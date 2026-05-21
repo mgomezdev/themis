@@ -9,6 +9,7 @@ from ...database import get_session
 from ...models import Printer
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui
 from ...services.printer_manager import printer_manager
+from ...services.profile_service import ProfileService
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -82,6 +83,24 @@ async def create_printer(
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)
+
+
+@router.get("/orca-presets")
+async def list_orca_printer_presets() -> list[str]:
+    svc = ProfileService()
+    return svc.get_printer_preset_names()
+
+
+@router.get("/{printer_id}/profiles")
+async def get_profiles(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    printer = await _get_or_404(printer_id, session)
+    if not printer.current_orca_printer_profile:
+        return {"print_profiles": [], "filament_profiles": []}
+    svc = ProfileService()
+    return svc.get_compatible_profiles(printer.current_orca_printer_profile)
 
 
 @router.get("/{printer_id}")
