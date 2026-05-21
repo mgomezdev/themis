@@ -75,3 +75,15 @@ def test_no_plates_at_all_returns_empty(tmp_path):
         zf.writestr("3D/3dmodel.model", "<model/>")
     plates = parse_three_mf(str(path))
     assert plates == []
+
+
+def test_malformed_slice_info_uses_defaults(tmp_path):
+    path = tmp_path / "bad.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Metadata/slice_info.config", "NOT VALID JSON {{{")
+        zf.writestr("Metadata/plate_1.png", b"\x89PNG\r\n\x1a\n")
+    plates = parse_three_mf(str(path))
+    assert len(plates) == 1
+    assert plates[0].plate_number == 1
+    assert plates[0].estimated_time == 0
+    assert plates[0].filament_g == 0.0

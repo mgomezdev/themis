@@ -29,11 +29,14 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
                 data = json.loads(zf.read("Metadata/slice_info.config"))
                 for p in data.get("plate", []):
                     idx = int(p.get("index", 0))
+                    raw_weight = p.get("weight", [0])
+                    if not isinstance(raw_weight, list):
+                        raw_weight = [raw_weight]
                     meta[idx] = {
                         "estimated_time": int(p.get("prediction", 0)),
-                        "filament_g": sum(float(w) for w in p.get("weight", [0])),
+                        "filament_g": sum(float(w) for w in raw_weight),
                     }
-            except Exception:
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
                 pass
 
         # Discover plate numbers from thumbnail files
