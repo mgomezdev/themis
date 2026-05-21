@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Frontend
+node_modules/
+frontend/dist/
+
+# Data
+*.db
+*.db-wal
+*.db-shm
+/data/
+
+# Env
+.env
+
+# Superpowers
+.superpowers/
