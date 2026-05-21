@@ -113,7 +113,7 @@ camera: bool = False
 
 `is_idle` (already on ABC) is the readiness signal. The queue engine requires **both** `is_idle == True` AND `awaiting_plate_clear == False` before assigning a job.
 
-**Vendors in scope for v1:** Bambu (MQTT), Moonraker/Klipper (HTTP poll), Elegoo Centauri (SDCP/WebSocket), Snapmaker U1 (extends Moonraker).
+**Vendors in scope for v1:** Bambu P1S (MQTT), Elegoo Centauri Carbon (SDCP/WebSocket). Moonraker/Klipper and Snapmaker U1 are deferred to future feature requests — the registry pattern means adding them later requires only a new client file + one registry entry.
 
 **Elegoo camera:** `ElegooCentauriClient.connection_fields()` gains an optional `camera_url` field (MJPEG stream URL). If set, `capabilities.camera = True`; if blank, `False`.
 
