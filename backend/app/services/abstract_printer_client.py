@@ -172,5 +172,7 @@ class AbstractPrinterClient(ABC):
             raise ValueError(f"Invalid file_id (path traversal): {file_id!r}")
         if decoded.startswith("/") or decoded.startswith("~"):
             raise ValueError(f"Invalid file_id (absolute path): {file_id!r}")
+        if decoded.startswith("\\\\"):
+            raise ValueError(f"Invalid file_id (UNC path): {file_id!r}")
         if len(decoded) >= 2 and decoded[1] == ":":
             raise ValueError(f"Invalid file_id (Windows drive): {file_id!r}")

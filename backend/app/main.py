@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .api.routes.printers import router as printers_router
 from .api.websocket import connection_manager, websocket_endpoint
-from .database import init_db
+from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
@@ -21,6 +21,8 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     printer_manager.set_loop(loop)
     printer_manager.set_broadcast_callback(connection_manager.broadcast)
+    printer_manager.set_session_factory(SessionLocal)
+    await printer_manager.load_awaiting_plate_clear_from_db()
     yield
 
 

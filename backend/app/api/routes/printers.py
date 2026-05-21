@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
 from ...models import Printer
-from ...services.printer_client_factory import get_printer_types_for_ui
+from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui
 from ...services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
@@ -69,6 +69,8 @@ async def create_printer(
     body: PrinterCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    if body.printer_type not in REGISTRY:
+        raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}. Valid types: {list(REGISTRY.keys())}")
     printer = Printer(
         name=body.name,
         printer_type=body.printer_type,

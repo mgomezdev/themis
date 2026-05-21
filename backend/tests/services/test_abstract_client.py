@@ -127,5 +127,11 @@ def test_validate_file_id_accepts_normal_filename():
     client._validate_file_id("my_model.3mf")  # should not raise
 
 
+def test_validate_file_id_rejects_unc_path():
+    client = MinimalClient()
+    with pytest.raises(ValueError):
+        client._validate_file_id("\\\\server\\share\\file")
+
+
 def test_connection_fields_default_empty():
     assert MinimalClient.connection_fields() == []

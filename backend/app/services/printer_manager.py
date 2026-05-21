@@ -4,6 +4,9 @@ import logging
 from dataclasses import asdict
 from typing import Any, Callable
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
 from .abstract_printer_client import AbstractPrinterClient
 
 logger = logging.getLogger(__name__)
@@ -51,12 +54,27 @@ class PrinterManager:
         self._awaiting_plate_clear: set[int] = set()
         self._on_state_broadcast: Callable | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._session_factory: async_sessionmaker | None = None
 
     def set_broadcast_callback(self, cb: Callable) -> None:
         self._on_state_broadcast = cb
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
+
+    def set_session_factory(self, factory: async_sessionmaker) -> None:
+        self._session_factory = factory
+
+    async def load_awaiting_plate_clear_from_db(self) -> None:
+        if not self._session_factory:
+            return
+        async with self._session_factory() as session:
+            from ..models import Printer
+            result = await session.execute(
+                select(Printer.id).where(Printer.awaiting_plate_clear == True)  # noqa: E712
+            )
+            ids = {row[0] for row in result.all()}
+            self.load_awaiting_plate_clear(ids)
 
     def register_client(self, printer_id: int, client: AbstractPrinterClient) -> None:
         self._clients[printer_id] = client
@@ -104,6 +122,13 @@ class PrinterManager:
 
     async def on_print_complete(self, printer_id: int, vendor_state) -> None:
         self.set_awaiting_plate_clear(printer_id, True)
+        if self._session_factory:
+            async with self._session_factory() as session:
+                from ..models import Printer
+                printer = await session.get(Printer, printer_id)
+                if printer:
+                    printer.awaiting_plate_clear = True
+                    await session.commit()
         if self._on_state_broadcast:
             normalized = self.get_normalized_state(printer_id)
             await self._on_state_broadcast("plate_clear_required", {"printer_id": printer_id})
@@ -113,18 +138,18 @@ class PrinterManager:
         self.register_client(printer_id, client)
         loop = self._loop
 
+        if loop is None:
+            logger.warning("connect_printer called before set_loop — callbacks will be disabled")
+
         async def _on_state(state):
             await self.on_state_change(printer_id, state)
 
         async def _on_complete(state):
             await self.on_print_complete(printer_id, state)
 
-        client._on_state_change = lambda s: (
-            asyncio.run_coroutine_threadsafe(_on_state(s), loop) if loop else None
-        )
-        client._on_print_complete = lambda s: (
-            asyncio.run_coroutine_threadsafe(_on_complete(s), loop) if loop else None
-        )
+        # Assign async functions directly — clients call run_coroutine_threadsafe on them
+        client._on_state_change = _on_state
+        client._on_print_complete = _on_complete
         client.connect(loop=loop)
 
     def disconnect_printer(self, printer_id: int) -> None:
