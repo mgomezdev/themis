@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from .api.routes.printers import router as printers_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import init_db
 from .services.printer_manager import printer_manager
@@ -26,6 +27,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Themis", lifespan=lifespan)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
+app.include_router(printers_router)
 
 
 @app.get("/api/v1/health")
