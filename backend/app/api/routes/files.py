@@ -83,13 +83,16 @@ async def get_thumbnail(
     filename: str,
     session: AsyncSession = Depends(get_session),
 ) -> FileResponse:
-    if "/" in filename or "\\" in filename or ".." in filename:
-        raise HTTPException(400, "Invalid filename")
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
     stored = Path(record.stored_path)
-    thumb_path = stored.parent / "thumbnails" / filename
+    thumb_dir = (stored.parent / "thumbnails").resolve()
+    try:
+        thumb_path = (thumb_dir / filename).resolve()
+        thumb_path.relative_to(thumb_dir)
+    except ValueError:
+        raise HTTPException(400, "Invalid filename")
     if not thumb_path.exists():
         raise HTTPException(404, "Thumbnail not found")
     return FileResponse(str(thumb_path), media_type="image/png")
