@@ -42,6 +42,12 @@ volumes:
 ### `printers`
 Registered printers. `printer_type` keys into the factory registry. `connection_config` is a JSON blob of vendor-specific credentials. `awaiting_plate_clear` is a boolean gate that must be explicitly cleared by the user before the printer can accept a new job.
 
+OrcaSlicer preset fields:
+- `orca_printer_profiles` — JSON array of OrcaSlicer printer preset name strings configured for this printer (e.g. `["Bambu Lab X1 Carbon 0.4", "Bambu Lab X1 Carbon 0.2"]`)
+- `current_orca_printer_profile` — the currently active preset (one of the values in `orca_printer_profiles`); switching this is how the user reflects a nozzle swap without re-adding the printer
+
+`ProfileService` always filters against `current_orca_printer_profile` when returning compatible print and filament profiles for a printer.
+
 ### `uploaded_files`
 A stored 3MF file. `plates` is a JSON array populated at upload time by `ThreeMFParser`:
 ```json
@@ -154,7 +160,9 @@ orcaslicer \
 
 Stdout/stderr are captured. Non-zero exit code → failure, stderr stored as `slice_error` on the config row.
 
-**Profile resolution:** `print_profile` and `filament_profile` are exact preset name strings from OrcaSlicer (matching the bind-mounted profiles directory). The frontend populates these from `GET /api/v1/printers/{printer_id}/profiles`, which reads available profiles directly from the mounted config directory at request time. The endpoint is scoped per-printer (rather than global) to allow future filtering by printer compatibility; in v1 it returns all available profiles regardless of printer.
+**Profile resolution:** `print_profile` and `filament_profile` are exact preset name strings from OrcaSlicer (matching the bind-mounted profiles directory). The frontend populates these from `GET /api/v1/printers/{printer_id}/profiles`.
+
+`ProfileService` reads the bind-mounted OrcaSlicer config directory and parses process and filament preset JSONs. Each preset has a `compatible_printers` array. The service filters to presets whose `compatible_printers` includes the printer's `current_orca_printer_profile` and returns two lists: `print_profiles` and `filament_profiles`. This means the profile dropdowns in the queue drawer only show presets that OrcaSlicer considers valid for that machine's current nozzle configuration — no manual curation needed.
 
 ---
 
@@ -211,7 +219,9 @@ All routes under `/api/v1/`. REST for CRUD and commands; WebSocket at `/ws` for 
 | `GET /jobs/{id}/slice-failures` | Per-printer slice error details |
 | `GET /queue` | Ordered job list |
 | `PATCH /queue/reorder` | Update `queue_position` values after drag |
-| `GET /printers/{id}/profiles` | Available OrcaSlicer presets from mounted config dir |
+| `GET /printers/{id}/profiles` | Print + filament presets compatible with printer's `current_orca_printer_profile` |
+| `PATCH /printers/{id}/active-preset` | Switch `current_orca_printer_profile` (nozzle swap) |
+| `GET /orca/printer-presets` | All OrcaSlicer printer preset names from mounted config dir (used when adding/editing a printer) |
 | `GET /printers/{id}/camera` | MJPEG stream |
 
 **WebSocket events (server → client):**
@@ -234,7 +244,7 @@ React + Vite + TypeScript. TanStack Query for server state. Zustand for local UI
 - **Dashboard** — printer card grid. Each card: status, current job + progress bar, temperatures, camera feed (`<img>` stream if `capabilities.camera`), pause/resume/cancel controls, prominent "Plate Cleared" button when status is `complete`.
 - **Queue** — drag-to-reorder job list. Add-to-queue drawer: file picker → plate selector → printer checkboxes with per-printer profile dropdowns (populated from `/api/v1/printers/{id}/profiles`).
 - **Projects** — project list with aggregate job status per project.
-- **Printers** — manage registered printers. Add-printer form dynamically rendered from `GET /api/v1/printers/types` — no frontend hardcoding of per-vendor fields.
+- **Printers** — manage registered printers. Add-printer form dynamically rendered from `GET /api/v1/printers/types` — no frontend hardcoding of per-vendor fields. Printer setup includes a multi-select of OrcaSlicer printer presets (from `GET /api/v1/orca/printer-presets`) and designation of the current active preset. Editing a printer exposes a "Switch Active Preset" control for nozzle swaps — a single click updates `current_orca_printer_profile` without touching connection config.
 - **Files** — uploaded 3MF library with plate thumbnails.
 
 **Capability discipline:** all controls rendered conditionally from `capabilities` flags on each printer's state object. No `printer_type` string comparisons anywhere in the UI.
