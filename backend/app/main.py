@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI
@@ -5,7 +6,8 @@ from fastapi.staticfiles import StaticFiles
 from .database import init_db
 
 
-STATIC_DIR = Path(__file__).parent.parent.parent / "frontend" / "dist"
+_default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
+STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 
 
 @asynccontextmanager
