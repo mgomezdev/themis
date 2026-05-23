@@ -145,13 +145,15 @@ class QueueEngine:
 
         # Store gcode record and transition to uploading
         async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status == "cancelled":
+                return
             gcode_rec = GcodeFile(job_id=job_id, printer_id=printer_id, path=gcode_path)
             session.add(gcode_rec)
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = "uploading"
-                job.updated_at = _now()
+            job.status = "uploading"
+            job.updated_at = _now()
             await session.commit()
+            plate_number = job.plate_number
 
         await self._broadcast_job(job_id)
 
@@ -186,9 +188,10 @@ class QueueEngine:
 
         async with self._factory() as session:
             job = await session.get(Job, job_id)
-            if job:
-                job.status = "printing"
-                job.updated_at = _now()
+            if job is None or job.status == "cancelled":
+                return
+            job.status = "printing"
+            job.updated_at = _now()
             await session.commit()
 
         await self._broadcast_job(job_id)
@@ -234,6 +237,20 @@ class QueueEngine:
                 job.status = "failed"
                 job.assigned_printer_id = None
                 job.updated_at = _now()
+            # Clean up gcode file from disk and DB
+            gcode_result = await session.execute(
+                select(GcodeFile).where(
+                    GcodeFile.job_id == job_id,
+                    GcodeFile.printer_id == printer_id,
+                )
+            )
+            gcode = gcode_result.scalar_one_or_none()
+            if gcode:
+                try:
+                    os.remove(gcode.path)
+                except OSError:
+                    pass
+                await session.delete(gcode)
             await session.commit()
         await self._broadcast_job(job_id)
 
