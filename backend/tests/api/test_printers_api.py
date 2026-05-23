@@ -119,3 +119,64 @@ async def test_switch_active_preset_invalid(client):
         json={"preset": "Not A Real Preset"},
     )
     assert response.status_code == 422
+
+
+import pytest
+from unittest.mock import MagicMock
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_camera_404_unknown_printer(client: AsyncClient):
+    resp = await client.get("/api/v1/printers/999/camera")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_camera_404_no_camera_capability(client: AsyncClient):
+    resp = await client.post("/api/v1/printers", json={
+        "name": "NoCam",
+        "printer_type": "elegoo_centauri",
+        "connection_config": {"ip_address": "1.2.3.4"},
+    })
+    assert resp.status_code == 201
+    printer_id = resp.json()["id"]
+
+    from app.services.printer_manager import printer_manager
+    mock_client = MagicMock()
+    mock_client.connected = True
+    mock_client.get_capabilities.return_value = MagicMock(camera=False)
+    mock_client.camera_mjpeg_url = None
+    mock_client.camera_rtsp_url = None
+    printer_manager._clients[printer_id] = mock_client
+
+    try:
+        resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
+        assert resp.status_code == 404
+    finally:
+        del printer_manager._clients[printer_id]
+
+
+@pytest.mark.asyncio
+async def test_camera_503_not_connected(client: AsyncClient):
+    resp = await client.post("/api/v1/printers", json={
+        "name": "NotConn",
+        "printer_type": "elegoo_centauri",
+        "connection_config": {"ip_address": "1.2.3.4"},
+    })
+    assert resp.status_code == 201
+    printer_id = resp.json()["id"]
+
+    from app.services.printer_manager import printer_manager
+    mock_client = MagicMock()
+    mock_client.connected = False
+    mock_client.get_capabilities.return_value = MagicMock(camera=True)
+    mock_client.camera_mjpeg_url = "http://fake/stream"
+    mock_client.camera_rtsp_url = None
+    printer_manager._clients[printer_id] = mock_client
+
+    try:
+        resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
+        assert resp.status_code == 503
+    finally:
+        del printer_manager._clients[printer_id]

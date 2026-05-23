@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
 from ...models import Printer
+from ...services.camera_proxy import stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui
 from ...services.printer_manager import printer_manager
 from ...services.profile_service import ProfileService
@@ -170,3 +172,27 @@ async def switch_active_preset(
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)
+
+
+@router.get("/{printer_id}/camera")
+async def stream_camera(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> StreamingResponse:
+    await _get_or_404(printer_id, session)
+    client = printer_manager._clients.get(printer_id)
+    if client is None or not client.connected:
+        raise HTTPException(503, "Printer not connected")
+    caps = client.get_capabilities()
+    if not caps.camera:
+        raise HTTPException(404, "This printer has no camera")
+    if client.camera_mjpeg_url:
+        stream = stream_mjpeg(client.camera_mjpeg_url)
+    elif client.camera_rtsp_url:
+        stream = stream_rtsp_ffmpeg(client.camera_rtsp_url)
+    else:
+        raise HTTPException(404, "No camera URL configured")
+    return StreamingResponse(
+        stream,
+        media_type="multipart/x-mixed-replace; boundary=frame",
+    )
