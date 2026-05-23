@@ -1,0 +1,302 @@
+from __future__ import annotations
+import asyncio
+import logging
+import os
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from typing import Callable
+
+from sqlalchemy import and_, func, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from ..models import GcodeFile, Job, JobPrinterConfig, UploadedFile
+from .printer_manager import PrinterManager
+from .slicer_service import SliceError, SlicerService
+
+logger = logging.getLogger(__name__)
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class QueueEngine:
+    def __init__(
+        self,
+        session_factory: async_sessionmaker,
+        printer_manager: PrinterManager,
+        slicer_service: SlicerService,
+        broadcast_cb: Callable | None = None,
+    ) -> None:
+        self._factory = session_factory
+        self._mgr = printer_manager
+        self._slicer = slicer_service
+        self._broadcast_cb = broadcast_cb
+        self._event = asyncio.Event()
+        self._task: asyncio.Task | None = None
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="slicer")
+
+    def wake(self) -> None:
+        self._event.set()
+
+    async def start(self) -> None:
+        self._task = asyncio.create_task(self._loop(), name="queue_engine")
+
+    async def stop(self) -> None:
+        if self._task:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self._executor.shutdown(wait=False)
+
+    async def _loop(self) -> None:
+        while True:
+            self._event.clear()
+            try:
+                await self._process_queue()
+            except Exception:
+                logger.exception("Queue engine error in _process_queue")
+            await self._event.wait()
+
+    async def _process_queue(self) -> None:
+        ready_ids = sorted([
+            pid for pid in self._mgr.get_all_printer_ids()
+            if self._mgr.is_printer_ready(pid)
+        ])
+        for printer_id in ready_ids:
+            async with self._factory() as session:
+                await self._try_claim_for_printer(session, printer_id)
+
+    async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int) -> None:
+        stmt = (
+            select(Job)
+            .join(
+                JobPrinterConfig,
+                and_(
+                    JobPrinterConfig.job_id == Job.id,
+                    JobPrinterConfig.printer_id == printer_id,
+                    JobPrinterConfig.slice_failed == False,  # noqa: E712
+                ),
+            )
+            .where(Job.status == "queued")
+            .order_by(Job.queue_position.asc())
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        job = result.scalar_one_or_none()
+        if job is None:
+            return
+
+        job.status = "slicing"
+        job.assigned_printer_id = printer_id
+        job.updated_at = _now()
+        # Capture plate_number before session closes to avoid DetachedInstanceError
+        plate_number = job.plate_number
+        job_id = job.id
+        await session.commit()
+
+        asyncio.create_task(
+            self._run_slice_and_print(job_id, printer_id, plate_number),
+            name=f"slice-{job_id}-{printer_id}",
+        )
+        await self._broadcast_job(job_id)
+
+    async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int) -> None:
+        # Load job details for slicing
+        async with self._factory() as session:
+            uploaded_file = None
+            config = None
+            job = await session.get(Job, job_id)
+            if job is not None:
+                uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+            result = await session.execute(
+                select(JobPrinterConfig).where(
+                    JobPrinterConfig.job_id == job_id,
+                    JobPrinterConfig.printer_id == printer_id,
+                    JobPrinterConfig.slice_failed == False,  # noqa: E712
+                )
+            )
+            config = result.scalar_one_or_none()
+            # Capture scalar values before session closes
+            print_profile = config.print_profile if config else None
+            filament_profile = config.filament_profile if config else None
+            stored_path = uploaded_file.stored_path if uploaded_file else None
+
+        if config is None or uploaded_file is None:
+            await self._fail_job_post_slice(job_id, printer_id)
+            return
+
+        loop = asyncio.get_event_loop()
+        try:
+            gcode_path: str = await loop.run_in_executor(
+                self._executor,
+                self._slicer.slice,
+                job_id,
+                stored_path,
+                plate_number,
+                print_profile,
+                filament_profile,
+            )
+        except SliceError as exc:
+            await self._handle_slice_failure(job_id, printer_id, str(exc))
+            return
+        except Exception as exc:
+            await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
+            return
+
+        # Store gcode record and transition to uploading
+        async with self._factory() as session:
+            gcode_rec = GcodeFile(job_id=job_id, printer_id=printer_id, path=gcode_path)
+            session.add(gcode_rec)
+            job = await session.get(Job, job_id)
+            if job:
+                job.status = "uploading"
+                job.updated_at = _now()
+            await session.commit()
+
+        await self._broadcast_job(job_id)
+
+        # Upload and start print
+        client = self._mgr.get_client(printer_id)
+        gcode_filename = os.path.basename(gcode_path)
+
+        if client.file_upload_supported:
+            try:
+                with open(gcode_path, "rb") as fh:
+                    data = fh.read()
+                upload_ok = await loop.run_in_executor(
+                    self._executor, client.upload_file, data, gcode_filename
+                )
+            except Exception:
+                upload_ok = False
+            if not upload_ok:
+                await self._fail_job_post_slice(job_id, printer_id)
+                return
+
+        from .abstract_printer_client import StartPrintOptions
+        opts = StartPrintOptions(plate_id=plate_number, gcode_path=gcode_filename)
+        try:
+            start_ok = await loop.run_in_executor(
+                self._executor, client.start_print, gcode_filename, opts
+            )
+        except Exception:
+            start_ok = False
+        if not start_ok:
+            await self._fail_job_post_slice(job_id, printer_id)
+            return
+
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job:
+                job.status = "printing"
+                job.updated_at = _now()
+            await session.commit()
+
+        await self._broadcast_job(job_id)
+
+    async def _handle_slice_failure(self, job_id: int, printer_id: int, error: str) -> None:
+        has_remaining = False
+        async with self._factory() as session:
+            result = await session.execute(
+                select(JobPrinterConfig).where(
+                    JobPrinterConfig.job_id == job_id,
+                    JobPrinterConfig.printer_id == printer_id,
+                )
+            )
+            config = result.scalar_one_or_none()
+            if config:
+                config.slice_failed = True
+                config.slice_error = error
+
+            remaining = await session.execute(
+                select(func.count(JobPrinterConfig.id)).where(
+                    JobPrinterConfig.job_id == job_id,
+                    JobPrinterConfig.slice_failed == False,  # noqa: E712
+                )
+            )
+            has_remaining = (remaining.scalar() or 0) > 0
+
+            job = await session.get(Job, job_id)
+            if job:
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+                job.status = "queued" if has_remaining else "failed"
+            await session.commit()
+
+        await self._broadcast_job(job_id)
+        if has_remaining:
+            self.wake()
+
+    async def _fail_job_post_slice(self, job_id: int, printer_id: int) -> None:
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job:
+                job.status = "failed"
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+            await session.commit()
+        await self._broadcast_job(job_id)
+
+    async def handle_print_complete(self, printer_id: int) -> None:
+        """Called by PrinterManager when the printer's vendor client signals print done."""
+        job_id = None
+        async with self._factory() as session:
+            result = await session.execute(
+                select(Job).where(
+                    Job.status == "printing",
+                    Job.assigned_printer_id == printer_id,
+                )
+            )
+            job = result.scalar_one_or_none()
+            if job is None:
+                return
+            job_id = job.id
+            job.status = "complete"
+            job.updated_at = _now()
+
+            # Delete gcode file from disk and DB
+            gcode_result = await session.execute(
+                select(GcodeFile).where(
+                    GcodeFile.job_id == job_id,
+                    GcodeFile.printer_id == printer_id,
+                )
+            )
+            gcode = gcode_result.scalar_one_or_none()
+            if gcode:
+                try:
+                    os.remove(gcode.path)
+                except OSError:
+                    pass
+                await session.delete(gcode)
+            await session.commit()
+
+        await self._broadcast_job(job_id)
+
+    async def _broadcast_job(self, job_id: int | None) -> None:
+        if not self._broadcast_cb or job_id is None:
+            return
+        try:
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+                if job:
+                    await self._broadcast_cb("job_update", {
+                        "id": job.id,
+                        "status": job.status,
+                        "assigned_printer_id": job.assigned_printer_id,
+                        "queue_position": job.queue_position,
+                    })
+                # Full queue broadcast (active jobs only)
+                result = await session.execute(
+                    select(Job)
+                    .where(Job.status.not_in(["complete", "failed", "cancelled"]))
+                    .order_by(Job.queue_position.asc())
+                )
+                all_jobs = result.scalars().all()
+                await self._broadcast_cb("queue_update", [
+                    {"id": j.id, "status": j.status, "queue_position": j.queue_position}
+                    for j in all_jobs
+                ])
+        except Exception:
+            logger.exception("Failed to broadcast job update")
+
+
+queue_engine = QueueEngine.__new__(QueueEngine)  # uninitialized singleton — init in lifespan

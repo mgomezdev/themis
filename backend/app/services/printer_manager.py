@@ -53,6 +53,7 @@ class PrinterManager:
         self._clients: dict[int, AbstractPrinterClient] = {}
         self._awaiting_plate_clear: set[int] = set()
         self._on_state_broadcast: Callable | None = None
+        self._on_job_complete: Callable | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session_factory: async_sessionmaker | None = None
 
@@ -64,6 +65,9 @@ class PrinterManager:
 
     def set_session_factory(self, factory: async_sessionmaker) -> None:
         self._session_factory = factory
+
+    def set_job_complete_callback(self, cb: Callable) -> None:
+        self._on_job_complete = cb
 
     async def load_awaiting_plate_clear_from_db(self) -> None:
         if not self._session_factory:
@@ -129,6 +133,8 @@ class PrinterManager:
                 if printer:
                     printer.awaiting_plate_clear = True
                     await session.commit()
+        if self._on_job_complete:
+            await self._on_job_complete(printer_id)
         if self._on_state_broadcast:
             normalized = self.get_normalized_state(printer_id)
             await self._on_state_broadcast("plate_clear_required", {"printer_id": printer_id})
