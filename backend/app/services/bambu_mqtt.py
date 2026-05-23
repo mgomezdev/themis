@@ -147,6 +147,14 @@ class BambuMQTTClient(AbstractPrinterClient):
         )
 
     @property
+    def camera_rtsp_url(self) -> str | None:
+        return f"rtsps://bblp:{self._access_code}@{self._ip}:322/streaming/live/1"
+
+    @property
+    def camera_mjpeg_url(self) -> str | None:
+        return None
+
+    @property
     def is_idle(self) -> bool:
         if self.state.state == "IDLE":
             return True

@@ -145,6 +145,14 @@ class AbstractPrinterClient(ABC):
     def file_upload_supported(self) -> bool:
         return False
 
+    @property
+    def camera_mjpeg_url(self) -> str | None:
+        return None
+
+    @property
+    def camera_rtsp_url(self) -> str | None:
+        return None
+
     def upload_file(self, data: bytes, filename: str) -> bool:
         return False
 

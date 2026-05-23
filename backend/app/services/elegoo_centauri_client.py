@@ -94,6 +94,14 @@ class ElegooCentauriClient(AbstractPrinterClient):
         )
 
     @property
+    def camera_mjpeg_url(self) -> str | None:
+        return self._camera_url or None
+
+    @property
+    def camera_rtsp_url(self) -> str | None:
+        return None
+
+    @property
     def is_idle(self) -> bool:
         return self.state.print_state in ("IDLE", "FINISH")
 

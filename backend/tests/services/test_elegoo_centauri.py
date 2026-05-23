@@ -118,3 +118,18 @@ def test_check_staleness_returns_connected():
     client = _make_client()
     client.state.connected = False
     assert client.check_staleness() is False
+
+
+def test_camera_mjpeg_url_returns_configured_url():
+    client = _make_client(camera_url="http://192.168.1.20:8080/?action=stream")
+    assert client.camera_mjpeg_url == "http://192.168.1.20:8080/?action=stream"
+
+
+def test_camera_mjpeg_url_is_none_when_not_configured():
+    client = _make_client(camera_url="")
+    assert client.camera_mjpeg_url is None
+
+
+def test_camera_rtsp_url_is_none_for_elegoo():
+    client = _make_client()
+    assert client.camera_rtsp_url is None

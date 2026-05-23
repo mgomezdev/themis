@@ -159,3 +159,13 @@ def test_start_print_uses_gcode_path_when_set():
     import json
     payload = json.loads(client._client.publish.call_args[0][1])
     assert payload["print"]["param"] == "output.gcode"
+
+
+def test_camera_rtsp_url_returns_rtsps_url():
+    client = _make_client()
+    assert client.camera_rtsp_url == "rtsps://bblp:12345678@192.168.1.10:322/streaming/live/1"
+
+
+def test_camera_mjpeg_url_is_none_for_bambu():
+    client = _make_client()
+    assert client.camera_mjpeg_url is None
