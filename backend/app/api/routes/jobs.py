@@ -8,11 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
+from ...services.queue_engine import queue_engine
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
-
-# Populated by lifespan wiring (avoids circular import at module load)
-queue_engine = None  # type: ignore[assignment]
 
 _CANCELLABLE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused"}
 

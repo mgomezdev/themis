@@ -10,6 +10,7 @@ from ...models import Printer
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui
 from ...services.printer_manager import printer_manager
 from ...services.profile_service import ProfileService
+from ...services.queue_engine import queue_engine
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -152,6 +153,7 @@ async def plate_cleared(
     printer.awaiting_plate_clear = False
     await session.commit()
     printer_manager.set_awaiting_plate_clear(printer_id, False)
+    queue_engine.wake()
     return {"ok": True}
 
 

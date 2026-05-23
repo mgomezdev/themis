@@ -14,6 +14,8 @@ from .api.routes.queue import router as queue_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
+from .services.queue_engine import QueueEngine, queue_engine
+from .services.slicer_service import SlicerService
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
@@ -22,12 +24,29 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
     loop = asyncio.get_event_loop()
+
+    # Wire printer manager
     printer_manager.set_loop(loop)
     printer_manager.set_broadcast_callback(connection_manager.broadcast)
     printer_manager.set_session_factory(SessionLocal)
     await printer_manager.load_awaiting_plate_clear_from_db()
+
+    # Initialise and wire queue engine
+    QueueEngine.__init__(
+        queue_engine,
+        session_factory=SessionLocal,
+        printer_manager=printer_manager,
+        slicer_service=SlicerService(),
+        broadcast_cb=connection_manager.broadcast,
+    )
+    printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
+    await queue_engine.start()
+
     yield
+
+    await queue_engine.stop()
 
 
 app = FastAPI(title="Themis", lifespan=lifespan)

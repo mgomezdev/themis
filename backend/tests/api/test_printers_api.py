@@ -84,9 +84,10 @@ async def test_plate_cleared_sets_gate(client):
     })
     printer_id = create.json()["id"]
     with patch("app.api.routes.printers.printer_manager") as mock_mgr:
-        response = await client.post(f"/api/v1/printers/{printer_id}/plate-cleared")
-        assert response.status_code == 200
-        mock_mgr.set_awaiting_plate_clear.assert_called_once_with(printer_id, False)
+        with patch("app.api.routes.printers.queue_engine") as mock_qe:
+            response = await client.post(f"/api/v1/printers/{printer_id}/plate-cleared")
+    assert response.status_code == 200
+    mock_mgr.set_awaiting_plate_clear.assert_called_once_with(printer_id, False)
 
 
 async def test_switch_active_preset(client):
