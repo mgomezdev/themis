@@ -25,7 +25,7 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 async def lifespan(app: FastAPI):
     await init_db()
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     # Wire printer manager
     printer_manager.set_loop(loop)
