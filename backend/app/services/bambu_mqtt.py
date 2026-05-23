@@ -109,6 +109,24 @@ class BambuMQTTClient(AbstractPrinterClient):
                     pass
         return self.state.connected
 
+    @property
+    def file_upload_supported(self) -> bool:
+        return True
+
+    def upload_file(self, data: bytes, filename: str) -> bool:
+        """Upload a gcode file to the printer via FTP (port 21, credentials = bblp / access_code)."""
+        import ftplib
+        import io
+        try:
+            ftp = ftplib.FTP()
+            ftp.connect(self._ip, 21, timeout=30)
+            ftp.login("bblp", self._access_code)
+            ftp.storbinary(f"STOR {filename}", io.BytesIO(data))
+            ftp.quit()
+            return True
+        except Exception:
+            return False
+
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
             ams=True,
@@ -145,7 +163,7 @@ class BambuMQTTClient(AbstractPrinterClient):
         payload: dict = {
             "print": {
                 "command": "project_file",
-                "param": f"Metadata/plate_{opts.plate_id}.gcode",
+                "param": opts.gcode_path or f"Metadata/plate_{opts.plate_id}.gcode",
                 "subtask_name": file_name,
                 "url": f"ftp://{file_name}",
                 "bed_type": "auto",

@@ -132,3 +132,30 @@ def test_check_staleness_returns_connected_state():
     client = _make_client()
     client.state.connected = False
     assert client.check_staleness() is False
+
+
+def test_upload_file_uses_ftp(mocker):
+    client = _make_client()
+    mock_ftp_instance = MagicMock()
+    mocker.patch("ftplib.FTP", return_value=mock_ftp_instance)
+    result = client.upload_file(b"G28\n", "output.gcode")
+    assert result is True
+    mock_ftp_instance.connect.assert_called_once()
+    mock_ftp_instance.storbinary.assert_called_once()
+
+
+def test_upload_file_returns_false_on_ftp_error(mocker):
+    client = _make_client()
+    mocker.patch("ftplib.FTP", side_effect=OSError("refused"))
+    result = client.upload_file(b"G28\n", "output.gcode")
+    assert result is False
+
+
+def test_start_print_uses_gcode_path_when_set():
+    client = _connected_client()
+    from app.services.abstract_printer_client import StartPrintOptions
+    opts = StartPrintOptions(plate_id=1, gcode_path="output.gcode")
+    client.start_print("output.gcode", opts)
+    import json
+    payload = json.loads(client._client.publish.call_args[0][1])
+    assert payload["print"]["param"] == "output.gcode"
