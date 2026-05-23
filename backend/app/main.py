@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     printer_manager.set_broadcast_callback(connection_manager.broadcast)
     printer_manager.set_session_factory(SessionLocal)
     await printer_manager.load_awaiting_plate_clear_from_db()
+    await printer_manager.connect_all_enabled_printers(SessionLocal)
 
     # Initialise and wire queue engine
     # Stop any previously running engine before re-initializing

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
+from .printer_client_factory import create_client
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,22 @@ class PrinterManager:
             )
             ids = {row[0] for row in result.all()}
             self.load_awaiting_plate_clear(ids)
+
+    async def connect_all_enabled_printers(self, session_factory) -> None:
+        if not session_factory:
+            return
+        async with session_factory() as session:
+            from ..models import Printer
+            result = await session.execute(
+                select(Printer).where(Printer.enabled == True)  # noqa: E712
+            )
+            printers = result.scalars().all()
+        for printer in printers:
+            try:
+                client = create_client(printer)
+                self.connect_printer(printer.id, client)
+            except Exception:
+                logger.exception("Failed to connect printer %s (id=%s)", printer.name, printer.id)
 
     def register_client(self, printer_id: int, client: AbstractPrinterClient) -> None:
         self._clients[printer_id] = client
