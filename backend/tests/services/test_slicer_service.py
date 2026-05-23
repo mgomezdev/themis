@@ -69,7 +69,7 @@ def test_slice_raises_when_no_gcode_produced(tmp_path):
         return result
 
     with patch("app.services.slicer_service.subprocess.run", side_effect=fake_run):
-        with pytest.raises(SliceError, match="no .gcode file"):
+        with pytest.raises(SliceError, match=r"no \.gcode file"):
             svc.slice(
                 job_id=1,
                 file_path="/data/uploads/abc/model.3mf",

@@ -117,6 +117,7 @@ class BambuMQTTClient(AbstractPrinterClient):
         """Upload a gcode file to the printer via FTP (port 21, credentials = bblp / access_code)."""
         import ftplib
         import io
+        ftp = None
         try:
             ftp = ftplib.FTP()
             ftp.connect(self._ip, 21, timeout=30)
@@ -125,6 +126,11 @@ class BambuMQTTClient(AbstractPrinterClient):
             ftp.quit()
             return True
         except Exception:
+            if ftp is not None:
+                try:
+                    ftp.quit()
+                except Exception:
+                    pass
             return False
 
     def get_capabilities(self) -> PrinterCapabilities:
