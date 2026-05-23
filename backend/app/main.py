@@ -51,6 +51,8 @@ async def lifespan(app: FastAPI):
     yield
 
     await queue_engine.stop()
+    for pid in list(printer_manager._clients.keys()):
+        printer_manager.disconnect_printer(pid)
 
 
 app = FastAPI(title="Themis", lifespan=lifespan)

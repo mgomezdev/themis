@@ -6,6 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import shutil
+
 from ...database import get_session
 from ...models import Printer
 from ...services.camera_proxy import stream_mjpeg, stream_rtsp_ffmpeg
@@ -189,6 +191,9 @@ async def stream_camera(
     if client.camera_mjpeg_url:
         stream = stream_mjpeg(client.camera_mjpeg_url)
     elif client.camera_rtsp_url:
+        from ...config import get_ffmpeg_executable
+        if not shutil.which(get_ffmpeg_executable()):
+            raise HTTPException(503, "ffmpeg not available for RTSP streaming")
         stream = stream_rtsp_ffmpeg(client.camera_rtsp_url)
     else:
         raise HTTPException(404, "No camera URL configured")
