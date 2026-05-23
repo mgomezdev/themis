@@ -13,3 +13,7 @@ def get_orca_config_dir() -> Path:
 
 def get_orca_executable() -> str:
     return os.environ.get("ORCA_EXECUTABLE", "orcaslicer")
+
+
+def get_ffmpeg_executable() -> str:
+    return os.environ.get("FFMPEG_EXECUTABLE", "ffmpeg")
