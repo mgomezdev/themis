@@ -125,7 +125,7 @@ class QueueEngine:
             await self._fail_job_post_slice(job_id, printer_id)
             return
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             gcode_path: str = await loop.run_in_executor(
                 self._executor,
@@ -206,6 +206,7 @@ class QueueEngine:
             if config:
                 config.slice_failed = True
                 config.slice_error = error
+                await session.flush()
 
             remaining = await session.execute(
                 select(func.count(JobPrinterConfig.id)).where(

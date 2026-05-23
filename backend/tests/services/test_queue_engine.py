@@ -79,11 +79,11 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)  # allow background task to run
+    await asyncio.sleep(0.1)  # allow background task to run through to printing
 
     async with db() as session:
         job = await session.get(Job, job_id)
-        assert job.status in ("slicing", "uploading", "printing")
+        assert job.status == "printing"
 
 
 @pytest.mark.asyncio
