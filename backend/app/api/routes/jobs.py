@@ -104,8 +104,7 @@ async def create_job(
     await session.commit()
     await session.refresh(job)
 
-    if queue_engine is not None:
-        queue_engine.wake()
+    queue_engine.wake()
 
     return _to_dict(job)
 

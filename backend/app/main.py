@@ -34,6 +34,9 @@ async def lifespan(app: FastAPI):
     await printer_manager.load_awaiting_plate_clear_from_db()
 
     # Initialise and wire queue engine
+    # Stop any previously running engine before re-initializing
+    if getattr(queue_engine, '_task', None) is not None:
+        await queue_engine.stop()
     QueueEngine.__init__(
         queue_engine,
         session_factory=SessionLocal,
