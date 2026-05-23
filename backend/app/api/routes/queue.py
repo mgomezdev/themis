@@ -57,6 +57,8 @@ async def reorder_queue(
         job = await session.get(Job, update.job_id)
         if job is None:
             raise HTTPException(404, f"Job {update.job_id} not found")
+        if job.status not in _ACTIVE_STATUSES:
+            raise HTTPException(422, f"Job {update.job_id} has status {job.status!r} and cannot be reordered")
         job.queue_position = update.queue_position
         job.updated_at = now
     await session.commit()
