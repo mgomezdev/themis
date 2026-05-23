@@ -115,9 +115,9 @@ async def test_cancel_complete_job_fails(client, tmp_path):
             ],
         })
     job_id = create.json()["id"]
-    # Force job to complete status via DB override is complex; just verify the route exists
-    response = await client.get(f"/api/v1/jobs/{job_id}")
-    assert response.status_code == 200
+    await client.post(f"/api/v1/jobs/{job_id}/cancel")   # transitions to "cancelled"
+    response = await client.post(f"/api/v1/jobs/{job_id}/cancel")  # "cancelled" not in _CANCELLABLE_STATUSES
+    assert response.status_code == 422
 
 
 async def test_get_slice_failures(client, tmp_path):
