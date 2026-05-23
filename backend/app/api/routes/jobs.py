@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, UploadedFile
+from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -71,6 +71,14 @@ async def create_job(
     if uploaded_file is None:
         raise HTTPException(404, f"File {body.uploaded_file_id} not found")
 
+    if not body.printer_configs:
+        raise HTTPException(422, "printer_configs must not be empty")
+
+    for cfg in body.printer_configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is None:
+            raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+
     now = datetime.now(timezone.utc).isoformat()
     pos = await _next_queue_position(session)
 
@@ -127,6 +135,7 @@ async def cancel_job(
     if job.status not in _CANCELLABLE_STATUSES:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be cancelled")
     job.status = "cancelled"
+    job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
