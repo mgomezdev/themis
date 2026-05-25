@@ -11,6 +11,9 @@ describe('fmtTime', () => {
 describe('fmtClock', () => {
   it('zero pads', () => expect(fmtClock(65)).toBe('01:05'));
   it('handles null', () => expect(fmtClock(null)).toBe('--:--'));
+  it('handles zero', () => expect(fmtClock(0)).toBe('00:00'));
+  it('handles 59 minutes', () => expect(fmtClock(59)).toBe('00:59'));
+  it('handles exactly 60 minutes', () => expect(fmtClock(60)).toBe('01:00'));
 });
 
 describe('matColor', () => {
