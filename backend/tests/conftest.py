@@ -1,30 +1,30 @@
-﻿import pytest
-import pytest_asyncio
-from fastapi import FastAPI
+﻿import pytest_asyncio
+from collections.abc import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.api.routes.printers import router as printers_router
+from app.main import app
 from app.database import Base, get_session
+
+TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture
-async def client():
-    test_engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    TestSession = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
-
-    async with test_engine.begin() as conn:
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    engine = create_async_engine(TEST_DB_URL)
+    async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    async def override_get_session():
-        async with TestSession() as session:
-            yield session
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-    test_app = FastAPI()
-    test_app.include_router(printers_router)
-    test_app.dependency_overrides[get_session] = override_get_session
+    async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
+        async with factory() as s:
+            yield s
 
-    async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as c:
+    app.dependency_overrides[get_session] = override_get_session
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
 
-    await test_engine.dispose()
+    app.dependency_overrides.clear()
+    await engine.dispose()
