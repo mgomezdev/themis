@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { ORDERS, JOBS } from '../data/mock';
 import { matColor, fmtTime } from '../data/helpers';
 import { StatusPill, SectionHeader, MaterialChip, Progress, Kv, Empty } from '../components/ui';

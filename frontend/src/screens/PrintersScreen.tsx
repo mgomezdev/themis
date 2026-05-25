@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { PRINTERS } from '../data/mock';
 import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { StatusPill, Progress, Swatch, MaterialChip, Card, SectionHeader, Empty, Kv } from './ui';
+import { StatusPill, Progress, Card, Empty, Kv } from './ui';
 import { Icons } from './icons';
 
 describe('StatusPill', () => {

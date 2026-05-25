@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { FILES } from '../data/mock';
 import { shade } from '../data/helpers';
 import { Icons } from '../components/icons';

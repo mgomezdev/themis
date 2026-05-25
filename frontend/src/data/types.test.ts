@@ -1,5 +1,5 @@
 import { describe, it, expectTypeOf } from 'vitest';
-import type { Printer, Job, Order, Filament, FileEntry } from './types';
+import type { Printer, Job } from './types';
 
 describe('data types', () => {
   it('Printer has required fields', () => {
