@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -11,7 +13,7 @@ import shutil
 from ...database import get_session
 from ...models import Printer
 from ...services.camera_proxy import stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui
+from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config
 from ...services.printer_manager import printer_manager
 from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
@@ -94,6 +96,34 @@ async def create_printer(
 async def list_orca_printer_presets() -> list[str]:
     svc = ProfileService()
     return svc.get_printer_preset_names()
+
+
+class TestConnectionRequest(BaseModel):
+    printer_type: str
+    connection_config: dict
+
+
+@router.post("/test-connection")
+async def test_connection(body: TestConnectionRequest) -> dict:
+    if body.printer_type not in REGISTRY:
+        raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
+    client = None
+    try:
+        client = create_client_from_config(body.printer_type, body.connection_config)
+        client.connect()
+        await asyncio.sleep(5)
+        ok = client.connected
+        if ok:
+            return {"ok": True}
+        return {"ok": False, "error": "Could not connect"}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    finally:
+        if client is not None:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
 
 @router.get("/{printer_id}/profiles")
