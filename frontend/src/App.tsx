@@ -59,6 +59,7 @@ function AppShell() {
             <Route path="/filaments"    element={<FilamentsScreen />} />
             <Route path="/printers"     element={<PrintersScreen />} />
             <Route path="/settings/*"   element={<SettingsScreen />} />
+            <Route path="*"             element={<Navigate to="/queue" replace />} />
           </Routes>
         </div>
       </div>
