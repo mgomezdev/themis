@@ -42,6 +42,7 @@ class ActivePresetUpdate(BaseModel):
 
 
 def _to_dict(p: Printer) -> dict:
+    live_client = printer_manager._clients.get(p.id)
     return {
         "id": p.id,
         "name": p.name,
@@ -51,6 +52,7 @@ def _to_dict(p: Printer) -> dict:
         "orca_printer_profiles": p.orca_printer_profiles,
         "current_orca_printer_profile": p.current_orca_printer_profile,
         "enabled": p.enabled,
+        "connected": live_client.connected if live_client else False,
     }
 
 
