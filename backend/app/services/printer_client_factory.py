@@ -48,3 +48,10 @@ def create_client(printer: Printer, **callbacks) -> AbstractPrinterClient:
         if k in sig.parameters:
             kwargs[k] = v
     return cls(**kwargs)
+
+
+def create_client_from_config(printer_type: str, connection_config: dict) -> AbstractPrinterClient:
+    cls = _load_class(printer_type)
+    accepted = {f.name for f in cls.connection_fields()}
+    kwargs = {k: v for k, v in connection_config.items() if k in accepted}
+    return cls(**kwargs)
