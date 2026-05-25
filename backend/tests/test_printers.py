@@ -16,10 +16,32 @@ async def test_test_connection_known_type_returns_ok_field(client):
         "/api/v1/printers/test-connection",
         json={
             "printer_type": "bambu",
-            "connection_config": {"host": "192.168.1.1", "access_code": "00000000", "serial": "TEST"},
+            "connection_config": {"ip_address": "192.168.1.1", "access_code": "00000000", "serial_number": "TEST"},
         },
     )
     assert resp.status_code == 200
     body = resp.json()
     assert "ok" in body
     assert isinstance(body["ok"], bool)
+
+
+async def test_list_printers_includes_connected_field(client):
+    # Create a printer via the API
+    resp = await client.post(
+        "/api/v1/printers",
+        json={
+            "name": "Test Printer",
+            "printer_type": "bambu",
+            "connection_config": {"ip_address": "192.168.1.10", "access_code": "12345678", "serial_number": "SN001"},
+        },
+    )
+    assert resp.status_code == 201
+
+    # List printers — must include connected field
+    resp = await client.get("/api/v1/printers")
+    assert resp.status_code == 200
+    printers = resp.json()
+    assert len(printers) == 1
+    assert "connected" in printers[0]
+    # No live client in tests, so connected must be False
+    assert printers[0]["connected"] is False
