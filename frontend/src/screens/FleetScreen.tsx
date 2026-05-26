@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { PRINTERS, JOBS } from '../data/mock';
+import { JOBS } from '../data/mock';
+import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import {
   StatusPill,
@@ -491,9 +492,11 @@ function PrinterExpandedCard({
 // FleetGrid layout
 // -------------------------------------------------------------------------
 function FleetGrid({
+  printers,
   expandedId,
   onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
@@ -505,7 +508,7 @@ function FleetGrid({
         gap: 16,
       }}
     >
-      {PRINTERS.map(p => {
+      {printers.map(p => {
         const expanded = expandedId === p.id;
         return (
           <div
@@ -531,9 +534,11 @@ function FleetGrid({
 // FleetList layout — table with inline expand row
 // -------------------------------------------------------------------------
 function FleetList({
+  printers,
   expandedId,
   onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
@@ -553,7 +558,7 @@ function FleetList({
           </tr>
         </thead>
         <tbody>
-          {PRINTERS.map(p => {
+          {printers.map(p => {
             const expanded = expandedId === p.id;
             return (
               <React.Fragment key={p.id}>
@@ -746,14 +751,16 @@ function PrinterStripCard({
 // FleetFocus layout — one big hero + sidebar strip
 // -------------------------------------------------------------------------
 function FleetFocus({
+  printers,
   expandedId: _expandedId,
   onToggle: _onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
-  const [focusId, setFocusId] = useState(PRINTERS[0].id);
-  const hero = PRINTERS.find(p => p.id === focusId) ?? PRINTERS[0];
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const hero = printers.find(p => p.id === (focusId ?? printers[0]?.id)) ?? printers[0] ?? null;
   return (
     <div
       style={{
@@ -762,9 +769,9 @@ function FleetFocus({
         gap: 18,
       }}
     >
-      <PrinterExpandedCard printer={hero} onCollapse={() => {}} />
+      {hero && <PrinterExpandedCard printer={hero} onCollapse={() => {}} />}
       <div className="col gap-3">
-        {PRINTERS.map(p => (
+        {printers.map(p => (
           <PrinterStripCard
             key={p.id}
             printer={p}
@@ -781,14 +788,15 @@ function FleetFocus({
 // FleetScreen — main export
 // -------------------------------------------------------------------------
 export function FleetScreen() {
+  const printers = useFleetData();
   const [layout, setLayout] = useState<Layout>('grid');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const toggle = (id: string) =>
     setExpandedId(expandedId === id ? null : id);
 
-  const printingCount = PRINTERS.filter(p => p.status === 'printing').length;
-  const idleCount = PRINTERS.filter(p => p.status === 'idle').length;
+  const printingCount = printers.filter(p => p.status === 'printing').length;
+  const idleCount = printers.filter(p => p.status === 'idle').length;
 
   return (
     <div className="col gap-5">
@@ -809,7 +817,7 @@ export function FleetScreen() {
                 letterSpacing: '-0.02em',
               }}
             >
-              {PRINTERS.length} printers online
+              {printers.length} printers online
             </div>
             <div className="muted small">
               {printingCount} printing · {idleCount} idle
@@ -849,13 +857,13 @@ export function FleetScreen() {
       </div>
 
       {layout === 'list' && (
-        <FleetList expandedId={expandedId} onToggle={toggle} />
+        <FleetList printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
       {layout === 'focus' && (
-        <FleetFocus expandedId={expandedId} onToggle={toggle} />
+        <FleetFocus printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
       {layout === 'grid' && (
-        <FleetGrid expandedId={expandedId} onToggle={toggle} />
+        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
     </div>
   );
