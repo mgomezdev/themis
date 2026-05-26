@@ -29,17 +29,27 @@ def _serialize_bambu(state, printer_id: int) -> dict:
 
 
 def _serialize_elegoo(state, printer_id: int) -> dict:
+    total_ticks = getattr(state, "total_ticks", 0)
+    current_ticks = getattr(state, "current_ticks", 0)
+    if total_ticks > 0 and current_ticks < total_ticks:
+        remaining_time = int((total_ticks - current_ticks) / 60)
+    else:
+        remaining_time = getattr(state, "remaining_time", 0) or 0
     return {
         "printer_type": "elegoo_centauri",
         "id": printer_id,
         "connected": state.connected,
         "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
+        "current_print": getattr(state, "filename", None) or getattr(state, "current_print", None),
         "progress": getattr(state, "progress", 0.0),
-        "remaining_time": getattr(state, "remaining_time", 0),
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
+        "remaining_time": remaining_time,
+        "layer_num": getattr(state, "layer_num", None),
+        "total_layers": getattr(state, "total_layers", None),
         "temperatures": getattr(state, "temperatures", {}),
+        "fan_speed": getattr(state, "fan_model", 0),
+        "speed_factor": getattr(state, "print_speed_pct", 100) / 100.0,
+        "klippy_state": "ready" if state.connected else "disconnected",
+        "cover_url": None,
     }
 
 
