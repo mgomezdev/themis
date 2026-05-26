@@ -124,6 +124,18 @@ async def test_light_ok_off(client):
     printer_manager._clients.pop(printer_id)
 
 
+async def test_light_404_on_missing_printer(client):
+    resp = await client.post("/api/v1/printers/999/light", json={"on": True})
+    assert resp.status_code == 404
+
+
+async def test_light_503_when_not_connected(client):
+    printer_id = await _create_printer(client)
+    resp = await client.post(f"/api/v1/printers/{printer_id}/light", json={"on": True})
+    assert resp.status_code == 503
+    printer_manager._clients.pop(printer_id, None)
+
+
 # ── Jog-Z ────────────────────────────────────────────────────────────────────
 
 async def test_jog_z_ok(client):
@@ -145,6 +157,18 @@ async def test_jog_z_negative(client):
     assert resp.status_code == 200
     mock.jog_z.assert_called_once_with(-10.0)
     printer_manager._clients.pop(printer_id)
+
+
+async def test_jog_z_404_on_missing_printer(client):
+    resp = await client.post("/api/v1/printers/999/jog-z", json={"distance_mm": 5.0})
+    assert resp.status_code == 404
+
+
+async def test_jog_z_503_when_not_connected(client):
+    printer_id = await _create_printer(client)
+    resp = await client.post(f"/api/v1/printers/{printer_id}/jog-z", json={"distance_mm": 5.0})
+    assert resp.status_code == 503
+    printer_manager._clients.pop(printer_id, None)
 
 
 # ── Fan ──────────────────────────────────────────────────────────────────────
@@ -212,6 +236,18 @@ async def test_fan_422_on_invalid_fan_name(client):
     printer_manager._clients.pop(printer_id)
 
 
+async def test_fan_404_on_missing_printer(client):
+    resp = await client.post("/api/v1/printers/999/fan", json={"fan": "model", "speed_pct": 50})
+    assert resp.status_code == 404
+
+
+async def test_fan_503_when_not_connected(client):
+    printer_id = await _create_printer(client)
+    resp = await client.post(f"/api/v1/printers/{printer_id}/fan", json={"fan": "model", "speed_pct": 50})
+    assert resp.status_code == 503
+    printer_manager._clients.pop(printer_id, None)
+
+
 # ── Bed temp ─────────────────────────────────────────────────────────────────
 
 async def test_bed_temp_ok(client):
@@ -233,3 +269,15 @@ async def test_bed_temp_zero_turns_off(client):
     assert resp.status_code == 200
     mock.set_bed_temp.assert_called_once_with(0)
     printer_manager._clients.pop(printer_id)
+
+
+async def test_bed_temp_404_on_missing_printer(client):
+    resp = await client.post("/api/v1/printers/999/bed-temp", json={"celsius": 95})
+    assert resp.status_code == 404
+
+
+async def test_bed_temp_503_when_not_connected(client):
+    printer_id = await _create_printer(client)
+    resp = await client.post(f"/api/v1/printers/{printer_id}/bed-temp", json={"celsius": 95})
+    assert resp.status_code == 503
+    printer_manager._clients.pop(printer_id, None)
