@@ -25,6 +25,10 @@ export interface Printer {
   currentJobId: string | null;
   accent: string;
   note?: string;
+  fanModel: number;
+  fanAux: number;
+  fanBox: number;
+  bedTempTarget: number;
 }
 
 export interface OrderPart {

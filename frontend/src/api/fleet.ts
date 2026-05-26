@@ -15,9 +15,12 @@ export interface FleetPrinter {
   remaining_time: number;
   layer_num: number | null;
   total_layers: number | null;
-  temperatures: { nozzle?: number; bed?: number; chamber?: number };
+  temperatures: { nozzle?: number; bed?: number; chamber?: number; bed_target?: number };
   capabilities: Record<string, boolean>;
   current_print: string | null;
+  fan_model: number;
+  fan_aux: number;
+  fan_box: number;
 }
 
 const ACCENT: Record<string, string> = {
@@ -70,6 +73,10 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
       : { name: '—', type: '—', color: '#475472' },
     currentJobId: p.current_print ?? null,
     accent: ACCENT[p.printer_type] ?? '#888888',
+    fanModel: p.fan_model ?? 0,
+    fanAux: p.fan_aux ?? 0,
+    fanBox: p.fan_box ?? 0,
+    bedTempTarget: p.temperatures?.bed_target ?? 0,
   };
 }
 

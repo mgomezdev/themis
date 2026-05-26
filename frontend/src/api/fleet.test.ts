@@ -108,4 +108,36 @@ describe('toFleetPrinter', () => {
   it('maps null current_print to null currentJobId', () => {
     expect(toFleetPrinter({ ...BASE, current_print: null }).currentJobId).toBeNull();
   });
+
+  it('maps fan_model, fan_aux, fan_box to Printer', () => {
+    const p = toFleetPrinter({
+      ...BASE,
+      fan_model: 80,
+      fan_aux: 60,
+      fan_box: 40,
+    } as any);
+    expect(p.fanModel).toBe(80);
+    expect(p.fanAux).toBe(60);
+    expect(p.fanBox).toBe(40);
+  });
+
+  it('defaults fan fields to 0 when absent', () => {
+    const p = toFleetPrinter({ ...BASE } as any);
+    expect(p.fanModel).toBe(0);
+    expect(p.fanAux).toBe(0);
+    expect(p.fanBox).toBe(0);
+  });
+
+  it('maps temperatures.bed_target to bedTempTarget', () => {
+    const p = toFleetPrinter({
+      ...BASE,
+      temperatures: { nozzle: 285, bed: 95, bed_target: 100 },
+    } as any);
+    expect(p.bedTempTarget).toBe(100);
+  });
+
+  it('defaults bedTempTarget to 0 when bed_target absent', () => {
+    const p = toFleetPrinter({ ...BASE } as any);
+    expect(p.bedTempTarget).toBe(0);
+  });
 });
