@@ -343,16 +343,43 @@ async def stream_camera(
     caps = client.get_capabilities()
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
+
+    # Activate Elegoo MJPEG stream before proxying (no-op for clients without the method)
+    if hasattr(client, "start_video_stream"):
+        client.start_video_stream()
+
     if client.camera_mjpeg_url:
-        stream = stream_mjpeg(client.camera_mjpeg_url)
+        raw = stream_mjpeg(client.camera_mjpeg_url)
     elif client.camera_rtsp_url:
         from ...config import get_ffmpeg_executable
         if not shutil.which(get_ffmpeg_executable()):
             raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        stream = stream_rtsp_ffmpeg(client.camera_rtsp_url)
+        raw = stream_rtsp_ffmpeg(client.camera_rtsp_url)
     else:
         raise HTTPException(404, "No camera URL configured")
+
+    # Ping keepalive: Elegoo drops the MJPEG stream after 60 s of silence; ping every 45 s.
+    stop = asyncio.Event()
+
+    async def _ping_loop():
+        while not stop.is_set():
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=45)
+            except asyncio.TimeoutError:
+                if hasattr(client, "ping_video_stream"):
+                    client.ping_video_stream()
+
+    ping_task = asyncio.create_task(_ping_loop())
+
+    async def _stream():
+        try:
+            async for chunk in raw:
+                yield chunk
+        finally:
+            stop.set()
+            ping_task.cancel()
+
     return StreamingResponse(
-        stream,
+        _stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
     )
