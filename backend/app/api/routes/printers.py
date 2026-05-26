@@ -27,6 +27,7 @@ class PrinterCreate(BaseModel):
     connection_config: dict
     orca_printer_profiles: list[str] = []
     current_orca_printer_profile: str | None = None
+    loaded_filaments: list[dict] = []
 
 
 class PrinterUpdate(BaseModel):
@@ -35,6 +36,7 @@ class PrinterUpdate(BaseModel):
     orca_printer_profiles: list[str] | None = None
     current_orca_printer_profile: str | None = None
     enabled: bool | None = None
+    loaded_filaments: list[dict] | None = None
 
 
 class ActivePresetUpdate(BaseModel):
@@ -52,6 +54,7 @@ def _to_dict(p: Printer) -> dict:
         "orca_printer_profiles": p.orca_printer_profiles,
         "current_orca_printer_profile": p.current_orca_printer_profile,
         "enabled": p.enabled,
+        "loaded_filaments": p.loaded_filaments or [],
         "connected": live_client.connected if live_client else False,
     }
 
@@ -87,6 +90,7 @@ async def create_printer(
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
+        loaded_filaments=body.loaded_filaments,
     )
     session.add(printer)
     await session.commit()
@@ -165,6 +169,8 @@ async def update_printer(
         printer.current_orca_printer_profile = body.current_orca_printer_profile
     if body.enabled is not None:
         printer.enabled = body.enabled
+    if body.loaded_filaments is not None:
+        printer.loaded_filaments = body.loaded_filaments
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

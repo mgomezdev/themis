@@ -15,6 +15,7 @@ class Printer(Base):
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
     current_orca_printer_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class UploadedFile(Base):
