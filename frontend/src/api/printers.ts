@@ -103,3 +103,51 @@ export function testConnection(body: {
     body: JSON.stringify(body),
   });
 }
+
+export function pausePrinter(id: string): Promise<void> {
+  return request(`${BASE}/${id}/pause`, { method: 'POST' });
+}
+
+export function resumePrinter(id: string): Promise<void> {
+  return request(`${BASE}/${id}/resume`, { method: 'POST' });
+}
+
+export function stopPrinter(id: string): Promise<void> {
+  return request(`${BASE}/${id}/stop`, { method: 'POST' });
+}
+
+export function setLight(id: string, on: boolean): Promise<void> {
+  return request(`${BASE}/${id}/light`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ on }),
+  });
+}
+
+export function jogZ(id: string, distanceMm: number): Promise<void> {
+  return request(`${BASE}/${id}/jog-z`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ distance_mm: distanceMm }),
+  });
+}
+
+export function setFanSpeed(
+  id: string,
+  fan: 'model' | 'auxiliary' | 'box',
+  speedPct: number,
+): Promise<void> {
+  return request(`${BASE}/${id}/fan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fan, speed_pct: speedPct }),
+  });
+}
+
+export function setBedTemp(id: string, celsius: number): Promise<void> {
+  return request(`${BASE}/${id}/bed-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ celsius }),
+  });
+}
