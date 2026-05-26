@@ -43,6 +43,23 @@ class ActivePresetUpdate(BaseModel):
     preset: str
 
 
+class LightBody(BaseModel):
+    on: bool
+
+
+class JogZBody(BaseModel):
+    distance_mm: float
+
+
+class FanBody(BaseModel):
+    fan: str  # "model" | "auxiliary" | "box"
+    speed_pct: int
+
+
+class BedTempBody(BaseModel):
+    celsius: int
+
+
 def _to_dict(p: Printer) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
@@ -64,6 +81,13 @@ async def _get_or_404(printer_id: int, session: AsyncSession) -> Printer:
     if printer is None:
         raise HTTPException(404, f"Printer {printer_id} not found")
     return printer
+
+
+def _get_connected_client(printer_id: int):
+    client = printer_manager._clients.get(printer_id)
+    if client is None or not client.connected:
+        raise HTTPException(503, "Printer not connected")
+    return client
 
 
 @router.get("/types")
@@ -212,6 +236,99 @@ async def switch_active_preset(
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)
+
+
+@router.post("/{printer_id}/pause")
+async def pause_printer(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.pause_print()
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/resume")
+async def resume_printer(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.resume_print()
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/stop")
+async def stop_printer(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.stop_print()
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/light")
+async def set_light(
+    printer_id: int,
+    body: LightBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.set_chamber_light(body.on)
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/jog-z")
+async def jog_z(
+    printer_id: int,
+    body: JogZBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.jog_z(body.distance_mm)
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/fan")
+async def set_fan(
+    printer_id: int,
+    body: FanBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    state = printer_manager.get_normalized_state(printer_id)
+    model = int(state.get("fan_model", 0))
+    aux = int(state.get("fan_aux", 0))
+    box = int(state.get("fan_box", 0))
+    if body.fan == "model":
+        model = body.speed_pct
+    elif body.fan == "auxiliary":
+        aux = body.speed_pct
+    elif body.fan == "box":
+        box = body.speed_pct
+    else:
+        raise HTTPException(422, f"Invalid fan name: {body.fan!r}. Valid: model, auxiliary, box")
+    client.set_fan_speeds(model, aux, box)
+    return {"ok": True}
+
+
+@router.post("/{printer_id}/bed-temp")
+async def set_bed_temp(
+    printer_id: int,
+    body: BedTempBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    client.set_bed_temp(body.celsius)
+    return {"ok": True}
 
 
 @router.get("/{printer_id}/camera")
