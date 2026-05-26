@@ -83,23 +83,33 @@ export function useFleetData(): Printer[] {
   const [raw, setRaw] = useState<FleetPrinter[]>([]);
 
   useEffect(() => {
-    fetchFleetPrinters().then(setRaw).catch(console.error);
-
+    let alive = true;
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-    ws.onmessage = (e) => {
-      try {
-        const event = JSON.parse(e.data) as { type: string; data: FleetPrinter };
-        if (event.type === 'printer_state') {
-          setRaw(prev =>
-            prev.map(p => (p.id === event.data.id ? { ...p, ...event.data } : p)),
-          );
-        }
-      } catch {
-        // ignore malformed frames
-      }
+
+    fetchFleetPrinters()
+      .then(data => {
+        if (!alive) return;
+        setRaw(data);
+        ws.onmessage = (e) => {
+          try {
+            const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
+            if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
+              setRaw(prev =>
+                prev.map(p => (p.id === msg.data.id ? { ...p, ...msg.data } : p)),
+              );
+            }
+          } catch {
+            // ignore malformed frames
+          }
+        };
+      })
+      .catch(console.error);
+
+    return () => {
+      alive = false;
+      ws.close();
     };
-    return () => ws.close();
   }, []);
 
   return raw.map(toFleetPrinter);
