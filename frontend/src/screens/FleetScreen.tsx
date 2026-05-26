@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { JOBS } from '../data/mock';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
@@ -12,6 +12,15 @@ import {
 } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
+import {
+  pausePrinter,
+  resumePrinter,
+  stopPrinter,
+  setLight,
+  jogZ,
+  setFanSpeed,
+  setBedTemp,
+} from '../api/printers';
 
 type Layout = 'grid' | 'list' | 'focus';
 
@@ -165,6 +174,16 @@ function PrinterExpandedCard({
   onCollapse: () => void;
 }) {
   const isPrinting = p.status === 'printing';
+  const isPaused = p.status === 'paused';
+  const isOffline = p.status === 'offline';
+  const [lightOn, setLightOn] = useState(false);
+  const [fanValues, setFanValues] = useState({
+    model: p.fanModel,
+    auxiliary: p.fanAux,
+    box: p.fanBox,
+  });
+  const [bedInput, setBedInput] = useState(String(p.bedTempTarget));
+  const fanDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const job: Job | undefined = p.currentJobId
     ? JOBS.find(j => j.id === p.currentJobId)
     : undefined;
@@ -322,17 +341,64 @@ function PrinterExpandedCard({
           {isPrinting && <Progress value={p.progress} large />}
 
           {/* Action row */}
-          <div className="row gap-2" style={{ marginTop: 2 }}>
+          <div className="row gap-2" style={{ marginTop: 2, flexWrap: 'wrap' }}>
             {isPrinting && (
-              <>
-                <button className="btn">{Icons.pause} Pause</button>
-                <button className="btn">{Icons.stop} Stop</button>
-              </>
+              <button
+                className="btn"
+                onClick={() => pausePrinter(p.id).catch(console.error)}
+              >
+                {Icons.pause} Pause
+              </button>
             )}
-            {!isPrinting && (
+            {isPaused && (
+              <button
+                className="btn"
+                onClick={() => resumePrinter(p.id).catch(console.error)}
+              >
+                {Icons.play} Resume
+              </button>
+            )}
+            {(isPrinting || isPaused) && (
+              <button
+                className="btn"
+                onClick={() => stopPrinter(p.id).catch(console.error)}
+              >
+                {Icons.stop} Stop
+              </button>
+            )}
+            {!isPrinting && !isPaused && (
               <button className="btn primary">
                 {Icons.play} Claim next from queue
               </button>
+            )}
+            {p.capabilities.includes('chamber light') && (
+              <button
+                className={`btn sm${lightOn ? ' active' : ''}`}
+                title="Toggle chamber light"
+                onClick={() => {
+                  const next = !lightOn;
+                  setLightOn(next);
+                  setLight(p.id, next).catch(console.error);
+                }}
+              >
+                {lightOn ? 'Light: On' : 'Light: Off'}
+              </button>
+            )}
+            {p.capabilities.includes('pause resume') && (
+              <>
+                <button
+                  className="btn sm"
+                  onClick={() => jogZ(p.id, 10).catch(console.error)}
+                >
+                  +10 mm
+                </button>
+                <button
+                  className="btn sm"
+                  onClick={() => jogZ(p.id, -10).catch(console.error)}
+                >
+                  −10 mm
+                </button>
+              </>
             )}
             <div style={{ flex: 1 }} />
             <button className="btn ghost sm">
@@ -458,6 +524,85 @@ function PrinterExpandedCard({
               )}
             </div>
           </div>
+
+          {p.capabilities.includes('fan control') && (
+            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+              <div className="tag-key" style={{ marginBottom: 10 }}>Fans</div>
+              <div className="col gap-3">
+                {(['model', 'auxiliary', 'box'] as const).map(fan => (
+                  <div key={fan} className="col gap-1">
+                    <div className="row between">
+                      <span className="small" style={{ textTransform: 'capitalize' }}>{fan}</span>
+                      <span className="num small muted">{fanValues[fan]}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={fanValues[fan]}
+                      disabled={isOffline}
+                      style={{ width: '100%' }}
+                      onChange={e => {
+                        const value = Number(e.target.value);
+                        setFanValues(prev => ({ ...prev, [fan]: value }));
+                        clearTimeout(fanDebounceRef.current[fan]);
+                        fanDebounceRef.current[fan] = setTimeout(() => {
+                          setFanSpeed(p.id, fan, value).catch(console.error);
+                        }, 300);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {p.capabilities.includes('temp control') && (
+            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+              <div className="row between" style={{ marginBottom: 10 }}>
+                <span className="tag-key">Bed Temp</span>
+                <span className="num small muted">target: {p.bedTempTarget}°C</span>
+              </div>
+              <div className="row gap-2" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
+                {[0, 60, 80, 95, 110].map(preset => (
+                  <button
+                    key={preset}
+                    className="btn sm"
+                    disabled={isOffline}
+                    onClick={() => {
+                      setBedInput(String(preset));
+                      setBedTemp(p.id, preset).catch(console.error);
+                    }}
+                  >
+                    {preset === 0 ? 'Off' : `${preset}°C`}
+                  </button>
+                ))}
+              </div>
+              <div className="row gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={120}
+                  value={bedInput}
+                  disabled={isOffline}
+                  style={{ width: 72, padding: '4px 8px', borderRadius: 6,
+                    background: 'var(--bg-3)', border: '1px solid var(--border-1)',
+                    color: 'var(--text-1)', fontSize: 13 }}
+                  onChange={e => setBedInput(e.target.value)}
+                />
+                <button
+                  className="btn sm"
+                  disabled={isOffline}
+                  onClick={() => {
+                    const c = parseInt(bedInput, 10);
+                    if (!isNaN(c)) setBedTemp(p.id, c).catch(console.error);
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+            </div>
+          )}
 
           <div
             className="card"
