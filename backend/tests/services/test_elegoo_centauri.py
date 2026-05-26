@@ -428,3 +428,63 @@ def test_port_coerced_from_string():
     client = ElegooCentauriClient(ip_address="1.2.3.4", port="3030")
     assert client._port == 3030
     assert isinstance(client._port, int)
+
+
+# ---------------------------------------------------------------------------
+# fan_box field
+# ---------------------------------------------------------------------------
+
+def test_elegoo_state_has_fan_box_defaulting_to_zero():
+    client = _make_client()
+    assert client.state.fan_box == 0
+
+
+def test_parse_status_msg_reads_box_fan():
+    client = _make_client()
+    msg = {
+        "Status": {
+            "CurrentFanSpeed": {"ModelFan": 80, "AuxiliaryFan": 60, "BoxFan": 40},
+            "CurrentStatus": [],
+            "PrintInfo": {},
+        }
+    }
+    client._parse_status_msg(msg)
+    assert client.state.fan_box == 40
+
+
+def test_parse_status_msg_box_fan_defaults_to_zero_when_absent():
+    client = _make_client()
+    msg = {
+        "Status": {
+            "CurrentFanSpeed": {"ModelFan": 80, "AuxiliaryFan": 60},
+            "CurrentStatus": [],
+            "PrintInfo": {},
+        }
+    }
+    client._parse_status_msg(msg)
+    assert client.state.fan_box == 0
+
+
+# ---------------------------------------------------------------------------
+# Serializer — fan fields
+# ---------------------------------------------------------------------------
+
+def test_serialize_elegoo_exposes_three_fan_fields():
+    from app.services.printer_manager import _serialize_elegoo
+    from app.services.elegoo_centauri_client import ElegooState
+    state = ElegooState()
+    state.connected = True
+    state.fan_model = 80
+    state.fan_aux = 60
+    state.fan_box = 40
+    result = _serialize_elegoo(state, 1)
+    assert result["fan_model"] == 80
+    assert result["fan_aux"] == 60
+    assert result["fan_box"] == 40
+
+
+def test_serialize_elegoo_no_longer_has_fan_speed():
+    from app.services.printer_manager import _serialize_elegoo
+    from app.services.elegoo_centauri_client import ElegooState
+    result = _serialize_elegoo(ElegooState(), 1)
+    assert "fan_speed" not in result

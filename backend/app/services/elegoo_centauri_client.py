@@ -93,6 +93,7 @@ class ElegooState:
     temperatures: dict = field(default_factory=dict)
     fan_model: int = 0
     fan_aux: int = 0
+    fan_box: int = 0
     chamber_light: bool = False
     rgb_light: list = field(default_factory=lambda: [0, 0, 0])
     video_url: str | None = None
@@ -380,6 +381,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
         fans = status.get("CurrentFanSpeed", {})
         new.fan_model = int(fans.get("ModelFan", 0))
         new.fan_aux = int(fans.get("AuxiliaryFan", 0))
+        new.fan_box = int(fans.get("BoxFan", 0))
 
         # Lights — RgbLight only updated when present to preserve accent color
         lights = status.get("LightStatus", {})
