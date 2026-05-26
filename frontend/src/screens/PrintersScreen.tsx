@@ -11,7 +11,31 @@ import {
   type ApiPrinter,
   type PrinterType,
   type ConnectionField,
+  type LoadedFilament,
 } from '../api/printers';
+
+// ---------------------------------------------------------------------------
+// Constants + small components
+// ---------------------------------------------------------------------------
+
+const MAT_TYPES = ['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'PC', 'TPU', 'Other'] as const;
+
+function SlotSwatch({ color, name, type }: { color: string; name: string; type: string }) {
+  return (
+    <div
+      title={`${name} (${type})`}
+      style={{
+        width: 16,
+        height: 16,
+        borderRadius: '50%',
+        background: color,
+        border: '1px solid var(--border-2)',
+        flexShrink: 0,
+        display: 'inline-block',
+      }}
+    />
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -47,14 +71,27 @@ function EditForm({
       Object.entries(printer.connection_config).map(([k, v]) => [k, String(v)])
     )
   );
+  const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  function addSlot() {
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+  }
+
+  function removeSlot(i: number) {
+    setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
+  }
+
+  function updateSlot(i: number, patch: Partial<LoadedFilament>) {
+    setSlots(s => s.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  }
 
   async function handleSave() {
     setSaving(true);
     setError(null);
     try {
-      await updatePrinter(printer.id, { name, connection_config: config });
+      await updatePrinter(printer.id, { name, connection_config: config, loaded_filaments: slots });
       onSave();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -82,6 +119,52 @@ function EditForm({
             />
           </div>
         ))}
+        <div>
+          <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>
+          <div className="col gap-2">
+            {slots.map((s, i) => (
+              <div key={i} className="row gap-2" style={{ alignItems: 'center' }}>
+                <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
+                <input
+                  type="color"
+                  value={s.color}
+                  onChange={e => updateSlot(i, { color: e.target.value })}
+                  style={{
+                    width: 32, height: 32, padding: 2,
+                    border: '1px solid var(--border-1)', borderRadius: 6,
+                    cursor: 'pointer', background: 'var(--bg-2)',
+                  }}
+                />
+                <select
+                  className="input"
+                  style={{ width: 90, flexShrink: 0 }}
+                  value={s.type}
+                  onChange={e => updateSlot(i, { type: e.target.value })}>
+                  {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input
+                  className="input"
+                  style={{ flex: 1 }}
+                  placeholder="Filament name"
+                  value={s.name}
+                  onChange={e => updateSlot(i, { name: e.target.value })}
+                />
+                <button
+                  className="btn ghost icon sm"
+                  onClick={() => removeSlot(i)}
+                  title="Remove slot">
+                  {Icons.x}
+                </button>
+              </div>
+            ))}
+            <button
+              className="btn ghost sm"
+              onClick={addSlot}
+              style={{ alignSelf: 'flex-start' }}>
+              {Icons.plus} Add slot
+            </button>
+          </div>
+        </div>
         {error && <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>}
         <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
           <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
@@ -430,6 +513,7 @@ export function PrintersScreen() {
                 <th>Printer</th>
                 <th>Type</th>
                 <th>Connection</th>
+                <th>Filament</th>
                 <th>Status</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
@@ -446,6 +530,17 @@ export function PrintersScreen() {
                     </td>
                     <td><div className="small">{displayName(p)}</div></td>
                     <td className="mono small">{connectionSummary(p)}</td>
+                    <td>
+                      {p.loaded_filaments.length === 0 ? (
+                        <span className="tiny muted">— no filament</span>
+                      ) : (
+                        <div className="row gap-1" style={{ alignItems: 'center' }}>
+                          {p.loaded_filaments.map(s => (
+                            <SlotSwatch key={s.slot} color={s.color} name={s.name} type={s.type} />
+                          ))}
+                        </div>
+                      )}
+                    </td>
                     <td>
                       <StatusPill status={p.connected ? 'idle' : 'offline'} />
                     </td>
@@ -466,7 +561,7 @@ export function PrintersScreen() {
                   </tr>
                   {editingId === p.id && (
                     <tr>
-                      <td colSpan={5} style={{ padding: '0 16px 16px' }}>
+                      <td colSpan={6} style={{ padding: '0 16px 16px' }}>
                         <EditForm
                           printer={p}
                           types={types}
