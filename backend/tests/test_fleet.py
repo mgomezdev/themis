@@ -33,6 +33,7 @@ async def test_fleet_returns_printer_with_offline_state(client: AsyncClient) -> 
     assert p["total_layers"] is None
     assert p["current_print"] is None
     assert p["loaded_filaments"] == []
+    assert p["capabilities"] == {}
 
 
 async def test_fleet_includes_loaded_filaments(client: AsyncClient) -> None:
