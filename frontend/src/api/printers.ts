@@ -53,6 +53,7 @@ export interface CreatePrinterBody {
   connection_config: Record<string, unknown>;
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
+  loaded_filaments?: LoadedFilament[];
 }
 
 export interface UpdatePrinterBody {
