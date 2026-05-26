@@ -111,7 +111,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     def connect(self, loop=None) -> None:
         self._loop = loop
-        url = f"ws://{self._ip}:{self._port}"
+        url = f"ws://{self._ip}:{self._port}/websocket"
         ws = websocket.WebSocketApp(
             url,
             on_open=self._on_open,
@@ -193,26 +193,48 @@ class ElegooCentauriClient(AbstractPrinterClient):
             data = json.loads(message)
         except Exception:
             return
-        cmd = data.get("Data", {}).get("Cmd")
-        inner = data.get("Data", {}).get("Data", {})
-        request_id = data.get("Data", {}).get("RequestID", "")
+
+        # Printer-pushed status message: {"Status": {...}, ...}
+        if "Status" in data:
+            d = data.get("Data", {})
+            if d.get("MainboardID"):
+                self.state.mainboard_id = d["MainboardID"]
+            self._update_state(data["Status"])
+            return
+
+        # Command response: {"Data": {"Cmd": N, "Data": {...}, "RequestID": "...", ...}}
+        d = data.get("Data", {})
+        raw_request_id = d.get("RequestID", "")
+        # Printer appends \x01 to RequestID in responses — strip it
+        request_id = raw_request_id.rstrip("\x01")
+        if d.get("MainboardID"):
+            self.state.mainboard_id = d["MainboardID"]
         if request_id in self._pending_acks:
-            self._ack_results[request_id] = data.get("Data", {}).get("Result", -1)
+            self._ack_results[request_id] = d.get("Result", -1)
             self._pending_acks[request_id].set()
-        if cmd in (_SdcpCmd.GET_STATUS, None):
-            self._update_state(inner)
+        if d.get("Cmd") == _SdcpCmd.GET_STATUS:
+            self._update_state(d.get("Data", {}))
 
     def _update_state(self, data: dict) -> None:
         prev = self.state.print_state
         state_map = {0: "IDLE", 1: "RUNNING", 2: "PAUSE", 3: "FINISH", 4: "FAILED"}
         if "CurrentStatus" in data:
-            self.state.print_state = state_map.get(data["CurrentStatus"], "unknown")
+            raw = data["CurrentStatus"]
+            # Printer sends CurrentStatus as a list (e.g. [0]); also handle bare int
+            code = raw[0] if isinstance(raw, list) else raw
+            self.state.print_state = state_map.get(code, "unknown")
         if "PrintInfo" in data:
             info = data["PrintInfo"]
-            self.state.progress = float(info.get("Progress", 0))
-            self.state.layer_num = int(info.get("CurrentLayer", 0))
-            self.state.total_layers = int(info.get("TotalLayer", 0))
-            self.state.current_print = info.get("Filename")
+            # "Status" inside PrintInfo mirrors top-level CurrentStatus
+            if "Status" in info and "CurrentStatus" not in data:
+                self.state.print_state = state_map.get(info["Status"], "unknown")
+            total = int(info.get("TotalTicks") or info.get("TotalLayer") or 0)
+            current = int(info.get("CurrentTicks") or info.get("CurrentLayer") or 0)
+            self.state.total_layers = total
+            self.state.layer_num = current
+            self.state.progress = (current / total * 100.0) if total else float(info.get("Progress", 0))
+            self.state.current_print = info.get("Filename") or None
+            self.state.remaining_time = int(info.get("RemainTime") or info.get("remaining_time") or 0)
         if self._on_state_change and self._loop:
             import asyncio
             asyncio.run_coroutine_threadsafe(
