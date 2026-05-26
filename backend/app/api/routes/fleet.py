@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,9 +10,11 @@ from ...database import get_session
 from ...models import Printer
 from ...services.printer_manager import printer_manager
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/fleet", tags=["fleet"])
 
-_OFFLINE_STATE: dict = {
+_OFFLINE_STATE: dict[str, object] = {
     "connected": False,
     "state": "unknown",
     "progress": 0,
@@ -37,9 +41,11 @@ def _fleet_dict(p: Printer) -> dict:
         try:
             live = printer_manager.get_normalized_state(p.id)
         except Exception:
+            logger.exception("Failed to get normalized state for printer %s", p.id)
             live = dict(_OFFLINE_STATE)
     else:
         live = dict(_OFFLINE_STATE)
+    live.pop("awaiting_plate_clear", None)
     return {**base, **live}
 
 

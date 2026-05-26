@@ -64,4 +64,4 @@ async def test_fleet_awaiting_plate_clear_field_present(client: AsyncClient) -> 
 
     resp = await client.get("/api/v1/fleet")
     assert resp.status_code == 200
-    assert "awaiting_plate_clear" in resp.json()[0]
+    assert resp.json()[0]["awaiting_plate_clear"] is False
