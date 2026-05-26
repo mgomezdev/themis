@@ -26,6 +26,14 @@ export interface PrinterType {
   connection_fields: ConnectionField[];
 }
 
+export interface LoadedFilament {
+  slot: number;
+  filament_id: string | null;
+  name: string;
+  type: string;
+  color: string;
+}
+
 export interface ApiPrinter {
   id: number;
   name: string;
@@ -36,6 +44,7 @@ export interface ApiPrinter {
   current_orca_printer_profile: string | null;
   enabled: boolean;
   connected: boolean;
+  loaded_filaments: LoadedFilament[];
 }
 
 export interface CreatePrinterBody {
@@ -52,6 +61,7 @@ export interface UpdatePrinterBody {
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
   enabled?: boolean;
+  loaded_filaments?: LoadedFilament[];
 }
 
 export function fetchPrinterTypes(): Promise<PrinterType[]> {
