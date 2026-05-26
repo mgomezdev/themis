@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes.files import router as files_router
+from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
 from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
@@ -59,6 +60,7 @@ app = FastAPI(title="Themis", lifespan=lifespan)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
 app.include_router(printers_router)
+app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
