@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { JOBS } from '../data/mock';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
@@ -184,6 +184,17 @@ function PrinterExpandedCard({
   });
   const [bedInput, setBedInput] = useState(String(p.bedTempTarget));
   const fanDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+
+  useEffect(() => {
+    setFanValues({ model: p.fanModel, auxiliary: p.fanAux, box: p.fanBox });
+    setBedInput(String(p.bedTempTarget));
+  }, [p.id]);
+
+  useEffect(() => {
+    const refs = fanDebounceRef.current;
+    return () => { Object.values(refs).forEach(clearTimeout); };
+  }, []);
+
   const job: Job | undefined = p.currentJobId
     ? JOBS.find(j => j.id === p.currentJobId)
     : undefined;
@@ -375,6 +386,7 @@ function PrinterExpandedCard({
               <button
                 className={`btn sm${lightOn ? ' active' : ''}`}
                 title="Toggle chamber light"
+                disabled={isOffline}
                 onClick={() => {
                   const next = !lightOn;
                   setLightOn(next);
