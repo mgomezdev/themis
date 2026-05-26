@@ -183,6 +183,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
             file_models=True,
             file_history=True,
             gcode=False,
+            fan_control=True,
+            temp_control=True,
         )
 
     # ------------------------------------------------------------------
@@ -572,6 +574,15 @@ class ElegooCentauriClient(AbstractPrinterClient):
             with self._lock:
                 self.state.chamber_light = on
         return success
+
+    def set_fan_speeds(self, model_pct: int, aux_pct: int, box_pct: int) -> bool:
+        return self._send(
+            _Cmd.EDIT_STATUS_DATA,
+            {"TargetFanSpeed": {"ModelFan": model_pct, "AuxiliaryFan": aux_pct, "BoxFan": box_pct}},
+        )
+
+    def set_bed_temp(self, celsius: int) -> bool:
+        return self._send(_Cmd.EDIT_STATUS_DATA, {"TempTargetHotbed": celsius})
 
     # ------------------------------------------------------------------
     # Video streaming (Cmd 386)

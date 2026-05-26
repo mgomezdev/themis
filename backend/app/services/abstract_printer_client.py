@@ -23,6 +23,8 @@ class PrinterCapabilities:
     file_history: bool = False
     file_timelapse: bool = False
     camera: bool = False
+    fan_control: bool = False
+    temp_control: bool = False
 
 
 @dataclass
@@ -111,6 +113,12 @@ class AbstractPrinterClient(ABC):
         return True
 
     def set_chamber_light(self, on: bool) -> bool:
+        return False
+
+    def set_fan_speeds(self, model_pct: int, aux_pct: int, box_pct: int) -> bool:
+        return False
+
+    def set_bed_temp(self, celsius: int) -> bool:
         return False
 
     @property

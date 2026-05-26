@@ -488,3 +488,69 @@ def test_serialize_elegoo_no_longer_has_fan_speed():
     from app.services.elegoo_centauri_client import ElegooState
     result = _serialize_elegoo(ElegooState(), 1)
     assert "fan_speed" not in result
+
+
+# ---------------------------------------------------------------------------
+# New capability flags
+# ---------------------------------------------------------------------------
+
+def test_fan_control_capability():
+    assert _make_client().get_capabilities().fan_control is True
+
+
+def test_temp_control_capability():
+    assert _make_client().get_capabilities().temp_control is True
+
+
+# ---------------------------------------------------------------------------
+# set_fan_speeds
+# ---------------------------------------------------------------------------
+
+def test_set_fan_speeds_sends_cmd_403_with_target_fan_speed():
+    client = _connected_client()
+    result = client.set_fan_speeds(80, 60, 40)
+    assert result is True
+    sent = json.loads(client._ws.send.call_args[0][0])
+    assert sent["Data"]["Cmd"] == 403
+    assert sent["Data"]["Data"]["TargetFanSpeed"] == {
+        "ModelFan": 80, "AuxiliaryFan": 60, "BoxFan": 40
+    }
+
+
+def test_set_fan_speeds_all_zero_for_off():
+    client = _connected_client()
+    client.set_fan_speeds(0, 0, 0)
+    sent = json.loads(client._ws.send.call_args[0][0])
+    assert sent["Data"]["Data"]["TargetFanSpeed"] == {
+        "ModelFan": 0, "AuxiliaryFan": 0, "BoxFan": 0
+    }
+
+
+def test_set_fan_speeds_returns_false_when_not_connected():
+    client = _make_client()  # no _ws set
+    assert client.set_fan_speeds(80, 60, 40) is False
+
+
+# ---------------------------------------------------------------------------
+# set_bed_temp
+# ---------------------------------------------------------------------------
+
+def test_set_bed_temp_sends_cmd_403_with_temp_target_hotbed():
+    client = _connected_client()
+    result = client.set_bed_temp(95)
+    assert result is True
+    sent = json.loads(client._ws.send.call_args[0][0])
+    assert sent["Data"]["Cmd"] == 403
+    assert sent["Data"]["Data"]["TempTargetHotbed"] == 95
+
+
+def test_set_bed_temp_zero_turns_off():
+    client = _connected_client()
+    client.set_bed_temp(0)
+    sent = json.loads(client._ws.send.call_args[0][0])
+    assert sent["Data"]["Data"]["TempTargetHotbed"] == 0
+
+
+def test_set_bed_temp_returns_false_when_not_connected():
+    client = _make_client()
+    assert client.set_bed_temp(60) is False

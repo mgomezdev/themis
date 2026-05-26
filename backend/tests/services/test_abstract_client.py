@@ -135,3 +135,48 @@ def test_validate_file_id_rejects_unc_path():
 
 def test_connection_fields_default_empty():
     assert MinimalClient.connection_fields() == []
+
+
+# ---------------------------------------------------------------------------
+# New: fan_control / temp_control capability flags + default no-op methods
+# ---------------------------------------------------------------------------
+
+class _Dummy(AbstractPrinterClient):
+    printer_type = "dummy"
+
+    @property
+    def connected(self): return False
+
+    def connect(self, loop=None): pass
+
+    def disconnect(self, timeout=0): pass
+
+    def check_staleness(self): return False
+
+    def start_print(self, f, opts=None): return False
+
+    def stop_print(self): return False
+
+    def pause_print(self): return False
+
+    def resume_print(self): return False
+
+    def send_gcode(self, g): return False
+
+    def request_status_update(self): pass
+
+
+def test_capabilities_has_fan_control_flag():
+    assert PrinterCapabilities().fan_control is False
+
+
+def test_capabilities_has_temp_control_flag():
+    assert PrinterCapabilities().temp_control is False
+
+
+def test_set_fan_speeds_default_returns_false():
+    assert _Dummy().set_fan_speeds(100, 100, 100) is False
+
+
+def test_set_bed_temp_default_returns_false():
+    assert _Dummy().set_bed_temp(60) is False
