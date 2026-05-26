@@ -2,7 +2,7 @@ services:
   themis:
     build: .
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
     volumes:
       - themis-data:/data
       - "${APPDATA}/OrcaSlicer:/root/.config/OrcaSlicer:ro"
