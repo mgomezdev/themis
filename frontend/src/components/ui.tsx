@@ -47,11 +47,34 @@ export function MaterialChip({ material, color }: { material: string; color: str
   );
 }
 
-export function VideoTile({ live = true, status, time }: { live?: boolean; status?: StatusKey; time?: number }) {
+export function VideoTile({
+  live = true,
+  status,
+  time,
+  printerId,
+}: {
+  live?: boolean;
+  status?: StatusKey;
+  time?: number;
+  printerId?: string;
+}) {
+  const [imgError, setImgError] = React.useState(false);
+  const showCamera = live && printerId && !imgError;
   return (
     <div className={`video ${live ? 'live' : ''}`}>
-      <div className="feed-scene" />
-      <div className="feed-noise" />
+      {showCamera ? (
+        <img
+          src={`/api/v1/printers/${printerId}/camera`}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          onError={() => setImgError(true)}
+          alt=""
+        />
+      ) : (
+        <>
+          <div className="feed-scene" />
+          <div className="feed-noise" />
+        </>
+      )}
       {time != null && <div className="feed-time mono">{fmtClock(time)}</div>}
       {status && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 3 }}>

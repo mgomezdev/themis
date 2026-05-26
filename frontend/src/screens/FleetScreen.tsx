@@ -261,10 +261,7 @@ function PrinterExpandedCard({
       >
         {/* LEFT */}
         <div className="col gap-4" style={{ minWidth: 0 }}>
-          <VideoTile live={isPrinting} time={p.timeElapsed} />
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: -8 }}>
-            Live camera — stub (see GitHub issues for wiring)
-          </div>
+          <VideoTile live={isPrinting} time={p.timeElapsed} printerId={p.id} />
 
           {/* Big telemetry numbers */}
           <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
