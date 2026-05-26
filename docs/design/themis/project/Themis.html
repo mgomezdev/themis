@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Themis — print farm manager</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;450;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script>
+  // The hosted preview gates static assets behind a token in the query
+  // string. Relative <link>/<script src=> requests don't inherit it, so
+  // append the parent search params to every same-origin asset URL.
+  (function(){
+    var q = window.location.search || "";
+    var head = document.getElementsByTagName('head')[0];
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = 'styles.css' + q;
+    head.appendChild(l);
+    window.__themisAssetSuffix = q;
+  })();
+</script>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root">
+  <div style="position:fixed;inset:0;display:grid;place-items:center;background:#060c1a;color:#6b81a4;font-family:system-ui,sans-serif;font-size:13px;letter-spacing:0.05em;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:24px;height:24px;border-radius:6px;background:linear-gradient(135deg,#60a5fa,#1e3a8a);box-shadow:0 0 16px rgba(59,130,246,0.4);"></div>
+      <span>themis.farm — loading…</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Fetch each JSX file (with token preserved), transform via Babel, and
+  // execute in order. The auth-token query string isn't inherited by relative
+  // <script src=...> requests, so we route through fetch() where we can carry it.
+  (async function () {
+    var q = window.__themisAssetSuffix || "";
+    var files = [
+      'data.jsx',
+      'tweaks-panel.jsx',
+      'components.jsx',
+      'screen-queue.jsx',
+      'screen-fleet.jsx',
+      'screen-orders.jsx',
+      'screen-files-printers.jsx',
+      'screen-filaments.jsx',
+      'screen-new-order.jsx',
+      'screen-new-job.jsx',
+      'screen-settings.jsx',
+      'app.jsx'
+    ];
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      try {
+        var src = await (await fetch(f + q)).text();
+        var out = Babel.transform(src, {
+          presets: ['react'],
+          filename: f,
+          sourceMaps: 'inline'
+        }).code;
+        // Wrap each file in an IIFE so top-level `const`/`let` don't collide
+        // across files in the shared global scope.
+        out = '(function(){\n' + out + '\n})();';
+        // Append as a real script element so the browser shows file/line in stack traces.
+        var blob = new Blob([out + '\n//# sourceURL=' + f], {type: 'text/javascript'});
+        var url = URL.createObjectURL(blob);
+        await new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = url;
+          s.onload = function () { resolve(); };
+          s.onerror = function (e) { console.error('Failed to load', f, e); reject(e); };
+          document.body.appendChild(s);
+        });
+      } catch (e) {
+        console.error('Boot error in ' + f + ':', e);
+        document.getElementById('root').innerHTML =
+          '<pre style="color:#f87171;padding:20px;font-family:monospace;">Failed to load ' + f + '\n' + (e.message || e) + '</pre>';
+        break;
+      }
+    }
+  })();
+</script>
+</body>
+</html>

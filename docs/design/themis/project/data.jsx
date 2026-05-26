@@ -1,0 +1,730 @@
+/* global window */
+
+// =========================================================================
+// Themis — mock data
+// Bambu P1S, Elegoo Centauri Carbon, Snapmaker U1
+// =========================================================================
+
+const PRINTERS = [
+  {
+    id: "p1s-01",
+    name: "Bambu P1S",
+    nickname: "Atlas",
+    model: "Bambu Lab P1S",
+    badge: "P1S",
+    buildVolume: "256×256×256",
+    capabilities: ["PLA","PETG","PLA-CF","ABS","ASA","TPU"],
+    chamber: false,
+    status: "printing",        // printing | idle | paused | error | offline | claiming
+    progress: 64,
+    timeRemaining: 73,          // minutes
+    timeElapsed: 128,
+    layer: { now: 184, total: 296 },
+    nozzleTemp: 218,
+    bedTemp: 60,
+    chamberTemp: 32,
+    material: { name: "Polymaker PolyTerra Charcoal", type: "PLA", color: "#3a3a3a" },
+    currentJobId: "J-1043",
+    accent: "#3b82f6",
+  },
+  {
+    id: "ecc-01",
+    name: "Elegoo Centauri Carbon",
+    nickname: "Forge",
+    model: "Elegoo Centauri Carbon",
+    badge: "ECC",
+    buildVolume: "256×256×256",
+    capabilities: ["PLA","PETG","PA-CF","PC","ABS","PEEK?"],
+    chamber: true,
+    status: "printing",
+    progress: 28,
+    timeRemaining: 312,
+    timeElapsed: 116,
+    layer: { now: 88, total: 312 },
+    nozzleTemp: 285,
+    bedTemp: 95,
+    chamberTemp: 58,
+    material: { name: "Bambu PA-CF Black", type: "PA-CF", color: "#0c0c0c" },
+    currentJobId: "J-1042",
+    accent: "#22d3ee",
+  },
+  {
+    id: "snp-01",
+    name: "Snapmaker U1",
+    nickname: "Iris",
+    model: "Snapmaker U1",
+    badge: "U1",
+    buildVolume: "200×200×200",
+    capabilities: ["PLA","PETG","TPU","Multi-color"],
+    chamber: false,
+    status: "idle",
+    progress: 0,
+    timeRemaining: 0,
+    timeElapsed: 0,
+    layer: null,
+    nozzleTemp: 28,
+    bedTemp: 23,
+    chamberTemp: null,
+    material: { name: "—", type: "—", color: "#475472" },
+    currentJobId: null,
+    accent: "#a78bfa",
+    note: "Ready for next claim",
+  },
+];
+
+const MATERIALS = [
+  { id: "pla-charcoal",  name: "PolyTerra Charcoal",  type: "PLA",   color: "#3a3a3a",  brand: "Polymaker", remaining: 62 },
+  { id: "pla-arctic",    name: "PolyLite Arctic White",type: "PLA",   color: "#eef0ee",  brand: "Polymaker", remaining: 88 },
+  { id: "petg-trans",    name: "Prusament PETG Clear",type: "PETG",   color: "#cfe7e8",  brand: "Prusa",     remaining: 21 },
+  { id: "pacf-black",    name: "Bambu PA-CF Black",   type: "PA-CF",  color: "#0c0c0c",  brand: "Bambu",     remaining: 44 },
+  { id: "tpu-signal",    name: "NinjaFlex Signal",    type: "TPU",    color: "#dc2626",  brand: "NinjaTek",  remaining: 70 },
+  { id: "abs-graphite",  name: "Polymaker ABS",       type: "ABS",    color: "#1f2937",  brand: "Polymaker", remaining: 55 },
+];
+
+const ORDERS = [
+  {
+    id: "ORD-2241",
+    type: "customer",
+    customer: "Vela Robotics",
+    title: "Mk3 chassis brackets — batch 4",
+    placed: "2026-05-18",
+    due: "2026-05-24",
+    status: "in_progress",   // queued | in_progress | partial | complete | hold
+    notes: "Customer prefers PA-CF for structural. Match black tone across set.",
+    parts: [
+      { id: "vr-arm-l",   name: "Arm bracket — L",  qty: 8,  printed: 5, material: "PA-CF", est: 78,  thumbColor: "#16203a" },
+      { id: "vr-arm-r",   name: "Arm bracket — R",  qty: 8,  printed: 4, material: "PA-CF", est: 78,  thumbColor: "#16203a" },
+      { id: "vr-clamp",   name: "Cable clamp",      qty: 24, printed: 24, material: "PETG", est: 12, thumbColor: "#1e3a5a" },
+      { id: "vr-spacer",  name: "Standoff spacer",  qty: 32, printed: 8,  material: "PLA",  est: 6,  thumbColor: "#2a3552" },
+    ],
+  },
+  {
+    id: "ORD-2242",
+    type: "internal",
+    customer: "Internal — R&D",
+    title: "Reflow oven enclosure prototypes",
+    placed: "2026-05-19",
+    due: "2026-05-23",
+    status: "queued",
+    notes: "",
+    parts: [
+      { id: "ro-wall",   name: "Side panel",      qty: 4, printed: 0, material: "ABS",  est: 192, thumbColor: "#222b41" },
+      { id: "ro-hinge",  name: "Hinge assembly",  qty: 4, printed: 0, material: "PA-CF", est: 44, thumbColor: "#16203a" },
+    ],
+  },
+  {
+    id: "ORD-2243",
+    type: "customer",
+    customer: "Hartwell Models",
+    title: "Diorama figures — wave 12",
+    placed: "2026-05-15",
+    due: "2026-05-22",
+    status: "in_progress",
+    notes: "Multi-color via U1 only.",
+    parts: [
+      { id: "hm-fig-a",  name: "Figure A (multi-color)", qty: 12, printed: 9, material: "PLA", est: 38, thumbColor: "#3a2a3a" },
+      { id: "hm-fig-b",  name: "Figure B (multi-color)", qty: 12, printed: 4, material: "PLA", est: 41, thumbColor: "#3a3a2a" },
+    ],
+  },
+  {
+    id: "ORD-2244",
+    type: "customer",
+    customer: "Northbeam Audio",
+    title: "Microphone cradle pre-prod",
+    placed: "2026-05-20",
+    due: "2026-05-27",
+    status: "queued",
+    notes: "Send proof photo before final batch.",
+    parts: [
+      { id: "na-cradle", name: "Cradle body",   qty: 6, printed: 0, material: "PETG", est: 64, thumbColor: "#1e3a4a" },
+      { id: "na-foot",   name: "Foot dampener", qty: 12, printed: 0, material: "TPU", est: 18, thumbColor: "#4a1a1a" },
+    ],
+  },
+  {
+    id: "ORD-2240",
+    type: "customer",
+    customer: "Vela Robotics",
+    title: "Mk3 chassis brackets — batch 3",
+    placed: "2026-05-08",
+    due: "2026-05-15",
+    status: "complete",
+    notes: "",
+    parts: [
+      { id: "vr-arm-l3",   name: "Arm bracket — L",  qty: 8,  printed: 8, material: "PA-CF", est: 78, thumbColor: "#16203a" },
+      { id: "vr-arm-r3",   name: "Arm bracket — R",  qty: 8,  printed: 8, material: "PA-CF", est: 78, thumbColor: "#16203a" },
+    ],
+  },
+  {
+    id: "ORD-2245",
+    type: "internal",
+    customer: "Internal — Marketing",
+    title: "Trade show display props",
+    placed: "2026-05-20",
+    due: "2026-06-05",
+    status: "hold",
+    notes: "On hold pending final design from L.",
+    parts: [
+      { id: "tm-disp", name: "Display stand", qty: 3, printed: 0, material: "PLA", est: 220, thumbColor: "#2a3552" },
+    ],
+  },
+];
+
+// Slicer process presets — printer × nozzle × quality combos.
+const PROCESS_PRESETS = [
+  // Bambu P1S — Atlas
+  { id: "proc-p1s-04-std",   printerId: "p1s-01", name: "0.20mm Standard",    nozzle: "0.4mm",          layerHeight: 0.20, infill: 15, walls: 3, speed: "Normal",    description: "Default workshop profile. Balanced quality / time." },
+  { id: "proc-p1s-04-fine",  printerId: "p1s-01", name: "0.16mm Fine",        nozzle: "0.4mm",          layerHeight: 0.16, infill: 18, walls: 3, speed: "Quality",   description: "Lower layers for silk + cosmetic surfaces." },
+  { id: "proc-p1s-04-draft", printerId: "p1s-01", name: "0.28mm Draft",       nozzle: "0.4mm",          layerHeight: 0.28, infill: 10, walls: 2, speed: "Fast",      description: "Drop-in for rapid prototypes." },
+  { id: "proc-p1s-04-strong",printerId: "p1s-01", name: "0.20mm Strong",      nozzle: "0.4mm",          layerHeight: 0.20, infill: 40, walls: 5, speed: "Normal",    description: "Mechanical parts — higher infill + walls." },
+
+  // Elegoo Centauri Carbon — Forge
+  { id: "proc-ecc-04-std",   printerId: "ecc-01", name: "0.20mm Standard",    nozzle: "0.4mm",          layerHeight: 0.20, infill: 15, walls: 3, speed: "Normal",    description: "Chamber-on default." },
+  { id: "proc-ecc-04-hf",    printerId: "ecc-01", name: "0.20mm HF (hardened)", nozzle: "0.4mm hardened", layerHeight: 0.20, infill: 20, walls: 4, speed: "Normal",  description: "Abrasive (CF) filaments. Hardened nozzle required." },
+  { id: "proc-ecc-06-draft", printerId: "ecc-01", name: "0.32mm Draft (0.6)", nozzle: "0.6mm hardened", layerHeight: 0.32, infill: 12, walls: 3, speed: "Fast",      description: "Bulk PETG / PA-CF drafts." },
+  { id: "proc-ecc-04-struct",printerId: "ecc-01", name: "0.20mm Structural",  nozzle: "0.4mm hardened", layerHeight: 0.20, infill: 45, walls: 5, speed: "Quality",   description: "Vela arm brackets. Max walls, slow cooling." },
+  { id: "proc-ecc-04-chamber",printerId:"ecc-01", name: "0.20mm Chamber 60°", nozzle: "0.4mm",          layerHeight: 0.20, infill: 20, walls: 4, speed: "Normal",    description: "ABS / ASA / PC. Holds 55–60 °C chamber." },
+
+  // Snapmaker U1 — Iris
+  { id: "proc-snp-04-multi", printerId: "snp-01", name: "0.20mm Multi-color", nozzle: "0.4mm",          layerHeight: 0.20, infill: 15, walls: 3, speed: "Normal",    description: "4-slot color-swap default. Adds 240mm³ purge." },
+  { id: "proc-snp-04-single",printerId: "snp-01", name: "0.20mm Single-color",nozzle: "0.4mm",          layerHeight: 0.20, infill: 15, walls: 3, speed: "Normal",    description: "Bypass color-changer for one filament jobs." },
+  { id: "proc-snp-04-fine",  printerId: "snp-01", name: "0.16mm Fine multi",  nozzle: "0.4mm",          layerHeight: 0.16, infill: 18, walls: 3, speed: "Quality",   description: "Hartwell figures — pairs with silk filaments." },
+];
+
+// Tag library — categorized labels applied to files / orders / jobs.
+// Each tag has stable id, display name, color, and an optional category for grouping.
+const TAGS = [
+  // Material tags
+  { id: "tag-mat-pla",       name: "PLA",         color: "#60a5fa", category: "Material" },
+  { id: "tag-mat-petg",      name: "PETG",        color: "#67e8f9", category: "Material" },
+  { id: "tag-mat-pacf",      name: "PA-CF",       color: "#94a3b8", category: "Material" },
+  { id: "tag-mat-abs",       name: "ABS",         color: "#a78bfa", category: "Material" },
+  { id: "tag-mat-tpu",       name: "TPU",         color: "#f87171", category: "Material" },
+  { id: "tag-mat-multi",     name: "multi-color", color: "#f472b6", category: "Material" },
+
+  // Use-type tags
+  { id: "tag-use-structural",name: "structural",  color: "#fbbf24", category: "Use" },
+  { id: "tag-use-cosmetic",  name: "cosmetic",    color: "#fb7185", category: "Use" },
+  { id: "tag-use-fixture",   name: "fixture",     color: "#a3e635", category: "Use" },
+  { id: "tag-use-mechanism", name: "mechanism",   color: "#34d399", category: "Use" },
+  { id: "tag-use-damper",    name: "damper",      color: "#fb923c", category: "Use" },
+  { id: "tag-use-figurine",  name: "figurine",    color: "#e879f9", category: "Use" },
+  { id: "tag-use-enclosure", name: "enclosure",   color: "#22d3ee", category: "Use" },
+  { id: "tag-use-display",   name: "display",     color: "#f0abfc", category: "Use" },
+
+  // Lifecycle tags
+  { id: "tag-life-prod",     name: "production",  color: "#22c55e", category: "Lifecycle" },
+  { id: "tag-life-proto",    name: "prototype",   color: "#38bdf8", category: "Lifecycle" },
+  { id: "tag-life-reuse",    name: "reusable",    color: "#a8a29e", category: "Lifecycle" },
+  { id: "tag-life-arch",     name: "archived",    color: "#475472", category: "Lifecycle" },
+];
+
+// App-level user-editable preferences. Single-user app; lives in localStorage
+// in a real build, but here we keep an in-memory default the Settings screen
+// can mutate live.
+const SETTINGS = {
+  general: {
+    workshopName: "Lev Romero · Print Farm",
+    units: "metric",          // metric | imperial
+    dateFormat: "iso",        // iso | us | eu
+    weekStart: "monday",      // monday | sunday
+    defaultPriority: "normal",// normal | high
+  },
+  notifications: {
+    onJobComplete: true,
+    onJobFailed: true,
+    onPrinterIdle: false,
+    onClaimWaiting: true,
+    onLowSpool: true,
+    soundOnAlerts: false,
+    desktopNotifications: true,
+  },
+  print: {
+    sliceOnClaim: true,
+    autoStartAfterSlice: false,
+    requireDryBefore: ["PA-CF", "TPU", "PETG"],
+    lowSpoolPercent: 20,
+    chamberPreheat: true,
+    cooldownWaitMinutes: 5,
+  },
+  data: {
+    autoBackup: true,
+    backupFrequency: "weekly", // daily | weekly | monthly
+    keepCompletedJobs: 90,     // days
+  },
+  spoolman: {
+    enabled: false,
+    url: "http://spoolman.local:7912",
+    apiKey: "",
+    syncInterval: 5,             // minutes
+    syncOnEvents: true,          // push usage automatically after each job
+    autoCreateSpools: false,     // create a spool in Spoolman when a new filament shows up here
+    pullVendorMaterials: true,   // mirror vendor + material info on changes
+    deductFromSpoolman: true,    // subtract grams from Spoolman on completed jobs
+    syncLocation: "Workshop",    // location label written to Spoolman entries
+    syncLot: true,               // include lot numbers when writing
+    lastSyncedAt: null,          // ISO string when connected
+    connectionStatus: "disconnected", // disconnected | connecting | connected | error
+  },
+};
+
+// Filament library — physical spools the workshop knows how to print with.
+const FILAMENTS = [
+  {
+    id: "fil-polyterra-charcoal",
+    name: "PolyTerra Charcoal",
+    manufacturer: "Polymaker",
+    type: "PLA",
+    subtype: "Matte",
+    color: "#3a3a3a",
+    colorName: "Charcoal Black",
+    diameter: 1.75,
+    dryTemp: 45,
+    purchaseLinks: [
+      { vendor: "Polymaker direct", url: "https://polymaker.com/product/polyterra-pla" },
+      { vendor: "Matterhackers",    url: "https://matterhackers.com/store/l/polyterra-pla/sk/M9F0HE2K" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "PolyTerra · 0.4mm · standard", nozzle: "0.4mm", bedTemp: 60,  hotendTemp: 215, layerHeight: 0.20, notes: "Default farm profile. Cooling 100%." },
+      { printerId: "snp-01", name: "PolyTerra · 0.4mm · multi",    nozzle: "0.4mm", bedTemp: 60,  hotendTemp: 215, layerHeight: 0.20, notes: "Slot A. Purge 240mm³." },
+    ],
+    notes: "Workshop default for cosmetic / display parts. Color matches the figure batches for Hartwell. Print dry — picks up moisture in <48h on the shelf.",
+    favorite: true,
+  },
+  {
+    id: "fil-polylite-arctic",
+    name: "PolyLite Arctic White",
+    manufacturer: "Polymaker",
+    type: "PLA",
+    subtype: "Basic",
+    color: "#eef0ee",
+    colorName: "Arctic White",
+    diameter: 1.75,
+    dryTemp: 45,
+    purchaseLinks: [
+      { vendor: "Polymaker direct", url: "https://polymaker.com/product/polylite-pla" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "PolyLite · 0.4mm · standard", nozzle: "0.4mm", bedTemp: 60, hotendTemp: 210, layerHeight: 0.20, notes: "" },
+      { printerId: "ecc-01", name: "PolyLite · 0.4mm · standard", nozzle: "0.4mm", bedTemp: 60, hotendTemp: 210, layerHeight: 0.20, notes: "" },
+    ],
+    notes: "Clean white for prototypes and packaging mockups.",
+  },
+  {
+    id: "fil-bambu-silk-gold",
+    name: "Bambu Silk Royal Gold",
+    manufacturer: "Bambu Lab",
+    type: "PLA",
+    subtype: "Silk",
+    color: "#d4a64a",
+    colorName: "Royal Gold",
+    diameter: 1.75,
+    dryTemp: 50,
+    purchaseLinks: [
+      { vendor: "Bambu Store", url: "https://store.bambulab.com/products/pla-silk" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "Bambu Silk · 0.4mm · glossy", nozzle: "0.4mm", bedTemp: 55, hotendTemp: 220, layerHeight: 0.16, notes: "Lower layer height for silk sheen." },
+      { printerId: "snp-01", name: "Bambu Silk · 0.4mm · multi",  nozzle: "0.4mm", bedTemp: 55, hotendTemp: 220, layerHeight: 0.20, notes: "Pairs with charcoal in slot B for figurine accents." },
+    ],
+    notes: "Reserved for display props. Tends to ooze — keep retraction conservative.",
+  },
+  {
+    id: "fil-prusament-petg-clear",
+    name: "Prusament PETG Clear",
+    manufacturer: "Prusa",
+    type: "PETG",
+    subtype: "Basic",
+    color: "#cfe7e8",
+    colorName: "Jet Black / Clear",
+    diameter: 1.75,
+    dryTemp: 65,
+    purchaseLinks: [
+      { vendor: "Prusa shop", url: "https://www.prusa3d.com/category/prusament-petg/" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "Prusament PETG · 0.4mm",  nozzle: "0.4mm", bedTemp: 80, hotendTemp: 240, layerHeight: 0.20, notes: "Z-offset +0.04 vs PLA." },
+      { printerId: "ecc-01", name: "Prusament PETG · 0.4mm",  nozzle: "0.4mm", bedTemp: 80, hotendTemp: 240, layerHeight: 0.20, notes: "" },
+      { printerId: "ecc-01", name: "Prusament PETG · 0.6mm · draft", nozzle: "0.6mm", bedTemp: 80, hotendTemp: 245, layerHeight: 0.32, notes: "For Northbeam cradle drafts." },
+    ],
+    notes: "Cradle bodies and cosmetic enclosures. Dry box every load — clear PETG turns hazy when wet.",
+  },
+  {
+    id: "fil-bambu-pacf-black",
+    name: "Bambu PA-CF",
+    manufacturer: "Bambu Lab",
+    type: "PA-CF",
+    subtype: "CF-filled",
+    color: "#0c0c0c",
+    colorName: "Carbon Black",
+    diameter: 1.75,
+    dryTemp: 80,
+    purchaseLinks: [
+      { vendor: "Bambu Store",   url: "https://store.bambulab.com/products/pa-cf" },
+      { vendor: "Matterhackers", url: "https://matterhackers.com/store/printer-filament/bambu-pa-cf" },
+    ],
+    profiles: [
+      { printerId: "ecc-01", name: "Bambu PA-CF · 0.4mm HF · chamber", nozzle: "0.4mm hardened", bedTemp: 95, hotendTemp: 285, layerHeight: 0.20, notes: "Chamber 55°C. Dry 6h @ 80°C before run." },
+      { printerId: "ecc-01", name: "Bambu PA-CF · 0.6mm · structural", nozzle: "0.6mm hardened", bedTemp: 95, hotendTemp: 290, layerHeight: 0.28, notes: "Bracket batches — 4 walls minimum." },
+    ],
+    notes: "Structural parts only (Vela arm brackets). Hardened nozzle required. Sucks up moisture aggressively — keep on dry-while-printing only.",
+    favorite: true,
+  },
+  {
+    id: "fil-ninjaflex-signal",
+    name: "NinjaFlex Signal Red",
+    manufacturer: "NinjaTek",
+    type: "TPU",
+    subtype: "85A",
+    color: "#dc2626",
+    colorName: "Signal Red",
+    diameter: 1.75,
+    dryTemp: 50,
+    purchaseLinks: [
+      { vendor: "NinjaTek",      url: "https://ninjatek.com/shop/ninjaflex/" },
+      { vendor: "Matterhackers", url: "https://matterhackers.com/store/l/ninjaflex" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "NinjaFlex · 0.4mm · slow",  nozzle: "0.4mm", bedTemp: 50, hotendTemp: 230, layerHeight: 0.20, notes: "Max 25 mm/s. Direct only — bypass AMS." },
+      { printerId: "snp-01", name: "NinjaFlex · 0.4mm · direct", nozzle: "0.4mm", bedTemp: 50, hotendTemp: 230, layerHeight: 0.20, notes: "Hand-feed; no multi-color." },
+    ],
+    notes: "Northbeam foot dampeners. Bypass AMS — feed direct. Don't queue overnight.",
+  },
+  {
+    id: "fil-polymaker-abs-graphite",
+    name: "Polymaker ABS",
+    manufacturer: "Polymaker",
+    type: "ABS",
+    subtype: "Basic",
+    color: "#1f2937",
+    colorName: "Graphite",
+    diameter: 1.75,
+    dryTemp: 80,
+    purchaseLinks: [
+      { vendor: "Polymaker direct", url: "https://polymaker.com/product/polylite-abs" },
+    ],
+    profiles: [
+      { printerId: "ecc-01", name: "Polymaker ABS · 0.4mm · chamber", nozzle: "0.4mm", bedTemp: 100, hotendTemp: 250, layerHeight: 0.20, notes: "Chamber 55–60°C. ABS slurry adhesion." },
+    ],
+    notes: "Reflow oven enclosure side panels. Chamber required — Centauri only. Ventilate.",
+  },
+  {
+    id: "fil-prusament-pcblend",
+    name: "Prusament PC Blend",
+    manufacturer: "Prusa",
+    type: "PC",
+    subtype: "Blend",
+    color: "#1c2331",
+    colorName: "Urban Grey",
+    diameter: 1.75,
+    dryTemp: 80,
+    purchaseLinks: [
+      { vendor: "Prusa shop", url: "https://www.prusa3d.com/category/prusament-pc/" },
+    ],
+    profiles: [
+      { printerId: "ecc-01", name: "PC Blend · 0.4mm · chamber", nozzle: "0.4mm", bedTemp: 110, hotendTemp: 275, layerHeight: 0.20, notes: "Chamber 60°C. PVA glue, no slurry." },
+    ],
+    notes: "Heat-resistant fixtures. Only when ABS isn't tough enough. Slow first layer.",
+  },
+  {
+    id: "fil-esun-marble",
+    name: "eSun ePLA-Marble",
+    manufacturer: "eSun",
+    type: "PLA",
+    subtype: "Marble",
+    color: "#dad6cd",
+    colorName: "Marble White",
+    diameter: 1.75,
+    dryTemp: 45,
+    purchaseLinks: [
+      { vendor: "eSun store",  url: "https://esun3dstore.com/products/epla-marble" },
+      { vendor: "Amazon",       url: "https://www.amazon.com/s?k=esun+epla+marble" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "ePLA-Marble · 0.4mm · cosmetic", nozzle: "0.4mm hardened", bedTemp: 60, hotendTemp: 215, layerHeight: 0.20, notes: "Hardened nozzle — marble grit wears brass." },
+    ],
+    notes: "Cosmetic only. Abrasive — only on hardened nozzle. Trade-show props.",
+  },
+  {
+    id: "fil-bambu-petgcf",
+    name: "Bambu PETG-CF",
+    manufacturer: "Bambu Lab",
+    type: "PETG",
+    subtype: "CF-filled",
+    color: "#15181c",
+    colorName: "CF Black",
+    diameter: 1.75,
+    dryTemp: 65,
+    purchaseLinks: [
+      { vendor: "Bambu Store", url: "https://store.bambulab.com/products/petg-cf" },
+    ],
+    profiles: [
+      { printerId: "ecc-01", name: "PETG-CF · 0.4mm HF · jigs", nozzle: "0.4mm hardened", bedTemp: 80, hotendTemp: 250, layerHeight: 0.20, notes: "Solid hinges, clamps." },
+      { printerId: "p1s-01", name: "PETG-CF · 0.4mm HF",        nozzle: "0.4mm hardened", bedTemp: 80, hotendTemp: 250, layerHeight: 0.20, notes: "Hardened nozzle." },
+    ],
+    notes: "Tougher than plain PETG, prints almost as easily. Used for cable clamp v3.",
+  },
+  {
+    id: "fil-sunlu-silk-cyan",
+    name: "Sunlu Silk Cyan",
+    manufacturer: "Sunlu",
+    type: "PLA",
+    subtype: "Silk",
+    color: "#27c7d6",
+    colorName: "Lagoon Cyan",
+    diameter: 1.75,
+    dryTemp: 50,
+    purchaseLinks: [
+      { vendor: "Sunlu shop", url: "https://www.sunlu.com/products/silk-pla" },
+      { vendor: "Amazon",      url: "https://www.amazon.com/s?k=sunlu+silk+pla" },
+    ],
+    profiles: [
+      { printerId: "snp-01", name: "Sunlu Silk · 0.4mm · multi", nozzle: "0.4mm", bedTemp: 55, hotendTemp: 220, layerHeight: 0.20, notes: "Slot C. Hartwell figure highlights." },
+    ],
+    notes: "Slot C in the U1 multi-color rig. Pairs with charcoal + gold for Hartwell wave 12.",
+  },
+  {
+    id: "fil-elegoo-pla-arctic",
+    name: "Elegoo Rapid PLA+",
+    manufacturer: "Elegoo",
+    type: "PLA",
+    subtype: "High-speed",
+    color: "#5b7cff",
+    colorName: "Atlantic Blue",
+    diameter: 1.75,
+    dryTemp: 45,
+    purchaseLinks: [
+      { vendor: "Elegoo store", url: "https://www.elegoo.com/products/rapid-pla-plus" },
+    ],
+    profiles: [
+      { printerId: "p1s-01", name: "Rapid PLA+ · 0.4mm · 250mm/s", nozzle: "0.4mm", bedTemp: 60, hotendTemp: 230, layerHeight: 0.20, notes: "High-flow profile. Cooling 100%." },
+      { printerId: "ecc-01", name: "Rapid PLA+ · 0.4mm · 300mm/s", nozzle: "0.4mm", bedTemp: 60, hotendTemp: 235, layerHeight: 0.20, notes: "Volumetric 28 mm³/s." },
+    ],
+    notes: "Standoff spacer batches — fastest profile we have. Loud but cuts queue time ~40%.",
+    favorite: true,
+  },
+  {
+    id: "fil-polymax-asa",
+    name: "PolyMax ASA",
+    manufacturer: "Polymaker",
+    type: "ASA",
+    subtype: "Basic",
+    color: "#0d0d0d",
+    colorName: "Jet Black",
+    diameter: 1.75,
+    dryTemp: 80,
+    purchaseLinks: [
+      { vendor: "Polymaker direct", url: "https://polymaker.com/product/polymax-asa" },
+    ],
+    profiles: [
+      { printerId: "ecc-01", name: "PolyMax ASA · 0.4mm · chamber", nozzle: "0.4mm", bedTemp: 100, hotendTemp: 255, layerHeight: 0.20, notes: "Chamber 55°C. UV-stable." },
+    ],
+    notes: "Outdoor parts. UV-stable. Same envelope as ABS but cleaner odor.",
+  },
+];
+
+// Plates / jobs — one plate per job, can include parts from one or more orders.
+const JOBS = [
+  {
+    id: "J-1042",
+    plateName: "PA-CF arm brackets",
+    status: "printing",
+    printerId: "ecc-01",
+    eligiblePrinters: ["ecc-01"],       // PA-CF only on ECC really
+    actualPrinter: "ecc-01",
+    material: "PA-CF",
+    parts: [
+      { orderId: "ORD-2241", partId: "vr-arm-l", qty: 2 },
+      { orderId: "ORD-2241", partId: "vr-arm-r", qty: 2 },
+    ],
+    estTime: 428,
+    elapsed: 116,
+    progress: 28,
+    layer: { now: 88, total: 312 },
+    priority: 1,
+    sliced: true,
+  },
+  {
+    id: "J-1043",
+    plateName: "PLA standoffs \u00d7 16",
+    status: "printing",
+    printerId: "p1s-01",
+    eligiblePrinters: ["p1s-01","snp-01"],
+    actualPrinter: "p1s-01",
+    material: "PETG",
+    parts: [
+      { orderId: "ORD-2241", partId: "vr-spacer", qty: 16 },
+    ],
+    estTime: 201,
+    elapsed: 128,
+    progress: 64,
+    layer: { now: 184, total: 296 },
+    priority: 2,
+    sliced: true,
+  },
+  {
+    id: "J-1044",
+    plateName: "Hartwell figures — multi-color batch",
+    status: "queued",
+    printerId: null,
+    eligiblePrinters: ["snp-01"],   // multi-color only
+    material: "PLA (4-color)",
+    parts: [
+      { orderId: "ORD-2243", partId: "hm-fig-b", qty: 4 },
+    ],
+    estTime: 164,
+    elapsed: 0,
+    progress: 0,
+    priority: 3,
+    sliced: false,
+    note: "Slicer profile picked at claim",
+  },
+  {
+    id: "J-1045",
+    plateName: "Cradle body — Northbeam",
+    status: "queued",
+    printerId: null,
+    eligiblePrinters: ["p1s-01","ecc-01"],
+    material: "PETG",
+    parts: [
+      { orderId: "ORD-2244", partId: "na-cradle", qty: 2 },
+    ],
+    estTime: 128,
+    elapsed: 0,
+    progress: 0,
+    priority: 4,
+    sliced: false,
+  },
+  {
+    id: "J-1046",
+    plateName: "TPU dampeners",
+    status: "queued",
+    printerId: null,
+    eligiblePrinters: ["p1s-01","snp-01"],
+    material: "TPU",
+    parts: [
+      { orderId: "ORD-2244", partId: "na-foot", qty: 12 },
+    ],
+    estTime: 92,
+    elapsed: 0,
+    progress: 0,
+    priority: 5,
+    sliced: false,
+  },
+  {
+    id: "J-1047",
+    plateName: "Reflow side panels (1/4)",
+    status: "queued",
+    printerId: null,
+    eligiblePrinters: ["ecc-01"],  // ABS needs chamber
+    material: "ABS",
+    parts: [
+      { orderId: "ORD-2242", partId: "ro-wall", qty: 1 },
+    ],
+    estTime: 192,
+    elapsed: 0,
+    progress: 0,
+    priority: 6,
+    sliced: false,
+    note: "Needs chamber heat — ECC only",
+  },
+  {
+    id: "J-1048",
+    plateName: "Cable clamps refill",
+    status: "queued",
+    printerId: null,
+    eligiblePrinters: ["p1s-01","ecc-01","snp-01"],
+    material: "PETG",
+    parts: [
+      { orderId: "ORD-2241", partId: "vr-clamp", qty: 8 },
+    ],
+    estTime: 68,
+    elapsed: 0,
+    progress: 0,
+    priority: 7,
+    sliced: false,
+  },
+  {
+    id: "J-1041",
+    plateName: "Hartwell figure A — finishing",
+    status: "complete",
+    printerId: "snp-01",
+    eligiblePrinters: ["snp-01"],
+    actualPrinter: "snp-01",
+    material: "PLA (4-color)",
+    parts: [
+      { orderId: "ORD-2243", partId: "hm-fig-a", qty: 3 },
+    ],
+    estTime: 142,
+    elapsed: 142,
+    progress: 100,
+    priority: 0,
+    completedAt: "2026-05-21 04:12",
+    sliced: true,
+  },
+];
+
+const FILES = [
+  { id: "f-arm-l",   name: "vr_arm_bracket_L.3mf",  size: "4.2 MB", parts: 1, updated: "2d", thumbColor: "#16203a",
+    folder: "/Customers/Vela Robotics", tags: ["PA-CF","structural","production"] },
+  { id: "f-arm-r",   name: "vr_arm_bracket_R.3mf",  size: "4.2 MB", parts: 1, updated: "2d", thumbColor: "#16203a",
+    folder: "/Customers/Vela Robotics", tags: ["PA-CF","structural","production"] },
+  { id: "f-clamp",   name: "cable_clamp_v3.3mf",    size: "0.8 MB", parts: 1, updated: "5d", thumbColor: "#1e3a5a",
+    folder: "/Shared parts", tags: ["PETG","fixture","reusable"] },
+  { id: "f-spacer",  name: "standoff_4mm.3mf",      size: "0.3 MB", parts: 1, updated: "5d", thumbColor: "#2a3552",
+    folder: "/Shared parts", tags: ["PLA","fixture","reusable"] },
+  { id: "f-fig-a",   name: "hartwell_fig_a.3mf",    size: "12.4 MB", parts: 4, updated: "1w", thumbColor: "#3a2a3a",
+    folder: "/Customers/Hartwell Models", tags: ["PLA","multi-color","figurine","production"] },
+  { id: "f-fig-b",   name: "hartwell_fig_b.3mf",    size: "11.8 MB", parts: 4, updated: "1w", thumbColor: "#3a3a2a",
+    folder: "/Customers/Hartwell Models", tags: ["PLA","multi-color","figurine","production"] },
+  { id: "f-cradle",  name: "northbeam_cradle.3mf",  size: "6.1 MB", parts: 1, updated: "3h", thumbColor: "#1e3a4a",
+    folder: "/Customers/Northbeam Audio", tags: ["PETG","cosmetic","prototype"] },
+  { id: "f-foot",    name: "northbeam_foot.3mf",    size: "1.2 MB", parts: 1, updated: "3h", thumbColor: "#4a1a1a",
+    folder: "/Customers/Northbeam Audio", tags: ["TPU","damper","prototype"] },
+  { id: "f-wall",    name: "reflow_wall_panel.3mf", size: "8.8 MB", parts: 1, updated: "1d", thumbColor: "#222b41",
+    folder: "/Internal/R&D/Reflow oven", tags: ["ABS","structural","enclosure","prototype"] },
+  { id: "f-hinge",   name: "reflow_hinge.3mf",      size: "2.0 MB", parts: 2, updated: "1d", thumbColor: "#16203a",
+    folder: "/Internal/R&D/Reflow oven", tags: ["PA-CF","mechanism","prototype"] },
+  { id: "f-stand",   name: "tradeshow_stand.3mf",   size: "18.2 MB", parts: 3, updated: "4d", thumbColor: "#2a3552",
+    folder: "/Internal/Marketing", tags: ["PLA","cosmetic","display"] },
+  { id: "f-jig-v1",  name: "drill_jig_v1.3mf",      size: "3.4 MB", parts: 1, updated: "3w", thumbColor: "#222b41",
+    folder: "/Archive", tags: ["PLA","fixture","archived"] },
+  { id: "f-knob",    name: "control_knob_proto.3mf",size: "0.6 MB", parts: 1, updated: "2w", thumbColor: "#1e3a4a",
+    folder: "/Archive", tags: ["PLA","cosmetic","archived"] },
+  { id: "f-grommet", name: "rubber_grommet.3mf",    size: "0.2 MB", parts: 1, updated: "6d", thumbColor: "#4a1a1a",
+    folder: "/Shared parts", tags: ["TPU","damper","reusable"] },
+];
+
+// Helpers
+function fmtTime(mins) {
+  if (mins == null) return "—";
+  if (mins < 1) return "<1m";
+  const h = Math.floor(mins / 60);
+  const m = Math.round(mins % 60);
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+function fmtClock(mins) {
+  if (mins == null) return "--:--";
+  const h = Math.floor(mins / 60);
+  const m = Math.floor(mins % 60);
+  return `${String(h).padStart(2,"0")}:${String(m).padStart(2,"0")}`;
+}
+function getPrinter(id) { return PRINTERS.find(p => p.id === id); }
+function getOrder(id)   { return ORDERS.find(o => o.id === id); }
+function getPart(orderId, partId) {
+  const o = getOrder(orderId);
+  return o ? o.parts.find(p => p.id === partId) : null;
+}
+function partsFromJob(job) {
+  return job.parts.map(ref => ({
+    ...getPart(ref.orderId, ref.partId),
+    orderId: ref.orderId,
+    qty: ref.qty,
+  }));
+}
+
+Object.assign(window, {
+  PRINTERS, MATERIALS, ORDERS, JOBS, FILES, FILAMENTS, PROCESS_PRESETS, TAGS, SETTINGS,
+  fmtTime, fmtClock, getPrinter, getOrder, getPart, partsFromJob,
+});
