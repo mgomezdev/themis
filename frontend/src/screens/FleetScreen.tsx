@@ -5,7 +5,7 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, type PrinterType } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, type PrinterType } from '../api/printers';
 import { PrinterAddForm } from './PrintersScreen';
 
 type Layout = 'cards' | 'rows';
@@ -71,62 +71,59 @@ function FanTelem({ label, pct, maxRpm = 7000 }: { label: string; pct: number; m
   );
 }
 
-// ── Capability checkbox grid (inside EditPrinterModal) ───────────────────────
-const ALL_CAPS = ['PLA','PETG','PLA-CF','PETG-CF','ABS','ASA','PA-CF','PC','TPU','Multi-color','Soluble support'];
-
-function CapabilityGrid({ draft, setDraft }: { draft: string[]; setDraft: (v: string[]) => void }) {
-  const toggle = (m: string) => setDraft(draft.includes(m) ? draft.filter(x => x !== m) : [...draft, m]);
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6 }}>
-      {ALL_CAPS.map(m => {
-        const on = draft.includes(m);
-        return (
-          <button key={m} onClick={() => toggle(m)} className="row gap-2"
-                  style={{
-                    padding: '8px 12px', borderRadius: 6,
-                    background: on ? 'rgba(59,130,246,0.12)' : 'var(--bg-1)',
-                    border: `1px solid ${on ? 'rgba(59,130,246,0.4)' : 'var(--border-1)'}`,
-                    color: on ? 'var(--accent-hi)' : 'var(--text-2)',
-                    cursor: 'pointer', textAlign: 'left', alignItems: 'center',
-                  }}>
-            <div style={{
-              width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-              background: on ? 'var(--accent)' : 'transparent',
-              border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border-2)'}`,
-              display: 'grid', placeItems: 'center', color: '#04101f',
-            }}>
-              {on && <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M20 6 9 17l-5-5"/></svg>}
-            </div>
-            <span className="small">{m}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 // ── Edit printer modal ───────────────────────────────────────────────────────
-type ConnectionType = 'lan' | 'cloud' | 'octo';
-const CONNECTION_OPTS: { id: ConnectionType; label: string }[] = [
-  { id: 'lan',   label: 'LAN mode (manufacturer firmware)' },
-  { id: 'cloud', label: 'Cloud account' },
-  { id: 'octo',  label: 'OctoPrint / Klipper / Moonraker' },
-];
 
-function EditPrinterModal({ printer: p, nickname, caps, onChangeNickname, onChangeCaps, onClose }: {
+function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClose }: {
   printer: Printer;
-  nickname: string;
-  caps: string[];
-  onChangeNickname: (v: string) => void;
-  onChangeCaps: (v: string[]) => void;
+  printerTypes: PrinterType[];
+  onSaved: () => void;
+  onDeleted: () => void;
   onClose: () => void;
 }) {
-  const [draftName, setDraftName] = useState(nickname);
-  const [draftCaps, setDraftCaps] = useState(caps);
-  const [connection, setConnection] = useState<ConnectionType>('lan');
-  const [ip, setIp] = useState('');
+  const [draftName, setDraftName] = useState(p.name);
+  const [draftConn, setDraftConn] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const save = () => { onChangeNickname(draftName); onChangeCaps(draftCaps); onClose(); };
+  const printerType = printerTypes.find(t => t.printer_type === p.model);
+
+  useEffect(() => {
+    fetchPrinter(Number(p.id))
+      .then(api => {
+        const conn: Record<string, string> = {};
+        for (const [k, v] of Object.entries(api.connection_config)) {
+          conn[k] = String(v ?? '');
+        }
+        setDraftConn(conn);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [p.id]);
+
+  const save = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      await updatePrinter(Number(p.id), { name: draftName, connection_config: draftConn });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDelete) { setConfirmDelete(true); return; }
+    try {
+      await deletePrinter(Number(p.id));
+      onDeleted();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Delete failed');
+      setConfirmDelete(false);
+    }
+  };
 
   return (
     <div onClick={onClose} style={{
@@ -162,15 +159,13 @@ function EditPrinterModal({ printer: p, nickname, caps, onChangeNickname, onChan
         <div className="col gap-5" style={{ padding: 20 }}>
           <div className="col gap-2">
             <div className="tag-key">Identity</div>
-            <label className="label">Nickname</label>
+            <label className="label">Name</label>
             <input className="input" value={draftName} onChange={e => setDraftName(e.target.value)} />
             <div className="row gap-4" style={{ marginTop: 4 }}>
-              {([
-                { label: 'Model', value: p.name },
-                { label: 'Build volume', value: `${p.buildVolume} mm` },
-                { label: 'Chamber', value: p.chamber ? 'enclosed' : 'open frame' },
+              {[
+                { label: 'Type', value: printerType?.display_name ?? p.model },
                 { label: 'Printer ID', value: p.id },
-              ] as const).map(kv => (
+              ].map(kv => (
                 <div key={kv.label} className="col">
                   <span className="tag-key" style={{ fontSize: 9.5 }}>{kv.label}</span>
                   <span className="small mono" style={{ marginTop: 2 }}>{kv.value}</span>
@@ -181,55 +176,52 @@ function EditPrinterModal({ printer: p, nickname, caps, onChangeNickname, onChan
 
           <div className="col gap-3">
             <div className="tag-key">Connection</div>
-            <div className="col gap-2">
-              {CONNECTION_OPTS.map(opt => {
-                const on = connection === opt.id;
-                return (
-                  <button key={opt.id} onClick={() => setConnection(opt.id)} className="row gap-3"
-                          style={{
-                            padding: '10px 12px', textAlign: 'left',
-                            background: on ? 'var(--bg-3)' : 'var(--bg-1)',
-                            border: `1px solid ${on ? 'var(--accent)' : 'var(--border-1)'}`,
-                            borderRadius: 8, cursor: 'pointer', alignItems: 'center',
-                          }}>
-                    <div style={{
-                      width: 14, height: 14, borderRadius: 7, flexShrink: 0,
-                      border: `2px solid ${on ? 'var(--accent)' : 'var(--border-2)'}`,
-                      background: on ? 'var(--accent)' : 'transparent',
-                      boxShadow: on ? 'inset 0 0 0 2px var(--bg-3)' : 'none',
-                    }} />
-                    <span className="small" style={{ color: on ? 'var(--text-1)' : 'var(--text-2)' }}>{opt.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {connection === 'lan' && (
-              <div>
-                <label className="label">IP address</label>
-                <input className="input mono" value={ip} onChange={e => setIp(e.target.value)} placeholder="192.168.1.x" />
-              </div>
+            {loading ? (
+              <div className="tiny muted">Loading connection settings…</div>
+            ) : printerType ? (
+              printerType.connection_fields.map(field => (
+                <div key={field.name} className="col gap-1">
+                  <label className="label">{field.label}{field.required ? ' *' : ''}</label>
+                  <input
+                    className="input mono"
+                    type={field.field_type === 'password' ? 'password' : 'text'}
+                    value={draftConn[field.name] ?? ''}
+                    onChange={e => setDraftConn(prev => ({ ...prev, [field.name]: e.target.value }))}
+                    placeholder={field.placeholder || String(field.default ?? '')}
+                  />
+                  {field.help_text && <div className="tiny muted">{field.help_text}</div>}
+                </div>
+              ))
+            ) : (
+              <div className="tiny muted">Unknown printer type — connection fields unavailable.</div>
             )}
           </div>
 
-          <div className="col gap-3">
-            <div className="row between" style={{ alignItems: 'baseline' }}>
-              <div className="tag-key">Queue eligibility</div>
-              <span className="tiny muted">{draftCaps.length} selected</span>
-            </div>
-            <CapabilityGrid draft={draftCaps} setDraft={setDraftCaps} />
-          </div>
+          {error && <div className="tiny" style={{ color: 'var(--err)' }}>{error}</div>}
         </div>
 
         <div className="row between" style={{
           padding: '14px 20px', borderTop: '1px solid var(--border-1)',
           background: 'var(--bg-3)', alignItems: 'center',
         }}>
-          <button className="btn ghost sm" style={{ color: 'var(--err)' }}>
-            {Icons.trash} Remove printer
-          </button>
+          {confirmDelete ? (
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <span className="small" style={{ color: 'var(--err)' }}>Remove printer?</span>
+              <button className="btn ghost sm" style={{ color: 'var(--err)' }} onClick={handleDelete}>
+                {Icons.trash} Confirm
+              </button>
+              <button className="btn ghost sm" onClick={() => setConfirmDelete(false)}>Cancel</button>
+            </div>
+          ) : (
+            <button className="btn ghost sm" style={{ color: 'var(--err)' }} onClick={handleDelete}>
+              {Icons.trash} Remove printer
+            </button>
+          )}
           <div className="row gap-2">
             <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" onClick={save}>{Icons.check} Save changes</button>
+            <button className="btn primary" onClick={save} disabled={saving}>
+              {Icons.check} {saving ? 'Saving…' : 'Save changes'}
+            </button>
           </div>
         </div>
       </div>
@@ -253,14 +245,20 @@ function FilamentPicker({ onClose }: { onClose: () => void }) {
 }
 
 // ── PrinterExpandedCard ───────────────────────────────────────────────────────
-function PrinterExpandedCard({ printer: p, onCollapse }: { printer: Printer; onCollapse: () => void }) {
+function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollapse }: {
+  printer: Printer;
+  printerTypes: PrinterType[];
+  refetchFleet: () => void;
+  onCollapse: () => void;
+}) {
   const isPrinting = p.status === 'printing';
   const isPaused = p.status === 'paused';
   const [nickname, setNickname] = useState(p.nickname);
   const [editingName, setEditingName] = useState(false);
-  const [caps, setCaps] = useState(p.capabilities);
   const [editingPrinter, setEditingPrinter] = useState(false);
   const [pickingFilament, setPickingFilament] = useState(false);
+
+  useEffect(() => { setNickname(p.nickname); }, [p.nickname]);
 
   const job: Job | undefined = p.currentJobId ? JOBS.find(j => j.id === p.currentJobId) : undefined;
 
@@ -298,7 +296,7 @@ function PrinterExpandedCard({ printer: p, onCollapse }: { printer: Printer; onC
               <span className="mono tiny muted" style={{ flexShrink: 0 }}>· {p.id}</span>
             </div>
             <div className="tiny muted" style={{ marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {caps.join(' · ')}
+              <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {p.capabilities.join(' · ')}
             </div>
           </div>
           <div className="row gap-2" style={{ flexShrink: 0 }}>
@@ -427,8 +425,9 @@ function PrinterExpandedCard({ printer: p, onCollapse }: { printer: Printer; onC
 
       {editingPrinter && (
         <EditPrinterModal
-          printer={p} nickname={nickname} caps={caps}
-          onChangeNickname={setNickname} onChangeCaps={setCaps}
+          printer={p} printerTypes={printerTypes}
+          onSaved={() => { setEditingPrinter(false); refetchFleet(); }}
+          onDeleted={() => { setEditingPrinter(false); refetchFleet(); onCollapse(); }}
           onClose={() => setEditingPrinter(false)}
         />
       )}
@@ -618,8 +617,9 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
 }
 
 // ── FleetGrid (cards layout) ──────────────────────────────────────────────────
-function FleetGrid({ printers, expandedId, onToggle, onAdd }: {
+function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
+  printerTypes: PrinterType[]; refetchFleet: () => void;
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
@@ -628,7 +628,7 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd }: {
         return (
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
-              ? <PrinterExpandedCard printer={p} onCollapse={() => onToggle(p.id)} />
+              ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} />
               : <PrinterTile printer={p} onClick={() => onToggle(p.id)} />}
           </div>
         );
@@ -639,8 +639,9 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd }: {
 }
 
 // ── FleetRows (rows layout) ───────────────────────────────────────────────────
-function FleetRows({ printers, expandedId, onToggle, onAdd }: {
+function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
+  printerTypes: PrinterType[]; refetchFleet: () => void;
 }) {
   return (
     <div className="col gap-2">
@@ -651,7 +652,7 @@ function FleetRows({ printers, expandedId, onToggle, onAdd }: {
             <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} />
             {expanded && (
               <div style={{ marginTop: 8 }}>
-                <PrinterExpandedCard printer={p} onCollapse={() => onToggle(p.id)} />
+                <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} />
               </div>
             )}
           </div>
@@ -711,10 +712,10 @@ export function FleetScreen() {
       </div>
 
       {layout === 'cards' && (
-        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} />
+        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} />
       )}
       {layout === 'rows' && (
-        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} />
+        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} />
       )}
     </div>
   );

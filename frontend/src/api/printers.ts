@@ -73,6 +73,10 @@ export function fetchPrinters(): Promise<ApiPrinter[]> {
   return request(BASE);
 }
 
+export function fetchPrinter(id: number): Promise<ApiPrinter> {
+  return request(`${BASE}/${id}`);
+}
+
 export function createPrinter(body: CreatePrinterBody): Promise<ApiPrinter> {
   return request(BASE, {
     method: 'POST',

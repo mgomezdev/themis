@@ -12,7 +12,6 @@ import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
 import { FilesScreen }     from './screens/FilesScreen';
 import { FilamentsScreen } from './screens/FilamentsScreen';
-import { PrintersScreen }  from './screens/PrintersScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
 
 function AppShell() {
@@ -35,7 +34,6 @@ function AppShell() {
     '/filaments':  { title: 'Filament library',  crumbs: ['Workshop'],
                      actions: <><button className="btn sm">{Icons.refresh} Sync vendor prices</button>
                                 <button className="btn primary sm">{Icons.plus} Add filament</button></> },
-    '/printers':   { title: 'Printers',          crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -57,7 +55,6 @@ function AppShell() {
             <Route path="/orders/new"   element={<NewOrderScreen />} />
             <Route path="/files"        element={<FilesScreen />} />
             <Route path="/filaments"    element={<FilamentsScreen />} />
-            <Route path="/printers"     element={<PrintersScreen />} />
             <Route path="/settings/*"   element={<SettingsScreen />} />
             <Route path="*"             element={<Navigate to="/queue" replace />} />
           </Routes>
