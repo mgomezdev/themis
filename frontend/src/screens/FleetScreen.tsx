@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { JOBS } from '../data/mock';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, type PrinterType } from '../api/printers';
+import { PrinterAddForm } from './PrintersScreen';
 
 type Layout = 'cards' | 'rows';
 
@@ -663,14 +664,30 @@ function FleetRows({ printers, expandedId, onToggle, onAdd }: {
 
 // ── FleetScreen ───────────────────────────────────────────────────────────────
 export function FleetScreen() {
-  const printers = useFleetData();
+  const [printers, refetchFleet] = useFleetData();
   const [layout, setLayout] = useState<Layout>('cards');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
+
+  useEffect(() => {
+    fetchPrinterTypes().then(setPrinterTypes).catch(console.error);
+  }, []);
 
   const toggle = (id: string) => setExpandedId(expandedId === id ? null : id);
   const printingCount = printers.filter(p => p.status === 'printing').length;
   const idleCount = printers.filter(p => p.status === 'idle').length;
+
+  if (adding) {
+    return (
+      <PrinterAddForm
+        types={printerTypes}
+        backLabel="Fleet"
+        onCancel={() => setAdding(false)}
+        onCreated={() => { setAdding(false); refetchFleet(); }}
+      />
+    );
+  }
 
   return (
     <div className="col gap-5">
@@ -693,22 +710,10 @@ export function FleetScreen() {
         </div>
       </div>
 
-      {adding && (
-        <div className="card" style={{ padding: 20 }}>
-          <div className="row between" style={{ marginBottom: 14 }}>
-            <span className="tag-key">Fleet / Add printer</span>
-            <button className="btn ghost icon sm" onClick={() => setAdding(false)}>{Icons.x}</button>
-          </div>
-          <div className="tiny muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-            Printer wizard coming soon.
-          </div>
-        </div>
-      )}
-
-      {!adding && layout === 'cards' && (
+      {layout === 'cards' && (
         <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} />
       )}
-      {!adding && layout === 'rows' && (
+      {layout === 'rows' && (
         <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} />
       )}
     </div>

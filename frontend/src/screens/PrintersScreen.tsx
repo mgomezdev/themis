@@ -181,14 +181,16 @@ function EditForm({
 // PrinterAddForm — 3-step wizard
 // ---------------------------------------------------------------------------
 
-function PrinterAddForm({
+export function PrinterAddForm({
   types,
   onCancel,
   onCreated,
+  backLabel = 'Printers',
 }: {
   types: PrinterType[];
   onCancel: () => void;
   onCreated: () => void;
+  backLabel?: string;
 }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState<WizardData>({
@@ -249,7 +251,7 @@ function PrinterAddForm({
     <div className="col gap-4">
       <div className="row gap-2">
         <button className="btn ghost sm" onClick={onCancel}>
-          {Icons.chevL} Printers
+          {Icons.chevL} {backLabel}
         </button>
         <span className="muted small">/</span>
         <span className="small">Add printer</span>
