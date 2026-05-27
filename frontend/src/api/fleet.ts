@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
 
@@ -86,38 +86,39 @@ async function fetchFleetPrinters(): Promise<FleetPrinter[]> {
   return resp.json();
 }
 
-export function useFleetData(): Printer[] {
+export function useFleetData(): [Printer[], () => void] {
   const [raw, setRaw] = useState<FleetPrinter[]>([]);
+  const [fetchTick, setFetchTick] = useState(0);
+
+  const refetch = useCallback(() => setFetchTick(t => t + 1), []);
 
   useEffect(() => {
     let alive = true;
+    fetchFleetPrinters()
+      .then(data => { if (alive) setRaw(data); })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, [fetchTick]);
+
+  useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
-
-    fetchFleetPrinters()
-      .then(data => {
-        if (!alive) return;
-        setRaw(data);
-        ws.onmessage = (e) => {
-          try {
-            const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
-            if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
-              setRaw(prev =>
-                prev.map(p => (p.id === msg.data.id ? { ...p, ...msg.data } : p)),
-              );
-            }
-          } catch {
-            // ignore malformed frames
-          }
-        };
-      })
-      .catch(console.error);
-
-    return () => {
-      alive = false;
-      ws.close();
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
+        if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
+          setRaw(prev => {
+            const idx = prev.findIndex(p => p.id === msg.data.id);
+            if (idx === -1) return [...prev, msg.data];
+            return prev.map(p => (p.id === msg.data.id ? { ...p, ...msg.data } : p));
+          });
+        }
+      } catch {
+        // ignore malformed frames
+      }
     };
+    return () => { ws.close(); };
   }, []);
 
-  return raw.map(toFleetPrinter);
+  return [raw.map(toFleetPrinter), refetch];
 }

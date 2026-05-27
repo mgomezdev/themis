@@ -13,7 +13,6 @@ export function Sidebar({ queueCount, ordersOpen }: SidebarProps) {
     { to: '/orders',    label: 'Orders',      icon: Icons.orders,   count: ordersOpen },
     { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/filaments', label: 'Filaments',   icon: Icons.spool },
-    { to: '/printers',  label: 'Printers',    icon: Icons.printer },
   ];
 
   return (

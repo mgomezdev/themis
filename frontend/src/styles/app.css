@@ -19,10 +19,10 @@
   --text-3:      #6b81a4;   /* tertiary */
   --text-4:      #475472;   /* quaternary / dim */
 
-  --accent:      #3b82f6;
-  --accent-hi:   #60a5fa;
-  --accent-lo:   #1e3a8a;
-  --accent-glow: rgba(59,130,246,0.18);
+  --accent:      #f59e0b;
+  --accent-hi:   #fbbf24;
+  --accent-lo:   #78350f;
+  --accent-glow: rgba(245,158,11,0.20);
 
   --ok:          #22c55e;
   --ok-bg:       rgba(34,197,94,0.12);
@@ -125,8 +125,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 100vh;
   width: 100vw;
   background:
-    radial-gradient(1200px 600px at 18% -10%, rgba(59,130,246,0.06), transparent 60%),
-    radial-gradient(900px 500px at 110% 110%, rgba(99,102,241,0.05), transparent 60%),
+    radial-gradient(1200px 600px at 18% -10%, rgba(245,158,11,0.06), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, rgba(245,158,11,0.03), transparent 60%),
     var(--bg-0);
 }
 .app[data-nav="collapsed"] { --sb-w: var(--sb-collapsed); }
@@ -395,7 +395,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .pill.info  .dot { background: var(--info); box-shadow: 0 0 6px var(--info); }
 .pill.idle  { background: var(--idle-bg); color: var(--text-2); }
 .pill.idle  .dot { background: var(--idle); }
-.pill.accent { background: rgba(59,130,246,0.12); color: var(--accent-hi); border-color: rgba(59,130,246,0.25); }
+.pill.accent { background: var(--accent-glow); color: var(--accent-hi); border-color: rgba(245,158,11,0.25); }
 .pill.accent .dot { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 
 /* ---------- progress ---------- */
@@ -526,7 +526,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   position: absolute; inset: 0;
   background:
     linear-gradient(180deg, transparent 60%, rgba(0,0,0,0.6) 100%),
-    radial-gradient(ellipse at 50% 78%, rgba(59,130,246,0.28) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 78%, rgba(245,158,11,0.28) 0%, transparent 50%),
     radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 50%);
 }
 .feed-scene::before {
@@ -569,7 +569,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .row { display: flex; align-items: center; gap: 10px; }
 .row.between { justify-content: space-between; }
 .col { display: flex; flex-direction: column; }
-.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; }
+.gap-2 { gap: 8px; } .gap-3 { gap: 12px; } .gap-4 { gap: 16px; } .gap-5 { gap: 20px; } .gap-6 { gap: 24px; }
 .muted { color: var(--text-3); }
 .tiny  { font-size: 11px; }
 .small { font-size: 12px; }
@@ -595,7 +595,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   100% { background-position: 200% 0; }
 }
 .shimmer-bar {
-  background: linear-gradient(90deg, transparent 0%, rgba(59,130,246,0.5) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, rgba(245,158,11,0.5) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2.4s linear infinite;
 }
@@ -619,7 +619,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   border: 1px solid var(--border-1);
   white-space: nowrap;
 }
-.elig.on { background: rgba(59,130,246,0.12); color: var(--accent-hi); border-color: rgba(59,130,246,0.25); }
+.elig.on { background: var(--accent-glow); color: var(--accent-hi); border-color: rgba(245,158,11,0.25); }
 .elig.off { color: var(--text-4); }
 
 /* ---------- content surface ---------- */

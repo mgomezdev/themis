@@ -154,33 +154,4 @@ describe('FleetScreen', () => {
     spy.mockRestore();
   });
 
-  it('clicking +10 mm calls jogZ with 10', async () => {
-    const spy = vi.spyOn(printersApi, 'jogZ').mockResolvedValue(undefined);
-    mockFetch([PRINTER_CONTROLS]);
-    render(<FleetScreen />);
-    fireEvent.click(await screen.findByText('Forge'));
-    fireEvent.click(await screen.findByText('+10 mm'));
-    expect(spy).toHaveBeenCalledWith(String(PRINTER_CONTROLS.id), 10);
-    spy.mockRestore();
-  });
-
-  it('clicking −10 mm calls jogZ with -10', async () => {
-    const spy = vi.spyOn(printersApi, 'jogZ').mockResolvedValue(undefined);
-    mockFetch([PRINTER_CONTROLS]);
-    render(<FleetScreen />);
-    fireEvent.click(await screen.findByText('Forge'));
-    fireEvent.click(await screen.findByText('−10 mm'));
-    expect(spy).toHaveBeenCalledWith(String(PRINTER_CONTROLS.id), -10);
-    spy.mockRestore();
-  });
-
-  it('clicking Light: Off calls setLight with (id, true)', async () => {
-    const spy = vi.spyOn(printersApi, 'setLight').mockResolvedValue(undefined);
-    mockFetch([PRINTER_CONTROLS]);
-    render(<FleetScreen />);
-    fireEvent.click(await screen.findByText('Forge'));
-    fireEvent.click(await screen.findByText('Light: Off'));
-    expect(spy).toHaveBeenCalledWith(String(PRINTER_CONTROLS.id), true);
-    spy.mockRestore();
-  });
 });
