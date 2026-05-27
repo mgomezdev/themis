@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from collections.abc import AsyncGenerator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
@@ -7,7 +9,11 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "sqlite+aiosqlite:////data/themis.db"
+# Docker sets THEMIS_DATA_DIR=/data; locally fall back to <repo-root>/data
+_default_data_dir = Path(__file__).resolve().parent.parent.parent / "data"
+_data_dir = os.environ.get("THEMIS_DATA_DIR", str(_default_data_dir))
+Path(_data_dir).mkdir(parents=True, exist_ok=True)
+DATABASE_URL = f"sqlite+aiosqlite:///{_data_dir}/themis.db"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

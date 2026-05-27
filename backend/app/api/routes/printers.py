@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,8 +12,8 @@ import shutil
 
 from ...database import get_session
 from ...models import Printer
-from ...services.camera_proxy import stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config
+from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_ffmpeg
+from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
 from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
@@ -119,6 +119,11 @@ async def create_printer(
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
+    try:
+        client = create_client(printer)
+        printer_manager.connect_printer(printer.id, client)
+    except Exception:
+        pass  # non-fatal: printer saved, connection will retry on next restart
     return _to_dict(printer)
 
 
@@ -238,6 +243,21 @@ async def switch_active_preset(
     return _to_dict(printer)
 
 
+@router.post("/{printer_id}/reconnect")
+async def reconnect_printer(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    printer = await _get_or_404(printer_id, session)
+    printer_manager.disconnect_printer(printer_id)
+    try:
+        client = create_client(printer)
+        printer_manager.connect_printer(printer_id, client)
+    except Exception as exc:
+        raise HTTPException(503, f"Failed to connect: {exc}")
+    return {"ok": True}
+
+
 @router.post("/{printer_id}/pause")
 async def pause_printer(
     printer_id: int,
@@ -331,6 +351,13 @@ async def set_bed_temp(
     return {"ok": True}
 
 
+async def _activate_camera(client) -> None:
+    """Enable the camera stream; runs the blocking call off the event loop."""
+    if hasattr(client, "start_video_stream"):
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, client.start_video_stream)
+
+
 @router.get("/{printer_id}/camera")
 async def stream_camera(
     printer_id: int,
@@ -344,9 +371,7 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    # Activate Elegoo MJPEG stream before proxying (no-op for clients without the method)
-    if hasattr(client, "start_video_stream"):
-        client.start_video_stream()
+    await _activate_camera(client)
 
     if client.camera_mjpeg_url:
         raw = stream_mjpeg(client.camera_mjpeg_url)
@@ -382,4 +407,36 @@ async def stream_camera(
     return StreamingResponse(
         _stream(),
         media_type="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@router.get("/{printer_id}/snapshot")
+async def snapshot_camera(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    """Return a single JPEG frame — for browsers that don't support MJPEG streaming."""
+    await _get_or_404(printer_id, session)
+    client = printer_manager._clients.get(printer_id)
+    if client is None or not client.connected:
+        raise HTTPException(503, "Printer not connected")
+    caps = client.get_capabilities()
+    if not caps.camera:
+        raise HTTPException(404, "This printer has no camera")
+
+    await _activate_camera(client)
+
+    url = client.camera_mjpeg_url
+    if not url:
+        raise HTTPException(404, "No camera URL configured")
+
+    try:
+        jpeg = await grab_jpeg_frame(url)
+    except Exception as exc:
+        raise HTTPException(503, f"Camera unavailable: {exc}")
+
+    return Response(
+        content=jpeg,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store"},
     )

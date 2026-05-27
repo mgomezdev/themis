@@ -123,7 +123,7 @@ function EditForm({
           <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>
           <div className="col gap-2">
             {slots.map((s, i) => (
-              <div key={i} className="row gap-2" style={{ alignItems: 'center' }}>
+              <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                 <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
                 <input
                   type="color"
@@ -132,7 +132,7 @@ function EditForm({
                   style={{
                     width: 32, height: 32, padding: 2,
                     border: '1px solid var(--border-1)', borderRadius: 6,
-                    cursor: 'pointer', background: 'var(--bg-2)',
+                    cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0,
                   }}
                 />
                 <select
@@ -144,7 +144,7 @@ function EditForm({
                 </select>
                 <input
                   className="input"
-                  style={{ flex: 1 }}
+                  style={{ flex: '1 1 140px' }}
                   placeholder="Filament name"
                   value={s.name}
                   onChange={e => updateSlot(i, { name: e.target.value })}
@@ -506,8 +506,8 @@ export function PrintersScreen() {
       )}
 
       {!loading && !error && printers.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <table className="tbl">
+        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="tbl" style={{ minWidth: 540 }}>
             <thead>
               <tr>
                 <th>Printer</th>

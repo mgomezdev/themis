@@ -151,3 +151,7 @@ export function setBedTemp(id: string, celsius: number): Promise<void> {
     body: JSON.stringify({ celsius }),
   });
 }
+
+export function reconnectPrinter(id: string): Promise<void> {
+  return request(`${BASE}/${id}/reconnect`, { method: 'POST' });
+}

@@ -62,10 +62,19 @@ describe('VideoTile', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('falls back to placeholder when img fires onError', () => {
+  it('falls back to snapshot polling when MJPEG onError fires', () => {
     render(<VideoTile live={true} printerId="42" />);
     const img = document.querySelector('img')!;
+    expect(img.src).toContain('/camera');
     fireEvent.error(img);
+    const snap = document.querySelector('img')!;
+    expect(snap.src).toContain('/snapshot');
+  });
+
+  it('hides img entirely when snapshot also fails', () => {
+    render(<VideoTile live={true} printerId="42" />);
+    fireEvent.error(document.querySelector('img')!);  // MJPEG → snapshot
+    fireEvent.error(document.querySelector('img')!);  // snapshot → placeholder
     expect(document.querySelector('img')).toBeNull();
   });
 });

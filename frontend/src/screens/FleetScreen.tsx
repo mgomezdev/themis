@@ -20,6 +20,7 @@ import {
   jogZ,
   setFanSpeed,
   setBedTemp,
+  reconnectPrinter,
 } from '../api/printers';
 
 type Layout = 'grid' | 'list' | 'focus';
@@ -184,6 +185,7 @@ function PrinterExpandedCard({
   });
   const [bedInput, setBedInput] = useState(String(p.bedTempTarget));
   const fanDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
     setFanValues({ model: p.fanModel, auxiliary: p.fanAux, box: p.fanBox });
@@ -219,6 +221,7 @@ function PrinterExpandedCard({
           borderBottom: '1px solid var(--border-1)',
           gap: 16,
           alignItems: 'center',
+          flexWrap: 'wrap',
         }}
       >
         <div className="col" style={{ minWidth: 0, flex: 1 }}>
@@ -266,8 +269,22 @@ function PrinterExpandedCard({
             {p.capabilities.join(' · ')}
           </div>
         </div>
-        <div className="row gap-2" style={{ flexShrink: 0 }}>
+        <div className="row gap-2" style={{ flexShrink: 0, flexWrap: 'wrap' }}>
           <StatusPill status={p.status} />
+          {isOffline && (
+            <button
+              className="btn sm"
+              disabled={reconnecting}
+              onClick={() => {
+                setReconnecting(true);
+                reconnectPrinter(p.id)
+                  .catch(console.error)
+                  .finally(() => setReconnecting(false));
+              }}
+            >
+              {Icons.refresh} {reconnecting ? 'Connecting…' : 'Reconnect'}
+            </button>
+          )}
           <button className="btn sm">{Icons.camera} Snapshot</button>
           <button className="btn icon sm">{Icons.more}</button>
           <button
@@ -283,15 +300,15 @@ function PrinterExpandedCard({
       {/* Body */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.6fr) minmax(280px, 1fr)',
+          display: 'flex',
+          flexWrap: 'wrap',
           gap: 18,
           padding: 18,
         }}
       >
         {/* LEFT */}
-        <div className="col gap-4" style={{ minWidth: 0 }}>
-          <VideoTile live={isPrinting} time={p.timeElapsed} printerId={p.id} />
+        <div className="col gap-4" style={{ flex: '1.6 1 320px', minWidth: 0 }}>
+          <VideoTile live={!isOffline} time={isPrinting ? p.timeElapsed : undefined} printerId={p.id} />
 
           {/* Big telemetry numbers */}
           <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
@@ -478,7 +495,7 @@ function PrinterExpandedCard({
         </div>
 
         {/* RIGHT */}
-        <div className="col gap-4">
+        <div className="col gap-4" style={{ flex: '1 1 260px', minWidth: 0 }}>
           <div
             className="card"
             style={{ padding: 14, background: 'var(--bg-1)' }}

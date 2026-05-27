@@ -3,7 +3,8 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes.files import router as files_router
@@ -73,4 +74,16 @@ async def health() -> dict:
 
 
 if STATIC_DIR.exists():
-    app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+    # Serve hashed assets with long cache; index.html with no-cache so browsers
+    # always revalidate and pick up new deploys without a hard refresh.
+    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(_: Request, full_path: str):
+        file = STATIC_DIR / full_path
+        if file.is_file() and full_path:
+            return FileResponse(file)
+        return FileResponse(
+            STATIC_DIR / "index.html",
+            headers={"Cache-Control": "no-cache, must-revalidate"},
+        )
