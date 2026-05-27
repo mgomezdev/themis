@@ -1,79 +1,252 @@
-import { useState } from 'react';
-import { PRINTERS } from '../data/mock';
+import { useState, useEffect, Fragment } from 'react';
 import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';
+import {
+  fetchPrinters,
+  fetchPrinterTypes,
+  createPrinter,
+  updatePrinter,
+  deletePrinter,
+  testConnection,
+  type ApiPrinter,
+  type PrinterType,
+  type ConnectionField,
+  type LoadedFilament,
+} from '../api/printers';
+
+// ---------------------------------------------------------------------------
+// Constants + small components
+// ---------------------------------------------------------------------------
+
+const MAT_TYPES = ['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'PC', 'TPU', 'Other'] as const;
+
+function SlotSwatch({ color, name, type }: { color: string; name: string; type: string }) {
+  return (
+    <div
+      title={`${name} (${type})`}
+      style={{
+        width: 16,
+        height: 16,
+        borderRadius: '50%',
+        background: color,
+        border: '1px solid var(--border-2)',
+        flexShrink: 0,
+        display: 'inline-block',
+      }}
+    />
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-type ConnectionType = 'lan' | 'cloud' | 'octo';
 type ConnStatus = 'idle' | 'testing' | 'success' | 'error';
 
 interface WizardData {
-  model: string;
+  printerType: PrinterType | null;
   nickname: string;
-  connection: ConnectionType;
-  ip: string;
-  accessCode: string;
-  capabilities: string[];
+  connectionConfig: Record<string, string>;
+}
+
+// ---------------------------------------------------------------------------
+// EditForm — inline edit for an existing printer
+// ---------------------------------------------------------------------------
+
+function EditForm({
+  printer,
+  types,
+  onSave,
+  onCancel,
+}: {
+  printer: ApiPrinter;
+  types: PrinterType[];
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const ptype = types.find(t => t.printer_type === printer.printer_type);
+  const [name, setName] = useState(printer.name);
+  const [config, setConfig] = useState<Record<string, string>>(
+    Object.fromEntries(
+      Object.entries(printer.connection_config).map(([k, v]) => [k, String(v)])
+    )
+  );
+  const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function addSlot() {
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+  }
+
+  function removeSlot(i: number) {
+    setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
+  }
+
+  function updateSlot(i: number, patch: Partial<LoadedFilament>) {
+    setSlots(s => s.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      await updatePrinter(printer.id, { name, connection_config: config, loaded_filaments: slots });
+      onSave();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 16, marginTop: 8 }}>
+      <div className="col gap-3">
+        <div>
+          <label className="label">Nickname</label>
+          <input className="input" value={name} onChange={e => setName(e.target.value)} />
+        </div>
+        {ptype?.connection_fields.map((f: ConnectionField) => (
+          <div key={f.name}>
+            <label className="label">{f.label}</label>
+            <input
+              className="input"
+              type={f.field_type === 'password' ? 'password' : 'text'}
+              placeholder={f.placeholder}
+              value={config[f.name] ?? ''}
+              onChange={e => setConfig({ ...config, [f.name]: e.target.value })}
+            />
+          </div>
+        ))}
+        <div>
+          <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>
+          <div className="col gap-2">
+            {slots.map((s, i) => (
+              <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
+                <input
+                  type="color"
+                  value={s.color}
+                  onChange={e => updateSlot(i, { color: e.target.value })}
+                  style={{
+                    width: 32, height: 32, padding: 2,
+                    border: '1px solid var(--border-1)', borderRadius: 6,
+                    cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0,
+                  }}
+                />
+                <select
+                  className="input"
+                  style={{ width: 90, flexShrink: 0 }}
+                  value={s.type}
+                  onChange={e => updateSlot(i, { type: e.target.value })}>
+                  {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <input
+                  className="input"
+                  style={{ flex: '1 1 140px' }}
+                  placeholder="Filament name"
+                  value={s.name}
+                  onChange={e => updateSlot(i, { name: e.target.value })}
+                />
+                <button
+                  className="btn ghost icon sm"
+                  onClick={() => removeSlot(i)}
+                  title="Remove slot">
+                  {Icons.x}
+                </button>
+              </div>
+            ))}
+            <button
+              className="btn ghost sm"
+              onClick={addSlot}
+              style={{ alignSelf: 'flex-start' }}>
+              {Icons.plus} Add slot
+            </button>
+          </div>
+        </div>
+        {error && <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>}
+        <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
+          <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
+          <button className="btn primary sm" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
 // PrinterAddForm — 3-step wizard
 // ---------------------------------------------------------------------------
 
-const PRINTER_MODELS = [
-  { name: 'Bambu Lab P1S',          vol: '256×256×256', chamber: false },
-  { name: 'Bambu Lab X1 Carbon',    vol: '256×256×256', chamber: true  },
-  { name: 'Elegoo Centauri Carbon', vol: '256×256×256', chamber: true  },
-  { name: 'Snapmaker U1',           vol: '200×200×200', chamber: false },
-  { name: 'Prusa MK4',              vol: '250×210×220', chamber: false },
-  { name: 'Custom',                 vol: '—',           chamber: false },
-] as const;
-
-const ALL_CAPABILITIES = [
-  'PLA', 'PETG', 'PLA-CF', 'ABS', 'ASA',
-  'PA-CF', 'PC', 'TPU', 'Multi-color', 'Soluble support',
-];
-
-const CONNECTION_OPTIONS: { id: ConnectionType; label: string; sub: string }[] = [
-  { id: 'lan',   label: 'LAN mode (manufacturer firmware)',   sub: 'Stream camera + control via local API.' },
-  { id: 'cloud', label: 'Cloud account',                       sub: 'Sign in to vendor\'s cloud; OK for remote.' },
-  { id: 'octo',  label: 'OctoPrint / Klipper / Moonraker',    sub: 'For custom firmware setups.' },
-];
-
-function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
+function PrinterAddForm({
+  types,
+  onCancel,
+  onCreated,
+}: {
+  types: PrinterType[];
+  onCancel: () => void;
+  onCreated: () => void;
+}) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState<WizardData>({
-    model: 'Bambu Lab P1S',
+    printerType: types[0] ?? null,
     nickname: '',
-    connection: 'lan',
-    ip: '192.168.1.',
-    accessCode: '',
-    capabilities: ['PLA', 'PETG'],
+    connectionConfig: {},
   });
   const [connStatus, setConnStatus] = useState<ConnStatus>('idle');
+  const [connError, setConnError] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
 
-  function testConnection() {
+  async function handleTestConnection() {
+    if (!data.printerType) return;
     setConnStatus('testing');
-    setTimeout(() => setConnStatus('success'), 1000);
+    setConnError(null);
+    try {
+      const result = await testConnection({
+        printer_type: data.printerType.printer_type,
+        connection_config: data.connectionConfig,
+      });
+      if (result.ok) {
+        setConnStatus('success');
+      } else {
+        setConnStatus('error');
+        setConnError(result.error ?? 'Could not connect');
+      }
+    } catch (e) {
+      setConnStatus('error');
+      setConnError(e instanceof Error ? e.message : 'Connection test failed');
+    }
   }
 
-  function handleFinish() {
-    console.log('Add printer:', data);
-    onCancel();
+  async function handleFinish() {
+    if (!data.printerType) return;
+    setFinishing(true);
+    setFinishError(null);
+    try {
+      await createPrinter({
+        name: data.nickname || data.printerType.display_name,
+        printer_type: data.printerType.printer_type,
+        connection_config: data.connectionConfig,
+      });
+      onCreated();
+    } catch (e) {
+      setFinishError(e instanceof Error ? e.message : 'Failed to add printer');
+      setFinishing(false);
+    }
   }
 
   const steps = [
-    { n: 1, label: 'Model' },
+    { n: 1, label: 'Type' },
     { n: 2, label: 'Connect' },
-    { n: 3, label: 'Capabilities' },
+    { n: 3, label: 'Review' },
   ] as const;
 
   return (
     <div className="col gap-4">
-      {/* Breadcrumb */}
       <div className="row gap-2">
         <button className="btn ghost sm" onClick={onCancel}>
           {Icons.chevL} Printers
@@ -107,16 +280,16 @@ function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
           ))}
         </div>
 
-        {/* Step 1: Model selection */}
+        {/* Step 1: Printer type */}
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
-            <SectionHeader title="Pick a printer model" sub="We'll suggest sensible defaults." />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
-              {PRINTER_MODELS.map(m => {
-                const active = data.model === m.name;
+            <SectionHeader title="Select printer type" sub="Choose the vendor for this printer." />
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+              {types.map(t => {
+                const active = data.printerType?.printer_type === t.printer_type;
                 return (
-                  <button key={m.name}
-                    onClick={() => setData({ ...data, model: m.name })}
+                  <button key={t.printer_type}
+                    onClick={() => setData({ ...data, printerType: t, connectionConfig: {} })}
                     className="card"
                     style={{
                       textAlign: 'left', padding: 14, cursor: 'pointer',
@@ -124,79 +297,53 @@ function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
                       borderColor: active ? 'var(--accent)' : 'var(--border-1)',
                     }}>
                     <div className="row between">
-                      <div style={{ fontWeight: 500 }}>{m.name}</div>
+                      <div style={{ fontWeight: 500 }}>{t.display_name}</div>
                       {active && <div style={{ color: 'var(--accent-hi)' }}>{Icons.check}</div>}
-                    </div>
-                    <div className="tiny muted" style={{ marginTop: 4 }}>
-                      {m.vol} mm · {m.chamber ? 'enclosed' : 'open'}
                     </div>
                   </button>
                 );
               })}
             </div>
-            <div style={{ marginTop: 20 }}>
+            <div>
               <label className="label">Nickname</label>
               <input className="input" value={data.nickname}
                 placeholder="e.g. Atlas, Forge, Iris"
                 onChange={e => setData({ ...data, nickname: e.target.value })} />
               <div className="tiny muted" style={{ marginTop: 6 }}>
-                Shown in queue and on tiles. Real model name stays in metadata.
+                Shown in queue and on tiles.
               </div>
             </div>
             <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
               <button className="btn ghost" onClick={onCancel}>Cancel</button>
-              <button className="btn primary" onClick={() => setStep(2)}>
+              <button className="btn primary" disabled={!data.printerType} onClick={() => setStep(2)}>
                 Next {Icons.chevR}
               </button>
             </div>
           </div>
         )}
 
-        {/* Step 2: Connection */}
-        {step === 2 && (
+        {/* Step 2: Connection fields */}
+        {step === 2 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
-            <SectionHeader title="How should we talk to this printer?" />
+            <SectionHeader title={`Connect to ${data.printerType.display_name}`} />
             <div className="col gap-3">
-              {CONNECTION_OPTIONS.map(opt => {
-                const active = data.connection === opt.id;
-                return (
-                  <button key={opt.id}
-                    onClick={() => setData({ ...data, connection: opt.id })}
-                    className="card"
-                    style={{
-                      textAlign: 'left', padding: 14, cursor: 'pointer',
-                      background: active ? 'var(--bg-3)' : 'var(--bg-1)',
-                      borderColor: active ? 'var(--accent)' : 'var(--border-1)',
-                    }}>
-                    <div className="row between">
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{opt.label}</div>
-                        <div className="tiny muted" style={{ marginTop: 2 }}>{opt.sub}</div>
-                      </div>
-                      <div style={{
-                        width: 16, height: 16, borderRadius: 8,
-                        border: `2px solid ${active ? 'var(--accent)' : 'var(--border-2)'}`,
-                        background: active ? 'var(--accent)' : 'transparent',
-                        boxShadow: active ? 'inset 0 0 0 3px var(--bg-3)' : 'none',
-                        flexShrink: 0,
-                      }} />
-                    </div>
-                  </button>
-                );
-              })}
+              {data.printerType.connection_fields.map((f: ConnectionField) => (
+                <div key={f.name}>
+                  <label className="label">{f.label}{f.required ? '' : ' (optional)'}</label>
+                  <input
+                    className="input"
+                    type={f.field_type === 'password' ? 'password' : 'text'}
+                    placeholder={f.placeholder}
+                    value={data.connectionConfig[f.name] ?? (f.default != null ? String(f.default) : '')}
+                    onChange={e => setData({
+                      ...data,
+                      connectionConfig: { ...data.connectionConfig, [f.name]: e.target.value },
+                    })}
+                  />
+                  {f.help_text && <div className="tiny muted" style={{ marginTop: 4 }}>{f.help_text}</div>}
+                </div>
+              ))}
             </div>
-
-            {data.connection === 'lan' && (
-              <div style={{ marginTop: 20 }}>
-                <label className="label">IP address</label>
-                <input className="input mono" value={data.ip}
-                  onChange={e => setData({ ...data, ip: e.target.value })} />
-                <label className="label" style={{ marginTop: 12 }}>Access code</label>
-                <input className="input mono" placeholder="••••••••"
-                  value={data.accessCode}
-                  onChange={e => setData({ ...data, accessCode: e.target.value })} />
-              </div>
-            )}
 
             {connStatus === 'success' && (
               <div className="row gap-2" style={{ marginTop: 12, color: 'var(--ok)', fontSize: 13 }}>
@@ -205,14 +352,14 @@ function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
             )}
             {connStatus === 'error' && (
               <div className="row gap-2" style={{ marginTop: 12, color: 'var(--err)', fontSize: 13 }}>
-                {Icons.alert} Could not connect
+                {Icons.alert} {connError ?? 'Could not connect'}
               </div>
             )}
 
             <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setStep(1)}>{Icons.chevL} Back</button>
               <button className="btn"
-                onClick={testConnection}
+                onClick={handleTestConnection}
                 disabled={connStatus === 'testing'}>
                 {connStatus === 'testing' ? 'Testing…' : 'Test connection'}
               </button>
@@ -223,59 +370,39 @@ function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
           </div>
         )}
 
-        {/* Step 3: Capabilities */}
-        {step === 3 && (
+        {/* Step 3: Review + finish */}
+        {step === 3 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
-            <SectionHeader
-              title="Queue eligibility"
-              sub="Which materials this printer can claim from the queue."
-            />
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, 1fr)',
-              gap: 8,
-              marginTop: 12,
-            }}>
-              {ALL_CAPABILITIES.map(m => {
-                const on = data.capabilities.includes(m);
+            <SectionHeader title="Review" sub="Confirm the details before adding." />
+            <div className="col gap-2" style={{ marginBottom: 20 }}>
+              <div className="row gap-3">
+                <span className="muted small" style={{ width: 120 }}>Type</span>
+                <span className="small">{data.printerType.display_name}</span>
+              </div>
+              <div className="row gap-3">
+                <span className="muted small" style={{ width: 120 }}>Nickname</span>
+                <span className="small">{data.nickname || data.printerType.display_name}</span>
+              </div>
+              {Object.entries(data.connectionConfig).map(([k, v]) => {
+                const field = data.printerType!.connection_fields.find(f => f.name === k);
+                const isPassword = field?.field_type === 'password';
                 return (
-                  <button key={m}
-                    onClick={() => {
-                      const next = on
-                        ? data.capabilities.filter(x => x !== m)
-                        : [...data.capabilities, m];
-                      setData({ ...data, capabilities: next });
-                    }}
-                    className="row gap-2"
-                    style={{
-                      padding: '10px 12px', borderRadius: 8,
-                      background: on ? 'rgba(59,130,246,0.12)' : 'var(--bg-1)',
-                      border: `1px solid ${on ? 'rgba(59,130,246,0.4)' : 'var(--border-1)'}`,
-                      color: on ? 'var(--accent-hi)' : 'var(--text-2)',
-                      cursor: 'pointer', textAlign: 'left',
-                    }}>
-                    <div style={{
-                      width: 14, height: 14, borderRadius: 3,
-                      background: on ? 'var(--accent)' : 'transparent',
-                      border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border-2)'}`,
-                      display: 'grid', placeItems: 'center', color: '#04101f', flexShrink: 0,
-                    }}>
-                      {on && (
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"
-                          stroke="currentColor" strokeWidth="3">
-                          <path d="M20 6 9 17l-5-5" />
-                        </svg>
-                      )}
-                    </div>
-                    <span className="small">{m}</span>
-                  </button>
+                  <div key={k} className="row gap-3">
+                    <span className="muted small" style={{ width: 120 }}>{field?.label ?? k}</span>
+                    <span className="small mono">{isPassword ? '••••••••' : v}</span>
+                  </div>
                 );
               })}
             </div>
-            <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
+
+            {finishError && (
+              <div style={{ color: 'var(--err)', fontSize: 13, marginBottom: 12 }}>{finishError}</div>
+            )}
+
+            <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
-              <button className="btn primary" onClick={handleFinish}>
-                {Icons.check} Finish
+              <button className="btn primary" onClick={handleFinish} disabled={finishing}>
+                {finishing ? 'Adding…' : <>{Icons.check} Finish</>}
               </button>
             </div>
           </div>
@@ -290,17 +417,68 @@ function PrinterAddForm({ onCancel }: { onCancel: () => void }) {
 // ---------------------------------------------------------------------------
 
 export function PrintersScreen() {
+  const [printers, setPrinters] = useState<ApiPrinter[]>([]);
+  const [types, setTypes] = useState<PrinterType[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+
+  async function load() {
+    setLoading(true);
+    setError(null);
+    try {
+      const [ps, ts] = await Promise.all([fetchPrinters(), fetchPrinterTypes()]);
+      setPrinters(ps);
+      setTypes(ts);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load printers');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function handleDelete(id: number) {
+    if (!confirm('Delete this printer?')) return;
+    try {
+      await deletePrinter(id);
+      await load();
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed');
+    }
+  }
 
   if (adding) {
-    return <PrinterAddForm onCancel={() => setAdding(false)} />;
+    return (
+      <PrinterAddForm
+        types={types}
+        onCancel={() => setAdding(false)}
+        onCreated={() => { setAdding(false); load(); }}
+      />
+    );
   }
+
+  const onlineCount = printers.filter(p => p.connected).length;
+  const offlineCount = printers.filter(p => !p.connected).length;
+
+  const displayName = (p: ApiPrinter) =>
+    types.find(t => t.printer_type === p.printer_type)?.display_name ?? p.printer_type;
+
+  const connectionSummary = (p: ApiPrinter) => {
+    const cfg = p.connection_config;
+    if ('ip_address' in cfg) return String(cfg.ip_address);
+    if ('host' in cfg) return String(cfg.host);
+    const first = Object.values(cfg)[0];
+    return first != null ? String(first) : '—';
+  };
 
   return (
     <div className="col gap-4">
       <SectionHeader
         title="Printers"
-        sub="3 connected · 0 offline"
+        sub={`${onlineCount} connected · ${offlineCount} offline`}
         actions={
           <button className="btn primary sm" onClick={() => setAdding(true)}>
             {Icons.plus} Add printer
@@ -308,61 +486,97 @@ export function PrintersScreen() {
         }
       />
 
-      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-        <table className="tbl">
-          <thead>
-            <tr>
-              <th>Printer</th>
-              <th>Model</th>
-              <th>Build volume</th>
-              <th>Capabilities</th>
-              <th>Status</th>
-              <th style={{ textAlign: 'right' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {PRINTERS.map(p => (
-              <tr key={p.id}>
-                <td>
-                  <div className="row gap-3">
-                    <div style={{
-                      width: 36, height: 36, borderRadius: 8,
-                      background: `linear-gradient(135deg, ${p.accent}33, transparent)`,
-                      border: '1px solid var(--border-1)',
-                      display: 'grid', placeItems: 'center',
-                    }}>
-                      <span className="mono tiny" style={{ color: p.accent }}>{p.badge}</span>
-                    </div>
-                    <div className="col">
-                      <div style={{ fontWeight: 500 }}>{p.nickname}</div>
-                      <div className="mono tiny muted">{p.id}</div>
-                    </div>
-                  </div>
-                </td>
-                <td><div className="small">{p.name}</div></td>
-                <td className="num small">{p.buildVolume} mm</td>
-                <td>
-                  <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-                    {p.capabilities.slice(0, 4).map(c => (
-                      <span key={c} className="elig on">{c}</span>
-                    ))}
-                    {p.capabilities.length > 4 && (
-                      <span className="elig">+{p.capabilities.length - 4}</span>
-                    )}
-                  </div>
-                </td>
-                <td><StatusPill status={p.status} /></td>
-                <td style={{ textAlign: 'right' }}>
-                  <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
-                    <button className="btn ghost sm" onClick={e => e.stopPropagation()}>Edit</button>
-                    <button className="btn icon ghost sm">{Icons.more}</button>
-                  </div>
-                </td>
+      {loading && (
+        <div className="card" style={{ padding: 24, textAlign: 'center' }}>
+          <span className="muted small">Loading…</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="card" style={{ padding: 16, color: 'var(--err)' }}>
+          {error}
+          <button className="btn ghost sm" style={{ marginLeft: 12 }} onClick={load}>Retry</button>
+        </div>
+      )}
+
+      {!loading && !error && printers.length === 0 && (
+        <div className="card" style={{ padding: 24, textAlign: 'center' }}>
+          <span className="muted small">No printers yet — add one to get started.</span>
+        </div>
+      )}
+
+      {!loading && !error && printers.length > 0 && (
+        <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
+          <table className="tbl" style={{ minWidth: 540 }}>
+            <thead>
+              <tr>
+                <th>Printer</th>
+                <th>Type</th>
+                <th>Connection</th>
+                <th>Filament</th>
+                <th>Status</th>
+                <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {printers.map(p => (
+                <Fragment key={p.id}>
+                  <tr style={{ opacity: p.enabled ? 1 : 0.5 }}>
+                    <td>
+                      <div className="col">
+                        <div style={{ fontWeight: 500 }}>{p.name}</div>
+                        <div className="mono tiny muted">#{p.id}</div>
+                      </div>
+                    </td>
+                    <td><div className="small">{displayName(p)}</div></td>
+                    <td className="mono small">{connectionSummary(p)}</td>
+                    <td>
+                      {p.loaded_filaments.length === 0 ? (
+                        <span className="tiny muted">— no filament</span>
+                      ) : (
+                        <div className="row gap-1" style={{ alignItems: 'center' }}>
+                          {p.loaded_filaments.map(s => (
+                            <SlotSwatch key={s.slot} color={s.color} name={s.name} type={s.type} />
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                    <td>
+                      <StatusPill status={p.connected ? 'idle' : 'offline'} />
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
+                        <button
+                          className="btn ghost sm"
+                          onClick={() => setEditingId(editingId === p.id ? null : p.id)}>
+                          Edit
+                        </button>
+                        <button
+                          className="btn icon ghost sm"
+                          onClick={() => handleDelete(p.id)}>
+                          {Icons.trash}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  {editingId === p.id && (
+                    <tr>
+                      <td colSpan={6} style={{ padding: '0 16px 16px' }}>
+                        <EditForm
+                          printer={p}
+                          types={types}
+                          onSave={() => { setEditingId(null); load(); }}
+                          onCancel={() => setEditingId(null)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

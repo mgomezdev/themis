@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { PRINTERS, JOBS } from '../data/mock';
+import React, { useState, useRef, useEffect } from 'react';
+import { JOBS } from '../data/mock';
+import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import {
   StatusPill,
@@ -11,6 +12,16 @@ import {
 } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
+import {
+  pausePrinter,
+  resumePrinter,
+  stopPrinter,
+  setLight,
+  jogZ,
+  setFanSpeed,
+  setBedTemp,
+  reconnectPrinter,
+} from '../api/printers';
 
 type Layout = 'grid' | 'list' | 'focus';
 
@@ -164,6 +175,28 @@ function PrinterExpandedCard({
   onCollapse: () => void;
 }) {
   const isPrinting = p.status === 'printing';
+  const isPaused = p.status === 'paused';
+  const isOffline = p.status === 'offline';
+  const [lightOn, setLightOn] = useState(false);
+  const [fanValues, setFanValues] = useState({
+    model: p.fanModel,
+    auxiliary: p.fanAux,
+    box: p.fanBox,
+  });
+  const [bedInput, setBedInput] = useState(String(p.bedTempTarget));
+  const fanDebounceRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const [reconnecting, setReconnecting] = useState(false);
+
+  useEffect(() => {
+    setFanValues({ model: p.fanModel, auxiliary: p.fanAux, box: p.fanBox });
+    setBedInput(String(p.bedTempTarget));
+  }, [p.id]);
+
+  useEffect(() => {
+    const refs = fanDebounceRef.current;
+    return () => { Object.values(refs).forEach(clearTimeout); };
+  }, []);
+
   const job: Job | undefined = p.currentJobId
     ? JOBS.find(j => j.id === p.currentJobId)
     : undefined;
@@ -188,6 +221,7 @@ function PrinterExpandedCard({
           borderBottom: '1px solid var(--border-1)',
           gap: 16,
           alignItems: 'center',
+          flexWrap: 'wrap',
         }}
       >
         <div className="col" style={{ minWidth: 0, flex: 1 }}>
@@ -235,8 +269,22 @@ function PrinterExpandedCard({
             {p.capabilities.join(' · ')}
           </div>
         </div>
-        <div className="row gap-2" style={{ flexShrink: 0 }}>
+        <div className="row gap-2" style={{ flexShrink: 0, flexWrap: 'wrap' }}>
           <StatusPill status={p.status} />
+          {isOffline && (
+            <button
+              className="btn sm"
+              disabled={reconnecting}
+              onClick={() => {
+                setReconnecting(true);
+                reconnectPrinter(p.id)
+                  .catch(console.error)
+                  .finally(() => setReconnecting(false));
+              }}
+            >
+              {Icons.refresh} {reconnecting ? 'Connecting…' : 'Reconnect'}
+            </button>
+          )}
           <button className="btn sm">{Icons.camera} Snapshot</button>
           <button className="btn icon sm">{Icons.more}</button>
           <button
@@ -252,18 +300,15 @@ function PrinterExpandedCard({
       {/* Body */}
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: 'minmax(0, 1.6fr) minmax(280px, 1fr)',
+          display: 'flex',
+          flexWrap: 'wrap',
           gap: 18,
           padding: 18,
         }}
       >
         {/* LEFT */}
-        <div className="col gap-4" style={{ minWidth: 0 }}>
-          <VideoTile live={isPrinting} time={p.timeElapsed} />
-          <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: -8 }}>
-            Live camera — stub (see GitHub issues for wiring)
-          </div>
+        <div className="col gap-4" style={{ flex: '1.6 1 320px', minWidth: 0 }}>
+          <VideoTile live={!isOffline} time={isPrinting ? p.timeElapsed : undefined} printerId={p.id} />
 
           {/* Big telemetry numbers */}
           <div className="row gap-6" style={{ flexWrap: 'wrap' }}>
@@ -324,17 +369,65 @@ function PrinterExpandedCard({
           {isPrinting && <Progress value={p.progress} large />}
 
           {/* Action row */}
-          <div className="row gap-2" style={{ marginTop: 2 }}>
+          <div className="row gap-2" style={{ marginTop: 2, flexWrap: 'wrap' }}>
             {isPrinting && (
-              <>
-                <button className="btn">{Icons.pause} Pause</button>
-                <button className="btn">{Icons.stop} Stop</button>
-              </>
+              <button
+                className="btn"
+                onClick={() => pausePrinter(p.id).catch(console.error)}
+              >
+                {Icons.pause} Pause
+              </button>
             )}
-            {!isPrinting && (
+            {isPaused && (
+              <button
+                className="btn"
+                onClick={() => resumePrinter(p.id).catch(console.error)}
+              >
+                {Icons.play} Resume
+              </button>
+            )}
+            {(isPrinting || isPaused) && (
+              <button
+                className="btn"
+                onClick={() => stopPrinter(p.id).catch(console.error)}
+              >
+                {Icons.stop} Stop
+              </button>
+            )}
+            {!isPrinting && !isPaused && (
               <button className="btn primary">
                 {Icons.play} Claim next from queue
               </button>
+            )}
+            {p.capabilities.includes('chamber light') && (
+              <button
+                className={`btn sm${lightOn ? ' active' : ''}`}
+                title="Toggle chamber light"
+                disabled={isOffline}
+                onClick={() => {
+                  const next = !lightOn;
+                  setLightOn(next);
+                  setLight(p.id, next).catch(console.error);
+                }}
+              >
+                {lightOn ? 'Light: On' : 'Light: Off'}
+              </button>
+            )}
+            {p.capabilities.includes('pause resume') && (
+              <>
+                <button
+                  className="btn sm"
+                  onClick={() => jogZ(p.id, 10).catch(console.error)}
+                >
+                  +10 mm
+                </button>
+                <button
+                  className="btn sm"
+                  onClick={() => jogZ(p.id, -10).catch(console.error)}
+                >
+                  −10 mm
+                </button>
+              </>
             )}
             <div style={{ flex: 1 }} />
             <button className="btn ghost sm">
@@ -402,7 +495,7 @@ function PrinterExpandedCard({
         </div>
 
         {/* RIGHT */}
-        <div className="col gap-4">
+        <div className="col gap-4" style={{ flex: '1 1 260px', minWidth: 0 }}>
           <div
             className="card"
             style={{ padding: 14, background: 'var(--bg-1)' }}
@@ -461,6 +554,85 @@ function PrinterExpandedCard({
             </div>
           </div>
 
+          {p.capabilities.includes('fan control') && (
+            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+              <div className="tag-key" style={{ marginBottom: 10 }}>Fans</div>
+              <div className="col gap-3">
+                {(['model', 'auxiliary', 'box'] as const).map(fan => (
+                  <div key={fan} className="col gap-1">
+                    <div className="row between">
+                      <span className="small" style={{ textTransform: 'capitalize' }}>{fan}</span>
+                      <span className="num small muted">{fanValues[fan]}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={fanValues[fan]}
+                      disabled={isOffline}
+                      style={{ width: '100%' }}
+                      onChange={e => {
+                        const value = Number(e.target.value);
+                        setFanValues(prev => ({ ...prev, [fan]: value }));
+                        clearTimeout(fanDebounceRef.current[fan]);
+                        fanDebounceRef.current[fan] = setTimeout(() => {
+                          setFanSpeed(p.id, fan, value).catch(console.error);
+                        }, 300);
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {p.capabilities.includes('temp control') && (
+            <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
+              <div className="row between" style={{ marginBottom: 10 }}>
+                <span className="tag-key">Bed Temp</span>
+                <span className="num small muted">target: {p.bedTempTarget}°C</span>
+              </div>
+              <div className="row gap-2" style={{ flexWrap: 'wrap', marginBottom: 10 }}>
+                {[0, 60, 80, 95, 110].map(preset => (
+                  <button
+                    key={preset}
+                    className="btn sm"
+                    disabled={isOffline}
+                    onClick={() => {
+                      setBedInput(String(preset));
+                      setBedTemp(p.id, preset).catch(console.error);
+                    }}
+                  >
+                    {preset === 0 ? 'Off' : `${preset}°C`}
+                  </button>
+                ))}
+              </div>
+              <div className="row gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  max={120}
+                  value={bedInput}
+                  disabled={isOffline}
+                  style={{ width: 72, padding: '4px 8px', borderRadius: 6,
+                    background: 'var(--bg-3)', border: '1px solid var(--border-1)',
+                    color: 'var(--text-1)', fontSize: 13 }}
+                  onChange={e => setBedInput(e.target.value)}
+                />
+                <button
+                  className="btn sm"
+                  disabled={isOffline}
+                  onClick={() => {
+                    const c = parseInt(bedInput, 10);
+                    if (!isNaN(c)) setBedTemp(p.id, c).catch(console.error);
+                  }}
+                >
+                  Set
+                </button>
+              </div>
+            </div>
+          )}
+
           <div
             className="card"
             style={{ padding: 14, background: 'var(--bg-1)' }}
@@ -491,9 +663,11 @@ function PrinterExpandedCard({
 // FleetGrid layout
 // -------------------------------------------------------------------------
 function FleetGrid({
+  printers,
   expandedId,
   onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
@@ -505,7 +679,7 @@ function FleetGrid({
         gap: 16,
       }}
     >
-      {PRINTERS.map(p => {
+      {printers.map(p => {
         const expanded = expandedId === p.id;
         return (
           <div
@@ -531,9 +705,11 @@ function FleetGrid({
 // FleetList layout — table with inline expand row
 // -------------------------------------------------------------------------
 function FleetList({
+  printers,
   expandedId,
   onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
@@ -553,7 +729,7 @@ function FleetList({
           </tr>
         </thead>
         <tbody>
-          {PRINTERS.map(p => {
+          {printers.map(p => {
             const expanded = expandedId === p.id;
             return (
               <React.Fragment key={p.id}>
@@ -746,14 +922,16 @@ function PrinterStripCard({
 // FleetFocus layout — one big hero + sidebar strip
 // -------------------------------------------------------------------------
 function FleetFocus({
+  printers,
   expandedId: _expandedId,
   onToggle: _onToggle,
 }: {
+  printers: Printer[];
   expandedId: string | null;
   onToggle: (id: string) => void;
 }) {
-  const [focusId, setFocusId] = useState(PRINTERS[0].id);
-  const hero = PRINTERS.find(p => p.id === focusId) ?? PRINTERS[0];
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const hero = printers.find(p => p.id === (focusId ?? printers[0]?.id)) ?? printers[0] ?? null;
   return (
     <div
       style={{
@@ -762,9 +940,9 @@ function FleetFocus({
         gap: 18,
       }}
     >
-      <PrinterExpandedCard printer={hero} onCollapse={() => {}} />
+      {hero && <PrinterExpandedCard printer={hero} onCollapse={() => {}} />}
       <div className="col gap-3">
-        {PRINTERS.map(p => (
+        {printers.map(p => (
           <PrinterStripCard
             key={p.id}
             printer={p}
@@ -781,14 +959,15 @@ function FleetFocus({
 // FleetScreen — main export
 // -------------------------------------------------------------------------
 export function FleetScreen() {
+  const printers = useFleetData();
   const [layout, setLayout] = useState<Layout>('grid');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const toggle = (id: string) =>
     setExpandedId(expandedId === id ? null : id);
 
-  const printingCount = PRINTERS.filter(p => p.status === 'printing').length;
-  const idleCount = PRINTERS.filter(p => p.status === 'idle').length;
+  const printingCount = printers.filter(p => p.status === 'printing').length;
+  const idleCount = printers.filter(p => p.status === 'idle').length;
 
   return (
     <div className="col gap-5">
@@ -809,7 +988,7 @@ export function FleetScreen() {
                 letterSpacing: '-0.02em',
               }}
             >
-              {PRINTERS.length} printers online
+              {printers.length} printers online
             </div>
             <div className="muted small">
               {printingCount} printing · {idleCount} idle
@@ -849,13 +1028,13 @@ export function FleetScreen() {
       </div>
 
       {layout === 'list' && (
-        <FleetList expandedId={expandedId} onToggle={toggle} />
+        <FleetList printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
       {layout === 'focus' && (
-        <FleetFocus expandedId={expandedId} onToggle={toggle} />
+        <FleetFocus printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
       {layout === 'grid' && (
-        <FleetGrid expandedId={expandedId} onToggle={toggle} />
+        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} />
       )}
     </div>
   );

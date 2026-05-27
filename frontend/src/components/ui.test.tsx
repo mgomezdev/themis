@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
-import { StatusPill, Progress, Card, Empty, Kv } from './ui';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { StatusPill, Progress, Card, Empty, Kv, VideoTile } from './ui';
 import { Icons } from './icons';
 
 describe('StatusPill', () => {
@@ -41,5 +41,40 @@ describe('Empty', () => {
     render(<Empty title="No files" sub="Try again" icon={Icons.files} />);
     expect(screen.getByText('No files')).toBeTruthy();
     expect(screen.getByText('Try again')).toBeTruthy();
+  });
+});
+
+describe('VideoTile', () => {
+  it('renders img with camera URL when printerId is set and live is true', () => {
+    render(<VideoTile live={true} printerId="42" />);
+    const img = document.querySelector('img');
+    expect(img).toBeTruthy();
+    expect(img!.getAttribute('src')).toContain('/api/v1/printers/42/camera');
+  });
+
+  it('does not render img when live is false even with printerId', () => {
+    render(<VideoTile live={false} printerId="42" />);
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('does not render img when printerId is absent', () => {
+    render(<VideoTile live={true} />);
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('falls back to snapshot polling when MJPEG onError fires', () => {
+    render(<VideoTile live={true} printerId="42" />);
+    const img = document.querySelector('img')!;
+    expect(img.src).toContain('/camera');
+    fireEvent.error(img);
+    const snap = document.querySelector('img')!;
+    expect(snap.src).toContain('/snapshot');
+  });
+
+  it('hides img entirely when snapshot also fails', () => {
+    render(<VideoTile live={true} printerId="42" />);
+    fireEvent.error(document.querySelector('img')!);  // MJPEG → snapshot
+    fireEvent.error(document.querySelector('img')!);  // snapshot → placeholder
+    expect(document.querySelector('img')).toBeNull();
   });
 });

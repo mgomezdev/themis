@@ -71,7 +71,20 @@ All messages have a `Topic` field that determines the message type:
 | 386 | `_CMD_EDIT_VIDEO_STREAMING` | → printer | `{"Enable": 1}` or `{"Enable": 0}` | Start/stop MJPEG stream |
 | 401 | `_CMD_EDIT_AXIS_NUMBER` | → printer | `{"Axis": "Z", "Step": <mm>}` | Jog axis |
 | 402 | `_CMD_EDIT_AXIS_ZERO` | → printer | `{"Axis": "XYZ"}` | Home |
-| 403 | `_CMD_EDIT_STATUS_DATA` | → printer | `{"LightStatus": {...}}` | Light + fan control |
+| 403 | `_CMD_EDIT_STATUS_DATA` | → printer | See write payloads below | Light, fan, temperature control |
+
+### Cmd 403 write payloads (`EDIT_STATUS_DATA`)
+
+| Purpose | Payload |
+|---|---|
+| Chamber light (on) | `{"LightStatus": {"SecondLight": true, "RgbLight": [R, G, B]}}` |
+| Chamber light (off) | `{"LightStatus": {"SecondLight": false, "RgbLight": [R, G, B]}}` |
+| Fan speeds | `{"TargetFanSpeed": {"ModelFan": 80, "AuxiliaryFan": 60, "BoxFan": 40}}` |
+| Bed temperature | `{"TempTargetHotbed": 95}` — use `0` to turn off |
+| Nozzle temperature | `{"TempTargetNozzle": 220}` — deferred, do not expose yet |
+| Print speed | `{"PrintSpeedPct": 100}` — deferred |
+
+**Fan semantics:** All three fan values must be sent together. To change one fan without resetting others, read the current `fan_model`/`fan_aux`/`fan_box` from the state dict, patch the target fan, then send all three.
 
 ---
 
@@ -125,6 +138,7 @@ All values are rounded to 1 decimal place. Missing keys are omitted (not default
 From `Status.CurrentFanSpeed`:
 - `ModelFan` → `state.fan_model` (part-cooling fan, 0–100)
 - `AuxiliaryFan` → `state.fan_aux` (0–100)
+- `BoxFan` → `state.fan_box` (box/chamber fan, 0–100)
 
 ### Light fields
 
@@ -163,6 +177,7 @@ class ElegooState:
     temperatures: dict            # normalized (see above)
     fan_model: int                # 0–100
     fan_aux: int                  # 0–100
+    fan_box: int                   # 0–100, box/chamber fan
     chamber_light: bool           # SecondLight
     rgb_light: list               # [R, G, B]
     video_url: str | None         # populated by Cmd 386 response

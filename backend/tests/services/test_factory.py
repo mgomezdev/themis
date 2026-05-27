@@ -52,7 +52,8 @@ def test_get_printer_types_elegoo_fields():
     assert "elegoo_centauri" in types
     field_names = [f["name"] for f in types["elegoo_centauri"]["connection_fields"]]
     assert "ip_address" in field_names
-    assert "camera_url" in field_names
+    # camera_url is not a connection field — camera URL is derived from IP at port 3031
+    assert "camera_url" not in field_names
 
 
 def test_create_client_bambu():

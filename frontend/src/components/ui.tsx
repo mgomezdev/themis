@@ -47,11 +47,60 @@ export function MaterialChip({ material, color }: { material: string; color: str
   );
 }
 
-export function VideoTile({ live = true, status, time }: { live?: boolean; status?: StatusKey; time?: number }) {
+export function VideoTile({
+  live = true,
+  status,
+  time,
+  printerId,
+}: {
+  live?: boolean;
+  status?: StatusKey;
+  time?: number;
+  printerId?: string;
+}) {
+  const [imgError, setImgError] = React.useState(false);
+  const [useSnapshot, setUseSnapshot] = React.useState(false);
+  const [snapTick, setSnapTick] = React.useState(0);
+
+  React.useEffect(() => {
+    setImgError(false);
+    setUseSnapshot(false);
+    setSnapTick(0);
+  }, [printerId]);
+
+  React.useEffect(() => {
+    if (!useSnapshot || !live || !printerId) return;
+    const id = setInterval(() => setSnapTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [useSnapshot, live, printerId]);
+
+  const showCamera = live && printerId && !imgError;
+
   return (
     <div className={`video ${live ? 'live' : ''}`}>
-      <div className="feed-scene" />
-      <div className="feed-noise" />
+      {showCamera ? (
+        useSnapshot ? (
+          <img
+            key={snapTick}
+            src={`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            onError={() => setImgError(true)}
+            alt=""
+          />
+        ) : (
+          <img
+            src={`/api/v1/printers/${printerId}/camera`}
+            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+            onError={() => setUseSnapshot(true)}
+            alt=""
+          />
+        )
+      ) : (
+        <>
+          <div className="feed-scene" />
+          <div className="feed-noise" />
+        </>
+      )}
       {time != null && <div className="feed-time mono">{fmtClock(time)}</div>}
       {status && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 3 }}>
