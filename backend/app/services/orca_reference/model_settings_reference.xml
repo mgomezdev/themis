@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <object id="20">
+    <metadata key="name" value="LegrandKeyStoneMount"/>
+    <metadata key="extruder" value="1"/>
+    <part id="1" subtype="normal_part">
+      <metadata key="name" value="on-qbracketTrimmed.stl"/>
+      <metadata key="matrix" value="-1 -1.2246467991473532e-16 0 4.7089994079634039 1.2246467991473532e-16 -1 0 90.352577706452621 0 0 1 0 0 0 0 1"/>
+      <metadata key="source_file" value="LegrandMountStuffKeystone-Klucas.3mf"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="0"/>
+      <metadata key="source_offset_x" value="1.17724609375"/>
+      <metadata key="source_offset_y" value="10.490540027618408"/>
+      <metadata key="source_offset_z" value="0"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="2" subtype="normal_part">
+      <metadata key="name" value="Generic-Box"/>
+      <metadata key="matrix" value="0.90327688416877427 0 0 -159.12458576372995 0 0.13000000000000003 0 64.306656132693234 0 0 1.0022519476439764 -32.921759149399634 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="1"/>
+      <metadata key="source_offset_x" value="-79.562294006347656"/>
+      <metadata key="source_offset_y" value="32.153327941894531"/>
+      <metadata key="source_offset_z" value="-16.460879564285278"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="3" subtype="normal_part">
+      <metadata key="name" value="Shape-BoxTriangle"/>
+      <metadata key="matrix" value="-1 -1.2246467991473532e-16 0 -322.76364269471873 1.2246467991473532e-16 -1 0 25.504086269800872 0 0 1 -66.153343200683594 0 0 0 1"/>
+      <metadata key="source_file" value="LegrandMountStuffKeystone-Klucas.3mf"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="9"/>
+      <metadata key="source_offset_x" value="-72.395500183105469"/>
+      <metadata key="source_offset_y" value="-5.7215824127197266"/>
+      <metadata key="source_offset_z" value="-16.538335800170898"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="4" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 -156.85054048564746 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="3"/>
+      <metadata key="source_offset_x" value="-78.425270080566406"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="5" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 -122.86332147391423 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="4"/>
+      <metadata key="source_offset_x" value="-61.431659698486328"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="6" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 -88.794655767289925 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="5"/>
+      <metadata key="source_offset_x" value="-44.397327423095703"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="7" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 -53.189954101612983 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="6"/>
+      <metadata key="source_offset_x" value="-26.594977378845215"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="8" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 -18.110925556552658 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="7"/>
+      <metadata key="source_offset_x" value="-9.0554627999663353"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="9" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 16.198934462959045 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="8"/>
+      <metadata key="source_offset_x" value="8.0994672477245331"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="10" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 51.667933654026228 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="9"/>
+      <metadata key="source_offset_x" value="25.833967208862305"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="11" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 86.750838967542279 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="10"/>
+      <metadata key="source_offset_x" value="43.375419616699219"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="12" subtype="normal_part">
+      <metadata key="name" value="IndividualKeystone.stl"/>
+      <metadata key="matrix" value="1 0 0 120.72522874166594 0 1 0 26.780456906215939 0 0 1 -46.578058242797852 0 0 0 1"/>
+      <metadata key="source_file" value="legrandmountstuffkeystone-printables.3mf"/>
+      <metadata key="source_object_id" value="0"/>
+      <metadata key="source_volume_id" value="11"/>
+      <metadata key="source_offset_x" value="60.362613677978516"/>
+      <metadata key="source_offset_y" value="13.390228390693665"/>
+      <metadata key="source_offset_z" value="-23.289029121398926"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="13" subtype="normal_part">
+      <metadata key="name" value="Shape-BoxTriangle"/>
+      <metadata key="matrix" value="-1 -1.2246467991473532e-16 0 276.71656554545018 1.2246467991473532e-16 -1 0 25.487003360308798 0 0 1 -66.153343200683594 0 0 0 1"/>
+      <metadata key="source_file" value="LegrandMountStuffKeystone-Klucas.3mf"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="8"/>
+      <metadata key="source_offset_x" value="68.64501953125"/>
+      <metadata key="source_offset_y" value="-5.725853443145752"/>
+      <metadata key="source_offset_z" value="-16.538335800170898"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="14" subtype="normal_part">
+      <metadata key="name" value="Shape-Box-fillerBridge"/>
+      <metadata key="matrix" value="6.4693085733335138 0 0 -19.990755693507108 0 0.16678827702505947 0 72.200484483199915 0 0 0.12 -109.95611572265625 0 0 0 1"/>
+      <metadata key="source_file" value="LegrandMountStuffKeystone-Klucas.3mf"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="15"/>
+      <metadata key="source_offset_x" value="-0.4666900634765625"/>
+      <metadata key="source_offset_y" value="4.874906063079834"/>
+      <metadata key="source_offset_z" value="-27.489028930664062"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="15" subtype="normal_part">
+      <metadata key="name" value="helper_disk.stl"/>
+      <metadata key="matrix" value="1 0 0 287.16665430096623 0 1 0 -41.961253860677154 0 0 1 -115.55611457675695 0 0 0 1"/>
+      <metadata key="source_file" value="helper_disk.stl"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="39"/>
+      <metadata key="source_offset_x" value="0"/>
+      <metadata key="source_offset_y" value="0"/>
+      <metadata key="source_offset_z" value="0.10000000149011612"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="16" subtype="normal_part">
+      <metadata key="name" value="helper_disk.stl"/>
+      <metadata key="matrix" value="7.7573771692340925 -2.4651903288156619e-32 0 -40.338767245133567 0 1 0 86.742499863630655 0 0 1 -115.55611457675695 0 0 0 1"/>
+      <metadata key="source_file" value="helper_disk.stl"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="39"/>
+      <metadata key="source_offset_x" value="0"/>
+      <metadata key="source_offset_y" value="0"/>
+      <metadata key="source_offset_z" value="0.10000000149011612"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="17" subtype="normal_part">
+      <metadata key="name" value="helper_disk.stl"/>
+      <metadata key="matrix" value="1 0 0 272.20940456739288 0 1 0 83.708524967876087 0 0 1 -115.55611457675695 0 0 0 1"/>
+      <metadata key="source_file" value="helper_disk.stl"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="39"/>
+      <metadata key="source_offset_x" value="0"/>
+      <metadata key="source_offset_y" value="0"/>
+      <metadata key="source_offset_z" value="0.10000000149011612"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="18" subtype="normal_part">
+      <metadata key="name" value="helper_disk.stl"/>
+      <metadata key="matrix" value="1 0 0 -335.11781191359279 0 1 0 54.507746344302355 0 0 1 -115.55611457675695 0 0 0 1"/>
+      <metadata key="source_file" value="helper_disk.stl"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="39"/>
+      <metadata key="source_offset_x" value="0"/>
+      <metadata key="source_offset_y" value="0"/>
+      <metadata key="source_offset_z" value="0.10000000149011612"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+    <part id="19" subtype="normal_part">
+      <metadata key="name" value="helper_disk.stl"/>
+      <metadata key="matrix" value="1 0 0 -337.26555695003753 0 1 0 -35.154694262351576 0 0 1 -115.55611457675695 0 0 0 1"/>
+      <metadata key="source_file" value="helper_disk.stl"/>
+      <metadata key="source_object_id" value="11"/>
+      <metadata key="source_volume_id" value="39"/>
+      <metadata key="source_offset_x" value="0"/>
+      <metadata key="source_offset_y" value="0"/>
+      <metadata key="source_offset_z" value="0.10000000149011612"/>
+      <metadata key="extruder" value="0"/>
+      <mesh_stat edges_fixed="0" degenerate_facets="0" facets_removed="0" facets_reversed="0" backwards_edges="0"/>
+    </part>
+  </object>
+  <plate>
+    <metadata key="plater_id" value="1"/>
+    <metadata key="plater_name" value=""/>
+    <metadata key="locked" value="false"/>
+    <metadata key="filament_map_mode" value="Auto For Flush"/>
+    <metadata key="thumbnail_file" value="Metadata/plate_1.png"/>
+    <metadata key="thumbnail_no_light_file" value="Metadata/plate_no_light_1.png"/>
+    <metadata key="top_file" value="Metadata/top_1.png"/>
+    <metadata key="pick_file" value="Metadata/pick_1.png"/>
+    <model_instance>
+      <metadata key="object_id" value="20"/>
+      <metadata key="instance_id" value="0"/>
+      <metadata key="identify_id" value="308"/>
+    </model_instance>
+  </plate>
+  <assemble>
+   <assemble_item object_id="20" instance_id="0" transform="1 0 0 0 1 0 0 0 1 136.79486083984375 110.80473983287811 28.989029884338379" offset="0 0 0" />
+  </assemble>
+</config>
