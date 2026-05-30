@@ -86,6 +86,20 @@ def test_slice_raises_when_both_attempts_fail(mock_build, mock_cfg, tmp_path):
             svc.slice(_req(tmp_path))
 
 
+@patch("app.services.slicer_service.build_project_config", return_value={})
+@patch("app.services.slicer_service.stl_to_3mf")
+@patch("app.services.slicer_service.build_sliceable_3mf")
+def test_stl_source_uses_stl_wrapper(mock_build, mock_stl, mock_cfg, tmp_path):
+    svc = _make_service(tmp_path)
+    req = _req(tmp_path)
+    req.source_3mf = str(tmp_path / "model.stl")
+    Path(req.source_3mf).write_bytes(b"stl")
+    with patch("app.services.slicer_service.subprocess.run", side_effect=_fake_run_writing_gcode(True)):
+        svc.slice(req)
+    mock_stl.assert_called_once()          # STL path wraps the mesh
+    mock_build.assert_not_called()         # not the 3MF preserve path
+
+
 def test_slice_raises_on_unresolvable_preset(tmp_path):
     from app.services.preset_resolver import PresetNotFoundError
     svc = SlicerService(orca_executable="orcaslicer", data_dir=str(tmp_path))

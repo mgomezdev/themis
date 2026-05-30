@@ -1,7 +1,44 @@
 import json
+import struct
 import zipfile
 
-from app.services.mesh_3mf_builder import build_sliceable_3mf, source_has_project_settings
+from app.services.mesh_3mf_builder import build_sliceable_3mf, source_has_project_settings, stl_to_3mf
+
+
+def _binary_stl(path, triangles):
+    data = b"\x00" * 80 + struct.pack("<I", len(triangles))
+    for tri in triangles:
+        data += struct.pack("<3f", 0.0, 0.0, 1.0)  # normal (ignored)
+        for v in tri:
+            data += struct.pack("<3f", *v)
+        data += b"\x00\x00"  # attribute byte count
+    path.write_bytes(data)
+
+
+def test_stl_to_3mf_wraps_mesh_with_config(tmp_path):
+    stl = tmp_path / "m.stl"
+    # two triangles sharing an edge -> 4 unique vertices
+    _binary_stl(stl, [
+        ((0, 0, 0), (1, 0, 0), (1, 1, 0)),
+        ((0, 0, 0), (1, 1, 0), (0, 1, 0)),
+    ])
+    out = stl_to_3mf(stl, {"printer_model": "X"}, tmp_path / "out.3mf")
+    with zipfile.ZipFile(out) as z:
+        names = set(z.namelist())
+        assert {"[Content_Types].xml", "_rels/.rels", "3D/3dmodel.model",
+                "Metadata/project_settings.config"} <= names
+        model = z.read("3D/3dmodel.model").decode()
+        assert model.count("<vertex ") == 4      # deduplicated
+        assert model.count("<triangle ") == 2
+        assert json.loads(z.read("Metadata/project_settings.config")) == {"printer_model": "X"}
+
+
+def test_stl_to_3mf_rejects_empty(tmp_path):
+    import pytest
+    stl = tmp_path / "empty.stl"
+    _binary_stl(stl, [])
+    with pytest.raises(ValueError):
+        stl_to_3mf(stl, {}, tmp_path / "out.3mf")
 
 
 def _make_source(tmp_path):

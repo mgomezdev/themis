@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import get_data_dir, get_orca_executable
-from .mesh_3mf_builder import build_sliceable_3mf
+from .mesh_3mf_builder import build_sliceable_3mf, stl_to_3mf
 from .preset_resolver import PresetNotFoundError, PresetResolver
 from .project_config_builder import build_project_config
 
@@ -53,6 +53,12 @@ class SlicerService:
         out_dir = self._data_dir / "gcode" / str(req.job_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         prepared = out_dir / "prepared.3mf"
+
+        # Bare STL: wrap the mesh into a fresh 3MF with our config (no model_settings
+        # to preserve, so there's nothing for the recovery tier to strip).
+        if Path(req.source_3mf).suffix.lower() == ".stl":
+            stl_to_3mf(req.source_3mf, config, prepared)
+            return self._run_and_extract(prepared, req.plate_number, out_dir)
 
         # Primary: preserve model_settings (per-object overrides / paint).
         build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False)

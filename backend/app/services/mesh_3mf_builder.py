@@ -10,8 +10,25 @@ preserved so they re-layer onto the new presets. ``slice_info.config`` is droppe
 from __future__ import annotations
 
 import json
+import re
+import struct
 import zipfile
 from pathlib import Path
+
+_CONTENT_TYPES = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+    "</Types>"
+)
+_RELS = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+    'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/>'
+    "</Relationships>"
+)
 
 # Embedded files Themis owns / regenerates — everything else is copied verbatim.
 _REPLACED = "metadata/project_settings.config"
@@ -46,6 +63,71 @@ def build_sliceable_3mf(
                 continue
             zout.writestr(item, zin.read(item))
         zout.writestr("Metadata/project_settings.config", config_bytes)
+    return out_path
+
+
+def _parse_stl(path: Path) -> list[tuple[tuple[float, float, float], ...]]:
+    """Return a list of triangles (each 3 (x,y,z) vertices) from a binary or ASCII STL."""
+    data = path.read_bytes()
+    if len(data) >= 84:
+        ntri = struct.unpack_from("<I", data, 80)[0]
+        if len(data) == 84 + ntri * 50:  # exact binary-STL size → binary
+            tris = []
+            off = 84
+            for _ in range(ntri):
+                vs = struct.unpack_from("<9f", data, off + 12)  # skip 12-byte normal
+                tris.append(((vs[0], vs[1], vs[2]), (vs[3], vs[4], vs[5]), (vs[6], vs[7], vs[8])))
+                off += 50
+            return tris
+    # ASCII fallback
+    nums = re.findall(r"vertex\s+(\S+)\s+(\S+)\s+(\S+)", data.decode("utf-8", "ignore"))
+    verts = [(float(a), float(b), float(c)) for a, b, c in nums]
+    return [tuple(verts[i:i + 3]) for i in range(0, len(verts) - 2, 3)]
+
+
+def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path) -> Path:
+    """Wrap an STL mesh into a sliceable 3MF carrying the generated project config.
+
+    Deduplicates vertices and emits a single model object. Used when the upload is
+    a bare STL (no 3MF container / model_settings to preserve).
+    """
+    stl_path, out_path = Path(stl_path), Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tris = _parse_stl(stl_path)
+    if not tris:
+        raise ValueError(f"no triangles parsed from STL: {stl_path}")
+
+    index: dict[tuple[float, float, float], int] = {}
+    vertices: list[tuple[float, float, float]] = []
+    faces: list[tuple[int, int, int]] = []
+    for tri in tris:
+        face = []
+        for v in tri:
+            i = index.get(v)
+            if i is None:
+                i = len(vertices)
+                index[v] = i
+                vertices.append(v)
+            face.append(i)
+        faces.append((face[0], face[1], face[2]))
+
+    v_xml = "".join(f'<vertex x="{x}" y="{y}" z="{z}"/>' for x, y, z in vertices)
+    t_xml = "".join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in faces)
+    model = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<model unit="millimeter" xml:lang="en-US" '
+        'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+        "<resources><object id=\"1\" type=\"model\"><mesh>"
+        f"<vertices>{v_xml}</vertices><triangles>{t_xml}</triangles>"
+        "</mesh></object></resources>"
+        '<build><item objectid="1"/></build></model>'
+    )
+
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("3D/3dmodel.model", model)
+        z.writestr("Metadata/project_settings.config", json.dumps(project_config))
     return out_path
 
 
