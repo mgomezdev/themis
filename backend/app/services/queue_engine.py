@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import GcodeFile, Job, JobPrinterConfig, Printer, UploadedFile
 from .printer_manager import PrinterManager
-from .slicer_service import SliceError, SlicerService
+from .slicer_service import SliceError, SliceRequest, SlicerService
 
 logger = logging.getLogger(__name__)
 
@@ -119,26 +119,35 @@ class QueueEngine:
                 )
             )
             config = result.scalar_one_or_none()
+            printer = await session.get(Printer, printer_id)
             # Capture scalar values before session closes
             print_profile = config.print_profile if config else None
             filament_profile = config.filament_profile if config else None
+            filament_color = config.filament_color if config else None
             stored_path = uploaded_file.stored_path if uploaded_file else None
+            machine_preset = printer.current_orca_printer_profile if printer else None
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
+        if not machine_preset:
+            await self._handle_slice_failure(
+                job_id, printer_id, "printer has no OrcaSlicer machine preset selected"
+            )
+            return
 
         loop = asyncio.get_running_loop()
+        req = SliceRequest(
+            job_id=job_id,
+            source_3mf=stored_path,
+            plate_number=plate_number,
+            machine_preset=machine_preset,
+            process_preset=print_profile,
+            filament_presets=[filament_profile] if filament_profile else [],
+            filament_colours=[filament_color] if filament_color else [],
+        )
         try:
-            gcode_path: str = await loop.run_in_executor(
-                self._executor,
-                self._slicer.slice,
-                job_id,
-                stored_path,
-                plate_number,
-                print_profile,
-                filament_profile,
-            )
+            gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
         except SliceError as exc:
             await self._handle_slice_failure(job_id, printer_id, str(exc))
             return

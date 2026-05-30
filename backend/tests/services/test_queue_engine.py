@@ -45,6 +45,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
                 connection_config={},
+                current_orca_printer_profile="Test Machine Preset",
             ))
             await session.flush()
         f = UploadedFile(

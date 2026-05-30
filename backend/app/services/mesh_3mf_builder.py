@@ -15,21 +15,34 @@ from pathlib import Path
 
 # Embedded files Themis owns / regenerates — everything else is copied verbatim.
 _REPLACED = "metadata/project_settings.config"
+_MODEL = "metadata/model_settings.config"
 _DROPPED = ("metadata/slice_info.config",)
 
 
-def build_sliceable_3mf(source_3mf: str | Path, project_config: dict, out_path: str | Path) -> Path:
-    """Copy ``source_3mf`` preserving geometry + ``model_settings.config`` + paint,
-    replacing ``project_settings.config`` with ``project_config``."""
+def build_sliceable_3mf(
+    source_3mf: str | Path,
+    project_config: dict,
+    out_path: str | Path,
+    geometry_only: bool = False,
+) -> Path:
+    """Copy ``source_3mf`` preserving geometry, replacing ``project_settings.config``
+    with ``project_config``.
+
+    Normally ``model_settings.config`` (per-object overrides, modifiers, paint
+    refs) is preserved. ``geometry_only=True`` drops it too — the recovery tier,
+    mirroring the GUI's "import geometry only": discard all the file's settings
+    and apply ours fresh.
+    """
     source_3mf, out_path = Path(source_3mf), Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     config_bytes = json.dumps(project_config).encode("utf-8")
+    drop = set(_DROPPED) | {_REPLACED}
+    if geometry_only:
+        drop.add(_MODEL)
 
     with zipfile.ZipFile(source_3mf) as zin, zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
-        names = {n.lower() for n in zin.namelist()}
         for item in zin.namelist():
-            low = item.lower()
-            if low == _REPLACED or low in _DROPPED:
+            if item.lower() in drop:
                 continue
             zout.writestr(item, zin.read(item))
         zout.writestr("Metadata/project_settings.config", config_bytes)
