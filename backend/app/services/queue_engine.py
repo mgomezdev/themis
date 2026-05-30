@@ -2,6 +2,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
@@ -125,6 +126,7 @@ class QueueEngine:
             filament_profile = config.filament_profile if config else None
             filament_color = config.filament_color if config else None
             stored_path = uploaded_file.stored_path if uploaded_file else None
+            original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
 
         if config is None or uploaded_file is None:
@@ -136,6 +138,13 @@ class QueueEngine:
             )
             return
 
+        # Meaningful, unique artifact name; the printer decides its output format.
+        stem = os.path.splitext(os.path.basename(original_filename or "model"))[0]
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+        file_base = f"{safe}_p{plate_number}_j{job_id}"
+        client = self._mgr.get_client(printer_id)
+        export_args = client.orca_export_args(file_base) if client else []
+
         loop = asyncio.get_running_loop()
         req = SliceRequest(
             job_id=job_id,
@@ -145,6 +154,7 @@ class QueueEngine:
             process_preset=print_profile,
             filament_presets=[filament_profile] if filament_profile else [],
             filament_colours=[filament_color] if filament_color else [],
+            export_args=export_args,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
