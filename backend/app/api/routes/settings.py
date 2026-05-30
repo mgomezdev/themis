@@ -5,10 +5,44 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import SpoolmanConfig
+from ...models import QueueConfig, SpoolmanConfig
 from ...services import spoolman_service
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
+
+
+class QueueConfigOut(BaseModel):
+    check_interval_minutes: int
+
+
+class QueueConfigIn(BaseModel):
+    check_interval_minutes: int
+
+
+async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
+    row = await session.get(QueueConfig, 1)
+    if row is None:
+        row = QueueConfig(id=1, check_interval_minutes=5)
+        session.add(row)
+        await session.flush()
+    return row
+
+
+@router.get("/queue", response_model=QueueConfigOut)
+async def get_queue_config(session: AsyncSession = Depends(get_session)):
+    return await _get_or_create_queue(session)
+
+
+@router.put("/queue", response_model=QueueConfigOut)
+async def update_queue_config(
+    body: QueueConfigIn,
+    session: AsyncSession = Depends(get_session),
+):
+    row = await _get_or_create_queue(session)
+    row.check_interval_minutes = max(1, body.check_interval_minutes)
+    await session.commit()
+    await session.refresh(row)
+    return row
 
 
 class SpoolmanConfigOut(BaseModel):
