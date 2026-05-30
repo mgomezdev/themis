@@ -47,11 +47,21 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
         if not plate_numbers:
             plate_numbers = set(meta.keys())
 
+        # Non-Bambu 3MFs (e.g. PrusaSlicer) have no plate metadata — treat as single plate
+        if not plate_numbers and "3D/3dmodel.model" in names:
+            plate_numbers = {1}
+
         if not plate_numbers:
             return []
 
         if thumbnail_dir:
             Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
+
+        # Global thumbnail fallback (e.g. PrusaSlicer / eufyMake — no per-plate images)
+        global_thumb = next(
+            (n for n in ["Metadata/thumbnail.png", "Metadata/preview.png"] if n in names),
+            None,
+        )
 
         for num in sorted(plate_numbers):
             thumb_zip_path = f"Metadata/plate_{num}.png"
@@ -61,9 +71,13 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
                 dest = Path(thumbnail_dir) / f"plate_{num}.png"
                 dest.write_bytes(zf.read(thumb_zip_path))
                 thumb_disk_path = str(dest)
-            elif thumb_zip_path not in names:
-                thumb_disk_path = None
-            # If thumbnail exists in ZIP but no thumbnail_dir requested, leave path as None
+            elif thumb_zip_path not in names and global_thumb and thumbnail_dir:
+                # Use the global thumbnail for all plates in non-Bambu 3MFs
+                dest = Path(thumbnail_dir) / f"plate_{num}.png"
+                if not dest.exists():
+                    dest.write_bytes(zf.read(global_thumb))
+                thumb_disk_path = str(dest)
+            # If no thumbnail available, leave path as None
 
             m_data = meta.get(num, {})
             plates.append(PlateInfo(

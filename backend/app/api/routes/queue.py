@@ -11,7 +11,7 @@ from ...models import Job
 
 router = APIRouter(prefix="/api/v1/queue", tags=["queue"])
 
-_ACTIVE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused"}
+_ACTIVE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "blocked", "failed"}
 
 
 class PositionUpdate(BaseModel):

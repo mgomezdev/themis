@@ -35,6 +35,16 @@ async def _migrate(conn) -> None:
     cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
     if "loaded_filaments" not in cols:
         await conn.execute(text("ALTER TABLE printers ADD COLUMN loaded_filaments JSON DEFAULT '[]'"))
+    if "queue_on" not in cols:
+        await conn.execute(text("ALTER TABLE printers ADD COLUMN queue_on BOOLEAN NOT NULL DEFAULT 1"))
+
+    jpc_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
+    if "filament_id" not in jpc_cols:
+        await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_id INTEGER"))
+    if "filament_type" not in jpc_cols:
+        await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_type VARCHAR(100)"))
+    if "filament_color" not in jpc_cols:
+        await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_color VARCHAR(20)"))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

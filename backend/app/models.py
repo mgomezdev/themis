@@ -15,6 +15,7 @@ class Printer(Base):
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
     current_orca_printer_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
 
 
@@ -58,7 +59,10 @@ class JobPrinterConfig(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id"))
     print_profile: Mapped[str] = mapped_column(String(512))
-    filament_profile: Mapped[str] = mapped_column(String(512))
+    filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    filament_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    filament_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -70,3 +74,12 @@ class GcodeFile(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id"))
     path: Mapped[str] = mapped_column(String(1024))
+
+
+class SpoolmanConfig(Base):
+    __tablename__ = "spoolman_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    api_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)

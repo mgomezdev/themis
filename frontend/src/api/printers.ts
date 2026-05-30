@@ -43,6 +43,7 @@ export interface ApiPrinter {
   orca_printer_profiles: string[];
   current_orca_printer_profile: string | null;
   enabled: boolean;
+  queue_on: boolean;
   connected: boolean;
   loaded_filaments: LoadedFilament[];
 }
@@ -62,6 +63,7 @@ export interface UpdatePrinterBody {
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
   enabled?: boolean;
+  queue_on?: boolean;
   loaded_filaments?: LoadedFilament[];
 }
 

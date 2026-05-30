@@ -9,7 +9,7 @@ from typing import Callable
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import GcodeFile, Job, JobPrinterConfig, UploadedFile
+from ..models import GcodeFile, Job, JobPrinterConfig, Printer, UploadedFile
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SlicerService
 
@@ -67,6 +67,9 @@ class QueueEngine:
                 await self._try_claim_for_printer(session, printer_id)
 
     async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int) -> None:
+        printer = await session.get(Printer, printer_id)
+        if printer is None or not printer.queue_on:
+            return
         stmt = (
             select(Job)
             .join(

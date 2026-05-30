@@ -635,3 +635,15 @@ input, textarea, select { font-family: inherit; color: inherit; }
   display: grid;
   gap: 16px;
 }
+
+/* Two-column main + sidebar layout, collapses to single column on mobile */
+.layout-main-sidebar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 18px;
+}
+@media (max-width: 768px) {
+  .layout-main-sidebar {
+    grid-template-columns: 1fr;
+  }
+}

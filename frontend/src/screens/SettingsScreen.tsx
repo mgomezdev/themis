@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools } from '../api/spoolman';
 import { TAGS } from '../data/mock';
 import { Icons, Icon } from '../components/icons';
 import type { Tag } from '../data/types';
@@ -700,33 +701,62 @@ function SpoolmanPage() {
   const update = (patch: Partial<SpoolmanSettings>) => set(prev => ({ ...prev, ...patch }));
 
   const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
 
-  function testConnection() {
+  useEffect(() => {
+    getSpoolmanConfig()
+      .then(cfg => update({ enabled: cfg.enabled, url: cfg.url ?? '', apiKey: cfg.api_key ?? '' }))
+      .catch(console.error);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const spools = useSpools(s.connectionStatus === 'connected');
+
+  const stats = useMemo(() => ({
+    spools: spools.length,
+    materials: new Set(spools.map(sp => sp.filament.material)).size,
+    vendors: new Set(spools.map(sp => sp.filament.vendor?.name ?? '').filter(Boolean)).size,
+    lowSpools: spools.filter(sp => sp.remaining_weight < 100).length,
+  }), [spools]);
+
+  async function saveConfig() {
+    setSaving(true);
+    try {
+      await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: s.apiKey || null });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function testConnection() {
     if (!s.url.trim()) return;
     setTesting(true);
     update({ connectionStatus: 'connecting' });
-    setTimeout(() => {
-      const ok = /^https?:\/\//i.test(s.url) && s.url.length > 10;
+    try {
+      await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: s.apiKey || null });
+      const result = await testSpoolmanConnection(s.url, s.apiKey || null);
       update({
-        connectionStatus: ok ? 'connected' : 'error',
-        lastSyncedAt: ok ? new Date().toISOString() : s.lastSyncedAt,
+        connectionStatus: result.ok ? 'connected' : 'error',
+        lastSyncedAt: result.ok ? new Date().toISOString() : s.lastSyncedAt,
       });
+    } catch {
+      update({ connectionStatus: 'error' });
+    } finally {
       setTesting(false);
-    }, 1100);
+    }
   }
 
-  function disconnect() {
+  async function disconnect() {
     update({ enabled: false, connectionStatus: 'disconnected', lastSyncedAt: null });
+    await saveSpoolmanConfig({ enabled: false }).catch(console.error);
   }
 
   function syncNow() {
     update({ connectionStatus: 'connecting' });
-    setTimeout(() => {
-      update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
-    }, 900);
+    testSpoolmanConnection(s.url, s.apiKey || null)
+      .then(r => update({ connectionStatus: r.ok ? 'connected' : 'error', lastSyncedAt: r.ok ? new Date().toISOString() : s.lastSyncedAt }))
+      .catch(() => update({ connectionStatus: 'error' }));
   }
 
-  const mockStats = useMemo(() => ({ spools: 27, materials: 14, vendors: 7, lowSpools: 3 }), []);
   const isConnected = s.connectionStatus === 'connected';
 
   return (
@@ -772,8 +802,11 @@ function SpoolmanPage() {
           </FieldRow>
 
           <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button className="btn primary sm" disabled={!s.url.trim() || testing} onClick={testConnection}>
+            <button className="btn primary sm" disabled={!s.url.trim() || testing || saving} onClick={testConnection}>
               {testing ? 'Connecting…' : <>{Icons.link} Test connection</>}
+            </button>
+            <button className="btn sm" disabled={saving || testing} onClick={saveConfig}>
+              {saving ? 'Saving…' : <>{Icons.check} Save</>}
             </button>
             {isConnected && (
               <>
@@ -786,10 +819,10 @@ function SpoolmanPage() {
           {isConnected && (
             <div style={{ padding: '20px 0', borderBottom: '1px solid var(--border-1)' }}>
               <div className="row gap-3" style={{ flexWrap: 'wrap' }}>
-                <SpoolStat label="Spools"     value={mockStats.spools} />
-                <SpoolStat label="Materials"  value={mockStats.materials} />
-                <SpoolStat label="Vendors"    value={mockStats.vendors} />
-                <SpoolStat label="Low spools" value={mockStats.lowSpools} tone={mockStats.lowSpools > 0 ? 'warn' : 'idle'} />
+                <SpoolStat label="Spools"     value={stats.spools} />
+                <SpoolStat label="Materials"  value={stats.materials} />
+                <SpoolStat label="Vendors"    value={stats.vendors} />
+                <SpoolStat label="Low spools" value={stats.lowSpools} tone={stats.lowSpools > 0 ? 'warn' : 'idle'} />
               </div>
             </div>
           )}

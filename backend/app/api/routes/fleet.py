@@ -33,6 +33,7 @@ def _fleet_dict(p: Printer) -> dict:
         "name": p.name,
         "printer_type": p.printer_type,
         "enabled": p.enabled,
+        "queue_on": p.queue_on,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "loaded_filaments": p.loaded_filaments or [],
     }

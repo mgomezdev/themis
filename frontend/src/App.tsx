@@ -1,9 +1,10 @@
 import React, { useMemo } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
-import { JOBS, ORDERS } from './data/mock';
+import { ORDERS } from './data/mock';
+import { useQueue } from './api/queue';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -15,14 +16,20 @@ import { FilamentsScreen } from './screens/FilamentsScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
 
 function AppShell() {
-  const queueCount = useMemo(() => JOBS.filter(j => j.status === 'queued').length, []);
+  const { jobs } = useQueue();
+  const queueCounts = useMemo(() => ({
+    active:  jobs.filter(j => ['printing','paused','slicing','uploading'].includes(j.status)).length,
+    pending: jobs.filter(j => j.status === 'queued').length,
+    blocked: jobs.filter(j => j.status === 'blocked').length,
+  }), [jobs]);
   const ordersOpen = useMemo(() => ORDERS.filter(o => o.status !== 'complete').length, []);
   const location = useLocation();
+  const navigate = useNavigate();
 
   const screenConfig: Record<string, { title: string; crumbs: string[]; actions?: React.ReactNode }> = {
     '/queue':      { title: 'Job queue',        crumbs: ['Workshop'],
                      actions: <><button className="btn sm">{Icons.refresh} Resync</button>
-                                <button className="btn primary sm">{Icons.plus} New job</button></> },
+                                <button className="btn primary sm" onClick={() => navigate('/queue/new')}>{Icons.plus} New job</button></> },
     '/queue/new':  { title: 'New job',           crumbs: ['Workshop', 'Job queue'] },
     '/fleet':      { title: 'Fleet',             crumbs: ['Workshop'],
                      actions: <button className="btn sm">{Icons.refresh} Resync</button> },
@@ -42,7 +49,7 @@ function AppShell() {
 
   return (
     <div className="app" data-nav="expanded">
-      <Sidebar queueCount={queueCount} ordersOpen={ordersOpen} />
+      <Sidebar queueCounts={queueCounts} ordersOpen={ordersOpen} />
       <div className="main">
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">
