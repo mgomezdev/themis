@@ -110,6 +110,20 @@ export async function checkOverrides(body: {
   });
 }
 
+export interface QueueConfig { check_interval_minutes: number; }
+
+export async function getQueueConfig(): Promise<QueueConfig> {
+  return request('/api/v1/settings/queue');
+}
+
+export async function saveQueueConfig(body: QueueConfig): Promise<QueueConfig> {
+  return request('/api/v1/settings/queue', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getQueue(): Promise<ApiJob[]> {
   return request('/api/v1/queue');
 }
