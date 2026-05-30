@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.database import Base
-from app.models import Job, JobPrinterConfig, UploadedFile, GcodeFile
+from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError
@@ -38,6 +38,15 @@ def _make_mock_printer_manager(printer_ids_ready: list[int]) -> PrinterManager:
 
 async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
     async with factory() as session:
+        # Ensure the target printer exists (queue engine checks queue_on before claiming)
+        if await session.get(Printer, printer_id) is None:
+            session.add(Printer(
+                id=printer_id,
+                name=f"Printer {printer_id}",
+                printer_type="elegoo_centauri",
+                connection_config={},
+            ))
+            await session.flush()
         f = UploadedFile(
             original_filename="test.3mf",
             stored_path="/data/uploads/x/model.3mf",
@@ -93,6 +102,27 @@ async def test_no_ready_printers_leaves_job_queued(db):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_queue_off_printer_does_not_claim(db):
+    # A ready printer with queue_on=False must behave like no eligible printer:
+    # the top job stays queued.
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    job_id = await _seed_job(db, printer_id=1)
+
+    async with db() as session:
+        printer = await session.get(Printer, 1)
+        printer.queue_on = False
+        await session.commit()
+
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
 
     async with db() as session:
         job = await session.get(Job, job_id)

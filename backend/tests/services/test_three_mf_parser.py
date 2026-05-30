@@ -69,10 +69,24 @@ def test_missing_slice_info_returns_defaults(tmp_path):
     assert plates[0].filament_g == 0.0
 
 
-def test_no_plates_at_all_returns_empty(tmp_path):
-    path = tmp_path / "empty.3mf"
+def test_no_plate_metadata_falls_back_to_single_plate(tmp_path):
+    # Non-Bambu 3MFs (e.g. PrusaSlicer) have no slice_info or plate PNGs;
+    # parser should return a single plate with zeroed time/weight.
+    path = tmp_path / "prusa.3mf"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("3D/3dmodel.model", "<model/>")
+    plates = parse_three_mf(str(path))
+    assert len(plates) == 1
+    assert plates[0].plate_number == 1
+    assert plates[0].estimated_time == 0
+    assert plates[0].filament_g == 0.0
+
+
+def test_no_3d_model_returns_empty(tmp_path):
+    # A ZIP that isn't a real 3MF at all should return nothing.
+    path = tmp_path / "empty.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("junk.txt", "hello")
     plates = parse_three_mf(str(path))
     assert plates == []
 

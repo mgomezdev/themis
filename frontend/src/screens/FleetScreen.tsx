@@ -6,6 +6,8 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, type PrinterType } from '../api/printers';
+import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
+import type { ApiSpool } from '../api/spoolman';
 import { PrinterAddForm } from './PrintersScreen';
 
 type Layout = 'cards' | 'rows';
@@ -229,15 +231,102 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   );
 }
 
-// ── Filament picker (UI stub — not wired to filament API yet) ────────────────
-function FilamentPicker({ onClose }: { onClose: () => void }) {
+// ── Filament picker ──────────────────────────────────────────────────────────
+function FilamentPicker({ printerId, onClose, onSaved }: {
+  printerId: number;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { config } = useSpoolmanConfig();
+  const spoolmanActive = !!(config?.enabled && config?.url);
+  const spools = useSpools(spoolmanActive);
+  const [manualText, setManualText] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function unload() {
+    setSaving(true);
+    try {
+      await updatePrinter(printerId, { loaded_filaments: [] });
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function selectSpool(spool: ApiSpool) {
+    setSaving(true);
+    try {
+      await updatePrinter(printerId, {
+        loaded_filaments: [{
+          slot: 0,
+          filament_id: String(spool.id),
+          name: spoolDisplayName(spool),
+          type: spool.filament.material,
+          color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
+        }],
+      });
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveManual() {
+    if (!manualText.trim()) return;
+    setSaving(true);
+    try {
+      await updatePrinter(printerId, {
+        loaded_filaments: [{
+          slot: 0,
+          filament_id: null,
+          name: manualText.trim(),
+          type: '',
+          color: '#888888',
+        }],
+      });
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-1)' }}>
-      <div className="tiny muted" style={{ padding: '20px 8px', textAlign: 'center' }}>
-        Filament library not connected yet.
+      {spoolmanActive && spools.length > 0 && (
+        <div className="col gap-2" style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
+          {spools.map(spool => (
+            <button key={spool.id} className="btn ghost sm" disabled={saving}
+                    onClick={() => selectSpool(spool)}
+                    style={{ justifyContent: 'flex-start', gap: 8, textAlign: 'left' }}>
+              <span style={{
+                width: 12, height: 12, borderRadius: 2, flexShrink: 0,
+                background: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
+              }} />
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {spoolDisplayName(spool)}
+              </span>
+              <span className="tiny muted" style={{ flexShrink: 0 }}>
+                {spool.remaining_weight?.toFixed(0)}g
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+      {spoolmanActive && spools.length === 0 && (
+        <div className="tiny muted" style={{ padding: '8px 0' }}>No spools found in Spoolman.</div>
+      )}
+      <div className="row gap-2" style={{ marginTop: 4 }}>
+        <input className="input" placeholder="Enter manually…" value={manualText}
+               onChange={e => setManualText(e.target.value)}
+               style={{ flex: 1 }} />
+        <button className="btn sm" disabled={!manualText.trim() || saving} onClick={saveManual}>
+          Set
+        </button>
       </div>
       <div className="row between" style={{ marginTop: 10 }}>
-        <button className="btn ghost sm" onClick={onClose}>{Icons.x} Unload spool</button>
+        <button className="btn ghost sm" disabled={saving} onClick={unload}>
+          {Icons.x} Unload spool
+        </button>
         <button className="btn ghost sm" onClick={onClose}>Cancel</button>
       </div>
     </div>
@@ -299,8 +388,18 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {p.capabilities.join(' · ')}
             </div>
           </div>
-          <div className="row gap-2" style={{ flexShrink: 0 }}>
+          <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
             <StatusPill status={p.status} />
+            <button
+              className={`btn sm${p.queueOn ? '' : ' ghost'}`}
+              title={p.queueOn ? 'Disable queue pulling' : 'Enable queue pulling'}
+              style={p.queueOn ? {} : { color: 'var(--text-3)' }}
+              onClick={async () => {
+                await updatePrinter(Number(p.id), { queue_on: !p.queueOn });
+                refetchFleet();
+              }}>
+              {p.queueOn ? <>{Icons.queue} Queue on</> : <>{Icons.queue} Queue off</>}
+            </button>
             <button className="btn sm">{Icons.camera} Snapshot</button>
             <button className="btn icon sm" title="Edit printer" onClick={() => setEditingPrinter(true)}>
               {Icons.wrench}
@@ -399,7 +498,13 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
                   <div className="tiny muted">{p.material.type}</div>
                 </div>
               </div>
-              {pickingFilament && <FilamentPicker onClose={() => setPickingFilament(false)} />}
+              {pickingFilament && (
+                <FilamentPicker
+                  printerId={Number(p.id)}
+                  onClose={() => setPickingFilament(false)}
+                  onSaved={() => { setPickingFilament(false); refetchFleet(); }}
+                />
+              )}
             </div>
 
             <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>

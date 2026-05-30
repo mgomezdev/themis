@@ -12,13 +12,16 @@ from ...services.queue_engine import queue_engine
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
-_CANCELLABLE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused"}
+_CANCELLABLE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "failed"}
 
 
 class PrinterConfigInput(BaseModel):
     printer_id: int
     print_profile: str
-    filament_profile: str
+    filament_profile: str | None = None
+    filament_id: int | None = None
+    filament_type: str | None = None
+    filament_color: str | None = None
 
 
 class JobCreate(BaseModel):
@@ -98,6 +101,9 @@ async def create_job(
             printer_id=cfg.printer_id,
             print_profile=cfg.print_profile,
             filament_profile=cfg.filament_profile,
+            filament_id=cfg.filament_id,
+            filament_type=cfg.filament_type,
+            filament_color=cfg.filament_color,
         )
         session.add(config)
 

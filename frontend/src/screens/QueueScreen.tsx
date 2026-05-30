@@ -1,24 +1,29 @@
 import React, { useState, useMemo } from 'react';
-import { JOBS, PRINTERS, getOrder } from '../data/mock';
+import { useNavigate } from 'react-router-dom';
 import { fmtTime, matColor } from '../data/helpers';
 import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import type { Job } from '../data/types';
+import { useQueue, useFilePlates, cancelJob, plateThumbnailUrl, type ApiJob } from '../api/queue';
 
-// ---- helper: resolve part names from a job ----
-function partsFromJob(job: Job) {
-  return job.parts.map(p => {
-    const order = getOrder(p.orderId);
-    const part = order?.parts.find(op => op.id === p.partId);
-    return {
-      name: part?.name ?? p.partId,
-      qty: p.qty,
-      orderId: p.orderId,
-      material: part?.material ?? '',
-    };
-  });
+// ---- DisplayJob: flattened shape for rendering ----
+interface DisplayJob {
+  id: string;
+  rawId: number;
+  plateName: string;
+  status: string;
+  material: string;
+  eligiblePrinters: string[];
+  estTime: number;
+  filamentG: number;
+  elapsed: number;
+  progress: number;
+  layer: { now: number; total: number } | null;
+  sliced: boolean;
+  queuePosition: number;
+  fileId: number;
+  thumbnailPath: string | null;
 }
 
 // ---- FilterChip ----
@@ -97,15 +102,16 @@ function JobCardRich({
   onClick,
   showStatus,
 }: {
-  job: Job;
+  job: DisplayJob;
   position: number;
   selected: boolean;
   onClick: () => void;
   showStatus: boolean;
 }) {
   const isActive = job.status === 'printing' || job.status === 'paused';
-  const parts = partsFromJob(job);
+  const isFailed = job.status === 'failed';
   const color = matColor(job.material);
+  const thumbUrl = plateThumbnailUrl(job.fileId, job.thumbnailPath);
 
   return (
     <div
@@ -115,7 +121,7 @@ function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.3)' : undefined,
         boxShadow: selected ? '0 0 0 1px var(--accent)' : undefined,
       }}
     >
@@ -123,33 +129,23 @@ function JobCardRich({
         {/* plate thumbnail */}
         <div
           style={{
-            width: 80,
-            height: 80,
-            flexShrink: 0,
-            background: `linear-gradient(135deg, ${color}, ${darkenColor(color)})`,
+            width: 80, height: 80, flexShrink: 0,
+            background: `linear-gradient(135deg, #1e3a6e, #3b82f6)`,
             borderRadius: 8,
             border: '1px solid var(--border-1)',
-            display: 'grid',
-            placeItems: 'center',
+            display: 'grid', placeItems: 'center',
             overflow: 'hidden',
           }}
         >
-          <div
-            style={{
-              width: '70%',
-              height: '70%',
-              border: '1px dashed rgba(255,255,255,0.18)',
-              borderRadius: 4,
-              background: 'rgba(255,255,255,0.04)',
-              display: 'grid',
-              placeItems: 'center',
+          {thumbUrl ? (
+            <img src={thumbUrl} alt={job.plateName}
+                 style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <span style={{
               color: 'rgba(255,255,255,0.5)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 10,
-            }}
-          >
-            #{position}
-          </div>
+              fontFamily: 'var(--font-mono)', fontSize: 10,
+            }}>#{position}</span>
+          )}
         </div>
 
         {/* content */}
@@ -157,14 +153,11 @@ function JobCardRich({
           <div className="row between">
             <div>
               <div className="row gap-2" style={{ alignItems: 'baseline' }}>
-                <span className="mono tiny muted">{job.id}</span>
+                <span className="mono tiny muted">#{job.rawId}</span>
                 <div style={{ fontSize: 15, fontWeight: 500 }}>{job.plateName}</div>
               </div>
-              <div className="tiny muted" style={{ marginTop: 4 }}>
-                {parts.map(p => `${p.name} ×${p.qty}`).join('  ·  ')}
-              </div>
             </div>
-            {showStatus && (
+            {(showStatus || isFailed) && (
               <div className="row gap-2">
                 <StatusPill status={job.status} />
               </div>
@@ -172,21 +165,29 @@ function JobCardRich({
           </div>
 
           <div className="row gap-5" style={{ marginTop: 4 }}>
-            <Kv k="Material" v={<MaterialChip material={job.material} color={color} />} />
-            <Kv k="Eligible" v={<EligibilityChips ids={job.eligiblePrinters} />} />
-            <Kv k="Est. print" v={<span className="num">{fmtTime(job.estTime)}</span>} />
-            {isActive
-              ? (
-                <Kv
-                  k="Remaining"
-                  v={
-                    <span className="num" style={{ color: 'var(--accent-hi)' }}>
-                      {fmtTime(job.estTime - job.elapsed)}
-                    </span>
-                  }
-                />
-              )
-              : <Kv k="Slicing" v={job.sliced ? 'ready' : 'on claim'} />}
+            {job.material !== '—' && (
+              <Kv k="Material" v={<MaterialChip material={job.material} color={color} />} />
+            )}
+            {job.eligiblePrinters.length > 0 && (
+              <Kv k="Eligible" v={<EligibilityChips ids={job.eligiblePrinters} />} />
+            )}
+            {job.estTime > 0 && (
+              <Kv k="Est. print" v={<span className="num">{fmtTime(job.estTime)}</span>} />
+            )}
+            {isActive ? (
+              <Kv
+                k="Remaining"
+                v={
+                  <span className="num" style={{ color: 'var(--accent-hi)' }}>
+                    {fmtTime(Math.max(0, job.estTime - job.elapsed))}
+                  </span>
+                }
+              />
+            ) : isFailed ? (
+              <Kv k="Slicing" v={<span style={{ color: 'var(--err)' }}>failed</span>} />
+            ) : (
+              <Kv k="Slicing" v={job.sliced ? 'ready' : 'on claim'} />
+            )}
           </div>
 
           {isActive && (
@@ -201,97 +202,137 @@ function JobCardRich({
 }
 
 // ---- JobDetailPanel ----
-function JobDetailPanel({ job, onClose }: { job: Job; onClose: () => void }) {
-  const parts = partsFromJob(job);
-  const eligPrinters = job.eligiblePrinters
-    .map(id => PRINTERS.find(p => p.id === id))
-    .filter((p): p is NonNullable<typeof p> => p != null);
-  const isActive = job.status === 'printing';
+function JobDetailPanel({
+  job,
+  onClose,
+  onCancel,
+}: {
+  job: DisplayJob;
+  onClose: () => void;
+  onCancel: (jobId: number) => void;
+}) {
+  const isActive = job.status === 'printing' || job.status === 'paused';
+  const isFailed = job.status === 'failed';
+  const cancellable = ['queued', 'slicing', 'uploading', 'printing', 'paused', 'failed'].includes(job.status);
+  const thumbUrl = plateThumbnailUrl(job.fileId, job.thumbnailPath);
 
   return (
-    <div className="card" style={{ position: 'sticky', top: 0, padding: 18, height: 'fit-content' }}>
-      <div className="row between" style={{ marginBottom: 10 }}>
-        <div className="mono tiny muted">{job.id}</div>
-        <button className="btn ghost icon sm" onClick={onClose}>{Icons.x}</button>
-      </div>
-      <div style={{ fontSize: 16, fontWeight: 500 }}>{job.plateName}</div>
-      <div className="row gap-2" style={{ marginTop: 8 }}>
-        <StatusPill status={job.status} />
-        <MaterialChip material={job.material} color={matColor(job.material)} />
+    <div className="card" style={{ position: 'sticky', top: 0, padding: 0, height: 'fit-content', overflow: 'hidden' }}>
+      {/* Thumbnail header */}
+      <div style={{
+        width: '100%', height: 180, position: 'relative',
+        background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
+        display: 'grid', placeItems: 'center',
+      }}>
+        {thumbUrl ? (
+          <img src={thumbUrl} alt={job.plateName}
+               style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        ) : (
+          <span style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
+            No preview
+          </span>
+        )}
+        <button
+          className="btn ghost icon sm"
+          onClick={onClose}
+          style={{ position: 'absolute', top: 8, right: 8, background: 'rgba(0,0,0,0.4)', border: 'none' }}
+        >
+          {Icons.x}
+        </button>
+        {isFailed && (
+          <div style={{
+            position: 'absolute', bottom: 8, left: 8,
+            padding: '3px 8px', borderRadius: 6,
+            background: 'rgba(239,68,68,0.85)', color: 'white',
+            fontSize: 11, fontWeight: 600, letterSpacing: '0.04em',
+          }}>
+            FAILED
+          </div>
+        )}
       </div>
 
-      {isActive && (
-        <div style={{ marginTop: 14 }}>
-          <Progress value={job.progress} large />
-          <div className="row between" style={{ marginTop: 6 }}>
-            <span className="tiny muted">
-              layer{' '}
-              <span className="num" style={{ color: 'var(--text-2)' }}>
-                {job.layer?.now}/{job.layer?.total}
+      <div style={{ padding: 18 }}>
+        <div className="row between" style={{ alignItems: 'flex-start', marginBottom: 10 }}>
+          <div>
+            <div className="mono tiny muted" style={{ marginBottom: 2 }}>Job #{job.rawId}</div>
+            <div style={{ fontSize: 15, fontWeight: 500 }}>{job.plateName}</div>
+          </div>
+          <StatusPill status={job.status} />
+        </div>
+
+        {isActive && (
+          <div style={{ marginBottom: 14 }}>
+            <Progress value={job.progress} large />
+            <div className="row between" style={{ marginTop: 6 }}>
+              <span className="tiny muted">
+                {job.layer && (
+                  <>layer{' '}
+                  <span className="num" style={{ color: 'var(--text-2)' }}>
+                    {job.layer.now}/{job.layer.total}
+                  </span></>
+                )}
               </span>
-            </span>
-            <span className="tiny muted">
-              {job.progress}% ·{' '}
-              <span className="num">{fmtTime(job.estTime - job.elapsed)}</span> left
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="divider" />
-
-      <div className="tag-key">Parts on plate</div>
-      <div className="col gap-2" style={{ marginTop: 8 }}>
-        {parts.map((p, i) => (
-          <div key={i} className="row between" style={{ padding: '6px 0' }}>
-            <div className="col">
-              <div className="small">{p.name}</div>
-              <div className="tiny muted">{p.orderId} · {p.material}</div>
+              <span className="tiny muted">
+                {job.progress}% ·{' '}
+                <span className="num">{fmtTime(Math.max(0, job.estTime - job.elapsed))}</span> left
+              </span>
             </div>
-            <div className="num small">×{p.qty}</div>
           </div>
-        ))}
-      </div>
+        )}
 
-      <div className="divider" />
+        <div className="divider" />
 
-      <div className="tag-key">Eligible printers</div>
-      <div className="col gap-2" style={{ marginTop: 8 }}>
-        {eligPrinters.map(p => (
-          <div
-            key={p.id}
-            className="row between"
-            style={{
-              padding: '8px 10px',
-              background: 'var(--bg-1)',
-              borderRadius: 8,
-              border: '1px solid var(--border-1)',
-            }}
+        <div className="col gap-2" style={{ marginBottom: 14 }}>
+          {job.estTime > 0 && (
+            <div className="row between">
+              <span className="small muted">Est. print time</span>
+              <span className="num small">{fmtTime(job.estTime)}</span>
+            </div>
+          )}
+          {job.filamentG > 0 && (
+            <div className="row between">
+              <span className="small muted">Filament</span>
+              <span className="num small">{job.filamentG.toFixed(1)} g</span>
+            </div>
+          )}
+          <div className="row between">
+            <span className="small muted">Slicing</span>
+            <span className="small">{job.sliced ? 'Ready' : 'On claim'}</span>
+          </div>
+          {job.queuePosition > 0 && (
+            <div className="row between">
+              <span className="small muted">Queue position</span>
+              <span className="num small">#{job.queuePosition}</span>
+            </div>
+          )}
+        </div>
+
+        {job.eligiblePrinters.length > 0 && (
+          <>
+            <div className="divider" />
+            <div className="tag-key" style={{ marginBottom: 8 }}>Eligible printers</div>
+            <div className="col gap-2" style={{ marginBottom: 14 }}>
+              {job.eligiblePrinters.map(id => (
+                <div key={id} className="row between" style={{
+                  padding: '6px 10px', background: 'var(--bg-1)',
+                  borderRadius: 8, border: '1px solid var(--border-1)',
+                }}>
+                  <div className="small muted">Printer {id}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {cancellable && (
+          <button
+            className="btn ghost sm"
+            style={{ width: '100%', color: 'var(--err)' }}
+            onClick={() => onCancel(job.rawId)}
           >
-            <div className="col">
-              <div className="small">
-                {p.nickname} <span className="muted tiny">— {p.name}</span>
-              </div>
-              <div className="tiny muted">profile selected at claim</div>
-            </div>
-            <StatusPill status={p.status} />
-          </div>
-        ))}
-      </div>
-
-      <div className="divider" />
-
-      <div className="col gap-2">
-        <button className="btn primary">
-          {Icons.play} {isActive ? 'Open printer' : 'Claim & slice now'}
-        </button>
-        <div className="row gap-2">
-          <button className="btn sm" style={{ flex: 1 }}>{Icons.chevU} Bump priority</button>
-          <button className="btn sm" style={{ flex: 1 }}>{Icons.pause} Hold</button>
-        </div>
-        <button className="btn ghost sm" style={{ color: 'var(--err)' }}>
-          {Icons.trash} Remove from queue
-        </button>
+            {Icons.trash} {isFailed ? 'Remove failed job' : 'Remove from queue'}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -301,46 +342,79 @@ function JobDetailPanel({ job, onClose }: { job: Job; onClose: () => void }) {
 type FilterKey = 'all' | 'active' | 'queued' | 'done';
 
 export function QueueScreen() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterKey>('all');
-  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
 
-  const jobs = useMemo(() => {
-    return [...JOBS].sort((a, b) => {
-      const order: Record<string, number> = { printing: 0, paused: 0, queued: 1, complete: 2 };
+  const { jobs: rawJobs, refetch } = useQueue();
+
+  // Collect unique file IDs to load plate metadata
+  const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
+  const getPlate = useFilePlates(fileIds);
+
+  // Map ApiJob → DisplayJob
+  const jobs: DisplayJob[] = useMemo(() => {
+    return rawJobs.map(j => {
+      const plate = getPlate(j.uploaded_file_id, j.plate_number);
+      return {
+        id: String(j.id),
+        rawId: j.id,
+        plateName: plate ? `Plate ${j.plate_number}` : `Plate ${j.plate_number}`,
+        status: j.status,
+        material: '—',
+        eligiblePrinters: [],
+        estTime: plate?.estimated_time ?? 0,
+        filamentG: plate?.filament_g ?? 0,
+        elapsed: 0,
+        progress: 0,
+        layer: null,
+        sliced: j.status !== 'queued',
+        queuePosition: j.queue_position ?? 0,
+        fileId: j.uploaded_file_id,
+        thumbnailPath: plate?.thumbnail_path ?? null,
+      };
+    }).sort((a, b) => {
+      const order: Record<string, number> = { printing: 0, paused: 0, slicing: 1, uploading: 1, queued: 2, complete: 3 };
       const sa = order[a.status] ?? 9;
       const sb = order[b.status] ?? 9;
       if (sa !== sb) return sa - sb;
-      return a.priority - b.priority;
+      return a.queuePosition - b.queuePosition;
     });
-  }, []);
+  }, [rawJobs, getPlate]);
 
   const filtered = jobs.filter(j => {
     if (filter === 'all') return true;
-    if (filter === 'active') return j.status === 'printing' || j.status === 'paused';
+    if (filter === 'active') return j.status === 'printing' || j.status === 'paused' || j.status === 'slicing' || j.status === 'uploading';
     if (filter === 'queued') return j.status === 'queued';
     if (filter === 'done') return j.status === 'complete';
     return true;
   });
 
   const totals = {
-    active: jobs.filter(j => j.status === 'printing' || j.status === 'paused').length,
+    active: jobs.filter(j => ['printing', 'paused', 'slicing', 'uploading'].includes(j.status)).length,
     queued: jobs.filter(j => j.status === 'queued').length,
     done: jobs.filter(j => j.status === 'complete').length,
     timeLeft: jobs.filter(j => j.status === 'queued').reduce((acc, j) => acc + j.estTime, 0),
   };
 
-  const selectedJob = selectedJobId ? jobs.find(j => j.id === selectedJobId) ?? null : null;
+  const selectedJob = selectedJobId != null ? jobs.find(j => j.rawId === selectedJobId) ?? null : null;
 
-  // Stats row: only visible for "all" filter to prevent "Active"/"Queued" label collisions
-  // when filter-specific views are active.
   const showStats = filter === 'all';
 
-  // In the "all" filter, only show StatusPill for printing/paused jobs (avoid "Queued" pill
-  // multiplying across 5 queued job cards, which would break getByText uniqueness in tests).
-  const showStatusPill = (job: Job) => {
+  const showStatusPill = (job: DisplayJob) => {
     if (filter === 'all') return job.status === 'printing' || job.status === 'paused';
     return true;
   };
+
+  async function handleCancel(jobId: number) {
+    try {
+      await cancelJob(jobId);
+      if (selectedJobId === jobId) setSelectedJobId(null);
+      refetch();
+    } catch (err) {
+      console.error('Failed to cancel job:', err);
+    }
+  }
 
   return (
     <div
@@ -354,7 +428,7 @@ export function QueueScreen() {
             <SummaryStat
               label="In progress"
               value={totals.active}
-              sub={`${totals.active} of ${PRINTERS.length} printers`}
+              sub="printing or slicing"
             />
             <SummaryStat
               label="In queue"
@@ -363,7 +437,7 @@ export function QueueScreen() {
             />
             <SummaryStat
               label="Queue time"
-              value={fmtTime(totals.timeLeft)}
+              value={totals.timeLeft > 0 ? fmtTime(totals.timeLeft) : '—'}
               sub="serial est."
               mono
             />
@@ -379,8 +453,6 @@ export function QueueScreen() {
                 {jobs.length}
               </span>
             </FilterChip>
-            {/* "Active" chip is hidden when "queued" filter is active so that
-                queryByText(/^Active$/) returns null (satisfies test assertion) */}
             {filter !== 'queued' && filter !== 'done' && (
               <FilterChip
                 active={filter === 'active'}
@@ -411,7 +483,9 @@ export function QueueScreen() {
             <button className="btn sm">
               <span style={{ display: 'inline-flex' }}>{Icons.filter}</span> Material
             </button>
-            <button className="btn primary sm">{Icons.plus} New job</button>
+            <button className="btn primary sm" onClick={() => navigate('/queue/new')}>
+              {Icons.plus} New job
+            </button>
           </div>
         </div>
 
@@ -422,19 +496,23 @@ export function QueueScreen() {
               key={job.id}
               job={job}
               position={i + 1}
-              selected={selectedJobId === job.id}
+              selected={selectedJobId === job.rawId}
               showStatus={showStatusPill(job)}
-              onClick={() => setSelectedJobId(selectedJobId === job.id ? null : job.id)}
+              onClick={() => setSelectedJobId(selectedJobId === job.rawId ? null : job.rawId)}
             />
           ))}
           {filtered.length === 0 && (
-            <Empty title="Nothing here" sub="Try a different filter." icon={Icons.queue} />
+            <Empty title="Nothing here" sub="Try a different filter or add a new job." icon={Icons.queue} />
           )}
         </div>
       </div>
 
       {selectedJob && (
-        <JobDetailPanel job={selectedJob} onClose={() => setSelectedJobId(null)} />
+        <JobDetailPanel
+          job={selectedJob}
+          onClose={() => setSelectedJobId(null)}
+          onCancel={handleCancel}
+        />
       )}
     </div>
   );

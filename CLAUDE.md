@@ -11,7 +11,7 @@ python -m venv .venv && .venv\Scripts\activate  # first time
 pip install -e ".[dev]"
 
 # Run dev server (auto-reload)
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8001
 
 # Run all tests
 pytest -v
@@ -24,7 +24,7 @@ pytest tests/test_models.py::test_create_printer -v
 ```bash
 cd frontend
 npm install          # first time
-npm run dev          # dev server on :5173, proxies /api to :8000
+npm run dev          # dev server on :5173, proxies /api to :8001
 npm run build        # production build → frontend/dist/
 ```
 
@@ -37,7 +37,7 @@ docker compose up --build    # rebuild image first
 
 ## Architecture
 
-Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker container. FastAPI serves the built React app as static files in production (`THEMIS_STATIC_DIR=/frontend/dist`); in development, Vite's dev server proxies `/api` to the FastAPI process on port 8000.
+Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker container. FastAPI serves the built React app as static files in production (`THEMIS_STATIC_DIR=/frontend/dist`); in development, Vite's dev server proxies `/api` to the FastAPI process on port 8001.
 
 ### Key design patterns
 

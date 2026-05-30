@@ -13,6 +13,8 @@ from .api.routes.jobs import router as jobs_router
 from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
 from .api.routes.queue import router as queue_router
+from .api.routes.settings import router as settings_router
+from .api.routes.spoolman import router as spoolman_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
@@ -66,6 +68,8 @@ app.include_router(files_router)
 app.include_router(projects_router)
 app.include_router(jobs_router)
 app.include_router(queue_router)
+app.include_router(settings_router)
+app.include_router(spoolman_router)
 
 
 @app.get("/api/v1/health")

@@ -1,36 +1,34 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { PRINTERS, PROCESS_PRESETS, FILAMENTS, ORDERS, getPrinter } from '../data/mock';
+import { ORDERS } from '../data/mock';
 import { fmtTime, darken } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { StatusPill, SectionHeader } from '../components/ui';
-import type { Order, Filament, ProcessPreset } from '../data/types';
+import type { Order } from '../data/types';
+import type { ApiPrinter } from '../api/printers';
+import { uploadFile, createJob, getPrinterProfiles, plateThumbnailUrl, type ApiPlate } from '../api/queue';
+import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
 
 // ============================================================
 // Types
 // ============================================================
 
-interface PlatePart {
-  name: string;
-  qty: number;
-  material: string;
-}
-
 interface Plate {
   id: string;
   index: number;
   name: string;
-  parts: PlatePart[];
   estTime: number;
-  materials: string[];
   thumbColor: string;
-  suggestedOrders?: string[];
+  thumbnailPath: string | null;
+  fileId: number | null;
 }
 
 interface PerPrinterCfg {
-  processId: string | null;
-  filamentId: string | null;
-  profileIdx: number;
+  printProfile: string | null;
+  filamentProfile: string | null;  // display name (from Spoolman or null)
+  filamentId: number | null;       // Spoolman filament ID when sourced from catalog
+  filamentType: string | null;     // material: PLA, PETG, ABS, …
+  filamentColor: string | null;    // hex color: #RRGGBB
 }
 
 interface PlateConfig {
@@ -49,165 +47,6 @@ interface FileInfo {
 }
 
 // ============================================================
-// Mocked plate parser — ported verbatim from design
-// ============================================================
-
-function readPlatesFromFilename(fileName: string): Plate[] {
-  const lower = fileName.toLowerCase();
-  if (lower.endsWith('.stl')) {
-    return [{
-      id: 'plate-1', index: 1, name: 'Single body',
-      parts: [{ name: fileName.replace(/\.stl$/i, ''), qty: 1, material: '—' }],
-      estTime: 64, materials: ['—'], thumbColor: '#2a3552',
-    }];
-  }
-  if (lower.includes('vr_arm') || lower.includes('arm_bracket')) {
-    return [
-      { id: 'plate-1', index: 1, name: 'Arm bracket — L (×2)',
-        parts: [{ name: 'Arm bracket — L', qty: 2, material: 'PA-CF' }],
-        estTime: 156, materials: ['PA-CF'], thumbColor: '#16203a',
-        suggestedOrders: ['ORD-2241'] },
-      { id: 'plate-2', index: 2, name: 'Arm bracket — R (×2)',
-        parts: [{ name: 'Arm bracket — R', qty: 2, material: 'PA-CF' }],
-        estTime: 156, materials: ['PA-CF'], thumbColor: '#16203a',
-        suggestedOrders: ['ORD-2241'] },
-      { id: 'plate-3', index: 3, name: 'Cable clamps (×8)',
-        parts: [{ name: 'Cable clamp', qty: 8, material: 'PETG' }],
-        estTime: 96, materials: ['PETG'], thumbColor: '#1e3a5a',
-        suggestedOrders: ['ORD-2241'] },
-    ];
-  }
-  if (lower.includes('hartwell') || lower.includes('fig')) {
-    return [
-      { id: 'plate-1', index: 1, name: 'Figure A — multi-color (×4)',
-        parts: [{ name: 'Figure A', qty: 4, material: 'PLA (4-color)' }],
-        estTime: 152, materials: ['PLA (4-color)'], thumbColor: '#3a2a3a',
-        suggestedOrders: ['ORD-2243'] },
-      { id: 'plate-2', index: 2, name: 'Figure A — accents (×4)',
-        parts: [{ name: 'Figure A accents', qty: 4, material: 'PLA Silk' }],
-        estTime: 88, materials: ['PLA (4-color)'], thumbColor: '#3a3a2a',
-        suggestedOrders: ['ORD-2243'] },
-    ];
-  }
-  if (lower.includes('cradle') || lower.includes('northbeam')) {
-    return [
-      { id: 'plate-1', index: 1, name: 'Cradle body (×2)',
-        parts: [{ name: 'Cradle body', qty: 2, material: 'PETG' }],
-        estTime: 128, materials: ['PETG'], thumbColor: '#1e3a4a',
-        suggestedOrders: ['ORD-2244'] },
-      { id: 'plate-2', index: 2, name: 'Foot dampener (×4)',
-        parts: [{ name: 'Foot dampener', qty: 4, material: 'TPU' }],
-        estTime: 72, materials: ['TPU'], thumbColor: '#4a1a1a',
-        suggestedOrders: ['ORD-2244'] },
-    ];
-  }
-  if (lower.includes('reflow') || lower.includes('wall_panel')) {
-    return [
-      { id: 'plate-1', index: 1, name: 'Wall panel (×1)',
-        parts: [{ name: 'Wall panel', qty: 1, material: 'ABS' }],
-        estTime: 192, materials: ['ABS'], thumbColor: '#222b41',
-        suggestedOrders: ['ORD-2242'] },
-    ];
-  }
-  return [
-    { id: 'plate-1', index: 1, name: 'Plate 1',
-      parts: [{ name: 'Main body', qty: 1, material: 'PLA' }],
-      estTime: 84, materials: ['PLA'], thumbColor: '#2a3552' },
-    { id: 'plate-2', index: 2, name: 'Plate 2',
-      parts: [{ name: 'Lid', qty: 1, material: 'PLA' }],
-      estTime: 52, materials: ['PLA'], thumbColor: '#2a3552' },
-  ];
-}
-
-// ============================================================
-// Material → printer compatibility — ported verbatim from design
-// ============================================================
-
-function eligibleForMaterial(materials: string[]): string[] {
-  const set = new Set<string>();
-  for (const m of materials) {
-    const lower = (m || '').toLowerCase();
-    if (lower.includes('pa-cf') || lower.includes('pc ') || lower === 'pc' ||
-        lower.includes('abs') || lower.includes('asa')) {
-      set.add('ecc-01'); continue;
-    }
-    if (lower.includes('4-color') || lower.includes('multi')) {
-      set.add('snp-01'); continue;
-    }
-    if (lower.includes('tpu')) {
-      ['p1s-01', 'snp-01'].forEach(id => set.add(id)); continue;
-    }
-    ['p1s-01', 'ecc-01', 'snp-01'].forEach(id => set.add(id));
-  }
-  return Array.from(set);
-}
-
-// ============================================================
-// Filament helpers
-// ============================================================
-
-interface FilamentOption {
-  filament: Filament;
-  profiles: Filament['profiles'];
-}
-
-function filamentsForPrinter(printerId: string, plateMaterials: string[]): FilamentOption[] {
-  const wantsCF    = plateMaterials.some(m => /cf/i.test(m));
-  const wantsTPU   = plateMaterials.some(m => /tpu/i.test(m));
-  const wantsABS   = plateMaterials.some(m => /\babs\b/i.test(m));
-  const wantsASA   = plateMaterials.some(m => /\basa\b/i.test(m));
-  const wantsPETG  = plateMaterials.some(m => /petg/i.test(m));
-  const wantsPC    = plateMaterials.some(m => /\bpc\b/i.test(m));
-  const wantsMulti = plateMaterials.some(m => /multi|4-color/i.test(m));
-
-  const matchesPlate = (fil: Filament) => {
-    const t = fil.type.toLowerCase();
-    if (wantsCF)    return t === 'pa-cf' || /cf/i.test(fil.subtype ?? '');
-    if (wantsTPU)   return t === 'tpu';
-    if (wantsABS)   return t === 'abs';
-    if (wantsASA)   return t === 'asa';
-    if (wantsPC)    return t === 'pc';
-    if (wantsMulti) return t === 'pla';
-    if (wantsPETG)  return t === 'petg';
-    return t === 'pla';
-  };
-
-  return FILAMENTS
-    .map(fil => ({
-      filament: fil,
-      profiles: (fil.profiles ?? []).filter(pf => pf.printerId === printerId),
-    }))
-    .filter(({ filament, profiles }) => profiles.length > 0 && matchesPlate(filament));
-}
-
-function pickFilamentForPrinter(printerId: string, plateMaterials: string[]): { id: string; profileIdx: number } | null {
-  const opts = filamentsForPrinter(printerId, plateMaterials);
-  if (opts.length === 0) {
-    const fallback = FILAMENTS.find(f => (f.profiles ?? []).some(p => p.printerId === printerId));
-    if (!fallback) return null;
-    return { id: fallback.id, profileIdx: 0 };
-  }
-  const fav = opts.find(o => o.filament.favorite);
-  const pick = fav ?? opts[0];
-  return { id: pick.filament.id, profileIdx: 0 };
-}
-
-// ============================================================
-// Default config for a plate
-// ============================================================
-
-function defaultConfigForPlate(plate: Plate): PlateConfig {
-  return {
-    selected: true,
-    jobName: plate.name,
-    priority: 'normal',
-    orderIds: plate.suggestedOrders ? [...plate.suggestedOrders] : [],
-    selectedPrinters: [],
-    perPrinter: {},
-  };
-}
-
-// ============================================================
 // Misc helpers
 // ============================================================
 
@@ -215,6 +54,50 @@ function formatBytes(b: number): string {
   if (b < 1024) return `${b} B`;
   if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+const BADGE: Record<string, string> = {
+  elegoo_centauri: 'ECC',
+  bambu: 'P1S',
+};
+
+// ============================================================
+// Printer list hook
+// ============================================================
+
+function usePrinterList(): ApiPrinter[] {
+  const [printers, setPrinters] = useState<ApiPrinter[]>([]);
+  useEffect(() => {
+    fetch('/api/v1/printers')
+      .then(r => r.json())
+      .then(setPrinters)
+      .catch(console.error);
+  }, []);
+  return printers;
+}
+
+// ============================================================
+// Printer profiles hook — fetches per printer when selected
+// ============================================================
+
+function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
+  const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
+    printProfiles: [],
+    filamentProfiles: [],
+  });
+
+  useEffect(() => {
+    if (printerId == null) return;
+    let alive = true;
+    getPrinterProfiles(printerId)
+      .then(p => {
+        if (alive) setData({ printProfiles: p.print_profiles, filamentProfiles: p.filament_profiles });
+      })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, [printerId]);
+
+  return data;
 }
 
 // ============================================================
@@ -255,17 +138,6 @@ function Checkbox({ checked, disabled }: { checked: boolean; disabled?: boolean 
         </span>
       )}
     </div>
-  );
-}
-
-function FilamentDot({ color }: { color: string }) {
-  return (
-    <span style={{
-      display: 'inline-block', width: 10, height: 10, borderRadius: '50%',
-      background: color, border: '1px solid rgba(255,255,255,0.15)',
-      boxShadow: `0 0 0 1px var(--border-2), 0 0 6px ${color}66`,
-      flexShrink: 0,
-    }} />
   );
 }
 
@@ -373,9 +245,7 @@ function FileCard({ file, plateCount, selectedCount, onClear }: {
     }}>
       <div style={{
         width: 44, height: 44, borderRadius: 8,
-        background: file.type === '3mf'
-          ? 'linear-gradient(135deg, #1e3a8a, #3b82f6)'
-          : 'linear-gradient(135deg, #475569, #94a3b8)',
+        background: 'linear-gradient(135deg, #1e3a8a, #3b82f6)',
         color: 'white',
         display: 'grid', placeItems: 'center',
         fontWeight: 700, fontSize: 10.5,
@@ -451,7 +321,7 @@ function QueueToggle({ checked, onChange }: { checked: boolean; onChange: (v: bo
 }
 
 // ============================================================
-// OrdersPicker
+// OrdersPicker — uses mock ORDERS while orders feature is pending
 // ============================================================
 
 function OrdersPicker({ selectedOrderIds, onChange }: {
@@ -555,59 +425,61 @@ function OrdersPicker({ selectedOrderIds, onChange }: {
 }
 
 // ============================================================
-// PrinterPicker
+// PrinterPicker — uses real ApiPrinter list
 // ============================================================
 
-function PrinterPicker({ eligibleIds, selectedPrinters, onToggle, materials }: {
-  eligibleIds: string[];
+function PrinterPicker({ printers, selectedPrinters, onToggle }: {
+  printers: ApiPrinter[];
   selectedPrinters: string[];
   onToggle: (id: string) => void;
-  materials: string[];
 }) {
+  if (printers.length === 0) {
+    return (
+      <div className="tiny muted" style={{ padding: '12px 0' }}>
+        No printers configured. Add a printer in the Printers screen first.
+      </div>
+    );
+  }
   return (
     <div style={{
       display: 'grid',
       gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
       gap: 10,
     }}>
-      {PRINTERS.map(printer => {
-        const eligible = eligibleIds.includes(printer.id);
-        const selected = selectedPrinters.includes(printer.id);
+      {printers.map(printer => {
+        const sid = String(printer.id);
+        const selected = selectedPrinters.includes(sid);
+        const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
         return (
           <button
             key={printer.id}
-            disabled={!eligible}
-            onClick={() => onToggle(printer.id)}
+            onClick={() => onToggle(sid)}
             style={{
               padding: 12,
               background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
               border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
               boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
               borderRadius: 10, textAlign: 'left',
-              cursor: eligible ? 'pointer' : 'not-allowed',
-              opacity: eligible ? 1 : 0.5,
+              cursor: 'pointer',
               color: 'var(--text-1)', fontFamily: 'inherit',
               position: 'relative',
             }}>
             <div className="row gap-2" style={{ alignItems: 'center' }}>
               <span className={`elig ${selected ? 'on' : 'off'}`}
                     style={selected ? { background: 'rgba(59,130,246,0.20)' } : undefined}>
-                {printer.badge}
+                {badge}
               </span>
               <div className="col" style={{ flex: 1, minWidth: 0 }}>
-                <div className="small" style={{ fontWeight: 500 }}>{printer.nickname}</div>
-                <div className="tiny muted">{printer.name}</div>
+                <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
+                <div className="tiny muted">{printer.printer_type}</div>
               </div>
-              <Checkbox checked={selected} disabled={!eligible} />
+              <Checkbox checked={selected} />
             </div>
-            <div className="tiny" style={{
-              marginTop: 8,
-              color: eligible ? 'var(--text-3)' : 'var(--err)',
-            }}>
-              {eligible
-                ? printer.capabilities.slice(0, 3).join(' · ')
-                : `Can't print ${materials.join(', ')}`}
-            </div>
+            {printer.current_orca_printer_profile && (
+              <div className="tiny" style={{ marginTop: 8, color: 'var(--text-3)' }}>
+                {printer.current_orca_printer_profile}
+              </div>
+            )}
           </button>
         );
       })}
@@ -616,31 +488,33 @@ function PrinterPicker({ eligibleIds, selectedPrinters, onToggle, materials }: {
 }
 
 // ============================================================
-// PerPrinterConfig
+// PerPrinterConfig — uses real OrcaSlicer profiles from API
 // ============================================================
 
-function PerPrinterConfig({ printerId, config, onChange, materials }: {
+function PerPrinterConfig({ printerId, printers, config, onChange }: {
   printerId: string;
+  printers: ApiPrinter[];
   config: PerPrinterCfg;
   onChange: (patch: Partial<PerPrinterCfg>) => void;
-  materials: string[];
 }) {
-  const printer = getPrinter(printerId);
-  const presets = useMemo<ProcessPreset[]>(
-    () => PROCESS_PRESETS.filter(p => p.printerId === printerId),
-    [printerId],
-  );
-  const filaments = useMemo(
-    () => filamentsForPrinter(printerId, materials),
-    [printerId, materials],
-  );
+  const pid = Number(printerId);
+  const printer = printers.find(p => p.id === pid);
+  const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
+  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+  const filaments = useFilaments(spoolmanActive);
+  const [manualMode, setManualMode] = useState(false);
 
-  const selectedPreset = presets.find(p => p.id === config.processId);
-  const selectedFilOption = filaments.find(f => f.filament.id === config.filamentId);
-  const selectedFilProfileIdx = config.profileIdx ?? 0;
-  const selectedFilProfile = selectedFilOption?.profiles[selectedFilProfileIdx];
+  // Default color to neutral grey when manual inputs first appear (color picker can't be empty).
+  useEffect(() => {
+    if ((!spoolmanActive || manualMode) && config.filamentColor === null) {
+      onChange({ filamentColor: '#888888' });
+    }
+  }, [spoolmanActive, manualMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!printer) return null;
+
+  const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
 
   return (
     <div style={{
@@ -648,59 +522,99 @@ function PerPrinterConfig({ printerId, config, onChange, materials }: {
       border: '1px solid var(--border-1)', borderRadius: 10,
     }}>
       <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
-        <span className="elig on">{printer.badge}</span>
+        <span className="elig on">{badge}</span>
         <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{printer.nickname}</div>
-          <div className="tiny muted">{printer.name}</div>
+          <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
+          <div className="tiny muted">{printer.printer_type}</div>
         </div>
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
         <div>
-          <label className="label">Process preset</label>
+          <label className="label">Print profile</label>
           <select
+            data-testid="print-profile-select"
             className="select"
-            value={config.processId ?? ''}
-            onChange={e => onChange({ processId: e.target.value })}>
-            {presets.length === 0 && <option value="">— no presets —</option>}
-            {presets.map(p => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.layerHeight}mm
-              </option>
+            value={config.printProfile ?? ''}
+            onChange={e => onChange({ printProfile: e.target.value || null })}>
+            <option value="">— select profile —</option>
+            {printProfiles.map(p => (
+              <option key={p} value={p}>{p}</option>
             ))}
           </select>
-          {selectedPreset && (
-            <div className="tiny muted" style={{ marginTop: 6, lineHeight: 1.5 }}>
-              {selectedPreset.nozzle} · {selectedPreset.walls} walls · {selectedPreset.infill}% infill
-            </div>
+          {printProfiles.length === 0 && (
+            <div className="tiny muted" style={{ marginTop: 4 }}>No profiles found for this printer</div>
           )}
         </div>
 
         <div>
-          <label className="label">Filament + profile</label>
-          <select
-            className="select"
-            value={config.filamentId ? `${config.filamentId}::${selectedFilProfileIdx}` : ''}
-            onChange={e => {
-              const [filId, idxStr] = e.target.value.split('::');
-              onChange({ filamentId: filId, profileIdx: Number(idxStr) || 0 });
-            }}>
-            {filaments.length === 0 && <option value="">— no compatible filaments —</option>}
-            {filaments.flatMap(({ filament, profiles }) =>
-              profiles.map((pf, i) => (
-                <option key={`${filament.id}::${i}`} value={`${filament.id}::${i}`}>
-                  {filament.name} · {pf.nozzle}
+          <label className="label">Filament</label>
+          {spoolmanActive && !manualMode ? (
+            <select
+              data-testid="filament-catalog-select"
+              className="select"
+              value={config.filamentProfile ?? ''}
+              onChange={e => {
+                const v = e.target.value;
+                if (v === '__manual__') {
+                  setManualMode(true);
+                  onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+                  return;
+                }
+                const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
+                onChange({
+                  filamentProfile: v || null,
+                  filamentId: f?.id ?? null,
+                  filamentType: f?.material ?? null,
+                  filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
+                });
+              }}>
+              <option value="">— select filament —</option>
+              {filaments.map(f => (
+                <option key={f.id} value={filamentDisplayName(f)}>
+                  {filamentDisplayName(f)} · {f.material}
                 </option>
-              ))
-            )}
-          </select>
-          {selectedFilProfile && (
-            <div className="row gap-2" style={{ marginTop: 6, alignItems: 'center' }}>
-              <FilamentDot color={selectedFilOption!.filament.color} />
-              <span className="tiny muted">
-                {selectedFilProfile.hotendTemp}° / {selectedFilProfile.bedTemp}° bed · {selectedFilProfile.layerHeight}mm
-              </span>
+              ))}
+              <option value="__manual__">Enter manually…</option>
+            </select>
+          ) : (
+            <div className="col gap-2" style={{ marginTop: 2 }}>
+              <div className="row gap-2">
+                <input
+                  data-testid="filament-type-input"
+                  className="input"
+                  list="filament-types"
+                  placeholder="Type (PLA, PETG, ABS…)"
+                  value={config.filamentType ?? ''}
+                  onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
+                  style={{ flex: 1 }}
+                />
+                {spoolmanActive && (
+                  <button className="btn ghost sm" onClick={() => {
+                    setManualMode(false);
+                    onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+                  }}>↩ Catalog</button>
+                )}
+              </div>
+              <datalist id="filament-types">
+                {['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC'].map(t => (
+                  <option key={t} value={t} />
+                ))}
+              </datalist>
+              <div className="row gap-2" style={{ alignItems: 'center' }}>
+                <input
+                  data-testid="filament-color-input"
+                  type="color"
+                  value={config.filamentColor ?? '#888888'}
+                  onChange={e => onChange({ filamentColor: e.target.value })}
+                  style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }}
+                />
+                <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
+              </div>
             </div>
+          )}
+          {spoolmanActive && !manualMode && filaments.length === 0 && (
+            <div className="tiny muted" style={{ marginTop: 4 }}>No filaments in Spoolman</div>
           )}
         </div>
       </div>
@@ -709,44 +623,75 @@ function PerPrinterConfig({ printerId, config, onChange, materials }: {
 }
 
 // ============================================================
+// PlateThumbnail — shared image for a plate across all screens
+// ============================================================
+
+function PlateThumbnail({
+  fileId,
+  thumbnailPath,
+  label,
+  style,
+}: {
+  fileId: number | null;
+  thumbnailPath: string | null;
+  label: string;
+  style?: React.CSSProperties;
+}) {
+  const url = fileId != null ? plateThumbnailUrl(fileId, thumbnailPath) : null;
+  return (
+    <div style={{
+      borderRadius: 8, flexShrink: 0,
+      background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
+      border: '1px solid var(--border-2)',
+      display: 'grid', placeItems: 'center',
+      overflow: 'hidden',
+      ...style,
+    }}>
+      {url ? (
+        <img src={url} alt={label}
+             style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+      ) : (
+        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 10, fontFamily: 'var(--font-mono)', fontWeight: 700 }}>
+          {label}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrders, onToggleQueued }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrders, onToggleQueued }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
+  printers: ApiPrinter[];
   onSetField: (patch: Partial<PlateConfig>) => void;
   onTogglePrinter: (id: string) => void;
   onSetPerPrinter: (printerId: string, patch: Partial<PerPrinterCfg>) => void;
   onSetOrders: (ids: string[]) => void;
   onToggleQueued: (v: boolean) => void;
 }) {
-  const eligibleIds = useMemo(() => eligibleForMaterial(plate.materials), [plate.materials]);
   const queued = !!config.selected;
-  const totalParts = plate.parts.reduce((a, b) => a + b.qty, 0);
 
   return (
     <div className="col gap-4">
       {/* Plate banner with queue toggle */}
       <div className="row gap-3" style={{ alignItems: 'center' }}>
-        <div style={{
-          width: 56, height: 50, borderRadius: 8, flexShrink: 0,
-          background: `linear-gradient(135deg, ${plate.thumbColor}, ${darken(plate.thumbColor)})`,
-          border: '1px solid var(--border-2)',
-          display: 'grid', placeItems: 'center',
-          color: 'rgba(255,255,255,0.55)', fontSize: 10,
-          fontFamily: 'var(--font-mono)',
-          opacity: queued ? 1 : 0.55,
-        }}>
-          P{plate.index}
-        </div>
+        <PlateThumbnail
+          fileId={plate.fileId}
+          thumbnailPath={plate.thumbnailPath}
+          label={`P${plate.index}`}
+          style={{ width: 56, height: 50, opacity: queued ? 1 : 0.55 }}
+        />
         <div className="col" style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14, fontWeight: 500, color: queued ? 'var(--text-1)' : 'var(--text-3)' }}>
             {plate.name}
           </div>
           <div className="tiny muted" style={{ marginTop: 2 }}>
-            {plate.materials.join(' · ')} · est. {fmtTime(plate.estTime)} · {totalParts} part{totalParts === 1 ? '' : 's'}
+            est. {fmtTime(plate.estTime)}
           </div>
         </div>
         {isMultiPlate && <QueueToggle checked={queued} onChange={onToggleQueued} />}
@@ -775,10 +720,9 @@ function PlateConfigPanel({ plate, config, isMultiPlate, onSetField, onTogglePri
               </div>
             </div>
             <PrinterPicker
-              eligibleIds={eligibleIds}
+              printers={printers}
               selectedPrinters={config.selectedPrinters}
               onToggle={onTogglePrinter}
-              materials={plate.materials}
             />
             {config.selectedPrinters.length > 0 && (
               <div className="col gap-3" style={{ marginTop: 14 }}>
@@ -786,9 +730,9 @@ function PlateConfigPanel({ plate, config, isMultiPlate, onSetField, onTogglePri
                   <PerPrinterConfig
                     key={pid}
                     printerId={pid}
-                    config={config.perPrinter[pid] ?? { processId: null, filamentId: null, profileIdx: 0 }}
+                    printers={printers}
+                    config={config.perPrinter[pid] ?? { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null }}
                     onChange={patch => onSetPerPrinter(pid, patch)}
-                    materials={plate.materials}
                   />
                 ))}
               </div>
@@ -804,7 +748,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, onSetField, onTogglePri
               Fulfills orders
             </div>
             <div className="tiny muted" style={{ marginTop: 2, marginBottom: 10, marginLeft: 30 }}>
-              Link this plate to the customer or internal order{config.orderIds.length === 1 ? '' : 's'} its parts ship into. Optional, but helps track progress.
+              Link this plate to the customer or internal order{config.orderIds.length === 1 ? '' : 's'} its parts ship into. Optional.
             </div>
             <OrdersPicker selectedOrderIds={config.orderIds} onChange={onSetOrders} />
           </div>
@@ -969,13 +913,49 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
 // Main screen
 // ============================================================
 
+function platesToLocal(apiPlates: ApiPlate[], fileId: number): Plate[] {
+  return apiPlates.map(p => ({
+    id: `plate-${p.plate_number}`,
+    index: p.plate_number,
+    name: `Plate ${p.plate_number}`,
+    estTime: p.estimated_time,
+    thumbColor: '#2a3552',
+    thumbnailPath: p.thumbnail_path,
+    fileId,
+  }));
+}
+
+function defaultConfigForPlate(plate: Plate): PlateConfig {
+  return {
+    selected: true,
+    jobName: plate.name,
+    priority: 'normal',
+    orderIds: [],
+    selectedPrinters: [],
+    perPrinter: {},
+  };
+}
+
 export function NewJobScreen() {
   const navigate = useNavigate();
+  const printers = usePrinterList();
+
   const [file, setFile] = useState<FileInfo | null>(null);
+  const [uploadedFileId, setUploadedFileId] = useState<number | null>(null);
   const [plates, setPlates] = useState<Plate[]>([]);
   const [plateConfigs, setPlateConfigs] = useState<Record<string, PlateConfig>>({});
   const [activePlateId, setActivePlateId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!successMsg) return;
+    const t = setTimeout(() => setSuccessMsg(null), 4000);
+    return () => clearTimeout(t);
+  }, [successMsg]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedPlateIds = useMemo(
@@ -990,20 +970,34 @@ export function NewJobScreen() {
   }, [plates, activePlateId]);
 
   // ---- file actions ----
-  function handleFile(rawFile: File | null | undefined) {
+  async function handleFile(rawFile: File | null | undefined) {
     if (!rawFile) return;
-    const f: FileInfo = {
-      name: rawFile.name,
-      size: rawFile.size,
-      type: rawFile.name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf',
-    };
-    setFile(f);
-    const detected = readPlatesFromFilename(f.name);
-    setPlates(detected);
-    const configs: Record<string, PlateConfig> = {};
-    detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p); });
-    setPlateConfigs(configs);
-    setActivePlateId(detected[0]?.id ?? null);
+    const nameLower = rawFile.name.toLowerCase();
+    if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl')) {
+      setError('Only .3mf and .stl files are supported.');
+      return;
+    }
+    setUploading(true);
+    setError(null);
+    try {
+      const uploaded = await uploadFile(rawFile);
+      setUploadedFileId(uploaded.id);
+      setFile({
+        name: uploaded.original_filename,
+        size: rawFile.size,
+        type: nameLower.endsWith('.stl') ? 'stl' : '3mf',
+      });
+      const detected = platesToLocal(uploaded.plates, uploaded.id);
+      setPlates(detected);
+      const configs: Record<string, PlateConfig> = {};
+      detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p); });
+      setPlateConfigs(configs);
+      setActivePlateId(detected[0]?.id ?? null);
+    } catch (err) {
+      setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setUploading(false);
+    }
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -1013,7 +1007,8 @@ export function NewJobScreen() {
   }
 
   function clearFile() {
-    setFile(null); setPlates([]); setPlateConfigs({}); setActivePlateId(null);
+    setFile(null); setUploadedFileId(null); setPlates([]);
+    setPlateConfigs({}); setActivePlateId(null); setError(null);
   }
 
   // ---- plate config mutators ----
@@ -1029,7 +1024,6 @@ export function NewJobScreen() {
     setPlateConfigs(prev => {
       const cfg = prev[plateId];
       if (!cfg) return prev;
-      const plate = plates.find(p => p.id === plateId);
       const inSelection = cfg.selectedPrinters.includes(printerId);
       if (inSelection) {
         const nextPP = { ...cfg.perPrinter };
@@ -1043,8 +1037,6 @@ export function NewJobScreen() {
           },
         };
       } else {
-        const firstProcess = PROCESS_PRESETS.find(p => p.printerId === printerId);
-        const firstFil = pickFilamentForPrinter(printerId, plate?.materials ?? []);
         return {
           ...prev,
           [plateId]: {
@@ -1052,11 +1044,7 @@ export function NewJobScreen() {
             selectedPrinters: [...cfg.selectedPrinters, printerId],
             perPrinter: {
               ...cfg.perPrinter,
-              [printerId]: {
-                processId: firstProcess?.id ?? null,
-                filamentId: firstFil?.id ?? null,
-                profileIdx: firstFil?.profileIdx ?? 0,
-              },
+              [printerId]: { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null },
             },
           },
         };
@@ -1089,22 +1077,41 @@ export function NewJobScreen() {
     if (cfg.selectedPrinters.length === 0) return false;
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
-      return pp && pp.processId && pp.filamentId;
+      return !!(pp && pp.printProfile && pp.filamentType && pp.filamentColor);
     });
   };
 
-  const isComplete = selectedPlateIds.length > 0 && selectedPlateIds.every(plateIsComplete);
+  const isComplete = uploadedFileId != null && selectedPlateIds.length > 0 && selectedPlateIds.every(plateIsComplete);
 
-  function handleCreate() {
-    const payload = {
-      file,
-      jobs: selectedPlateIds.map(id => ({
-        plate: plates.find(p => p.id === id),
-        config: plateConfigs[id],
-      })),
-    };
-    console.log('New jobs:', payload);
-    navigate('/queue');
+  async function handleCreate() {
+    if (!uploadedFileId || !isComplete) return;
+    setSubmitting(true);
+    setError(null);
+    const count = selectedPlateIds.length;
+    try {
+      for (const id of selectedPlateIds) {
+        const plate = plates.find(p => p.id === id)!;
+        const cfg = plateConfigs[id];
+        await createJob({
+          uploaded_file_id: uploadedFileId,
+          plate_number: plate.index,
+          printer_configs: cfg.selectedPrinters.map(pid => ({
+            printer_id: Number(pid),
+            print_profile: cfg.perPrinter[pid].printProfile!,
+            filament_profile: cfg.perPrinter[pid].filamentProfile ?? null,
+            filament_id: cfg.perPrinter[pid].filamentId ?? null,
+            filament_type: cfg.perPrinter[pid].filamentType,
+            filament_color: cfg.perPrinter[pid].filamentColor,
+          })),
+        });
+      }
+      clearFile();
+      setSuccessMsg(`${count} job${count === 1 ? '' : 's'} added to queue`);
+    } catch (err) {
+      setError(`Failed to create job: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -1115,16 +1122,39 @@ export function NewJobScreen() {
         <span className="small">New job</span>
       </div>
 
-      <div className="screen-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 340px', gap: 18 }}>
+      {successMsg && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(34,197,94,0.12)', border: '1px solid rgba(34,197,94,0.3)',
+          color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
+        </div>
+      )}
+      {error && (
+        <div style={{
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+          color: 'var(--err)', fontSize: 13,
+        }}>
+          {error}
+        </div>
+      )}
+
+      <div className="layout-main-sidebar">
         <div className="col gap-4">
 
           {/* Step 1: source file */}
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader
               title={<span><StepNum n={1} done={!!file} /> Source file</span>}
-              sub="Drop a .3mf with one or more plates, or a single .stl body."
+              sub="Drop a .3mf or .stl file to get started."
             />
-            {!file ? (
+            {uploading ? (
+              <div className="tiny muted" style={{ padding: '24px 0', textAlign: 'center' }}>
+                Uploading and parsing plates…
+              </div>
+            ) : !file ? (
               <Dropzone
                 dragOver={dragOver}
                 onDragEnter={() => setDragOver(true)}
@@ -1207,6 +1237,7 @@ export function NewJobScreen() {
                   plate={plates.find(p => p.id === activePlateId)!}
                   config={plateConfigs[activePlateId]}
                   isMultiPlate={plates.length > 1}
+                  printers={printers}
                   onSetField={patch => setPlateConfig(activePlateId, patch)}
                   onTogglePrinter={pid => togglePrinterForPlate(activePlateId, pid)}
                   onSetPerPrinter={(pid, patch) => setPerPrinter(activePlateId, pid, patch)}
@@ -1232,13 +1263,17 @@ export function NewJobScreen() {
             <button
               className="btn primary"
               style={{ width: '100%' }}
-              disabled={!isComplete}
+              disabled={!isComplete || submitting}
               onClick={handleCreate}>
-              {Icons.check} Add {selectedPlateIds.length || ''} job{selectedPlateIds.length === 1 ? '' : 's'} to queue
+              {submitting
+                ? 'Adding to queue…'
+                : <>{Icons.check} Add {selectedPlateIds.length || ''} job{selectedPlateIds.length === 1 ? '' : 's'} to queue</>
+              }
             </button>
             <button
               className="btn ghost sm"
               style={{ width: '100%', marginTop: 8 }}
+              disabled={submitting}
               onClick={() => navigate('/queue')}>
               Cancel
             </button>

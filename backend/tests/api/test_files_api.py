@@ -35,13 +35,27 @@ async def test_upload_three_mf(client, tmp_path):
     assert data["plates"][0]["estimated_time"] == 3600
 
 
-async def test_upload_rejects_non_3mf(client, tmp_path):
+async def test_upload_rejects_unsupported_type(client, tmp_path):
+    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+        response = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("model.obj", b"# obj file", "application/octet-stream")},
+        )
+    assert response.status_code == 422
+
+
+async def test_upload_stl_returns_single_plate(client, tmp_path):
     with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
         response = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.stl", b"solid model\nendsolid", "application/octet-stream")},
         )
-    assert response.status_code == 422
+    assert response.status_code == 201
+    data = response.json()
+    assert data["original_filename"] == "model.stl"
+    assert len(data["plates"]) == 1
+    assert data["plates"][0]["plate_number"] == 1
+    assert data["plates"][0]["estimated_time"] == 0
 
 
 async def test_get_plates(client, tmp_path):

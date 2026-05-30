@@ -29,6 +29,7 @@ export interface Printer {
   fanAux: number;
   fanBox: number;
   bedTempTarget: number;
+  queueOn: boolean;
 }
 
 export interface OrderPart {

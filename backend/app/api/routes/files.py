@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...config import get_data_dir
 from ...database import get_session
 from ...models import UploadedFile
-from ...services.three_mf_parser import parse_three_mf
+from ...services.three_mf_parser import parse_three_mf, PlateInfo
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
@@ -30,8 +30,13 @@ async def upload_file(
     file: UploadFile,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    if not (file.filename or "").lower().endswith(".3mf"):
-        raise HTTPException(422, "Only .3mf files are accepted")
+    fname = (file.filename or "").lower()
+    if fname.endswith(".3mf"):
+        ext = ".3mf"
+    elif fname.endswith(".stl"):
+        ext = ".stl"
+    else:
+        raise HTTPException(422, "Only .3mf and .stl files are accepted")
 
     data_dir = get_data_dir()
     file_uuid = str(uuid.uuid4())
@@ -39,11 +44,15 @@ async def upload_file(
     thumb_dir = upload_dir / "thumbnails"
     upload_dir.mkdir(parents=True, exist_ok=True)
 
-    stored_path = upload_dir / "model.3mf"
+    stored_path = upload_dir / f"model{ext}"
     content = await file.read()
     stored_path.write_bytes(content)
 
-    plates_raw = parse_three_mf(str(stored_path), thumbnail_dir=str(thumb_dir))
+    if ext == ".3mf":
+        plates_raw = parse_three_mf(str(stored_path), thumbnail_dir=str(thumb_dir))
+    else:
+        plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=0, filament_g=0.0)]
+
     plates_json = [
         {
             "plate_number": p.plate_number,

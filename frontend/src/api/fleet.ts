@@ -7,6 +7,7 @@ export interface FleetPrinter {
   name: string;
   printer_type: string;
   enabled: boolean;
+  queue_on: boolean;
   connected: boolean;
   awaiting_plate_clear: boolean;
   loaded_filaments: LoadedFilament[];
@@ -77,6 +78,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     fanAux: p.fan_aux ?? 0,
     fanBox: p.fan_box ?? 0,
     bedTempTarget: p.temperatures?.bed_target ?? 0,
+    queueOn: p.queue_on ?? true,
   };
 }
 

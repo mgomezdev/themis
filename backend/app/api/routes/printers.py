@@ -15,6 +15,7 @@ from ...models import Printer
 from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
+from ...config import get_orca_config_dir
 from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
 
@@ -36,6 +37,7 @@ class PrinterUpdate(BaseModel):
     orca_printer_profiles: list[str] | None = None
     current_orca_printer_profile: str | None = None
     enabled: bool | None = None
+    queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
 
 
@@ -71,6 +73,7 @@ def _to_dict(p: Printer) -> dict:
         "orca_printer_profiles": p.orca_printer_profiles,
         "current_orca_printer_profile": p.current_orca_printer_profile,
         "enabled": p.enabled,
+        "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
         "connected": live_client.connected if live_client else False,
     }
@@ -161,6 +164,22 @@ async def test_connection(body: TestConnectionRequest) -> dict:
                 pass
 
 
+_SAMPLE_PROFILES = {
+    "print_profiles": [
+        "0.20mm Standard @ECC",
+        "0.16mm Fine @ECC",
+        "0.28mm Draft @ECC",
+    ],
+    "filament_profiles": [
+        "Elegoo PLA Basic @ECC",
+        "Elegoo PLA+ @ECC",
+        "Elegoo PETG @ECC",
+        "Elegoo ABS @ECC",
+        "Generic PLA @ECC",
+    ],
+}
+
+
 @router.get("/{printer_id}/profiles")
 async def get_profiles(
     printer_id: int,
@@ -170,7 +189,11 @@ async def get_profiles(
     if not printer.current_orca_printer_profile:
         return {"print_profiles": [], "filament_profiles": []}
     svc = ProfileService()
-    return svc.get_compatible_profiles(printer.current_orca_printer_profile)
+    result = svc.get_compatible_profiles(printer.current_orca_printer_profile)
+    if not result["print_profiles"] and not result["filament_profiles"]:
+        if not get_orca_config_dir().exists():
+            return _SAMPLE_PROFILES
+    return result
 
 
 @router.get("/{printer_id}")
@@ -198,6 +221,8 @@ async def update_printer(
         printer.current_orca_printer_profile = body.current_orca_printer_profile
     if body.enabled is not None:
         printer.enabled = body.enabled
+    if body.queue_on is not None:
+        printer.queue_on = body.queue_on
     if body.loaded_filaments is not None:
         printer.loaded_filaments = body.loaded_filaments
     await session.commit()
