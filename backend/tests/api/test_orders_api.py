@@ -75,6 +75,19 @@ async def test_status_in_progress_with_job(client, tmp_path):
     assert data["jobs"][0]["plate_number"] == 1
 
 
+async def test_jobs_ordered_by_queue_position(client, tmp_path):
+    oid = (await _create_order(client)).json()["id"]
+    await _make_job(client, tmp_path, oid)
+    await _make_job(client, tmp_path, oid)
+    data = (await client.get(f"/api/v1/orders/{oid}")).json()
+    assert len(data["jobs"]) == 2
+    positions = [j["queue_position"] for j in data["jobs"]]
+    assert positions == sorted(positions)  # ascending by queue_position
+    # Each successive job gets the next queue_position, so ids come back in order.
+    ids = [j["id"] for j in data["jobs"]]
+    assert ids == sorted(ids)
+
+
 async def test_hold_override(client):
     oid = (await _create_order(client)).json()["id"]
     resp = await client.patch(f"/api/v1/orders/{oid}", json={"on_hold": True})

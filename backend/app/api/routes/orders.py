@@ -58,6 +58,7 @@ async def _derive(session: AsyncSession, order: Order) -> tuple[str, float, int]
     statuses = [r[0] for r in result.all()]
     active = [s for s in statuses if s != "cancelled"]
     completed = [s for s in active if s == "complete"]
+    # Manual hold overrides derived state (per spec).
     if order.on_hold:
         status = "hold"
     elif not active:
