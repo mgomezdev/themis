@@ -69,17 +69,20 @@ acceptable given the dev-only, disposable database.
 
 Computed on read. The only persisted status field is `on_hold`.
 
+Let `active_jobs` = linked jobs whose status is **not** `cancelled` (cancelled jobs are
+ignored for both status and progress, so a cancelled job never drags an order below 100%).
+
 ```
-if on_hold:                                   status = "hold"
-elif job_count == 0:                          status = "queued"
-elif all linked jobs in {complete, cancelled} status = "complete"   # and >= 1 complete
-else:                                         status = "in_progress"
-progress = completed_jobs / total_jobs        # 0 when total_jobs == 0
+if on_hold:                                    status = "hold"
+elif active_jobs is empty:                     status = "queued"   # no jobs, or all cancelled
+elif all active_jobs are complete:             status = "complete"
+else:                                          status = "in_progress"
+progress = completed_jobs / len(active_jobs)   # 0 when active_jobs is empty
 ```
 
-- "Completed" = job status `complete`. Cancelled jobs count toward "all done" but not
-  toward the completed numerator.
+- "Completed" = job status `complete`.
 - The mockup's `partial` status collapses into `in_progress`.
+- Status `complete` always pairs with `progress == 1.0`, by construction.
 
 ## Backend API (`routes/orders.py`, replaces `routes/projects.py`)
 
