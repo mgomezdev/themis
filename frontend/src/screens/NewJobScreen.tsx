@@ -442,7 +442,7 @@ function PerPrinterConfig({ printerId, printers, config, onChange }: {
 }) {
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
-  const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
+  const { printProfiles } = usePrinterProfiles(pid);
   const { config: spoolmanCfg } = useSpoolmanConfig();
   const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
   const filaments = useFilaments(spoolmanActive);
@@ -902,7 +902,7 @@ function OverrideAlertModal({ findings, onProceed, onCancel }: {
     }}>
       <div onClick={e => e.stopPropagation()} className="card" style={{ width: 'min(560px,100%)', padding: 24 }}>
         <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ color: 'var(--warn)' }}>{Icons.alert ?? Icons.info}</span>
+          <span style={{ color: 'var(--warn)' }}>{Icons.alert}</span>
           <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>This file has settings that won't carry over</h2>
         </div>
         <div className="muted small" style={{ marginBottom: 14, lineHeight: 1.5 }}>

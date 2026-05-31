@@ -7,6 +7,7 @@ const BASE: FleetPrinter = {
   name: 'Forge',
   printer_type: 'elegoo_centauri',
   enabled: true,
+  queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
   loaded_filaments: [],

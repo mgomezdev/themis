@@ -5,7 +5,8 @@ import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, plateThumbnailUrl, type ApiJob } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, plateThumbnailUrl } from '../api/queue';
+import type { StatusKey } from '../data/types';
 
 // ---- DisplayJob: flattened shape for rendering ----
 interface DisplayJob {
@@ -85,15 +86,6 @@ function SummaryStat({
   );
 }
 
-// ---- color helper ----
-function darkenColor(hex: string): string {
-  const n = parseInt(hex.replace('#', ''), 16);
-  const r = Math.max(0, ((n >> 16) & 0xff) - 40);
-  const g = Math.max(0, ((n >> 8) & 0xff) - 40);
-  const b = Math.max(0, (n & 0xff) - 40);
-  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
-}
-
 // ---- JobCardRich ----
 function JobCardRich({
   job,
@@ -159,7 +151,7 @@ function JobCardRich({
             </div>
             {(showStatus || isFailed) && (
               <div className="row gap-2">
-                <StatusPill status={job.status} />
+                <StatusPill status={job.status as StatusKey} />
               </div>
             )}
           </div>
@@ -257,7 +249,7 @@ function JobDetailPanel({
             <div className="mono tiny muted" style={{ marginBottom: 2 }}>Job #{job.rawId}</div>
             <div style={{ fontSize: 15, fontWeight: 500 }}>{job.plateName}</div>
           </div>
-          <StatusPill status={job.status} />
+          <StatusPill status={job.status as StatusKey} />
         </div>
 
         {isActive && (
