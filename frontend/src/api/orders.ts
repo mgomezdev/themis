@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { StatusKey } from '../data/types';
 
 export type OrderType = 'customer' | 'internal';
 
@@ -27,7 +28,7 @@ export interface ApiOrder {
   notes: string | null;
   on_hold: boolean;
   parts: ApiOrderPart[];
-  status: string;
+  status: StatusKey;
   progress: number;       // 0..1
   job_count: number;
   created_at: string;

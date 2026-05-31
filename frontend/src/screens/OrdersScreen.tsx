@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { matColor, fmtTime } from '../data/helpers';
 import { StatusPill, Progress, MaterialChip, Empty } from '../components/ui';
@@ -74,9 +74,11 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
   const [detail, setDetail] = useState<ApiOrderDetail | null>(null);
   const [busy, setBusy] = useState(false);
   const pct = Math.round(order.progress * 100);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
 
   useEffect(() => {
-    if (!expanded) return;
+    if (!expanded) { setDetail(null); return; }
     let alive = true;
     getOrder(order.id).then(d => { if (alive) setDetail(d); }).catch(console.error);
     return () => { alive = false; };
@@ -86,7 +88,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
     e.stopPropagation();
     setBusy(true);
     try { await updateOrder(order.id, { on_hold: !order.on_hold }); onChanged(); }
-    finally { setBusy(false); }
+    finally { if (mounted.current) setBusy(false); }
   }
 
   async function remove(e: React.MouseEvent) {
@@ -94,7 +96,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
     if (!window.confirm(`Delete order for ${order.customer}? Linked jobs stay in the queue.`)) return;
     setBusy(true);
     try { await deleteOrder(order.id); onChanged(); }
-    finally { setBusy(false); }
+    finally { if (mounted.current) setBusy(false); }
   }
 
   return (
@@ -127,7 +129,7 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
             <div style={{ marginTop: 6 }}><Progress value={pct} /></div>
           </div>
           <div style={{ width: 110, flexShrink: 0, display: 'flex', justifyContent: 'flex-end' }}>
-            <StatusPill status={order.status as never} />
+            <StatusPill status={order.status} />
           </div>
         </div>
       </button>
