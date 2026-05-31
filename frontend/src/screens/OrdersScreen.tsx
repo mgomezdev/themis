@@ -40,6 +40,7 @@ function PartsTable({ order }: { order: ApiOrder }) {
 }
 
 function JobsFilling({ jobs }: { jobs: OrderJobSummary[] }) {
+  const navigate = useNavigate();
   const fileIds = useMemo(() => [...new Set(jobs.map(j => j.uploaded_file_id))], [jobs]);
   const getPlate = useFilePlates(fileIds);
   if (jobs.length === 0) {
@@ -50,14 +51,29 @@ function JobsFilling({ jobs }: { jobs: OrderJobSummary[] }) {
       {jobs.map(j => {
         const plate = getPlate(j.uploaded_file_id, j.plate_number);
         return (
-          <div key={j.id} className="row between" style={{ padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 8, border: '1px solid var(--border-1)' }}>
+          <button
+            key={j.id}
+            onClick={e => { e.stopPropagation(); navigate(`/jobs/${j.id}`); }}
+            className="row between"
+            style={{
+              padding: '10px 12px', background: 'var(--bg-2)', borderRadius: 8,
+              border: '1px solid var(--border-1)', cursor: 'pointer',
+              color: 'inherit', fontFamily: 'inherit', textAlign: 'left', width: '100%',
+              transition: 'background 120ms',
+            }}
+            onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
+            onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg-2)')}
+          >
             <div className="row gap-3" style={{ alignItems: 'center', minWidth: 0 }}>
               <span className="mono tiny muted">#{j.id}</span>
               <div style={{ fontWeight: 500, fontSize: 13 }}>Plate {j.plate_number}</div>
               <StatusPill status={j.status as never} />
             </div>
-            <span className="num tiny muted">{plate?.estimated_time ? fmtTime(plate.estimated_time) : '—'}</span>
-          </div>
+            <div className="row gap-3" style={{ alignItems: 'center', flexShrink: 0 }}>
+              <span className="num tiny muted">{plate?.estimated_time ? fmtTime(plate.estimated_time) : '—'}</span>
+              <span className="tiny muted" style={{ opacity: 0.5 }}>→</span>
+            </div>
+          </button>
         );
       })}
     </div>

@@ -188,6 +188,68 @@ async def get_job(
     return _to_dict(await _get_or_404(job_id, session))
 
 
+@router.get("/{job_id}/details")
+async def get_job_details(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Full job detail: file name, plate stats, per-printer slicing configs, assigned printer."""
+    job = await _get_or_404(job_id, session)
+
+    # File + plate metadata
+    file_info = None
+    plate_info = None
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if uploaded_file:
+        file_info = {"id": uploaded_file.id, "original_filename": uploaded_file.original_filename}
+        plate = next(
+            (p for p in (uploaded_file.plates or []) if p.get("plate_number") == job.plate_number),
+            None,
+        )
+        if plate:
+            plate_info = {
+                "estimated_time": plate.get("estimated_time"),
+                "filament_g": plate.get("filament_g"),
+                "thumbnail_path": plate.get("thumbnail_path"),
+            }
+
+    # Per-printer slicing configs
+    result = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    printer_configs = []
+    for cfg in result.scalars().all():
+        p = await session.get(Printer, cfg.printer_id)
+        printer_configs.append({
+            "printer_id": cfg.printer_id,
+            "printer_name": p.name if p else f"Printer {cfg.printer_id}",
+            "printer_type": p.printer_type if p else "unknown",
+            "print_profile": cfg.print_profile,
+            "filament_profile": cfg.filament_profile,
+            "filament_id": cfg.filament_id,
+            "filament_type": cfg.filament_type,
+            "filament_color": cfg.filament_color,
+            "slice_failed": cfg.slice_failed,
+            "slice_error": cfg.slice_error,
+        })
+
+    # Assigned printer (if claimed)
+    assigned_printer = None
+    if job.assigned_printer_id:
+        p = await session.get(Printer, job.assigned_printer_id)
+        if p:
+            assigned_printer = {"id": p.id, "name": p.name, "printer_type": p.printer_type}
+
+    return {
+        **_to_dict(job),
+        "block_reason": job.block_reason,
+        "file": file_info,
+        "plate": plate_info,
+        "printer_configs": printer_configs,
+        "assigned_printer": assigned_printer,
+    }
+
+
 @router.post("/{job_id}/cancel")
 async def cancel_job(
     job_id: int,

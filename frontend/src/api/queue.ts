@@ -39,6 +39,27 @@ export interface ApiJob {
   updated_at: string;
 }
 
+export interface ApiJobPrinterConfig {
+  printer_id: number;
+  printer_name: string;
+  printer_type: string;
+  print_profile: string;
+  filament_profile: string | null;
+  filament_id: number | null;
+  filament_type: string | null;
+  filament_color: string | null;
+  slice_failed: boolean;
+  slice_error: string | null;
+}
+
+export interface ApiJobDetails extends ApiJob {
+  block_reason: string | null;
+  file: { id: number; original_filename: string } | null;
+  plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
+  printer_configs: ApiJobPrinterConfig[];
+  assigned_printer: { id: number; name: string; printer_type: string } | null;
+}
+
 /** Build the URL that serves a plate's embedded thumbnail via the files API. */
 export function plateThumbnailUrl(fileId: number, thumbnailPath: string | null | undefined): string | null {
   if (!thumbnailPath) return null;
@@ -130,6 +151,10 @@ export async function getQueue(): Promise<ApiJob[]> {
 
 export async function cancelJob(jobId: number): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/cancel`, { method: 'POST' });
+}
+
+export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
+  return request(`/api/v1/jobs/${jobId}/details`);
 }
 
 export async function reorderQueue(
