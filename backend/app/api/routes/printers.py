@@ -16,8 +16,12 @@ from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
 from ...config import get_orca_config_dir
+from ...services.profile_index import ProfileIndex
 from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
+
+# Shared, cached compatibility index (rebuilds when the user's presets change).
+_profile_index = ProfileIndex()
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -136,6 +140,13 @@ async def list_orca_printer_presets() -> list[str]:
     return svc.get_printer_preset_names()
 
 
+@router.get("/orca-machine-catalog")
+async def orca_machine_catalog() -> list[dict]:
+    """Real selectable OrcaSlicer machine presets [{name, printer_model, nozzle}]
+    for the printer-settings model/nozzle picker."""
+    return _profile_index.machine_catalog()
+
+
 class TestConnectionRequest(BaseModel):
     printer_type: str
     connection_config: dict
@@ -188,8 +199,8 @@ async def get_profiles(
     printer = await _get_or_404(printer_id, session)
     if not printer.current_orca_printer_profile:
         return {"print_profiles": [], "filament_profiles": []}
-    svc = ProfileService()
-    result = svc.get_compatible_profiles(printer.current_orca_printer_profile)
+    # Inheritance-resolved compatibility via the precomputed index.
+    result = _profile_index.compatible_profiles(printer.current_orca_printer_profile)
     if not result["print_profiles"] and not result["filament_profiles"]:
         if not get_orca_config_dir().exists():
             return _SAMPLE_PROFILES

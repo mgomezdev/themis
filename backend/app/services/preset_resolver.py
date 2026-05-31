@@ -30,6 +30,10 @@ class PresetResolver:
         self._root = Path(orca_config_dir) if orca_config_dir else get_orca_config_dir()
         self._index: dict[str, dict[str, Path]] | None = None
 
+    @property
+    def root(self) -> Path:
+        return self._root
+
     # ── indexing ──────────────────────────────────────────────────────────────
     def _build_index(self) -> dict[str, dict[str, Path]]:
         """name -> path, per category. Scans ``system/`` and signed-in user account
