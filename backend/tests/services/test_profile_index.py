@@ -72,6 +72,28 @@ def test_unknown_machine_returns_empty(tmp_path):
     assert prof == {"print_profiles": [], "filament_profiles": []}
 
 
+def test_universal_filament_compatible_with_every_machine(tmp_path):
+    # A selectable filament with NO compat declaration (like the OrcaFilamentLibrary
+    # "Generic @System" presets) is universal — it must appear for every machine,
+    # while an abstract @base preset (instantiation false) is excluded everywhere.
+    root = _make_tree(tmp_path)
+    _write(root / "system/OrcaFilamentLibrary/filament/generic_pla.json",
+           {"name": "Generic PLA @System", "type": "filament", "instantiation": "true"})
+    _write(root / "system/OrcaFilamentLibrary/filament/base.json",
+           {"name": "fdm_filament_common", "type": "filament", "instantiation": "false"})
+    idx = ProfileIndex(PresetResolver(str(root)))
+
+    for machine in ("Acme One 0.4 nozzle", "Acme One 0.6 nozzle", "My Acme"):
+        fils = idx.compatible_profiles(machine)["filament_profiles"]
+        assert "Generic PLA @System" in fils, machine
+        assert "fdm_filament_common" not in fils, machine
+    # the 0.4 still also has its name-list match; the 0.6 has only the universal one
+    assert idx.compatible_profiles("Acme One 0.4 nozzle")["filament_profiles"] == \
+        ["Generic PLA @System", "PLA @Acme"]
+    assert idx.compatible_profiles("Acme One 0.6 nozzle")["filament_profiles"] == \
+        ["Generic PLA @System"]
+
+
 def test_rebuilds_when_user_presets_change(tmp_path):
     root = _make_tree(tmp_path)
     idx = ProfileIndex(PresetResolver(str(root)))
