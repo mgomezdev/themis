@@ -1,5 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools } from '../api/spoolman';
+import { getQueueConfig, saveQueueConfig } from '../api/queue';
+import { rescanProfiles } from '../api/printers';
 import { TAGS } from '../data/mock';
 import { Icons, Icon } from '../components/icons';
 import type { Tag } from '../data/types';
@@ -560,10 +562,63 @@ function PrintDefaultsPage() {
     update({ requireDryBefore: has ? s.requireDryBefore.filter(x => x !== m) : [...s.requireDryBefore, m] });
   }
 
+  // Queue check interval — wired to the backend (how often the engine scans
+  // printer availability and claims the next compatible queued job).
+  const [checkInterval, setCheckInterval] = useState<number>(5);
+  const [savingInterval, setSavingInterval] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => setCheckInterval(c.check_interval_minutes)).catch(console.error);
+  }, []);
+  async function commitInterval(minutes: number) {
+    const v = Math.max(1, Math.round(minutes) || 1);
+    setCheckInterval(v);
+    setSavingInterval(true);
+    try { await saveQueueConfig({ check_interval_minutes: v }); }
+    finally { setSavingInterval(false); }
+  }
+
+  // Rescan OrcaSlicer presets (pick up models/profiles added since startup).
+  const [rescanning, setRescanning] = useState(false);
+  const [rescanMsg, setRescanMsg] = useState<string | null>(null);
+  async function doRescan() {
+    setRescanning(true);
+    setRescanMsg(null);
+    try {
+      const r = await rescanProfiles();
+      setRescanMsg(`Found ${r.machine_presets} printer presets.`);
+    } catch {
+      setRescanMsg('Rescan failed — is OrcaSlicer config reachable?');
+    } finally {
+      setRescanning(false);
+    }
+  }
+
   return (
     <div className="card" style={{ padding: 28 }}>
       <PageHeader title="Print defaults"
                   sub="Workshop-wide print behavior. Per-job overrides win when set during new-job intake." />
+
+      <FieldRow label="Queue check interval"
+                hint="How often the queue engine scans for an available printer and claims the next compatible job. Minutes.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <input className="input" type="number" min={1} step={1}
+                 value={checkInterval}
+                 onChange={e => setCheckInterval(Number(e.target.value))}
+                 onBlur={e => commitInterval(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">min{savingInterval ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="OrcaSlicer profiles"
+                hint="Themis caches your OrcaSlicer printer/process/filament presets. Rescan after adding or editing presets so new options appear in printer setup and new jobs.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <button className="btn sm" disabled={rescanning} onClick={doRescan}>
+            {Icons.refresh} {rescanning ? 'Rescanning…' : 'Rescan profiles'}
+          </button>
+          {rescanMsg && <span className="muted small">{rescanMsg}</span>}
+        </div>
+      </FieldRow>
 
       <FieldRow label="Slice on claim"
                 hint="When a printer claims a queued job, slice immediately using its configured profile rather than waiting for a manual slice.">

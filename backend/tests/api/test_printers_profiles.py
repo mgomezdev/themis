@@ -22,8 +22,8 @@ async def test_get_profiles_with_active_preset(client):
         "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle",
     })
     pid = create.json()["id"]
-    with patch("app.api.routes.printers.ProfileService") as MockSvc:
-        MockSvc.return_value.get_compatible_profiles.return_value = {
+    with patch("app.api.routes.printers._profile_index") as mock_idx:
+        mock_idx.compatible_profiles.return_value = {
             "print_profiles": ["0.20mm Standard"],
             "filament_profiles": ["Bambu PLA Basic"],
         }
@@ -31,6 +31,7 @@ async def test_get_profiles_with_active_preset(client):
     assert response.status_code == 200
     data = response.json()
     assert "0.20mm Standard" in data["print_profiles"]
+    mock_idx.compatible_profiles.assert_called_once_with("Bambu Lab P1S 0.4 nozzle")
 
 
 async def test_list_orca_printer_presets(client):

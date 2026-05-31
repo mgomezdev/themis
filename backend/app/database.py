@@ -46,6 +46,10 @@ async def _migrate(conn) -> None:
     if "filament_color" not in jpc_cols:
         await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_color VARCHAR(20)"))
 
+    job_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
+    if "block_reason" not in job_cols:
+        await conn.execute(text("ALTER TABLE jobs ADD COLUMN block_reason TEXT"))
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with SessionLocal() as session:

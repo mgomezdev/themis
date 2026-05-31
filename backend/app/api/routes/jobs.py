@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
+from ...services.mesh_3mf_builder import source_has_project_settings
+from ...services.override_inspector import inspect_overrides
+from ...services.preset_resolver import PresetNotFoundError, PresetResolver
+from ...services.project_config_builder import build_project_config
 from ...services.queue_engine import queue_engine
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
@@ -21,6 +25,14 @@ class PrinterConfigInput(BaseModel):
     filament_profile: str | None = None
     filament_id: int | None = None
     filament_type: str | None = None
+    filament_color: str | None = None
+
+
+class OverrideCheckRequest(BaseModel):
+    uploaded_file_id: int
+    printer_id: int
+    print_profile: str
+    filament_profile: str | None = None
     filament_color: str | None = None
 
 
@@ -113,6 +125,48 @@ async def create_job(
     queue_engine.wake()
 
     return _to_dict(job)
+
+
+@router.post("/check-overrides")
+async def check_overrides(
+    body: OverrideCheckRequest,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Flag settings baked into the uploaded 3MF that the chosen presets would
+    change, so the New Job flow can warn before slicing replaces them."""
+    uploaded_file = await session.get(UploadedFile, body.uploaded_file_id)
+    if uploaded_file is None:
+        raise HTTPException(404, f"File {body.uploaded_file_id} not found")
+    printer = await session.get(Printer, body.printer_id)
+    if printer is None:
+        raise HTTPException(404, f"Printer {body.printer_id} not found")
+
+    empty = {"has_findings": False, "setting_changes": [], "slot_warning": None}
+    # Bare/geometry-only uploads carry no settings to lose.
+    if not source_has_project_settings(uploaded_file.stored_path):
+        return {**empty, "has_embedded_settings": False}
+    if not printer.current_orca_printer_profile:
+        return {**empty, "has_embedded_settings": True}
+
+    resolver = PresetResolver()
+    try:
+        machine = resolver.resolve(printer.current_orca_printer_profile, "machine")
+        process = resolver.resolve(body.print_profile, "process")
+    except PresetNotFoundError as e:
+        # Can't compare without the chosen presets; don't block job creation.
+        return {**empty, "has_embedded_settings": True, "error": str(e)}
+    # Filament content doesn't affect the curated (process) diff; best-effort.
+    try:
+        filaments = [resolver.resolve(body.filament_profile, "filament")] if body.filament_profile else []
+    except PresetNotFoundError:
+        filaments = []
+    if not filaments:
+        filaments = [{"name": body.filament_profile or "filament", "filament_type": ["PLA"]}]
+
+    config = build_project_config(machine, process, filaments,
+                                  [body.filament_color] if body.filament_color else None)
+    slots = len(printer.loaded_filaments or []) or 1
+    return inspect_overrides(uploaded_file.stored_path, config, slots)
 
 
 @router.get("")

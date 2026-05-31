@@ -32,6 +32,7 @@ def _to_dict(j: Job) -> dict:
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
+        "block_reason": j.block_reason,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
     }

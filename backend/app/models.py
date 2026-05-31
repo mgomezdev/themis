@@ -48,6 +48,7 @@ class Job(Base):
     assigned_printer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("printers.id"), nullable=True)
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued")
+    block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
 
@@ -74,6 +75,13 @@ class GcodeFile(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id"))
     path: Mapped[str] = mapped_column(String(1024))
+
+
+class QueueConfig(Base):
+    __tablename__ = "queue_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    check_interval_minutes: Mapped[int] = mapped_column(default=5)
 
 
 class SpoolmanConfig(Base):

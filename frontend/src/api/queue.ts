@@ -88,6 +88,42 @@ export async function createJob(body: {
   });
 }
 
+export interface OverrideChange { key: string; from: string; to: string; }
+export interface OverrideCheck {
+  has_embedded_settings: boolean;
+  has_findings: boolean;
+  setting_changes: OverrideChange[];
+  slot_warning: { used_slots: number; printer_slots: number } | null;
+}
+
+export async function checkOverrides(body: {
+  uploaded_file_id: number;
+  printer_id: number;
+  print_profile: string;
+  filament_profile?: string | null;
+  filament_color?: string | null;
+}): Promise<OverrideCheck> {
+  return request('/api/v1/jobs/check-overrides', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export interface QueueConfig { check_interval_minutes: number; }
+
+export async function getQueueConfig(): Promise<QueueConfig> {
+  return request('/api/v1/settings/queue');
+}
+
+export async function saveQueueConfig(body: QueueConfig): Promise<QueueConfig> {
+  return request('/api/v1/settings/queue', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 export async function getQueue(): Promise<ApiJob[]> {
   return request('/api/v1/queue');
 }

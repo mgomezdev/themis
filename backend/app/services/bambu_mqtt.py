@@ -39,6 +39,11 @@ class PrinterState:
 class BambuMQTTClient(AbstractPrinterClient):
     printer_type: ClassVar[str] = "bambu"
 
+    def orca_export_args(self, file_base: str) -> list[str]:
+        # Bambu printers ingest the sliced .gcode.3mf (not raw gcode); name it
+        # after the job so the printer's file list is meaningful.
+        return ["--export-3mf", f"{file_base}.gcode.3mf"]
+
     def __init__(
         self,
         ip_address: str,

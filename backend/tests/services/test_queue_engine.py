@@ -6,6 +6,7 @@ import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.database import Base
@@ -45,6 +46,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
                 connection_config={},
+                current_orca_printer_profile="Test Machine Preset",
             ))
             await session.flush()
         f = UploadedFile(
@@ -130,7 +132,7 @@ async def test_queue_off_printer_does_not_claim(db):
 
 
 @pytest.mark.asyncio
-async def test_slice_failure_marks_config_and_requeues(db):
+async def test_slice_failure_blocks_job(db):
     mgr = _make_mock_printer_manager([1])
     mock_slicer = MagicMock()
     mock_slicer.slice.side_effect = SliceError("Profile not found")
@@ -143,8 +145,9 @@ async def test_slice_failure_marks_config_and_requeues(db):
 
     async with db() as session:
         job = await session.get(Job, job_id)
-        # All configs failed → job should be 'failed'
-        assert job.status == "failed"
+        # A slicing issue blocks the job (per queue policy), with a reason.
+        assert job.status == "blocked"
+        assert "slicing failed" in (job.block_reason or "")
 
 
 @pytest.mark.asyncio
@@ -157,6 +160,9 @@ async def test_slice_failure_requeues_when_other_printers_available(db):
     qe = QueueEngine(db, mgr, mock_slicer)
 
     async with db() as session:
+        for pid in (1, 2):
+            session.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri",
+                                connection_config={}, current_orca_printer_profile="Test Machine Preset"))
         f = UploadedFile(
             original_filename="test.3mf",
             stored_path="/data/uploads/x/model.3mf",
@@ -186,8 +192,13 @@ async def test_slice_failure_requeues_when_other_printers_available(db):
 
     async with db() as session:
         job = await session.get(Job, job_id)
-        # Printer 1 slice failed, but printer 2's config is still valid → job requeued
-        assert job.status == "queued"
+        # Printer 1's slice failed → blocked; printer 2 (config not failed) can still
+        # rescue it on a later check.
+        assert job.status == "blocked"
+        cfgs = (await session.execute(
+            select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
+        by_printer = {c.printer_id: c.slice_failed for c in cfgs}
+        assert by_printer[1] is True and by_printer[2] is False
 
 
 @pytest.mark.asyncio
@@ -207,3 +218,84 @@ async def test_handle_print_complete_transitions_job(db):
     async with db() as session:
         job = await session.get(Job, job_id)
         assert job.status == "complete"
+
+
+async def _set_filament(db, job_id, printer_id, req_type, req_color, loaded):
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id,
+            JobPrinterConfig.printer_id == printer_id))).scalar_one()
+        cfg.filament_type = req_type
+        cfg.filament_color = req_color
+        (await session.get(Printer, printer_id)).loaded_filaments = loaded
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_filament_mismatch_blocks_job(db):
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PETG", "#FF0000", [{"slot": 0, "type": "PLA", "color": "#FFFFFF"}])
+
+    await qe._process_queue()
+    await asyncio.sleep(0.05)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "blocked"
+        assert "filament" in (job.block_reason or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_filament_match_allows_claim(db, tmp_path):
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+    # case- and #-insensitive match
+    await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "pla", "color": "FFFFFF"}])
+
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
+
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PETG", "color": "#000000"}])
+
+    await qe._process_queue()
+    await asyncio.sleep(0.05)
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "blocked"
+
+    # load the matching filament, then re-check
+    async with db() as session:
+        (await session.get(Printer, 1)).loaded_filaments = [{"type": "PLA", "color": "#FFFFFF"}]
+        await session.commit()
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_check_interval_reads_config(db):
+    from app.models import QueueConfig
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+    assert await qe._check_interval_seconds() == 5 * 60  # default
+    async with db() as session:
+        session.add(QueueConfig(id=1, check_interval_minutes=15))
+        await session.commit()
+    assert await qe._check_interval_seconds() == 15 * 60
