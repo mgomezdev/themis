@@ -70,6 +70,8 @@ const MOCK_UPLOADED_FILE = {
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+class FakeWS { onmessage: ((e: MessageEvent) => void) | null = null; close() {} }
+vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket);
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <MemoryRouter>{children}</MemoryRouter>

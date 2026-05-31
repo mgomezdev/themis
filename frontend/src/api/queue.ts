@@ -31,7 +31,7 @@ export interface ApiJob {
   id: number;
   uploaded_file_id: number;
   plate_number: number;
-  project_id: number | null;
+  order_id: number | null;
   assigned_printer_id: number | null;
   queue_position: number | null;
   status: string;
@@ -79,7 +79,7 @@ export async function createJob(body: {
   uploaded_file_id: number;
   plate_number: number;
   printer_configs: PrinterConfigInput[];
-  project_id?: number | null;
+  order_id?: number | null;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',

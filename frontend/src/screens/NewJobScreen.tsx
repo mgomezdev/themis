@@ -1,12 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ORDERS } from '../data/mock';
-import { fmtTime, darken } from '../data/helpers';
+import { fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
-import { StatusPill, SectionHeader } from '../components/ui';
-import type { Order } from '../data/types';
+import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
 import { uploadFile, createJob, getPrinterProfiles, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck } from '../api/queue';
+import { useOrders } from '../api/orders';
 import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
 
 // ============================================================
@@ -35,7 +34,7 @@ interface PlateConfig {
   selected: boolean;
   jobName: string;
   priority: string;
-  orderIds: string[];
+  orderId: number | null;
   selectedPrinters: string[];
   perPrinter: Record<string, PerPrinterCfg>;
 }
@@ -321,105 +320,49 @@ function QueueToggle({ checked, onChange }: { checked: boolean; onChange: (v: bo
 }
 
 // ============================================================
-// OrdersPicker — uses mock ORDERS while orders feature is pending
+// OrdersPicker — single-select from real API orders
 // ============================================================
 
-function OrdersPicker({ selectedOrderIds, onChange }: {
-  selectedOrderIds: string[];
-  onChange: (ids: string[]) => void;
+function OrdersPicker({ selectedOrderId, onChange }: {
+  selectedOrderId: number | null;
+  onChange: (id: number | null) => void;
 }) {
-  const open = ORDERS.filter(o => o.status !== 'complete');
-  const complete = ORDERS.filter(o => o.status === 'complete');
-
-  function toggle(id: string) {
-    if (selectedOrderIds.includes(id)) {
-      onChange(selectedOrderIds.filter(x => x !== id));
-    } else {
-      onChange([...selectedOrderIds, id]);
-    }
-  }
-
-  function Chip({ order }: { order: Order }) {
-    const selected = selectedOrderIds.includes(order.id);
-    return (
-      <button
-        onClick={(e) => { e.stopPropagation(); toggle(order.id); }}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8,
-          padding: '6px 10px 6px 8px',
-          background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
-          border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
-          boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
-          borderRadius: 999,
-          cursor: 'pointer', color: 'var(--text-1)',
-          fontFamily: 'inherit', fontSize: 12,
-          whiteSpace: 'nowrap',
-          maxWidth: 280, minWidth: 0,
-          transition: 'background 120ms, border-color 120ms',
-        }}>
-        <span style={{
-          width: 14, height: 14, flexShrink: 0,
-          borderRadius: 4,
-          border: `1.5px solid ${selected ? 'var(--accent)' : 'var(--border-2)'}`,
-          background: selected ? 'var(--accent)' : 'transparent',
-          display: 'inline-grid', placeItems: 'center',
-        }}>
-          {selected && (
-            <span style={{ color: 'white', display: 'inline-flex' }}>
-              {React.cloneElement(Icons.check as React.ReactElement<{ size?: number; stroke?: number }>, { size: 9, stroke: 3 })}
-            </span>
-          )}
-        </span>
-        <span className="mono tiny" style={{ color: 'var(--text-3)', flexShrink: 0 }}>{order.id}</span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0, flex: 1 }}>
-          {order.customer}
-        </span>
-        <StatusPill status={order.status} />
-      </button>
-    );
-  }
+  const navigate = useNavigate();
+  const { orders } = useOrders();
+  const open = orders.filter(o => o.status !== 'complete');
 
   return (
     <div className="col gap-2">
       <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-        {open.map(o => <Chip key={o.id} order={o} />)}
-        <button
-          onClick={() => { /* placeholder */ }}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 10px 6px 8px',
-            background: 'transparent',
-            border: '1px dashed var(--border-2)',
-            borderRadius: 999,
-            color: 'var(--text-3)',
-            cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
-          }}>
-          {React.cloneElement(Icons.plus as React.ReactElement<{ size?: number }>, { size: 12 })} New order
+        {open.map(o => {
+          const selected = selectedOrderId === o.id;
+          return (
+            <button key={o.id} onClick={() => onChange(selected ? null : o.id)}
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
+                background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
+                border: `1px solid ${selected ? 'var(--accent)' : 'var(--border-1)'}`,
+                boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
+                borderRadius: 999, cursor: 'pointer', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 12,
+              }}>
+              <span className="mono tiny" style={{ color: 'var(--text-3)' }}>#{o.id}</span>
+              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.customer}</span>
+            </button>
+          );
+        })}
+        <button onClick={() => navigate('/orders/new')}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px',
+                   background: 'transparent', border: '1px dashed var(--border-2)', borderRadius: 999,
+                   color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>
+          {Icons.plus} New order
         </button>
-        <button
-          onClick={() => onChange([])}
-          disabled={selectedOrderIds.length === 0}
-          style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            padding: '6px 10px',
-            background: 'transparent', border: 'none',
-            color: selectedOrderIds.length === 0 ? 'var(--text-4)' : 'var(--text-3)',
-            cursor: selectedOrderIds.length === 0 ? 'default' : 'pointer',
-            fontFamily: 'inherit', fontSize: 12,
-          }}>
-          None — standalone job
-        </button>
+        {selectedOrderId != null && (
+          <button onClick={() => onChange(null)}
+            style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>
+            None — standalone job
+          </button>
+        )}
       </div>
-      {complete.length > 0 && (
-        <details>
-          <summary className="tiny muted" style={{ cursor: 'pointer', padding: '4px 0', userSelect: 'none' }}>
-            Show completed orders ({complete.length})
-          </summary>
-          <div className="row gap-2" style={{ flexWrap: 'wrap', marginTop: 6, opacity: 0.7 }}>
-            {complete.map(o => <Chip key={o.id} order={o} />)}
-          </div>
-        </details>
-      )}
     </div>
   );
 }
@@ -663,7 +606,7 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrders, onToggleQueued }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
@@ -671,7 +614,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, o
   onSetField: (patch: Partial<PlateConfig>) => void;
   onTogglePrinter: (id: string) => void;
   onSetPerPrinter: (printerId: string, patch: Partial<PerPrinterCfg>) => void;
-  onSetOrders: (ids: string[]) => void;
+  onSetOrder: (id: number | null) => void;
   onToggleQueued: (v: boolean) => void;
 }) {
   const queued = !!config.selected;
@@ -744,13 +687,13 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, o
           {/* Orders */}
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
-              <StepNum n={3} done={config.orderIds.length > 0} />
-              Fulfills orders
+              <StepNum n={3} done={config.orderId != null} />
+              Fulfills order
             </div>
             <div className="tiny muted" style={{ marginTop: 2, marginBottom: 10, marginLeft: 30 }}>
-              Link this plate to the customer or internal order{config.orderIds.length === 1 ? '' : 's'} its parts ship into. Optional.
+              Link this plate to the customer or internal order its parts ship into. Optional.
             </div>
-            <OrdersPicker selectedOrderIds={config.orderIds} onChange={onSetOrders} />
+            <OrdersPicker selectedOrderId={config.orderId} onChange={onSetOrder} />
           </div>
 
           <div className="divider" style={{ margin: 0 }} />
@@ -811,9 +754,10 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
     return a + (p?.estTime ?? 0);
   }, 0);
 
-  const allOrders = new Set<string>();
+  const allOrders = new Set<number>();
   selectedPlateIds.forEach(id => {
-    (plateConfigs[id]?.orderIds ?? []).forEach(o => allOrders.add(o));
+    const oid = plateConfigs[id]?.orderId;
+    if (oid != null) allOrders.add(oid);
   });
 
   return (
@@ -880,16 +824,7 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
           <div className="tag-key">Fulfills</div>
           <div className="row gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
             {Array.from(allOrders).map(id => (
-              <span
-                key={id}
-                className="mono tiny"
-                style={{
-                  padding: '2px 8px', background: 'var(--bg-1)',
-                  border: '1px solid var(--border-1)',
-                  borderRadius: 999, color: 'var(--text-2)',
-                }}>
-                {id}
-              </span>
+              <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-2)' }}>#{id}</span>
             ))}
           </div>
         </>
@@ -930,7 +865,7 @@ function defaultConfigForPlate(plate: Plate): PlateConfig {
     selected: true,
     jobName: plate.name,
     priority: 'normal',
-    orderIds: [],
+    orderId: null,
     selectedPrinters: [],
     perPrinter: {},
   };
@@ -1133,8 +1068,8 @@ export function NewJobScreen() {
     }));
   }
 
-  function setOrdersForPlate(plateId: string, orderIds: string[]) {
-    setPlateConfig(plateId, { orderIds });
+  function setOrderForPlate(plateId: string, orderId: number | null) {
+    setPlateConfig(plateId, { orderId });
   }
 
   // ---- validation ----
@@ -1196,6 +1131,7 @@ export function NewJobScreen() {
         await createJob({
           uploaded_file_id: uploadedFileId,
           plate_number: plate.index,
+          order_id: cfg.orderId,
           printer_configs: cfg.selectedPrinters.map(pid => ({
             printer_id: Number(pid),
             print_profile: cfg.perPrinter[pid].printProfile!,
@@ -1349,7 +1285,7 @@ export function NewJobScreen() {
                   onSetField={patch => setPlateConfig(activePlateId, patch)}
                   onTogglePrinter={pid => togglePrinterForPlate(activePlateId, pid)}
                   onSetPerPrinter={(pid, patch) => setPerPrinter(activePlateId, pid, patch)}
-                  onSetOrders={ids => setOrdersForPlate(activePlateId, ids)}
+                  onSetOrder={oid => setOrderForPlate(activePlateId, oid)}
                   onToggleQueued={v => togglePlate(activePlateId, v)}
                 />
               </div>
