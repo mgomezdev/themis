@@ -9,6 +9,8 @@ export interface ApiOrderPart {
   qty: number;
   material: string;
   est_minutes: number;
+  filament_id: number | null;
+  filament_color: string | null;
 }
 
 export interface OrderJobSummary {
@@ -45,6 +47,8 @@ export interface OrderPartInput {
   qty: number;
   material: string;
   est_minutes: number;
+  filament_id?: number | null;
+  filament_color?: string | null;
 }
 
 export interface OrderCreateInput {

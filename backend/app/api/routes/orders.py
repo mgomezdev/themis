@@ -19,6 +19,8 @@ class OrderPartIn(BaseModel):
     qty: int = 1
     material: str = ""
     est_minutes: int = 0
+    filament_id: int | None = None
+    filament_color: str | None = None
 
 
 class OrderCreate(BaseModel):
@@ -49,6 +51,8 @@ def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
             "qty": p.qty,
             "material": p.material,
             "est_minutes": p.est_minutes,
+            "filament_id": p.filament_id,
+            "filament_color": p.filament_color,
         })
     return out
 

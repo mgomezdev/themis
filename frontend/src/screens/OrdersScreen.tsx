@@ -29,7 +29,7 @@ function PartsTable({ order }: { order: ApiOrder }) {
         {order.parts.map(p => (
           <tr key={p.id}>
             <td style={{ paddingLeft: 18, fontWeight: 500 }}>{p.name || <span className="muted">unnamed</span>}</td>
-            <td><MaterialChip material={p.material} color={matColor(p.material)} /></td>
+            <td><MaterialChip material={p.material} color={p.filament_color ?? matColor(p.material)} /></td>
             <td className="num small">{p.qty}</td>
             <td className="num small" style={{ textAlign: 'right', paddingRight: 18 }}>{fmtTime(p.est_minutes)}</td>
           </tr>
