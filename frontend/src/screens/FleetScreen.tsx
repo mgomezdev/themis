@@ -108,11 +108,31 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
     fetchMachineCatalog().then(setCatalog).catch(console.error);
   }, [p.id]);
 
-  // Group the catalog by printer model for the picker.
-  const catalogByModel = catalog.reduce<Record<string, MachinePreset[]>>((acc, m) => {
-    (acc[m.printer_model] ??= []).push(m);
-    return acc;
-  }, {});
+  // Cascading make → model → nozzle picker over the catalog.
+  const [selVendor, setSelVendor] = useState('');
+  const [selModel, setSelModel] = useState('');
+  const [selNozzle, setSelNozzle] = useState('');
+
+  // Initialise the cascade from the printer's current preset once the catalog loads.
+  useEffect(() => {
+    if (!catalog.length || selVendor) return;
+    const e = catalog.find(c => c.name === machinePreset);
+    if (e) { setSelVendor(e.vendor); setSelModel(e.printer_model); setSelNozzle(e.nozzle); }
+  }, [catalog, machinePreset, selVendor]);
+
+  const uniq = (xs: string[]) => [...new Set(xs)].sort();
+  const vendors = uniq(catalog.map(c => c.vendor));
+  const models = uniq(catalog.filter(c => c.vendor === selVendor).map(c => c.printer_model));
+  const nozzles = uniq(catalog.filter(c => c.vendor === selVendor && c.printer_model === selModel).map(c => c.nozzle));
+
+  const pickVendor = (v: string) => { setSelVendor(v); setSelModel(''); setSelNozzle(''); setMachinePreset(''); };
+  const pickModel = (m: string) => { setSelModel(m); setSelNozzle(''); setMachinePreset(''); };
+  const pickNozzle = (nz: string) => {
+    setSelNozzle(nz);
+    const matches = catalog.filter(c => c.vendor === selVendor && c.printer_model === selModel && c.nozzle === nz);
+    const chosen = matches.find(c => c.source === 'system') ?? matches[0];
+    setMachinePreset(chosen ? chosen.name : '');
+  };
 
   const save = async () => {
     setSaving(true);
@@ -213,22 +233,36 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             )}
           </div>
 
-          <div className="col gap-1">
+          <div className="col gap-2">
             <div className="tag-key">Slicer profile</div>
-            <label className="label">OrcaSlicer printer model & nozzle</label>
-            <select className="select" value={machinePreset}
-                    onChange={e => setMachinePreset(e.target.value)}>
-              <option value="">— select model / nozzle —</option>
-              {Object.keys(catalogByModel).sort().map(model => (
-                <optgroup key={model} label={model}>
-                  {catalogByModel[model].map(m => (
-                    <option key={m.name} value={m.name}>{m.nozzle} mm — {m.name}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 110px', gap: 8 }}>
+              <div className="col gap-1">
+                <label className="label">Make</label>
+                <select className="select" value={selVendor} onChange={e => pickVendor(e.target.value)}>
+                  <option value="">— make —</option>
+                  {vendors.map(v => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+              <div className="col gap-1">
+                <label className="label">Model</label>
+                <select className="select" value={selModel} disabled={!selVendor}
+                        onChange={e => pickModel(e.target.value)}>
+                  <option value="">— model —</option>
+                  {models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+              </div>
+              <div className="col gap-1">
+                <label className="label">Nozzle</label>
+                <select className="select" value={selNozzle} disabled={!selModel}
+                        onChange={e => pickNozzle(e.target.value)}>
+                  <option value="">—</option>
+                  {nozzles.map(n => <option key={n} value={n}>{n} mm</option>)}
+                </select>
+              </div>
+            </div>
             <div className="tiny muted">
-              Determines which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
+              Sets which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
+              {machinePreset && <> Preset: <span className="mono">{machinePreset}</span>.</>}
             </div>
           </div>
 
