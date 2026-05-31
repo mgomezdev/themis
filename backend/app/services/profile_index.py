@@ -12,6 +12,7 @@ See the ``slicer-cli-architecture`` memory.
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -59,15 +60,42 @@ class ProfileIndex:
         self._signature = None
 
     # ── build ────────────────────────────────────────────────────────────────
+    def _vendor_path(self, path: Path) -> str | None:
+        """Vendor = the folder under system/, e.g. system/Elegoo/... -> 'Elegoo'."""
+        parts = path.parts
+        if "system" in parts:
+            i = parts.index("system")
+            if i + 1 < len(parts):
+                return parts[i + 1]
+        return None
+
+    def _vendor_of(self, name: str, machine_index: dict[str, Path], _seen=None) -> str:
+        """System presets get their vendor from the folder; user presets inherit it
+        from their system ancestor; otherwise 'Custom'."""
+        _seen = _seen or set()
+        path = machine_index.get(name)
+        if path is None or name in _seen:
+            return "Custom"
+        _seen.add(name)
+        v = self._vendor_path(path)
+        if v:
+            return v
+        try:
+            parent = json.loads(path.read_text(encoding="utf-8")).get("inherits")
+        except (OSError, json.JSONDecodeError):
+            parent = None
+        return self._vendor_of(parent, machine_index, _seen) if parent else "Custom"
+
     def _build(self) -> dict:
         self._resolver.refresh()
         index = self._resolver.index
+        machine_paths = index["machine"]
 
         # machine preset name -> (printer_model, nozzle); only real (instantiable)
         # presets carry both — base/common presets are skipped.
         machine_ident: dict[str, tuple[str, str]] = {}
         catalog: list[dict] = []
-        for name in index["machine"]:
+        for name, path in machine_paths.items():
             try:
                 cfg = self._resolver.resolve(name, "machine")
             except Exception:
@@ -76,7 +104,13 @@ class ProfileIndex:
             nozzle = _first(cfg.get("nozzle_diameter"))
             if model and nozzle:
                 machine_ident[name] = (model, nozzle)
-                catalog.append({"name": name, "printer_model": model, "nozzle": nozzle})
+                catalog.append({
+                    "name": name,
+                    "vendor": self._vendor_of(name, machine_paths),
+                    "printer_model": model,
+                    "nozzle": nozzle,
+                    "source": "system" if "system" in path.parts else "user",
+                })
 
         # (model, nozzle) -> {process, filament} via resolved compatible_printers
         compat: dict[tuple[str, str], dict[str, set]] = {}
@@ -98,7 +132,7 @@ class ProfileIndex:
         return {
             "machine_ident": machine_ident,
             "compat": {k: {c: sorted(v) for c, v in cats.items()} for k, cats in compat.items()},
-            "catalog": sorted(catalog, key=lambda m: (m["printer_model"], m["nozzle"], m["name"])),
+            "catalog": sorted(catalog, key=lambda m: (m["vendor"], m["printer_model"], m["nozzle"], m["name"])),
         }
 
     # ── public API ───────────────────────────────────────────────────────────

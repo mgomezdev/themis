@@ -142,9 +142,18 @@ async def list_orca_printer_presets() -> list[str]:
 
 @router.get("/orca-machine-catalog")
 async def orca_machine_catalog() -> list[dict]:
-    """Real selectable OrcaSlicer machine presets [{name, printer_model, nozzle}]
-    for the printer-settings model/nozzle picker."""
+    """Real selectable OrcaSlicer machine presets [{name, vendor, printer_model,
+    nozzle, source}] for the printer-settings make/model/nozzle picker."""
     return _profile_index.machine_catalog()
+
+
+@router.post("/rescan-profiles")
+async def rescan_profiles() -> dict:
+    """Drop the cached profile index and rebuild it from disk — use after adding
+    or editing OrcaSlicer presets/printers so new options appear."""
+    _profile_index.refresh()
+    catalog = _profile_index.machine_catalog()  # forces the rebuild
+    return {"machine_presets": len(catalog)}
 
 
 class TestConnectionRequest(BaseModel):

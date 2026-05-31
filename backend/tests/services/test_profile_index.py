@@ -42,6 +42,10 @@ def test_catalog_lists_real_machines_with_model_and_nozzle(tmp_path):
     assert "fdm_common" not in names  # base preset has no model/nozzle -> excluded
     m04 = next(c for c in cat if c["name"] == "Acme One 0.4 nozzle")
     assert m04["printer_model"] == "Acme One" and m04["nozzle"] == "0.4"
+    assert m04["vendor"] == "Acme" and m04["source"] == "system"
+    # user leaf inherits its vendor from the system ancestor
+    leaf = next(c for c in cat if c["name"] == "My Acme")
+    assert leaf["vendor"] == "Acme" and leaf["source"] == "user"
 
 
 def test_leaf_machine_matches_profiles_listing_the_system_name(tmp_path):
