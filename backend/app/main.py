@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api.routes.files import router as files_router
+from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
 from .api.routes.printers import router as printers_router
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Themis", lifespan=lifespan)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
+app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
