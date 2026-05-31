@@ -3,6 +3,12 @@
 **Date:** 2026-05-20
 **Stack:** Python (FastAPI) backend · React + Vite + TypeScript frontend · SQLite · Docker
 
+> ⚠️ **Historical design document.** This spec predates the slicing R&D and several
+> implementation pivots. Where it conflicts with the **as-built** reference, the latter is
+> authoritative: [`docs/architecture/index.html`](../../architecture/index.html). Notably, the
+> real slicing path uses an **embedded-config 3MF** (not `--export-gcode`/`--load-settings`), and
+> compatible-profile lookup is handled by `ProfileIndex` (not the original `ProfileService`).
+
 ---
 
 ## 1. System Architecture

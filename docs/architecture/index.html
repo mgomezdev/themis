@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Themis — Design &amp; Architecture</title>
+<style>
+  :root{
+    --bg:#0b0e14; --bg2:#0e1117; --panel:#161b26; --panel2:#1b2130;
+    --line:#26303f; --text:#cdd6e2; --muted:#8a96a8; --accent:#f0a020;
+    --accent2:#ffb43a; --green:#3ec46d; --red:#e5484d; --blue:#4aa3ff;
+    --mono:"SFMono-Regular",ui-monospace,"Cascadia Code",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+  a{color:var(--accent2);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);font-size:.86em;background:#0d1119;border:1px solid var(--line);
+    padding:.08em .38em;border-radius:5px;color:#e6c98a}
+  pre{background:#0a0d13;border:1px solid var(--line);border-radius:10px;padding:16px 18px;
+    overflow:auto;font-family:var(--mono);font-size:13px;line-height:1.55;color:#c6d2e2}
+  pre code{background:none;border:none;padding:0;color:inherit}
+  h1,h2,h3,h4{line-height:1.25;font-weight:650;color:#fff}
+  h2{font-size:26px;margin:0 0 6px;padding-top:14px;border-bottom:1px solid var(--line);padding-bottom:10px}
+  h3{font-size:19px;margin:30px 0 8px;color:#fff}
+  h4{font-size:15.5px;margin:20px 0 6px;color:var(--accent2);text-transform:uppercase;letter-spacing:.04em;font-size:13px}
+  p{margin:10px 0}
+
+  /* layout */
+  .wrap{display:flex;max-width:1500px;margin:0 auto}
+  nav.toc{position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;
+    width:268px;flex:0 0 268px;padding:26px 18px 60px;border-right:1px solid var(--line);background:var(--bg2)}
+  nav.toc .brand{display:flex;align-items:center;gap:10px;margin-bottom:20px}
+  nav.toc .brand .dot{width:26px;height:26px;border-radius:7px;
+    background:radial-gradient(circle at 30% 30%,var(--accent2),var(--accent));box-shadow:0 0 14px rgba(240,160,32,.45)}
+  nav.toc .brand b{font-size:17px;color:#fff}
+  nav.toc .brand b span{color:var(--muted);font-weight:400}
+  nav.toc a{display:block;color:var(--muted);padding:5px 10px;border-radius:7px;font-size:13.5px;border-left:2px solid transparent}
+  nav.toc a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+  nav.toc a.sub{padding-left:24px;font-size:12.7px}
+  nav.toc .grp{margin:16px 0 4px;padding-left:10px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#5b6677}
+  main{flex:1 1 auto;min-width:0;padding:40px 54px 120px;max-width:1080px}
+
+  /* hero */
+  .hero{background:linear-gradient(135deg,#13192400,#1a2130);border:1px solid var(--line);
+    border-radius:16px;padding:34px 36px;margin-bottom:10px;position:relative;overflow:hidden}
+  .hero:before{content:"";position:absolute;inset:0;background:radial-gradient(800px 300px at 90% -40%,rgba(240,160,32,.16),transparent)}
+  .hero h1{font-size:38px;margin:0 0 6px;letter-spacing:-.01em}
+  .hero h1 span{color:var(--accent)}
+  .hero p.tag{font-size:16px;color:var(--muted);margin:0}
+  .pill-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+  .pill{font-size:12.5px;background:var(--panel2);border:1px solid var(--line);color:var(--text);
+    padding:4px 11px;border-radius:20px}
+  .pill b{color:var(--accent2)}
+
+  /* misc components */
+  figure{margin:22px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px;overflow:hidden}
+  figure img{width:100%;display:block;border-radius:8px;border:1px solid #0a0d13}
+  figcaption{color:var(--muted);font-size:13px;margin-top:10px;padding:0 4px}
+  figcaption b{color:var(--text)}
+  .mermaid{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin:22px 0;text-align:center}
+  table{border-collapse:collapse;width:100%;margin:16px 0;font-size:13.6px}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#fff;font-weight:600}
+  tr:nth-child(even) td{background:#10141d}
+  .note,.warn,.ok{border-radius:10px;padding:13px 16px;margin:18px 0;border:1px solid;font-size:14px}
+  .note{background:#0f1726;border-color:#22405f}
+  .note b{color:var(--blue)}
+  .warn{background:#241712;border-color:#5a3417}
+  .warn b{color:var(--accent2)}
+  .ok{background:#0f1d15;border-color:#1f4a30}
+  .ok b{color:var(--green)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h4{margin-top:0}
+  .kbd{font-family:var(--mono);font-size:12px;background:#0d1119;border:1px solid var(--line);border-bottom-width:2px;padding:1px 6px;border-radius:5px}
+  .muted{color:var(--muted)}
+  .src{font-family:var(--mono);font-size:12px;color:var(--muted)}
+  hr{border:none;border-top:1px solid var(--line);margin:40px 0}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:8px 0}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle}
+  @media(max-width:1000px){nav.toc{display:none}main{padding:24px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<nav class="toc">
+  <div class="brand"><span class="dot"></span><b>themis<span>.docs</span></b></div>
+  <a href="#overview">Overview</a>
+  <a href="#stack">Technology stack</a>
+  <div class="grp">Architecture</div>
+  <a href="#system" class="">System architecture</a>
+  <a href="#system" class="sub">Container topology</a>
+  <a href="#deploy" class="sub">Deployment &amp; volumes</a>
+  <a href="#realtime" class="sub">Real-time updates</a>
+  <div class="grp">Data</div>
+  <a href="#data">Data model</a>
+  <a href="#status" class="sub">Job state machine</a>
+  <div class="grp">Subsystems</div>
+  <a href="#printers">Printer integration</a>
+  <a href="#queue">Queue engine</a>
+  <a href="#slicing">Slicing pipeline</a>
+  <a href="#profiles" class="sub">Profile resolution</a>
+  <a href="#filament">Filament &amp; Spoolman</a>
+  <a href="#camera">Camera proxy</a>
+  <div class="grp">Interfaces</div>
+  <a href="#api">REST API</a>
+  <a href="#ws">WebSocket events</a>
+  <a href="#frontend">Frontend architecture</a>
+  <div class="grp">Reference</div>
+  <a href="#env">Environment variables</a>
+  <a href="#decisions">Key decisions &amp; gotchas</a>
+</nav>
+
+<main>
+<section class="hero" id="overview">
+  <h1><span>Themis</span> — Design &amp; Architecture</h1>
+  <p class="tag">A self-hosted 3D-printing farm manager: upload models, auto-slice with native OrcaSlicer, and stream jobs to a heterogeneous fleet of printers from one queue.</p>
+  <div class="pill-row">
+    <span class="pill"><b>FastAPI</b> · Python 3.13</span>
+    <span class="pill"><b>React</b> · Vite · TypeScript</span>
+    <span class="pill"><b>SQLite</b> · async SQLAlchemy 2.0</span>
+    <span class="pill"><b>OrcaSlicer</b> CLI</span>
+    <span class="pill"><b>Docker</b> single container</span>
+    <span class="pill">WebSocket real-time</span>
+  </div>
+</section>
+
+<p class="muted" style="margin-top:18px">This document describes Themis <b>as built</b>. Where it diverges from the original
+<a href="../superpowers/specs/2026-05-20-themis-print-farm-manager-design.md">design spec</a> (which predates the slicing R&amp;D), the as-built behaviour here is authoritative. Screenshots are captured from the running app.</p>
+
+<h3>What it does</h3>
+<p>Themis is the control plane for a workshop of 3D printers. A user uploads a <code>.3mf</code> or <code>.stl</code>,
+picks which printers may run it and with what print/filament profile, and drops the job into a single shared queue.
+A background <b>queue engine</b> watches printer availability; when an eligible printer goes idle it slices the model
+for that exact machine using the workshop's real <b>OrcaSlicer</b> presets, uploads the result, and starts the print —
+then waits for the plate to be cleared before pulling the next job. Live printer state (temperatures, progress, camera)
+streams to the browser over a WebSocket. Filament inventory can be synced from <b>Spoolman</b>.</p>
+
+<div class="grid2">
+  <div class="card"><h4>Core capabilities</h4>
+    <ul style="margin:0;padding-left:18px">
+      <li>Multi-vendor fleet (Bambu MQTT, Elegoo Centauri SDCP) behind one abstraction</li>
+      <li>Single auto-claiming print queue with head-of-line blocking</li>
+      <li>Native, headless OrcaSlicer slicing per target machine</li>
+      <li>Multi-plate &amp; multi-color (AMS / multi-tool) aware</li>
+      <li>Filament-match gating &amp; Spoolman inventory sync</li>
+      <li>Live camera (MJPEG / RTSP→MJPEG) &amp; telemetry</li>
+    </ul>
+  </div>
+  <div class="card"><h4>Design principles</h4>
+    <ul style="margin:0;padding-left:18px">
+      <li><b>Capability-driven UI</b> — controls render from capability flags, never <code>printer_type</code> checks</li>
+      <li><b>New vendor = one class + one registry entry</b></li>
+      <li><b>Printers own their Orca output format</b> via <code>orca_export_args()</code></li>
+      <li><b>Blocked ≠ failed</b> — transient vs terminal job states</li>
+      <li>SQLite + bind-mounted Orca config = zero external services required</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="stack">Technology stack</h2>
+<table>
+<tr><th>Layer</th><th>Choice</th><th>Notes</th></tr>
+<tr><td>Backend</td><td>FastAPI (ASGI), Python 3.13</td><td>REST + WebSocket + static-file host in one app</td></tr>
+<tr><td>Persistence</td><td>SQLite (WAL) via async SQLAlchemy 2.0 + aiosqlite</td><td>No migration tool — <code>Base.metadata.create_all</code> + ad-hoc <code>ALTER</code>s on startup</td></tr>
+<tr><td>Slicing</td><td>OrcaSlicer 2.3.x CLI subprocess</td><td>Driven through an embedded-config 3MF (see <a href="#slicing">Slicing</a>)</td></tr>
+<tr><td>Printer transport</td><td>paho-mqtt (Bambu), websocket-client (Elegoo SDCP)</td><td>Thread-based clients bridged into the asyncio loop</td></tr>
+<tr><td>Camera</td><td>httpx streaming, ffmpeg subprocess</td><td>MJPEG passthrough or RTSP→MJPEG transcode</td></tr>
+<tr><td>Frontend</td><td>React 18 + Vite + TypeScript, React Router v6</td><td>Hand-rolled hooks for fetch+WS; no global store</td></tr>
+<tr><td>Packaging</td><td>Docker (single image), docker-compose</td><td>OrcaSlicer + ffmpeg baked in; host Orca config bind-mounted</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="system">System architecture</h2>
+<p>A single FastAPI process is the whole backend. It serves the REST API, hosts the WebSocket hub, and (in production)
+serves the built React SPA as static files. Three long-lived in-process subsystems do the work: the
+<b>PrinterManager</b> (vendor client lifecycle + state), the <b>QueueEngine</b> (an asyncio loop that claims and runs jobs),
+and the <b>SlicerService</b> (CPU-bound OrcaSlicer runs dispatched to a thread pool).</p>
+
+<div class="mermaid">
+flowchart TB
+  subgraph Browser["🖥️ Browser (React SPA)"]
+    UI[Screens: Queue · Fleet · New&nbsp;Job · Settings]
+  end
+
+  subgraph App["FastAPI process (single container)"]
+    direction TB
+    REST["REST API\n/api/v1/*"]
+    WS["WebSocket hub\n/ws"]
+    STATIC["Static SPA host\n(prod)"]
+    PM["PrinterManager\n(singleton)"]
+    QE["QueueEngine\n(asyncio loop)"]
+    SS["SlicerService\n(ThreadPoolExecutor)"]
+    REST --- PM
+    REST --- QE
+    QE --> SS
+    PM -. broadcast .-> WS
+    QE -. broadcast .-> WS
+  end
+
+  subgraph Clients["Printer clients"]
+    BB["BambuMQTTClient\n(MQTT/TLS)"]
+    EL["ElegooCentauriClient\n(SDCP / WebSocket)"]
+  end
+
+  DB[("SQLite (WAL)\n/data/themis.db")]
+  ORCA["OrcaSlicer CLI\nsubprocess"]
+  CFG[/"OrcaSlicer config\n(bind-mounted, ro)"/]
+  SPOOL["Spoolman\n(optional, HTTP)"]
+  P1["🖨️ Bambu printers"]
+  P2["🖨️ Elegoo Centauri"]
+
+  UI <-->|"REST"| REST
+  UI <-->|"events"| WS
+  UI -->|"GET assets"| STATIC
+  REST --> DB
+  QE --> DB
+  PM --> BB --> P1
+  PM --> EL --> P2
+  SS --> ORCA
+  ORCA -. reads .-> CFG
+  SS -. resolves presets .-> CFG
+  REST -->|"filaments/spools"| SPOOL
+</div>
+
+<h4>Container topology &amp; threading</h4>
+<ul>
+  <li><b>Event loop</b> — FastAPI handlers and the QueueEngine loop run on the single asyncio loop.</li>
+  <li><b>Thread-based printer clients</b> — MQTT and SDCP clients run their own receive/keepalive threads and inject state
+    changes back into the loop via <code>asyncio.run_coroutine_threadsafe</code>.</li>
+  <li><b>Slicing thread pool</b> — <code>ThreadPoolExecutor(max_workers=4, thread_name_prefix="slicer")</code> on the
+    QueueEngine keeps the 10-minute-capped OrcaSlicer subprocess off the loop. <span class="src">queue_engine.py:60</span></li>
+  <li><b>Lifespan wiring</b> — on startup the app inits the DB, wires the PrinterManager (loop, broadcast cb, session
+    factory), connects all enabled printers, (re)initialises the <code>queue_engine</code> singleton, and starts its loop.
+    <span class="src">main.py:28–53</span></li>
+</ul>
+
+<h3 id="deploy">Deployment &amp; volumes</h3>
+<p>Everything ships as one Docker image with OrcaSlicer and ffmpeg baked in. In development, Vite serves the SPA on
+<code>:5173</code> and proxies <code>/api</code> and <code>/ws</code> to the FastAPI process on <code>:8001</code>; in production
+FastAPI serves the built <code>frontend/dist</code> itself (hashed assets cached long, <code>index.html</code> no-cache).
+<span class="src">main.py:80–93</span></p>
+<table>
+<tr><th>Mount</th><th>Purpose</th></tr>
+<tr><td><code>/data</code></td><td>SQLite DB + uploaded 3MF/STL files + sliced gcode cache</td></tr>
+<tr><td><code>/root/.config/OrcaSlicer</code> <span class="muted">(ro)</span></td><td>Bind-mounted from <code>%APPDATA%\OrcaSlicer</code> on the Windows host — printer/process/filament presets edited in the host Orca install are immediately visible to the slicer</td></tr>
+</table>
+<pre><code>volumes:
+  - "${APPDATA}/OrcaSlicer:/root/.config/OrcaSlicer:ro"
+  - themis-data:/data</code></pre>
+
+<h3 id="realtime">Real-time updates</h3>
+<p>One WebSocket per browser tab at <code>/ws</code>. The backend pushes printer telemetry, job transitions, and full
+queue snapshots; the frontend hooks merge these into local state with no polling timer (an initial fetch primes the
+state, the socket keeps it live). See <a href="#ws">WebSocket events</a>.</p>
+
+<!-- ============================================================ -->
+<h2 id="data">Data model</h2>
+<p>Eight tables, all created on startup from SQLAlchemy models (<span class="src">models.py</span>). There is no migration
+framework; new columns are added with idempotent <code>ALTER TABLE</code> guards in <code>database.py</code>.</p>
+
+<div class="mermaid">
+erDiagram
+  printers ||--o{ jobs : "assigned_printer_id"
+  printers ||--o{ job_printer_configs : "printer_id"
+  printers ||--o{ gcode_files : "printer_id"
+  uploaded_files ||--o{ jobs : "uploaded_file_id"
+  projects ||--o{ jobs : "project_id (nullable)"
+  jobs ||--o{ job_printer_configs : "job_id"
+  jobs ||--o{ gcode_files : "job_id"
+
+  printers {
+    int id PK
+    string name
+    string printer_type "factory key"
+    json connection_config "vendor creds"
+    bool awaiting_plate_clear
+    json orca_printer_profiles "preset names"
+    string current_orca_printer_profile "active machine"
+    bool enabled
+    bool queue_on "pull from queue?"
+    json loaded_filaments "slot/type/color"
+  }
+  uploaded_files {
+    int id PK
+    string original_filename
+    string stored_path
+    json plates "parsed at upload"
+    string uploaded_at
+  }
+  jobs {
+    int id PK
+    int uploaded_file_id FK
+    int plate_number
+    int project_id FK "nullable"
+    int assigned_printer_id FK "nullable"
+    float queue_position "reorder w/o renum"
+    string status
+    text block_reason
+  }
+  job_printer_configs {
+    int id PK
+    int job_id FK
+    int printer_id FK
+    string print_profile
+    string filament_profile "nullable"
+    int filament_id "Spoolman, nullable"
+    string filament_type
+    string filament_color
+    bool slice_failed
+    text slice_error
+  }
+  gcode_files {
+    int id PK
+    int job_id FK
+    int printer_id FK
+    string path
+  }
+  projects {
+    int id PK
+    string name
+    text description
+  }
+  queue_config {
+    int id PK
+    int check_interval_minutes "default 5"
+  }
+  spoolman_config {
+    int id PK
+    bool enabled
+    string url
+    string api_key
+  }
+</div>
+
+<div class="note"><b>Why these shapes.</b> <code>queue_position</code> is a <code>float</code> so a drag-reorder can insert
+between two jobs (midpoint) without renumbering the table. A job is <i>one plate of one file</i>; multi-plate uploads fan
+out into independent jobs. <code>job_printer_configs</code> is the many-to-many between a job and each printer it's allowed
+to run on, carrying that pairing's slice settings and per-printer failure state — this is what lets one printer's slice
+failure not doom the job if another eligible printer remains.</p></div>
+
+<h3 id="status">Job state machine</h3>
+<p>The <code>status</code> string drives everything. The crucial distinction is <b>blocked</b> (transient — stays in the
+queue, re-evaluated every cycle) versus <b>failed</b> (terminal — needs user action). A slice problem or a filament
+mismatch <i>blocks</i>; only a post-slice upload/start failure <i>fails</i>.</p>
+
+<div class="mermaid">
+stateDiagram-v2
+  [*] --> queued
+  queued --> slicing : printer claims (idle + queue_on + filament match)
+  queued --> blocked : filament mismatch / slice_failed config (head-of-line)
+  blocked --> slicing : re-evaluated &amp; now eligible
+  slicing --> uploading : slice OK
+  slicing --> blocked : slice failed (config marked, job re-queueable)
+  uploading --> printing : upload + start_print OK
+  uploading --> failed : upload/start failed (terminal)
+  printing --> complete : printer signals done
+  printing --> failed : start error
+  complete --> [*]
+  queued --> cancelled
+  blocked --> cancelled
+  slicing --> cancelled
+  printing --> cancelled
+  failed --> [*]
+  cancelled --> [*]
+</div>
+
+<table>
+<tr><th>Status</th><th>Meaning</th><th>In queue badges</th></tr>
+<tr><td><code>queued</code></td><td>Waiting for an eligible printer</td><td>pending (grey)</td></tr>
+<tr><td><code>slicing</code> / <code>uploading</code></td><td>Being prepared for a claimed printer</td><td>active (green)</td></tr>
+<tr><td><code>printing</code> / <code>paused</code></td><td>On the printer</td><td>active (green)</td></tr>
+<tr><td><code>blocked</code></td><td><b>Transient.</b> Filament mismatch or slice issue at grab time; <code>block_reason</code> explains. Stays in queue, retried each cycle.</td><td>blocked (red)</td></tr>
+<tr><td><code>complete</code></td><td>Done; gcode artifact deleted, printer awaits plate clear</td><td>—</td></tr>
+<tr><td><code>failed</code></td><td><b>Terminal.</b> Upload/start failed, or all printer configs exhausted. User can delete it.</td><td>—</td></tr>
+<tr><td><code>cancelled</code></td><td>User-cancelled from any pre-complete state</td><td>—</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="printers">Printer integration layer</h2>
+<p>All vendor differences live behind <code>AbstractPrinterClient</code>. The rest of the system speaks only to that ABC and
+to <b>capability flags</b> — never to a <code>printer_type</code> string. Adding a vendor means writing one client class and
+adding one registry entry; no route, queue, or UI code changes.</p>
+
+<div class="mermaid">
+classDiagram
+  class AbstractPrinterClient {
+    +PrinterCapabilities capabilities
+    +bool is_idle
+    +connect() bool
+    +disconnect() void
+    +get_status() dict
+    +upload_file(data, name) bool
+    +start_print(name, opts) bool
+    +pause() bool
+    +resume() bool
+    +stop() bool
+    +orca_export_args(file_base) list
+    +connection_fields()$ list
+  }
+  class PrinterCapabilities {
+    +bool file_upload
+    +bool pause_resume
+    +bool camera
+    +bool bed_leveling
+    +bool chamber_light
+  }
+  class BambuMQTTClient
+  class ElegooCentauriClient
+  class PrinterManager {
+    +dict clients
+    +connect_all_enabled_printers()
+    +is_printer_ready(id) bool
+  }
+  AbstractPrinterClient <|-- BambuMQTTClient
+  AbstractPrinterClient <|-- ElegooCentauriClient
+  AbstractPrinterClient *-- PrinterCapabilities
+  PrinterManager o-- AbstractPrinterClient
+  note for BambuMQTTClient "MQTT over TLS · consumes .gcode.3mf · export-3mf output args"
+  note for ElegooCentauriClient "SDCP WebSocket + HTTP upload · raw .gcode · optional camera_url"
+</div>
+
+<table>
+<tr><th></th><th>Bambu (P1S/X1)</th><th>Elegoo Centauri Carbon</th></tr>
+<tr><td>Transport</td><td>MQTT over TLS</td><td>SDCP — WebSocket <code>:3030</code> + HTTP <code>/uploadFile/upload</code></td></tr>
+<tr><td>Start-print</td><td>MQTT command</td><td>SDCP Cmd 128 <code>{Filename}</code></td></tr>
+<tr><td>Gcode format</td><td><code>.gcode.3mf</code> archive</td><td>raw <code>.gcode</code></td></tr>
+<tr><td><code>orca_export_args</code></td><td><code>["--export-3mf","{base}.gcode.3mf"]</code></td><td><code>[]</code> (raw gcode default)</td></tr>
+<tr><td>Camera</td><td>RTSP → ffmpeg → MJPEG</td><td>MJPEG passthrough via <code>camera_url</code> field</td></tr>
+</table>
+
+<div class="note"><b>Printers own their output format.</b> The slice call needs the target machine so the correct artifact is
+produced. Rather than branch on vendor in the slicer, each client answers <code>orca_export_args(file_base)</code>; the
+QueueEngine passes those straight to OrcaSlicer. A new vendor that needs a different container just overrides that one
+method. <span class="src">queue_engine.py:201–206 · slicer_service.py:88–114</span></p></div>
+
+<p>The <b>PrinterManager</b> singleton owns every client, exposes <code>is_printer_ready(id)</code> (idle + plate cleared) to
+the queue engine, and dispatches a print-complete callback that wakes the queue. Connection lifecycle (connect on startup
+for enabled printers, reconnect, disconnect) is centralized here.</p>
+
+<!-- ============================================================ -->
+<h2 id="queue">Queue engine</h2>
+<p>A single asyncio task. Each iteration it processes the queue, then sleeps until either an explicit <code>wake()</code>
+event (new job, print complete) <i>or</i> the configurable check interval elapses — whichever comes first.
+<span class="src">queue_engine.py:74–98</span></p>
+
+<div class="mermaid">
+sequenceDiagram
+  participant L as Queue loop
+  participant DB as SQLite
+  participant C as Printer client
+  participant O as OrcaSlicer
+  Note over L: wake() OR interval (default 5 min)
+  L->>DB: get ready printers (idle and queue_on)
+  loop each ready printer, in id order
+    L->>DB: lowest queue_position job listing this printer
+    alt config slice_failed
+      L->>DB: set blocked with reason, then STOP (head-of-line)
+    else filament mismatch (type and color)
+      L->>DB: set blocked with reason, then STOP
+    else eligible
+      L->>DB: status=slicing, assign printer
+      L->>O: slice plate N with printer export args
+      alt slice fails
+        O-->>L: error
+        L->>O: retry geometry-only
+      end
+      O-->>L: artifact path
+      L->>DB: status=uploading
+      L->>C: upload_file + start_print
+      alt success
+        L->>DB: status=printing
+      else failure
+        L->>DB: status=failed, delete gcode
+      end
+    end
+  end
+</div>
+
+<h4>Eligibility &amp; head-of-line blocking</h4>
+<ul>
+  <li>A printer is <b>ready</b> when its client reports idle, the plate-clear gate is down, and <code>queue_on</code> is true
+    (a disabled-from-queue printer is still selectable at job creation, just won't auto-pull).
+    <span class="src">queue_engine.py:101–111</span></li>
+  <li>For each ready printer the engine takes the <b>single lowest-<code>queue_position</code> job</b> that lists it
+    (status <code>queued</code> or <code>blocked</code>). If that job can't run on this printer — its config is
+    <code>slice_failed</code>, or the required filament (<b>type AND color</b>) isn't loaded — the job is set
+    <code>blocked</code> with a reason and the engine <b>stops looking</b> for this printer. It does not skip ahead to a
+    later job. <span class="src">queue_engine.py:114–139</span></li>
+  <li>Filament match is case-insensitive and <code>#</code>-insensitive on colour; a job with no declared filament matches
+    anything. <span class="src">queue_engine.py:27–43</span></li>
+  <li>Blocked jobs are re-evaluated every cycle, so loading the right spool — or another compatible printer coming free —
+    unblocks them automatically.</li>
+</ul>
+
+<h4>Slice failure vs job failure</h4>
+<p>A <b>slice</b> failure marks that one <code>job_printer_config.slice_failed=True</code> and blocks the job, so another
+compatible printer can still rescue it later. A post-slice <b>upload/start</b> failure is terminal — the job goes
+<code>failed</code> and its gcode is cleaned from disk and DB.
+<span class="src">queue_engine.py:281–329</span></p>
+
+<!-- ============================================================ -->
+<h2 id="slicing">Slicing pipeline</h2>
+<p>This is the hardest-won part of Themis. The goal: run the workshop's <i>real</i> native OrcaSlicer headlessly, with the
+user's own presets, producing a gcode artifact for one specific machine — no GUI, no profile sync.</p>
+
+<div class="warn"><b>The core constraint.</b> OrcaSlicer's <code>--load-settings</code> does <i>not</i> work for these presets:
+user presets are inheritance <i>diffs</i>, and even fully resolved, <code>--load-settings</code> never registers the machine
+as the <i>active printer</i>, so Orca rejects the process ("process not compatible with printer"). The only path that works
+is slicing a <b>3MF with an embedded <code>Metadata/project_settings.config</code></b>, which establishes the active printer
+by identity. Themis therefore <i>becomes the GUI's "export"</i>: it generates that 3MF itself.</p></div>
+
+<div class="mermaid">
+flowchart LR
+  A["machine + process +\nfilament preset names"] --> B
+  subgraph R["PresetResolver"]
+    B["walk inherits chain\ndeep-merge child-over-parent"]
+  end
+  B --> C["build_project_config()\nbaseline 609-key real config,\noverride only known keys,\ncoerce types · per-slot arrays"]
+  SRC[/"source 3MF / STL"/] --> D
+  C --> D{source type?}
+  D -->|".stl"| E["stl_to_3mf()\nmesh + embedded config"]
+  D -->|".3mf"| F["build_sliceable_3mf()\nkeep 3D/ geometry + model_settings,\nswap project_settings"]
+  E --> G
+  F --> G["_run(): orcaslicer --slice N\n--outputdir … {export_args}"]
+  G -->|ok| H["artifact:\nraw .gcode  or  .gcode.3mf"]
+  G -->|fail| I["recovery: build_sliceable_3mf\ngeometry_only=True\n(drop file settings) → re-slice"]
+  I --> H
+</div>
+
+<h4>Stage by stage</h4>
+<ol>
+  <li><b>PresetResolver</b> — indexes every preset by name across <code>system/</code> and signed-in <code>user/*</code>
+    folders (skips <code>user_backup-*</code>), walks each preset's <code>inherits</code> chain and deep-merges into one
+    flat, self-contained config. Fixes <code>printer_settings_id</code> to the leaf preset name so the active-printer
+    identity matches. <span class="src">preset_resolver.py</span></li>
+  <li><b>build_project_config()</b> — a sparse hand-merge segfaults Orca, so this baselines a <i>complete</i> real exported
+    config (~609 keys, <code>orca_reference/project_settings_reference.json</code>) and overrides only keys present in it,
+    coercing to the reference type. Filament fields are parallel <b>per-slot arrays</b> (one entry per AMS/tool slot);
+    <code>single_extruder_multi_material=1</code> for AMS. <span class="src">project_config_builder.py</span></li>
+  <li><b>mesh_3mf_builder</b> — wraps the model. For a <code>.3mf</code>, <code>build_sliceable_3mf()</code> preserves
+    <code>3D/*</code> geometry + <code>model_settings.config</code> (per-object overrides, paint, the per-part
+    <code>extruder</code> = colour-slot mapping) and swaps in the generated <code>project_settings.config</code>. For a bare
+    <code>.stl</code>, <code>stl_to_3mf()</code> parses the mesh and emits a fresh 3MF with the embedded config.
+    <span class="src">mesh_3mf_builder.py</span></li>
+  <li><b>_run()</b> — <code>orcaslicer --slice N --outputdir &lt;dir&gt; {export_args} prepared.3mf</code>. Orca always writes
+    raw <code>plate_N.gcode</code> to <code>--outputdir</code>; <code>--export-3mf &lt;name&gt;</code> (Bambu) additionally emits
+    the archive. Returns the requested artifact. 10-minute timeout. <span class="src">slicer_service.py:88–114</span></li>
+  <li><b>Recovery tier</b> — mirrors the GUI's "import geometry only": if the primary slice fails (e.g. bad embedded
+    settings), rebuild the 3MF dropping the file's own settings/overrides and re-slice with our fresh config.
+    <span class="src">slicer_service.py:69–76</span></li>
+</ol>
+
+<div class="note"><b>Override inspection at job creation.</b> A 3MF can carry global settings that the chosen preset would
+override. Rather than silently drop or re-apply them, <code>override_inspector.inspect_overrides()</code> diffs the uploaded
+<code>project_settings.config</code> against the generated config over a curated set of intent keys (supports, brim, raft,
+infill, wall/shell layers, layer height, ironing) and checks slot capacity, so the New-Job UI can warn the user and let
+them choose. <span class="src">override_inspector.py</span></p></div>
+
+<h3 id="profiles">Profile resolution &amp; the compatibility index</h3>
+<p>The New-Job process/filament dropdowns must show only presets valid for the chosen machine. <b>ProfileIndex</b> resolves
+inheritance once and builds two maps: machine-preset-name → <code>(printer_model, nozzle)</code>, and
+<code>(printer_model, nozzle)</code> → compatible <code>{process, filament}</code> preset names. Keying on
+<i>(model, nozzle)</i> instead of machine name sidesteps the leaf-vs-system naming mismatch. It's cached and rebuilt on a
+user-preset mtime signature; <code>POST /printers/rescan-profiles</code> forces a rebuild.
+<span class="src">profile_index.py</span></p>
+
+<p>Compatibility is matched two ways, mirroring OrcaSlicer's own dropdown logic:</p>
+<table>
+<tr><th>Mechanism</th><th>Rule</th></tr>
+<tr><td><b>Name-list</b></td><td>A preset's resolved <code>compatible_printers</code> is mapped through the machine map to <code>(model, nozzle)</code>.</td></tr>
+<tr><td><b>Universal</b></td><td>A <i>selectable</i> preset (raw leaf <code>instantiation</code> ≠ "false") with empty <code>compatible_printers</code> <b>and</b> empty <code>compatible_printers_condition</code> is compatible with <i>every</i> printer — this is how the OrcaFilamentLibrary <code>Generic *@System</code> filaments ship. Abstract <code>@base</code> presets are excluded.</td></tr>
+</table>
+<div class="note"><b>On <code>compatible_printers_condition</code>.</b> An expression evaluator was scoped but found
+unnecessary: the installed config has <i>zero</i> non-empty conditions (the key exists but every value is <code>""</code>),
+and every conditioned preset also carries a name-list. Non-empty conditions only appear in <i>exported project 3MFs</i>,
+which Themis slices directly rather than looking up. It will be revisited only if a real conditioned-without-name-list
+preset appears.</p></div>
+
+<figure>
+  <img src="img/screen-settings-printdefaults.png" alt="Print defaults settings page">
+  <figcaption><b>Print defaults &amp; the profile cache.</b> The queue check interval, the <b>Rescan profiles</b> button
+  (rebuilds the ProfileIndex to pick up newly-added presets), and per-job slicing behaviour live here.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="filament">Filament &amp; Spoolman integration</h2>
+<p>Each printer carries <code>loaded_filaments</code> (slot, type, color, optional Spoolman id). At queue-pull time the
+engine checks the job's required filament <b>type and color</b> against what's loaded; a mismatch blocks the job. Filament
+requirements are stored as structured <code>filament_type</code> + <code>filament_color</code> on the
+<code>job_printer_config</code>, plus an optional Spoolman <code>filament_id</code>.</p>
+<p>When <b>Spoolman</b> is configured, the New-Job and Fleet filament pickers source from the Spoolman <b>filament catalog</b>
+(displaying the name, storing the id). Manual entry is always allowed — even with Spoolman integrated — so an off-catalog
+spool can still be specified. When Spoolman is off, only manual type+color entry is offered. The backend talks to Spoolman
+over HTTP (<code>/api/v1/info</code>, <code>/filament</code>, <code>/spool</code>) with an optional API key.
+<span class="src">spoolman_service.py · settings.py · spoolman.py</span></p>
+
+<figure>
+  <img src="img/screen-settings-spoolman.png" alt="Spoolman settings page">
+  <figcaption><b>Spoolman integration settings.</b> Server URL, optional API key, test-connection, and sync behaviour.
+  With sync off, Themis falls back to its local filament library entirely.</figcaption>
+</figure>
+
+<!-- ============================================================ -->
+<h2 id="camera">Camera proxy</h2>
+<p><code>CameraProxy</code> normalizes per-vendor camera streams into one MJPEG endpoint per printer, only spawning work when
+a feed is actually viewed. Three modes: MJPEG passthrough (Elegoo <code>camera_url</code>), single-frame JPEG snapshot
+(capped at ~2 MB, used for the poll-based fallback tile), and RTSP→MJPEG via an ffmpeg subprocess (Bambu), killed on client
+disconnect. The frontend renders the live feed as a plain <code>&lt;img&gt;</code> or, when offline, polls the snapshot
+endpoint. <span class="src">camera_proxy.py · ui.tsx VideoTile</span></p>
+
+<!-- ============================================================ -->
+<h2 id="api">REST API</h2>
+<p>All routes under <code>/api/v1/</code>, registered from eight routers. <span class="src">main.py:65–72</span> Highlights:</p>
+<table>
+<tr><th>Group</th><th>Endpoint</th><th>Purpose</th></tr>
+<tr><td rowspan="3">Files / Jobs</td><td><code>POST /files/upload</code></td><td>Store 3MF/STL, run parser, return plate list + thumbnails</td></tr>
+<tr><td><code>POST /jobs</code> · <code>POST /jobs/check-overrides</code></td><td>Create job(s) from file + plate + per-printer configs; pre-flight override check</td></tr>
+<tr><td><code>GET /files/{id}/plates</code> · plate thumbnail</td><td>Plate metadata &amp; render thumbnail</td></tr>
+<tr><td rowspan="2">Queue</td><td><code>GET /queue</code></td><td>Ordered active job list (incl. blocked/failed)</td></tr>
+<tr><td><code>POST /jobs/{id}/cancel</code> · <code>PATCH /queue/reorder</code></td><td>Cancel; drag-reorder via <code>queue_position</code></td></tr>
+<tr><td rowspan="4">Printers / Fleet</td><td><code>GET /printers/types</code></td><td><code>ConnectionField</code> descriptors per vendor → dynamic add-printer form</td></tr>
+<tr><td><code>GET /fleet</code></td><td>Normalized per-printer state (telemetry, capabilities, filaments)</td></tr>
+<tr><td><code>GET /printers/{id}/profiles</code></td><td>Process + filament presets compatible with the printer's machine</td></tr>
+<tr><td><code>GET /printers/orca-machine-catalog</code> · <code>POST /printers/rescan-profiles</code></td><td>Machine catalog for the make→model→nozzle cascade; force index rebuild</td></tr>
+<tr><td>Printer control</td><td><code>POST /printers/{id}/</code>{pause,resume,stop,light,jog-z,fan,bed-temp,reconnect}</td><td>Capability-gated commands (422 if unsupported)</td></tr>
+<tr><td>Camera</td><td><code>GET /printers/{id}/camera</code> · <code>/snapshot</code></td><td>MJPEG stream / single JPEG</td></tr>
+<tr><td>Settings</td><td><code>GET·PUT /settings/queue</code> · <code>/settings/spoolman</code> · <code>POST /settings/spoolman/test</code></td><td>Queue interval; Spoolman config + test</td></tr>
+<tr><td>Spoolman</td><td><code>GET /spoolman/filaments</code> · <code>/spools</code></td><td>Proxy the Spoolman catalog/inventory</td></tr>
+</table>
+<p class="muted">A <code>telegram_webhook</code> router exists as a stub but is <b>not</b> registered in <code>main.py</code> — not a live surface.</p>
+
+<h3 id="ws">WebSocket events</h3>
+<p>Server→client messages are <code>{type, data}</code> JSON on <code>/ws</code>:</p>
+<table>
+<tr><th>Type</th><th>Payload</th><th>Drives</th></tr>
+<tr><td><code>printer_state</code></td><td>Normalized printer status (temps, progress, layer, fans, state)</td><td>Fleet cards, video tile</td></tr>
+<tr><td><code>job_update</code></td><td><code>{id, status, assigned_printer_id, queue_position}</code></td><td>Single-job merge in the queue</td></tr>
+<tr><td><code>queue_update</code></td><td>Full ordered list of active jobs</td><td>Queue list + sidebar badges</td></tr>
+</table>
+
+<!-- ============================================================ -->
+<h2 id="frontend">Frontend architecture</h2>
+<p>React + Vite + TypeScript, React Router v6. An <code>AppShell</code> wraps every screen with a fixed
+<b>Sidebar</b> and a <b>Topbar</b> whose title/breadcrumbs/actions come from a per-route config object. There is no global
+store; each screen uses small hooks that fetch on mount and subscribe to the WebSocket. <span class="src">App.tsx</span></p>
+
+<div class="mermaid">
+flowchart LR
+  subgraph Shell["AppShell (App.tsx)"]
+    SB["Sidebar\n+ queue badges"]
+    TB["Topbar\n(title/crumbs/actions)"]
+    RT["Routes"]
+  end
+  RT --> Q["/queue · /queue/new"]
+  RT --> F["/fleet"]
+  RT --> O["/orders · /orders/new"]
+  RT --> FL["/files · /filaments"]
+  RT --> S["/settings/*"]
+  Q -. useQueue() .-> API
+  F -. useFleetData() .-> API
+  Q -. useFilePlates() .-> API
+  S -. useSpoolmanConfig() .-> API
+  API["/api/v1 + /ws"]
+</div>
+
+<table>
+<tr><th>Route</th><th>Screen</th><th>What it does</th></tr>
+<tr><td><code>/queue</code></td><td>QueueScreen</td><td>Job list with status tabs, summary stats, plate thumbnails, and a sticky detail panel (cancel/delete). <code>useQueue()</code> + <code>useFilePlates()</code>.</td></tr>
+<tr><td><code>/queue/new</code></td><td>NewJobScreen</td><td>Upload → per-plate config: eligible printers, print profile, filament (Spoolman or manual), order link. Override-alert modal; submit→reset→toast. Mobile: cards stack, action card last.</td></tr>
+<tr><td><code>/fleet</code></td><td>FleetScreen</td><td>Printer cards/rows, expand for camera + temps + fans + progress, loaded-filament picker, <code>queue_on</code> toggle, and an edit modal with a make→model→nozzle cascade resolving to a machine preset.</td></tr>
+<tr><td><code>/settings/*</code></td><td>SettingsScreen</td><td>General, Print defaults (queue interval, rescan profiles, slicing behaviour), Spoolman integration, and more.</td></tr>
+<tr><td><code>/orders</code>, <code>/files</code>, <code>/filaments</code></td><td>Orders / Files / Filaments</td><td>Order tracking, file library, and filament library views.</td></tr>
+</table>
+
+<div class="legend">
+  <span><span class="sw" style="background:var(--green)"></span>active</span>
+  <span><span class="sw" style="background:#5b6677"></span>pending</span>
+  <span><span class="sw" style="background:var(--red)"></span>blocked</span>
+</div>
+<p>The sidebar's <b>queue badges</b> are computed (<code>useMemo</code>) from the live jobs array: <i>active</i> =
+printing/paused/slicing/uploading, <i>pending</i> = queued, <i>blocked</i> = blocked. Because the jobs array is fed by the
+WebSocket, the badges stay current without polling. <span class="src">App.tsx · Sidebar.tsx</span></p>
+
+<figure>
+  <img src="img/screen-fleet-expanded.png" alt="Expanded printer card on the Fleet screen">
+  <figcaption><b>Fleet — expanded printer.</b> Live camera, loaded filament, nozzle/bed/chamber temps, three fans,
+  progress &amp; layer, capability row, and <b>Claim next from queue</b> / <b>Queue off</b> controls. Every control renders
+  from the printer's capability flags.</figcaption>
+</figure>
+
+<div class="grid2">
+  <figure><img src="img/screen-newjob.png" alt="New Job screen"><figcaption><b>New Job</b> — drop a 3MF/STL; each plate becomes its own job and slices when a printer claims it.</figcaption></figure>
+  <figure><img src="img/screen-queue.png" alt="Queue screen"><figcaption><b>Queue</b> — in-progress / in-queue / queue-time stats, status tabs, and per-job detail.</figcaption></figure>
+</div>
+
+<h4>API client layer</h4>
+<p>Typed wrappers in <code>src/api/*.ts</code> own all endpoint knowledge and the shared TS types
+(<code>MachinePreset</code>, <code>OverrideCheck</code>, <code>FleetPrinter</code>, <code>ApiJob</code>, …). Hooks
+<code>useQueue</code>, <code>useFleetData</code>, <code>useFilePlates</code>, <code>useSpoolmanConfig/useSpools/useFilaments</code>
+encapsulate fetch + WebSocket-merge so screens stay declarative.</p>
+
+<!-- ============================================================ -->
+<h2 id="env">Environment variables</h2>
+<table>
+<tr><th>Variable</th><th>Default</th><th>Purpose</th></tr>
+<tr><td><code>THEMIS_DATA_DIR</code></td><td><code>/data</code></td><td>SQLite DB, uploads, gcode cache root <span class="src">config.py:7</span></td></tr>
+<tr><td><code>ORCA_CONFIG_DIR</code></td><td><code>/root/.config/OrcaSlicer</code></td><td>System + user preset directory (bind-mounted) <span class="src">config.py:11</span></td></tr>
+<tr><td><code>ORCA_EXECUTABLE</code></td><td><code>orcaslicer</code></td><td>OrcaSlicer CLI path <span class="src">config.py:15</span></td></tr>
+<tr><td><code>FFMPEG_EXECUTABLE</code></td><td><code>ffmpeg</code></td><td>RTSP→MJPEG transcode <span class="src">config.py:19</span></td></tr>
+<tr><td><code>THEMIS_STATIC_DIR</code></td><td><code>../frontend/dist</code></td><td>Built SPA assets (prod) <span class="src">main.py:24–25</span></td></tr>
+</table>
+<div class="warn"><b>Local (Windows) dev note.</b> <code>ORCA_CONFIG_DIR</code> must point at <code>%APPDATA%\OrcaSlicer</code>
+or the resolver finds no presets (it defaults to the in-container path). The dev server should be launched with this set.</p></div>
+
+<!-- ============================================================ -->
+<h2 id="decisions">Key decisions &amp; gotchas</h2>
+<div class="grid2">
+  <div class="card"><h4>Embedded-config 3MF slicing</h4><p><code>--load-settings</code> can't establish the active printer; only an embedded <code>project_settings.config</code> does. Themis generates that 3MF rather than driving the GUI. Headless, no profile sync.</p></div>
+  <div class="card"><h4>No <code>--export-gcode</code></h4><p>That flag is "Invalid option". Raw <code>plate_N.gcode</code> is the default <code>--outputdir</code> output; <code>--export-3mf &lt;name&gt;</code> is additive and needs a <i>relative</i> filename (absolute path double-joins and crashes).</p></div>
+  <div class="card"><h4>Complete baseline config</h4><p>A sparse hand-merged <code>project_settings.config</code> segfaults Orca. Baseline a full ~609-key real config and override only known keys with coerced types.</p></div>
+  <div class="card"><h4>Universal-compat filaments</h4><p>Generic filaments ship with no <code>compatible_printers</code> = compatible with all. ProfileIndex must add them to every machine, or the most-used filaments vanish from the dropdown.</p></div>
+  <div class="card"><h4>Blocked ≠ failed</h4><p>Filament/slice issues are transient and stay in the queue for retry; only post-slice upload/start errors are terminal. Head-of-line: a blocked job stops that printer's search.</p></div>
+  <div class="card"><h4>Capability discipline</h4><p>No <code>printer_type</code> comparisons in the UI or queue logic — everything keys off capability flags and the client ABC, so new vendors slot in cleanly.</p></div>
+</div>
+
+<hr>
+<p class="muted">Generated as the as-built reference for Themis. Diagrams render via Mermaid; screenshots are from the live app.
+See also the original <a href="../superpowers/specs/2026-05-20-themis-print-farm-manager-design.md">design spec</a>,
+the <a href="../printer-interface.md">printer-interface pattern</a>, and the
+<a href="../elegoo-centauri-client.md">Elegoo Centauri client notes</a>.</p>
+
+</main>
+</div>
+
+<script type="module">
+  import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs";
+  mermaid.initialize({
+    startOnLoad:true,
+    theme:"base",
+    themeVariables:{
+      darkMode:true,
+      background:"#161b26",
+      primaryColor:"#1b2130",
+      primaryBorderColor:"#3a4759",
+      primaryTextColor:"#cdd6e2",
+      lineColor:"#5b6677",
+      secondaryColor:"#13283f",
+      tertiaryColor:"#241712",
+      fontSize:"14px",
+      fontFamily:"-apple-system,Segoe UI,Roboto,sans-serif"
+    },
+    flowchart:{curve:"basis",useMaxWidth:true},
+    sequence:{useMaxWidth:true},
+    er:{useMaxWidth:true}
+  });
+</script>
+</body>
+</html>
