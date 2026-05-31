@@ -7,7 +7,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, UploadedFile
+from ...models import Job, JobPrinterConfig, Order, Printer, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides
 from ...services.preset_resolver import PresetNotFoundError, PresetResolver
@@ -93,7 +93,6 @@ async def create_job(
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
 
     if body.order_id is not None:
-        from ...models import Order
         order = await session.get(Order, body.order_id)
         if order is None:
             raise HTTPException(404, f"Order {body.order_id} not found")
