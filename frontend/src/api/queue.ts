@@ -35,8 +35,16 @@ export interface ApiJob {
   assigned_printer_id: number | null;
   queue_position: number | null;
   status: string;
+  block_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ApiSliceFailure {
+  printer_id: number;
+  print_profile: string;
+  filament_profile: string | null;
+  slice_error: string | null;
 }
 
 export interface ApiJobPrinterConfig {
@@ -155,6 +163,10 @@ export async function cancelJob(jobId: number): Promise<ApiJob> {
 
 export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
   return request(`/api/v1/jobs/${jobId}/details`);
+}
+
+export async function getSliceFailures(jobId: number): Promise<ApiSliceFailure[]> {
+  return request(`/api/v1/jobs/${jobId}/slice-failures`);
 }
 
 export async function reorderQueue(
