@@ -94,11 +94,11 @@ export function NewOrderScreen() {
         <div style={{ padding: '10px 14px', borderRadius: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>{error}</div>
       )}
 
-      <div className="screen-grid" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px', gap: 18 }}>
+      <div className="layout-main-sidebar" style={{ gridTemplateColumns: 'minmax(0, 1fr) 300px' }}>
         <div className="col gap-4">
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader title="Order info" />
-            <div className="row gap-3" style={{ marginBottom: 14 }}>
+            <div className="row gap-3" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
               {([
                 { id: 'customer' as OrderType, label: 'Customer order', sub: 'Goes to a paying customer' },
                 { id: 'internal' as OrderType, label: 'Internal project', sub: 'R&D, marketing, spares' },
@@ -140,9 +140,9 @@ export function NewOrderScreen() {
 
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border-1)' }}>
-              <SectionHeader title="Parts to print" sub={`${parts.length} parts · ${totalQty} units total`}
-                             actions={<button className="btn sm" onClick={addPart} aria-label="Add row">{Icons.plus} Add row</button>} />
+              <SectionHeader title="Parts to print" sub={`${parts.length} parts · ${totalQty} units total`} />
             </div>
+            <div style={{ overflowX: 'auto' }}>
             <table className="tbl">
               <thead>
                 <tr>
@@ -171,6 +171,7 @@ export function NewOrderScreen() {
                 ))}
               </tbody>
             </table>
+            </div>
             <div style={{ padding: 14, borderTop: '1px solid var(--border-1)' }}>
               <button className="btn sm" onClick={addPart} aria-label="Add part">{Icons.plus} Add part</button>
             </div>
