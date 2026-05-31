@@ -35,14 +35,17 @@ export function NewOrderScreen() {
 
   useEffect(() => {
     if (editingId == null) return;
+    let alive = true;
     getOrder(editingId).then(o => {
+      if (!alive) return;
       setOrderType(o.order_type);
       setCustomer(o.customer);
       setDue(o.due_date ?? '');
       setTitle(o.title);
       setNotes(o.notes ?? '');
       setParts(o.parts.length ? o.parts.map(p => ({ id: p.id, name: p.name, material: p.material, qty: p.qty, est_minutes: p.est_minutes })) : [emptyRow()]);
-    }).catch(e => setError(String(e)));
+    }).catch(e => { if (alive) setError(String(e)); });
+    return () => { alive = false; };
   }, [editingId]);
 
   function addPart() { setParts(prev => [...prev, emptyRow()]); }
