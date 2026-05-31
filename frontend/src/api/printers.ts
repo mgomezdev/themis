@@ -67,6 +67,16 @@ export interface UpdatePrinterBody {
   loaded_filaments?: LoadedFilament[];
 }
 
+export interface MachinePreset {
+  name: string;
+  printer_model: string;
+  nozzle: string;
+}
+
+export function fetchMachineCatalog(): Promise<MachinePreset[]> {
+  return request(`${BASE}/orca-machine-catalog`);
+}
+
 export function fetchPrinterTypes(): Promise<PrinterType[]> {
   return request(`${BASE}/types`);
 }

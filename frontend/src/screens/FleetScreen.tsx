@@ -5,7 +5,7 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, type PrinterType } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, type PrinterType, type MachinePreset } from '../api/printers';
 import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
 import type { ApiSpool } from '../api/spoolman';
 import { PrinterAddForm } from './PrintersScreen';
@@ -84,6 +84,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 }) {
   const [draftName, setDraftName] = useState(p.name);
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
+  const [machinePreset, setMachinePreset] = useState<string>('');
+  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -99,16 +101,28 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           conn[k] = String(v ?? '');
         }
         setDraftConn(conn);
+        setMachinePreset(api.current_orca_printer_profile ?? '');
       })
       .catch(console.error)
       .finally(() => setLoading(false));
+    fetchMachineCatalog().then(setCatalog).catch(console.error);
   }, [p.id]);
+
+  // Group the catalog by printer model for the picker.
+  const catalogByModel = catalog.reduce<Record<string, MachinePreset[]>>((acc, m) => {
+    (acc[m.printer_model] ??= []).push(m);
+    return acc;
+  }, {});
 
   const save = async () => {
     setSaving(true);
     setError(null);
     try {
-      await updatePrinter(Number(p.id), { name: draftName, connection_config: draftConn });
+      await updatePrinter(Number(p.id), {
+        name: draftName,
+        connection_config: draftConn,
+        current_orca_printer_profile: machinePreset || null,
+      });
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -197,6 +211,25 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             ) : (
               <div className="tiny muted">Unknown printer type — connection fields unavailable.</div>
             )}
+          </div>
+
+          <div className="col gap-1">
+            <div className="tag-key">Slicer profile</div>
+            <label className="label">OrcaSlicer printer model & nozzle</label>
+            <select className="select" value={machinePreset}
+                    onChange={e => setMachinePreset(e.target.value)}>
+              <option value="">— select model / nozzle —</option>
+              {Object.keys(catalogByModel).sort().map(model => (
+                <optgroup key={model} label={model}>
+                  {catalogByModel[model].map(m => (
+                    <option key={m.name} value={m.name}>{m.nozzle} mm — {m.name}</option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <div className="tiny muted">
+              Determines which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
+            </div>
           </div>
 
           {error && <div className="tiny" style={{ color: 'var(--err)' }}>{error}</div>}
