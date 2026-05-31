@@ -37,6 +37,7 @@ function AppShell() {
     '/orders':     { title: 'Orders',            crumbs: ['Workshop'],
                      actions: <button className="btn primary sm" onClick={() => navigate('/orders/new')}>{Icons.plus} New order</button> },
     '/orders/new': { title: 'New order',         crumbs: ['Workshop', 'Orders'] },
+    '/orders/edit': { title: 'Edit order',        crumbs: ['Workshop', 'Orders'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/filaments':  { title: 'Filament library',  crumbs: ['Workshop'],
@@ -45,7 +46,10 @@ function AppShell() {
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
-  const path = '/' + location.pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+  const segments = location.pathname.split('/').filter(Boolean);
+  const path = segments[0] === 'orders' && segments[2] === 'edit'
+    ? '/orders/edit'
+    : '/' + segments.slice(0, 2).join('/');
   const cfg = screenConfig[path] ?? screenConfig['/queue'];
 
   return (
