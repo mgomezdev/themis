@@ -107,17 +107,19 @@ export function useOrders(): { orders: ApiOrder[]; refetch: () => void } {
   }, [tick]);
 
   useEffect(() => {
+    let alive = true;
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string };
+        // Order progress is derived server-side, so refetch rather than patch locally.
         if (msg.type === 'job_update' || msg.type === 'queue_update') {
-          getOrders().then(d => setOrders(d)).catch(() => {});
+          getOrders().then(d => { if (alive) setOrders(d); }).catch(() => {});
         }
       } catch { /* ignore malformed frames */ }
     };
-    return () => { ws.close(); };
+    return () => { alive = false; ws.close(); };
   }, []);
 
   return { orders, refetch };
