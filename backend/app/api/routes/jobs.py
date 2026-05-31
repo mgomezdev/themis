@@ -39,7 +39,7 @@ class OverrideCheckRequest(BaseModel):
 class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
-    project_id: int | None = None
+    order_id: int | None = None
     printer_configs: list[PrinterConfigInput]
 
 
@@ -48,7 +48,7 @@ def _to_dict(j: Job) -> dict:
         "id": j.id,
         "uploaded_file_id": j.uploaded_file_id,
         "plate_number": j.plate_number,
-        "project_id": j.project_id,
+        "order_id": j.order_id,
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
@@ -92,13 +92,19 @@ async def create_job(
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
 
+    if body.order_id is not None:
+        from ...models import Order
+        order = await session.get(Order, body.order_id)
+        if order is None:
+            raise HTTPException(404, f"Order {body.order_id} not found")
+
     now = datetime.now(timezone.utc).isoformat()
     pos = await _next_queue_position(session)
 
     job = Job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
-        project_id=body.project_id,
+        order_id=body.order_id,
         queue_position=pos,
         status="queued",
         created_at=now,

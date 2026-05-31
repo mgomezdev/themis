@@ -29,13 +29,19 @@ class UploadedFile(Base):
     uploaded_at: Mapped[str] = mapped_column(String(32))
 
 
-class Project(Base):
-    __tablename__ = "projects"
+class Order(Base):
+    __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255))
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    order_type: Mapped[str] = mapped_column(String(20))  # "customer" | "internal"
+    customer: Mapped[str] = mapped_column(String(255))
+    title: Mapped[str] = mapped_column(String(255))
+    due_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    on_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    parts: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
 
 
 class Job(Base):
@@ -44,7 +50,7 @@ class Job(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
     plate_number: Mapped[int] = mapped_column(default=1)
-    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id"), nullable=True)
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("orders.id"), nullable=True)
     assigned_printer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("printers.id"), nullable=True)
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued")

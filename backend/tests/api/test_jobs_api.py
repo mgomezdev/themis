@@ -42,7 +42,7 @@ async def test_create_job(client, tmp_path):
     payload = {
         "uploaded_file_id": file_id,
         "plate_number": 1,
-        "project_id": None,
+        "order_id": None,
         "printer_configs": [
             {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
         ],
@@ -53,6 +53,7 @@ async def test_create_job(client, tmp_path):
     data = response.json()
     assert data["status"] == "queued"
     assert data["id"] is not None
+    assert data["order_id"] is None
     mock_qe.wake.assert_called_once()
 
 

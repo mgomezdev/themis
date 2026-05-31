@@ -28,7 +28,7 @@ def _to_dict(j: Job) -> dict:
         "id": j.id,
         "uploaded_file_id": j.uploaded_file_id,
         "plate_number": j.plate_number,
-        "project_id": j.project_id,
+        "order_id": j.order_id,
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,

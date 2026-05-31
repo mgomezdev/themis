@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.database import Base
-from app.models import Printer, UploadedFile, Project, Job, JobPrinterConfig, GcodeFile
+from app.models import Printer, UploadedFile, Job, JobPrinterConfig, GcodeFile
 
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
