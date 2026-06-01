@@ -161,6 +161,10 @@ export async function cancelJob(jobId: number): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/cancel`, { method: 'POST' });
 }
 
+export async function unblockJob(jobId: number): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/unblock`, { method: 'POST' });
+}
+
 export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
   return request(`/api/v1/jobs/${jobId}/details`);
 }

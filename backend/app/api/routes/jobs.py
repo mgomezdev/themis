@@ -74,6 +74,17 @@ async def _next_queue_position(session: AsyncSession) -> float:
     return (current_max or 0.0) + 1.0
 
 
+async def _front_queue_position(session: AsyncSession) -> float:
+    """Position just ahead of the current queue front (for re-queueing at the top)."""
+    result = await session.execute(
+        select(func.min(Job.queue_position)).where(
+            Job.status.in_(["queued", "blocked"])
+        )
+    )
+    current_min = result.scalar()
+    return (current_min or 1.0) - 1.0
+
+
 @router.post("", status_code=201)
 async def create_job(
     body: JobCreate,
@@ -263,6 +274,25 @@ async def cancel_job(
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
+    return _to_dict(job)
+
+
+@router.post("/{job_id}/unblock")
+async def unblock_job(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Re-queue a blocked job at the top of the queue and wake the engine."""
+    job = await _get_or_404(job_id, session)
+    if job.status != "blocked":
+        raise HTTPException(422, f"Job {job_id} has status {job.status!r} — only blocked jobs can be unblocked")
+    job.status = "queued"
+    job.block_reason = None
+    job.queue_position = await _front_queue_position(session)
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
     return _to_dict(job)
 
 

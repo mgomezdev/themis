@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
-import { getJobDetails, cancelJob, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
+import { getJobDetails, cancelJob, unblockJob, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
 
 const BADGE: Record<string, string> = {
@@ -92,6 +92,7 @@ export function JobDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [unblocking, setUnblocking] = useState(false);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -102,6 +103,19 @@ export function JobDetailScreen() {
       .catch(e => { if (alive) { setError(String(e)); setLoading(false); } });
     return () => { alive = false; };
   }, [jobId]);
+
+  async function handleUnblock() {
+    if (!job || unblocking) return;
+    setUnblocking(true);
+    try {
+      await unblockJob(job.id);
+      navigate('/queue');
+    } catch (e) {
+      setError(`Unblock failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setUnblocking(false);
+    }
+  }
 
   async function handleCancel() {
     if (!job || cancelling) return;
@@ -138,7 +152,8 @@ export function JobDetailScreen() {
   }
 
   const isActive = job.status === 'printing' || job.status === 'paused';
-  const cancellable = ['queued', 'slicing', 'uploading', 'printing', 'paused', 'failed'].includes(job.status);
+  const isBlocked = job.status === 'blocked';
+  const cancellable = ['queued', 'slicing', 'uploading', 'printing', 'paused', 'failed', 'blocked'].includes(job.status);
   const thumbUrl = plateThumbnailUrl(job.uploaded_file_id, job.plate?.thumbnail_path);
 
   return (
@@ -290,6 +305,19 @@ export function JobDetailScreen() {
                 onClick={() => navigate('/orders')}
               >
                 {Icons.orders} View order #{job.order_id}
+              </button>
+            </div>
+          )}
+
+          {isBlocked && (
+            <div className="card" style={{ padding: 18 }}>
+              <button
+                className="btn primary sm"
+                style={{ width: '100%' }}
+                disabled={unblocking}
+                onClick={handleUnblock}
+              >
+                {Icons.refresh} Unblock — retry at top of queue
               </button>
             </div>
           )}

@@ -5,7 +5,7 @@ import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, getSliceFailures, plateThumbnailUrl, type ApiSliceFailure } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, plateThumbnailUrl, type ApiSliceFailure } from '../api/queue';
 import type { StatusKey } from '../data/types';
 
 // ---- DisplayJob: flattened shape for rendering ----
@@ -217,10 +217,12 @@ function JobDetailPanel({
   job,
   onClose,
   onCancel,
+  onUnblock,
 }: {
   job: DisplayJob;
   onClose: () => void;
   onCancel: (jobId: number) => void;
+  onUnblock: (jobId: number) => void;
 }) {
   const navigate = useNavigate();
   const isActive = job.status === 'printing' || job.status === 'paused';
@@ -389,6 +391,16 @@ function JobDetailPanel({
           View full details →
         </button>
 
+        {isBlocked && (
+          <button
+            className="btn primary sm"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => onUnblock(job.rawId)}
+          >
+            {Icons.refresh} Unblock — retry at top of queue
+          </button>
+        )}
+
         {cancellable && (
           <button
             className="btn ghost sm"
@@ -479,6 +491,15 @@ export function QueueScreen() {
       refetch();
     } catch (err) {
       console.error('Failed to cancel job:', err);
+    }
+  }
+
+  async function handleUnblock(jobId: number) {
+    try {
+      await unblockJob(jobId);
+      refetch();
+    } catch (err) {
+      console.error('Failed to unblock job:', err);
     }
   }
 
@@ -578,6 +599,7 @@ export function QueueScreen() {
           job={selectedJob}
           onClose={() => setSelectedJobId(null)}
           onCancel={handleCancel}
+          onUnblock={handleUnblock}
         />
       )}
     </div>
