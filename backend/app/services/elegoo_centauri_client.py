@@ -23,6 +23,14 @@ from .abstract_printer_client import (
 
 logger = logging.getLogger(__name__)
 
+
+def _as_bool(v) -> bool:
+    """Coerce a config value (which arrives as a string from the frontend) to bool."""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+
 DEFAULT_PORT = 3030
 _CAMERA_PORT = 3031
 _ACK_TIMEOUT = 10.0
@@ -134,9 +142,16 @@ class ElegooCentauriClient(AbstractPrinterClient):
         port: int = DEFAULT_PORT,
         on_state_change: Callable | None = None,
         on_print_complete: Callable | None = None,
+        bed_type: int | str = 4,
+        bed_leveling: bool | str = True,
+        timelapse: bool | str = False,
     ) -> None:
         self._ip = ip_address
         self._port = int(port)  # coerce — frontend sends strings
+        # Per-printer print defaults sent with every start_print (see start_print).
+        self._bed_type = int(bed_type)
+        self._bed_leveling = _as_bool(bed_leveling)
+        self._timelapse = _as_bool(timelapse)
         self._on_state_change = on_state_change
         self._on_print_complete = on_print_complete
 
@@ -173,6 +188,30 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 field_type="number",
                 default=DEFAULT_PORT,
                 required=False,
+            ),
+            ConnectionField(
+                name="bed_type",
+                label="Bed type",
+                field_type="number",
+                default=4,
+                required=False,
+                help_text="Elegoo plate type code (PrintPlatformType) sent when starting a print.",
+            ),
+            ConnectionField(
+                name="bed_leveling",
+                label="Auto bed leveling",
+                field_type="number",
+                default=1,
+                required=False,
+                help_text="1 = run bed-flatness calibration before each print, 0 = skip.",
+            ),
+            ConnectionField(
+                name="timelapse",
+                label="Timelapse",
+                field_type="number",
+                default=0,
+                required=False,
+                help_text="1 = record a timelapse during the print, 0 = off.",
             ),
         ]
 
@@ -442,8 +481,11 @@ class ElegooCentauriClient(AbstractPrinterClient):
             with self._lock:
                 self.state.mainboard_id = d["MainboardID"]
 
-        ack = d.get("Result", d.get("Ack", -1))
         inner = d.get("Data", {})
+        # Result code lives at the envelope top level for most commands, but
+        # print-control acks (start/stop/pause) nest it as Data.Data.Ack.
+        inner_ack = inner.get("Ack", -1) if isinstance(inner, dict) else -1
+        ack = d.get("Result", d.get("Ack", inner_ack))
 
         # Cmd 386 (EDIT_VIDEO_STREAMING) response carries the live stream URL
         if d.get("Cmd") == _Cmd.EDIT_VIDEO_STREAMING:
@@ -541,7 +583,19 @@ class ElegooCentauriClient(AbstractPrinterClient):
         return False  # SDCP has no raw G-code channel
 
     def start_print(self, file_name: str, options: StartPrintOptions | None = None) -> bool:
-        return self._send(_Cmd.START_PRINT, {"Filename": file_name})
+        # The Centauri SDCP START_PRINT needs the on-printer "/local/" path plus the
+        # print parameters; a bare filename is acked but the print never starts.
+        # (Matches OrcaSlicer's ElegooLink: Filename, StartLayer, Calibration_switch,
+        # PrintPlatformType, Tlp_Switch.) Bed leveling / type / timelapse are
+        # per-printer config (see connection_fields).
+        filename = file_name if file_name.startswith("/") else f"/local/{file_name}"
+        return self._send(_Cmd.START_PRINT, {
+            "Filename": filename,
+            "StartLayer": 0,
+            "Calibration_switch": 1 if self._bed_leveling else 0,
+            "PrintPlatformType": self._bed_type,
+            "Tlp_Switch": 1 if self._timelapse else 0,
+        })
 
     def stop_print(self) -> bool:
         return self._send(_Cmd.STOP_PRINT, {})
