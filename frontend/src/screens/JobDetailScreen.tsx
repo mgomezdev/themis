@@ -176,6 +176,7 @@ export function JobDetailScreen() {
               width: '100%', height: 200, position: 'relative',
               background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
               display: 'grid', placeItems: 'center',
+              overflow: 'hidden',
             }}>
               {thumbUrl ? (
                 <img src={thumbUrl} alt={`Plate ${job.plate_number}`}
