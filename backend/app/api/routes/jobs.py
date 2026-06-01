@@ -309,7 +309,9 @@ async def update_job_configs(
             job_id=job_id,
             printer_id=cfg.printer_id,
             print_profile=cfg.print_profile,
-            filament_profile=cfg.filament_profile,
+            # Mirror the New Job convention: manual filaments store the type as the
+            # profile name. Never null — legacy DBs have a NOT NULL constraint here.
+            filament_profile=cfg.filament_profile or cfg.filament_type or "",
             filament_id=cfg.filament_id,
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
