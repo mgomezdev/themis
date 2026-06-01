@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -11,8 +12,12 @@ from ...models import Job, JobPrinterConfig, Order, Printer, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides
 from ...services.preset_resolver import PresetNotFoundError, PresetResolver
+from ...services.printer_manager import printer_manager
 from ...services.project_config_builder import build_project_config
 from ...services.queue_engine import queue_engine
+
+# Statuses where a printer is physically working on the job and must be told to stop.
+_PRINTER_ACTIVE_STATUSES = {"printing", "paused", "uploading"}
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -269,11 +274,29 @@ async def cancel_job(
     job = await _get_or_404(job_id, session)
     if job.status not in _CANCELLABLE_STATUSES:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be cancelled")
+
+    # If a printer is physically running this job, tell it to stop and free it.
+    stop_printer_id = (
+        job.assigned_printer_id
+        if job.status in _PRINTER_ACTIVE_STATUSES else None
+    )
     job.status = "cancelled"
+    job.assigned_printer_id = None
     job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
+
+    if stop_printer_id is not None:
+        client = printer_manager._clients.get(stop_printer_id)
+        if client is not None and client.connected:
+            # stop_print blocks on the websocket ack; don't stall the event loop.
+            try:
+                await asyncio.to_thread(client.stop_print)
+            except Exception:  # best-effort — the job is already cancelled
+                pass
+        queue_engine.wake()  # let the freed printer claim the next job once idle
+
     return _to_dict(job)
 
 
