@@ -28,6 +28,23 @@ def _norm_color(value) -> str:
     return str(value or "").strip().lstrip("#").lower()
 
 
+def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:
+    """The printer's loaded filament slot that satisfies the job's ask (type AND
+    color), or None. A job with no declared requirement matches the first slot.
+
+    The OrcaSlicer filament *profile* used for slicing is a printer-level setting
+    that lives on the matched slot (the "provide"); the job only declares the
+    desired type/color (the "ask")."""
+    req_type = (config.filament_type or "").strip().lower()
+    req_color = _norm_color(config.filament_color)
+    if not req_type and not req_color:
+        return (loaded[0] if loaded else None)
+    for f in loaded or []:
+        if str(f.get("type", "")).strip().lower() == req_type and _norm_color(f.get("color")) == req_color:
+            return f
+    return None
+
+
 def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
     """Return a reason string if the job's required filament (type AND color) is
     not present in the printer's loaded filaments, else None. A job with no
@@ -36,9 +53,8 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
     req_color = _norm_color(config.filament_color)
     if not req_type and not req_color:
         return None
-    for f in loaded or []:
-        if str(f.get("type", "")).strip().lower() == req_type and _norm_color(f.get("color")) == req_color:
-            return None
+    if _matching_loaded_filament(config, loaded) is not None:
+        return None
     return (f"loaded filament doesn't match required "
             f"{config.filament_type or '?'} {config.filament_color or '?'}")
 
@@ -183,8 +199,12 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             # Capture scalar values before session closes
             print_profile = config.print_profile if config else None
-            filament_profile = config.filament_profile if config else None
             filament_color = config.filament_color if config else None
+            # Filament profile is a printer-level setting: resolve the OrcaSlicer
+            # filament preset from the loaded slot that satisfies the job's ask.
+            loaded = (printer.loaded_filaments if printer else None) or []
+            slot = _matching_loaded_filament(config, loaded) if config else None
+            filament_profile = (slot or {}).get("filament_profile") or None
             stored_path = uploaded_file.stored_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None

@@ -32,6 +32,7 @@ export interface LoadedFilament {
   name: string;
   type: string;
   color: string;
+  filament_profile?: string | null;  // OrcaSlicer filament preset used to slice with this filament
 }
 
 export interface ApiPrinter {

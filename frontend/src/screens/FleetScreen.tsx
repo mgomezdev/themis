@@ -5,9 +5,10 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, type PrinterType, type MachinePreset } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
 import type { ApiSpool } from '../api/spoolman';
+import { getPrinterProfiles } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 
 type Layout = 'cards' | 'rows';
@@ -310,6 +311,42 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   const [manualText, setManualText] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // OrcaSlicer filament profile for this printer — the preset used to slice with
+  // whatever filament is loaded here (a printer-level setting).
+  const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
+  const [profile, setProfile] = useState('');
+  const [currentLoaded, setCurrentLoaded] = useState<LoadedFilament | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getPrinterProfiles(printerId)
+      .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
+      .catch(() => {});
+    // Pre-fill from the printer's currently loaded filament, if any.
+    fetchPrinter(printerId)
+      .then(p => {
+        if (!alive) return;
+        const loaded = p.loaded_filaments?.[0] ?? null;
+        setCurrentLoaded(loaded);
+        setProfile(loaded?.filament_profile ?? '');
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [printerId]);
+
+  async function saveProfileOnly() {
+    if (!currentLoaded) return;
+    setSaving(true);
+    try {
+      await updatePrinter(printerId, {
+        loaded_filaments: [{ ...currentLoaded, filament_profile: profile || null }],
+      });
+      onSaved();
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function unload() {
     setSaving(true);
     try {
@@ -330,6 +367,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
           name: spoolDisplayName(spool),
           type: spool.filament.material,
           color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
+          filament_profile: profile || null,
         }],
       });
       onSaved();
@@ -349,6 +387,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
           name: manualText.trim(),
           type: '',
           color: '#888888',
+          filament_profile: profile || null,
         }],
       });
       onSaved();
@@ -359,6 +398,26 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-1)' }}>
+      {/* OrcaSlicer filament profile — applies to whichever filament is loaded */}
+      <div style={{ marginBottom: 10 }}>
+        <label className="label">OrcaSlicer filament profile</label>
+        <select className="input" value={profile} onChange={e => setProfile(e.target.value)}>
+          <option value="">— none (slicer default) —</option>
+          {filamentProfiles.map(fp => <option key={fp} value={fp}>{fp}</option>)}
+        </select>
+        <div className="tiny muted" style={{ marginTop: 4 }}>
+          {filamentProfiles.length === 0
+            ? 'No filament profiles found — set the printer’s machine profile first.'
+            : 'Used to slice jobs claimed by this printer. Pick the preset matching the loaded filament.'}
+        </div>
+        {currentLoaded && (
+          <button className="btn primary sm" style={{ marginTop: 8 }}
+                  disabled={saving || profile === (currentLoaded.filament_profile ?? '')}
+                  onClick={saveProfileOnly}>
+            Save profile for loaded {currentLoaded.type || 'filament'}
+          </button>
+        )}
+      </div>
       {spoolmanActive && spools.length > 0 && (
         <div className="col gap-2" style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
           {spools.map(spool => (
