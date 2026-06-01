@@ -301,6 +301,15 @@ class QueueEngine:
                 return
             job.status = "printing"
             job.updated_at = _now()
+            # The printer has started a physical print: mark it not-ready for new
+            # work so it won't auto-claim the next job after this one finishes — the
+            # user must explicitly mark it ready (clear the plate) first. Set on
+            # start (not just on completion) so a missed completion event can't let
+            # it grab another job onto an uncleared plate.
+            self._mgr.set_awaiting_plate_clear(printer_id, True)
+            printer = await session.get(Printer, printer_id)
+            if printer is not None:
+                printer.awaiting_plate_clear = True
             await session.commit()
 
         await self._broadcast_job(job_id)

@@ -5,7 +5,7 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
 import type { ApiSpool } from '../api/spoolman';
 import { getPrinterProfiles } from '../api/queue';
@@ -483,6 +483,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         padding: 0, overflow: 'hidden',
         borderColor: 'var(--border-3)',
         boxShadow: '0 0 0 1px var(--accent-glow), 0 18px 40px -20px rgba(0,0,0,0.6)',
+        ...cardCueStyle(p),
       }}>
         {/* Header */}
         <div className="row between" style={{
@@ -516,6 +517,9 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           </div>
           <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
             <StatusPill status={p.status} />
+            {p.awaitingPlateClear && (
+              <ReadyForWorkButton printerId={p.id} refetchFleet={refetchFleet} />
+            )}
             <button
               className={`btn sm${p.queueOn ? '' : ' ghost'}`}
               title={p.queueOn ? 'Disable queue pulling' : 'Enable queue pulling'}
@@ -666,17 +670,64 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
   );
 }
 
+// ── Shared printer-card affordances ───────────────────────────────────────────
+const QUEUE_OFF_COLOR = '#f59e0b';
+
+// Border/shadow that flags a card as needing attention (awaiting clear) or
+// manually held out of the queue.
+function cardCueStyle(p: Printer): React.CSSProperties {
+  if (p.awaitingPlateClear) {
+    return { borderColor: 'var(--accent)', boxShadow: '0 0 0 1px var(--accent)' };
+  }
+  if (!p.queueOn) {
+    return { borderColor: QUEUE_OFF_COLOR, boxShadow: `0 0 0 1px rgba(245,158,11,0.35)` };
+  }
+  return {};
+}
+
+function QueueOffBadge() {
+  return (
+    <span className="tiny" style={{
+      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+      background: 'rgba(245,158,11,0.15)', color: QUEUE_OFF_COLOR, fontWeight: 600,
+    }}>QUEUE OFF</span>
+  );
+}
+
+function ReadyForWorkButton({ printerId, refetchFleet, block }: {
+  printerId: string; refetchFleet: () => void; block?: boolean;
+}) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      className="btn primary sm"
+      style={block ? { width: '100%' } : undefined}
+      disabled={busy}
+      onClick={async (e) => {
+        e.stopPropagation();
+        setBusy(true);
+        try { await markPlateCleared(printerId); refetchFleet(); }
+        finally { setBusy(false); }
+      }}>
+      {Icons.check} Ready for new work
+    </button>
+  );
+}
+
 // ── PrinterTile ───────────────────────────────────────────────────────────────
-function PrinterTile({ printer: p, onClick }: { printer: Printer; onClick: () => void }) {
+function PrinterTile({ printer: p, onClick, refetchFleet }: { printer: Printer; onClick: () => void; refetchFleet: () => void }) {
   const isPrinting = p.status === 'printing';
   return (
-    <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease' }}>
+    <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease', ...cardCueStyle(p) }}>
       <div className="row between" style={{ padding: '12px 14px 8px' }}>
         <div className="row gap-2" style={{ alignItems: 'baseline' }}>
           <span style={{ fontSize: 14, fontWeight: 600 }}>{p.nickname}</span>
           <span className="tiny muted">{p.badge}</span>
         </div>
-        <StatusPill status={p.status} />
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          {!p.queueOn && <QueueOffBadge />}
+          <StatusPill status={p.status} />
+        </div>
       </div>
       <div style={{ padding: '0 14px' }}>
         <VideoTile live={isPrinting} />
@@ -709,12 +760,20 @@ function PrinterTile({ printer: p, onClick }: { printer: Printer; onClick: () =>
           </div>
         </div>
       )}
+      {p.awaitingPlateClear && (
+        <div style={{ padding: '0 14px 14px' }}>
+          <ReadyForWorkButton printerId={p.id} refetchFleet={refetchFleet} block />
+          <div className="tiny muted" style={{ textAlign: 'center', marginTop: 4 }}>
+            Clear the plate, then mark ready
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 // ── PrinterRow (rows layout — no video feed) ──────────────────────────────────
-function PrinterRow({ printer: p, expanded, onClick }: { printer: Printer; expanded: boolean; onClick: () => void }) {
+function PrinterRow({ printer: p, expanded, onClick, refetchFleet }: { printer: Printer; expanded: boolean; onClick: () => void; refetchFleet: () => void }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{
@@ -722,8 +781,8 @@ function PrinterRow({ printer: p, expanded, onClick }: { printer: Printer; expan
       display: 'grid',
       gridTemplateColumns: 'auto auto 1.4fr auto 1.6fr 1fr auto',
       alignItems: 'center', gap: 16,
-      borderColor: expanded ? 'var(--accent)' : undefined,
       background: expanded ? 'var(--bg-3)' : undefined,
+      ...(expanded ? { borderColor: 'var(--accent)' } : cardCueStyle(p)),
     }}>
       <span style={{ display: 'inline-flex', color: 'var(--text-3)', transform: expanded ? 'rotate(90deg)' : 'none', transition: 'transform 120ms ease' }}>
         {Icons.chevR}
@@ -739,7 +798,10 @@ function PrinterRow({ printer: p, expanded, onClick }: { printer: Printer; expan
         <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nickname}</div>
         <div className="tiny muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
       </div>
-      <StatusPill status={p.status} />
+      <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
+        <StatusPill status={p.status} />
+        {!p.queueOn && <QueueOffBadge />}
+      </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
         <Swatch color={p.material.color} />
         <div className="col" style={{ minWidth: 0 }}>
@@ -760,7 +822,11 @@ function PrinterRow({ printer: p, expanded, onClick }: { printer: Printer; expan
           <span className="tiny muted">{p.note ?? '—'}</span>
         )}
       </div>
-      {isPrinting ? (
+      {p.awaitingPlateClear ? (
+        <div style={{ justifySelf: 'end' }} onClick={e => e.stopPropagation()}>
+          <ReadyForWorkButton printerId={p.id} refetchFleet={refetchFleet} />
+        </div>
+      ) : isPrinting ? (
         <div className="col" style={{ alignItems: 'flex-end', whiteSpace: 'nowrap', minWidth: 80 }}>
           <div className="num" style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--text-1)' }}>
             {fmtTime(p.timeRemaining)}
@@ -860,7 +926,7 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
               ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} />
-              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} />}
+              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} />}
           </div>
         );
       })}
@@ -880,7 +946,7 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
         const expanded = expandedId === p.id;
         return (
           <div key={p.id}>
-            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} />
+            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} />
             {expanded && (
               <div style={{ marginTop: 8 }}>
                 <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} />

@@ -36,7 +36,8 @@ const BADGE: Record<string, string> = {
 
 function mapStatus(p: FleetPrinter): Printer['status'] {
   if (!p.connected) return 'offline';
-  if (p.awaiting_plate_clear) return 'claiming';
+  // awaiting_plate_clear is surfaced as its own field/cue, not a status — it can be
+  // true while actively printing (set on print start), so it must not mask the state.
   switch (p.state) {
     case 'RUNNING': return 'printing';
     case 'PAUSE': return 'paused';
@@ -79,6 +80,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     fanBox: p.fan_box ?? 0,
     bedTempTarget: p.temperatures?.bed_target ?? 0,
     queueOn: p.queue_on ?? true,
+    awaitingPlateClear: p.awaiting_plate_clear ?? false,
   };
 }
 

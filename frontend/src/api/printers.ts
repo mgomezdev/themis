@@ -178,3 +178,9 @@ export function setBedTemp(id: string, celsius: number): Promise<void> {
 export function reconnectPrinter(id: string): Promise<void> {
   return request(`${BASE}/${id}/reconnect`, { method: 'POST' });
 }
+
+/** Mark the printer ready for new work (plate cleared) so it can claim the next job.
+ *  Same endpoint a QR code / home-automation trigger would hit. */
+export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> {
+  return request(`${BASE}/${id}/plate-cleared`, { method: 'POST' });
+}

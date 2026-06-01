@@ -289,6 +289,27 @@ async def test_slice_uses_filament_profile_from_loaded_slot(db, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
+    """When a job starts printing, the printer is flagged not-ready so it won't
+    auto-claim the next job until the user marks the plate cleared."""
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PLA", "color": "#FFFFFF"}])
+
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
+
+    mgr.set_awaiting_plate_clear.assert_any_call(1, True)
+    async with db() as session:
+        printer = await session.get(Printer, 1)
+        assert printer.awaiting_plate_clear is True
+
+
+@pytest.mark.asyncio
 async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     mgr = _make_mock_printer_manager([1])
     mock_slicer = MagicMock()
