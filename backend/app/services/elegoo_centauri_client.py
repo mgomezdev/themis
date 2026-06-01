@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import threading
 import time
 import uuid
@@ -19,6 +20,8 @@ from .abstract_printer_client import (
     PrinterFile,
     StartPrintOptions,
 )
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 3030
 _CAMERA_PORT = 3031
@@ -625,10 +628,21 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 files={"File": (filename, io.BytesIO(data), "application/octet-stream")},
                 timeout=120.0,
             )
-            result = resp.json()
-            return result.get("success") is True or result.get("code") == "000000"
         except Exception:
+            logger.exception("Upload POST to %s failed (%s, %d bytes) — printer HTTP "
+                             "endpoint unreachable/refused", url, filename, len(data))
             return False
+        try:
+            result = resp.json()
+        except Exception:
+            logger.warning("Upload of %s: non-JSON response (HTTP %s): %s",
+                           filename, resp.status_code, resp.text[:300])
+            return False
+        if result.get("success") is True or result.get("code") == "000000":
+            return True
+        logger.warning("Upload of %s rejected by printer (HTTP %s): %s",
+                       filename, resp.status_code, result)
+        return False
 
     def list_files(self, directory: str = "/") -> list[PrinterFile]:
         if directory == "/":
