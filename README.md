@@ -23,6 +23,8 @@ external services required.
 | **Multi-vendor fleet** | Bambu (MQTT) and Elegoo Centauri (SDCP/WebSocket) today; new vendors = one client class + one registry entry. |
 | **Multi-plate & multi-color** | Each plate of a 3MF becomes its own job; AMS / multi-tool colour slots are preserved. |
 | **Filament-aware gating** | A job won't start on a printer whose loaded filament (type **and** colour) doesn't match. |
+| **Ready-for-work gate** | A printer holds after finishing a job until you mark it ready (clear the plate) — via the Fleet button or a `POST /printers/{id}/plate-cleared` hook (wireable to a QR code / home automation). |
+| **Orders** | Group jobs under a customer/internal order with a parts checklist; order status & progress derive from its linked jobs. |
 | **Spoolman integration** | Source filament choices from your Spoolman catalog; manual entry always allowed. |
 | **Live camera & telemetry** | MJPEG passthrough or RTSP→MJPEG transcode, plus temps, fans, progress over WebSocket. |
 | **Capability-driven UI** | Every control renders from a printer's capability flags — never a hard-coded vendor check. |
@@ -44,9 +46,11 @@ external services required.
 
 | Screen | What it's for |
 |---|---|
-| **Queue** | The shared job list with active / pending / blocked badges, plate thumbnails, and a per-job detail panel. |
+| **Queue** | The shared job list with active / pending / blocked badges, plate thumbnails, a per-job detail panel, and inline block/slice-error surfacing. |
 | **New Job** | Upload a model and configure each plate: eligible printers, print profile, filament, and order link. |
-| **Fleet** | Printer cards with live camera + telemetry; edit a printer via a make → model → nozzle picker. |
+| **Job detail** | Full per-job view (file, plate, slicing config per printer); edit settings & re-queue, unblock, or cancel a blocked/failed/queued job. |
+| **Orders** | Customer/internal orders with a parts checklist; create, edit, hold, and see the jobs filling each. |
+| **Fleet** | Printer cards with live camera + telemetry; queue-off cue + **Ready for new work** button; loaded-filament + OrcaSlicer filament-profile picker; edit a printer via a make → model → nozzle picker. |
 | **Settings** | Workshop defaults, queue check interval, **Rescan profiles**, and Spoolman integration. |
 
 ---
@@ -71,6 +75,8 @@ Queue engine: a printer goes idle (queue_on) ─▶ is it eligible?
   loading the right spool unblocks it). Only a post-slice upload/start error *fails* it (terminal).
 - **Head-of-line:** if the first eligible job can't run on a printer, that printer waits rather than
   skipping ahead.
+- **Plate-clear hold:** once a job starts printing, its printer is flagged not-ready and won't claim
+  the next job until you mark it **Ready for new work** — so it can't print onto an uncleared plate.
 
 See the [architecture doc](docs/architecture/index.html) for the full state machine and slicing pipeline.
 
@@ -94,10 +100,8 @@ The container serves the app on its mapped port. Your `%APPDATA%\OrcaSlicer` is 
 ```bash
 # Backend (FastAPI on :8001)
 cd backend
-python -m venv .venv && .venv\Scripts\activate
+python -m venv .venv && .venv\Scripts\activate   # use the python.org interpreter (see note)
 pip install -e ".[dev]"
-# point the resolver at your host OrcaSlicer config (Windows):
-set ORCA_CONFIG_DIR=%APPDATA%\OrcaSlicer
 uvicorn app.main:app --reload --port 8001
 
 # Frontend (Vite on :5173, proxies /api and /ws → :8001)
@@ -107,8 +111,13 @@ npm run dev
 ```
 Open <http://localhost:5173>.
 
-> On Windows the backend **must** see `ORCA_CONFIG_DIR=%APPDATA%\OrcaSlicer`, or the slicer finds no
-> presets (it defaults to the in-container path).
+> On Windows the backend auto-resolves your OrcaSlicer config (`%APPDATA%\OrcaSlicer`) and the
+> `orca-slicer.exe` under Program Files — no env vars needed. Set `ORCA_CONFIG_DIR` / `ORCA_EXECUTABLE`
+> only to override.
+>
+> **Build the venv from the python.org Python, not the Microsoft Store Python.** The Store build is
+> sandboxed (hides `C:\Program Files`, redirects its bytecode cache) and breaks `--reload` and
+> subprocess slicing (`[WinError 2]`). `py -0` lists your interpreters.
 
 ---
 
@@ -122,7 +131,8 @@ Open <http://localhost:5173>.
   inheritance chain; a `ProfileIndex` keyed by *(printer model, nozzle)* drives the compatible-profile
   dropdowns.
 - **Persistence** — SQLite (WAL) via async SQLAlchemy. Tables: `printers`, `uploaded_files`,
-  `projects`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`.
+  `orders`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`
+  (a job links to at most one order via `jobs.order_id`).
 - **Frontend** — React + Vite + TypeScript, React Router. No global store; per-screen hooks fetch on
   mount and merge live WebSocket events.
 
@@ -130,7 +140,7 @@ Open <http://localhost:5173>.
 backend/app
 ├── main.py              # app, lifespan wiring, static host
 ├── models.py            # SQLAlchemy tables
-├── api/routes/          # files, fleet, jobs, printers, projects, queue, settings, spoolman
+├── api/routes/          # files, fleet, jobs, printers, orders, queue, settings, spoolman
 └── services/
     ├── printer_manager.py        abstract_printer_client.py
     ├── bambu_mqtt.py             elegoo_centauri_client.py
@@ -184,7 +194,10 @@ docker compose up --build
 | Variable | Default | Purpose |
 |---|---|---|
 | `THEMIS_DATA_DIR` | `/data` | SQLite DB, uploads, gcode cache |
-| `ORCA_CONFIG_DIR` | `/root/.config/OrcaSlicer` | OrcaSlicer preset directory (bind-mounted from the host) |
-| `ORCA_EXECUTABLE` | `orcaslicer` | OrcaSlicer CLI path |
+| `ORCA_CONFIG_DIR` | platform-aware¹ | OrcaSlicer preset directory (bind-mounted from the host in Docker) |
+| `ORCA_EXECUTABLE` | platform-aware¹ | OrcaSlicer CLI path |
 | `FFMPEG_EXECUTABLE` | `ffmpeg` | RTSP→MJPEG camera transcode |
 | `THEMIS_STATIC_DIR` | `../frontend/dist` | Built SPA assets (production) |
+
+¹ Defaults to the Docker/Linux paths (`/root/.config/OrcaSlicer`, `orcaslicer`); on Windows local dev,
+resolves `%APPDATA%\OrcaSlicer` and `…\Program Files\OrcaSlicer\orca-slicer.exe` automatically.

@@ -60,7 +60,7 @@ All messages have a `Topic` field that determines the message type:
 |----|----------|-----------|---------|-------|
 | 0 | `_CMD_GET_STATUS` | → printer | `{}` | Request immediate status push |
 | 1 | `_CMD_GET_ATTR` | → printer | `{}` | Request attributes push |
-| 128 | `_CMD_START_PRINT` | → printer | `{"Filename": "<path>"}` | |
+| 128 | `_CMD_START_PRINT` | → printer | `{"Filename": "/local/<file>", "StartLayer": 0, "Calibration_switch": 0\|1, "PrintPlatformType": <int>, "Tlp_Switch": 0\|1}` | Bare filename is acked but **won't start**; needs the `/local/` path + params (see Start print) |
 | 129 | `_CMD_SUSPEND_PRINT` | → printer | `{}` | Pause |
 | 130 | `_CMD_STOP_PRINT` | → printer | `{}` | Cancel |
 | 131 | `_CMD_RESTORE_PRINT` | → printer | `{}` | Resume |
@@ -85,6 +85,25 @@ All messages have a `Topic` field that determines the message type:
 | Print speed | `{"PrintSpeedPct": 100}` — deferred |
 
 **Fan semantics:** All three fan values must be sent together. To change one fan without resetting others, read the current `fan_model`/`fan_aux`/`fan_box` from the state dict, patch the target fan, then send all three.
+
+---
+
+## Print control & per-printer options
+
+`start_print(file_name, options)` sends Cmd 128 with the **on-printer `/local/` path** plus print parameters — a bare basename is acknowledged (`Ack: 0`) but the print never starts. Verified against an actual Centauri Carbon; this mirrors OrcaSlicer's ElegooLink "upload and print":
+
+```python
+{"Filename": "/local/<file>", "StartLayer": 0,
+ "Calibration_switch": 1,   # auto bed-flatness leveling before printing
+ "PrintPlatformType": 4,    # Elegoo plate type code
+ "Tlp_Switch": 0}           # timelapse
+```
+
+The three options are **per-printer config** surfaced as `connection_fields` (`bed_type`, `bed_leveling`, `timelapse`), so they flow from the printer record into the client constructor and are editable in the add/edit-printer form. Defaults: `bed_type=4`, `bed_leveling=True`, `timelapse=False`.
+
+**Stop during calibration:** `STOP_PRINT` (Cmd 130) is acked but **not honored while the printer is mid bed-flatness calibration** — the abort lands once that phase completes. Not a client bug; the firmware queues it.
+
+**Upload:** `upload_file` is a single multipart POST to `/uploadFile/upload` (see File Management). It logs the printer's response on rejection rather than failing silently. Large real-print gcode uploads fine on a healthy printer; the earlier "upload failed" symptoms traced to the printer's HTTP server becoming unresponsive, not the request shape.
 
 ---
 
@@ -204,9 +223,11 @@ All commands that need a confirmation use `wait_ack=True` in `_send()`.
 3. `ws.send(payload)` is called from the calling thread.
 4. `_send()` calls `event.wait(timeout=10.0)`.
 5. In the WebSocket background thread, `_on_ws_message` fires:
-   - `sdcp/response` topic → `_parse_response_msg()` looks up `_pending_acks[request_id]`, stores `_ack_results[request_id] = ack`, stores full response data in `_response_data[request_id]`, then calls `event.set()`.
+   - `sdcp/response` topic → `_parse_response_msg()` looks up `_pending_acks[request_id]`, stores `_ack_results[request_id] = ack`, stores the inner `Data.Data` in `_response_data[request_id]`, then calls `event.set()`.
    - `sdcp/error` topic → `_parse_error_msg()` does the same with the error ack, preventing the caller from hanging until timeout on a rejected command.
 6. `_send()` wakes up, reads `_ack_results.pop(request_id, -1)`, returns `True` if ack == 0.
+
+> **Result-code location.** Most commands carry the result at the envelope top level (`Data.Result` or `Data.Ack`), but **print-control acks (start/stop/pause) nest it as `Data.Data.Ack`**. `_parse_response_msg()` falls back to the inner `Data.Ack` when the top level has neither — without this, a successful start/stop reads `-1` and `_send()` wrongly returns `False`.
 
 ### `_send_with_response()`
 
