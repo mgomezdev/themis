@@ -25,6 +25,12 @@ def _serialize_bambu(state, printer_id: int) -> dict:
         "layer_num": getattr(state, "layer_num", 0),
         "total_layers": getattr(state, "total_layers", 0),
         "temperatures": getattr(state, "temperatures", {}),
+        "fan_model": getattr(state, "fan_model", 0),
+        "fan_aux": getattr(state, "fan_aux", 0),
+        "fan_box": getattr(state, "fan_box", 0),
+        "speed_factor": 1.0,
+        "klippy_state": "ready" if state.connected else "disconnected",
+        "cover_url": None,
     }
 
 
@@ -169,6 +175,23 @@ class PrinterManager:
             await self._on_state_broadcast("plate_clear_required", {"printer_id": printer_id})
             await self._on_state_broadcast("printer_state", normalized)
 
+    async def on_ams_change(self, printer_id: int, trays: list) -> None:
+        """AMS filament change → persist the printer's `loaded_filaments` from the
+        auto-detected trays, so the queue engine's filament gating and the Fleet UI
+        reflect what's actually loaded (no manual entry for AMS printers)."""
+        if self._session_factory:
+            async with self._session_factory() as session:
+                from ..models import Printer
+                printer = await session.get(Printer, printer_id)
+                if printer is not None:
+                    printer.loaded_filaments = trays
+                    await session.commit()
+        if self._on_state_broadcast:
+            try:
+                await self._on_state_broadcast("printer_state", self.get_normalized_state(printer_id))
+            except Exception:
+                logger.exception("Failed to broadcast after AMS change for printer %s", printer_id)
+
     def connect_printer(self, printer_id: int, client: AbstractPrinterClient) -> None:
         self.register_client(printer_id, client)
         loop = self._loop
@@ -182,9 +205,14 @@ class PrinterManager:
         async def _on_complete(state):
             await self.on_print_complete(printer_id, state)
 
+        async def _on_ams(trays):
+            await self.on_ams_change(printer_id, trays)
+
         # Assign async functions directly — clients call run_coroutine_threadsafe on them
         client._on_state_change = _on_state
         client._on_print_complete = _on_complete
+        if hasattr(client, "_on_ams_change"):
+            client._on_ams_change = _on_ams
         client.connect(loop=loop)
 
     def disconnect_printer(self, printer_id: int) -> None:

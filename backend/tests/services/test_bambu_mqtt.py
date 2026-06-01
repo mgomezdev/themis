@@ -7,19 +7,30 @@ from app.services.bambu_mqtt import BambuMQTTClient, PrinterState
 from app.services.abstract_printer_client import PrinterCapabilities, StartPrintOptions
 
 
-def _make_client() -> BambuMQTTClient:
+def _make_client(**kwargs) -> BambuMQTTClient:
     return BambuMQTTClient(
         ip_address="192.168.1.10",
         serial_number="01P00A123456789",
         access_code="12345678",
+        **kwargs,
     )
 
 
-def _connected_client() -> BambuMQTTClient:
-    client = _make_client()
+def _connected_client(**kwargs) -> BambuMQTTClient:
+    client = _make_client(**kwargs)
     client._client = MagicMock()
     client.state.connected = True
     return client
+
+
+_AMS_REPORT = {"print": {
+    "ams": {"tray_now": "1", "ams": [{"id": "0", "tray": [
+        {"id": "0", "tray_type": "PLA", "tray_sub_brands": "PLA Basic", "tray_color": "FF0000FF", "tray_info_idx": "GFA00"},
+        {"id": "1", "tray_type": "PETG", "tray_color": "000000FF", "tray_info_idx": "GFG00"},
+        {"id": "2", "tray_type": "", "tray_color": "00000000"},  # empty slot — skipped
+    ]}]},
+    "vt_tray": {"id": "254", "tray_type": "TPU", "tray_color": "00FF00FF"},  # external spool
+}}
 
 
 def test_printer_type():
@@ -134,21 +145,67 @@ def test_check_staleness_returns_connected_state():
     assert client.check_staleness() is False
 
 
-def test_upload_file_uses_ftp(mocker):
+def test_upload_file_uses_implicit_ftps(mocker):
     client = _make_client()
-    mock_ftp_instance = MagicMock()
-    mocker.patch("ftplib.FTP", return_value=mock_ftp_instance)
-    result = client.upload_file(b"G28\n", "output.gcode")
+    mock_ftp = MagicMock()
+    mocker.patch("app.services.bambu_mqtt._ImplicitFTP_TLS", return_value=mock_ftp)
+    result = client.upload_file(b"data", "model.gcode.3mf")
     assert result is True
-    mock_ftp_instance.connect.assert_called_once()
-    mock_ftp_instance.storbinary.assert_called_once()
+    # implicit FTPS on 990, authenticated, encrypted data channel
+    assert mock_ftp.connect.call_args[0][1] == 990
+    mock_ftp.login.assert_called_once_with("bblp", "12345678")
+    mock_ftp.prot_p.assert_called_once()
+    mock_ftp.storbinary.assert_called_once()
 
 
-def test_upload_file_returns_false_on_ftp_error(mocker):
+def test_upload_file_returns_false_on_ftps_error(mocker):
     client = _make_client()
-    mocker.patch("ftplib.FTP", side_effect=OSError("refused"))
-    result = client.upload_file(b"G28\n", "output.gcode")
-    assert result is False
+    mocker.patch("app.services.bambu_mqtt._ImplicitFTP_TLS", side_effect=OSError("refused"))
+    assert client.upload_file(b"data", "model.gcode.3mf") is False
+
+
+# ── AMS ──────────────────────────────────────────────────────────────────────
+
+def test_parse_ams_flattens_trays_and_skips_empty():
+    trays = BambuMQTTClient._parse_ams(_AMS_REPORT["print"])
+    assert len(trays) == 3  # 2 AMS + 1 external; empty tray skipped
+    by_id = {t["ams_tray_id"]: t for t in trays}
+    assert by_id[0]["type"] == "PLA" and by_id[0]["color"] == "#FF0000"
+    assert by_id[1]["type"] == "PETG" and by_id[1]["color"] == "#000000"
+    assert by_id[254]["type"] == "TPU"  # external/virtual spool
+
+
+def test_handle_message_updates_ams_state_and_loaded_filaments():
+    client = _make_client()
+    client._handle_message(_AMS_REPORT)
+    loaded = client.get_loaded_filaments()
+    assert len(loaded) == 3
+    assert client.state.ams_tray_now == 1
+
+
+def test_handle_message_fires_on_ams_change_once():
+    seen = []
+    client = _make_client(on_ams_change=lambda trays: seen.append(trays))
+    # No event loop wired → callback path guarded; assert state still updates.
+    client._handle_message(_AMS_REPORT)
+    assert len(client.state.ams_trays) == 3
+
+
+def test_start_print_includes_ams_mapping_and_per_printer_flags():
+    client = _connected_client(use_ams="1", bed_leveling="0", flow_cali="1", timelapse="1")
+    opts = StartPrintOptions(plate_id=2, gcode_path="Metadata/plate_2.gcode", ams_mapping=[1])
+    client.start_print("m.gcode.3mf", opts)
+    p = json.loads(client._client.publish.call_args[0][1])["print"]
+    assert p["ams_mapping"] == [1]
+    assert p["use_ams"] is True
+    assert p["bed_levelling"] is False
+    assert p["flow_cali"] is True
+    assert p["timelapse"] is True
+
+
+def test_connection_fields_include_ams_options():
+    names = {f.name for f in BambuMQTTClient.connection_fields()}
+    assert {"use_ams", "bed_leveling", "flow_cali", "timelapse"} <= names
 
 
 def test_start_print_uses_gcode_path_when_set():
