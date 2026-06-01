@@ -12,6 +12,7 @@ import { OrdersScreen }    from './screens/OrdersScreen';
 import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
 import { JobDetailScreen } from './screens/JobDetailScreen';
+import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }     from './screens/FilesScreen';
 import { FilamentsScreen } from './screens/FilamentsScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
@@ -40,6 +41,7 @@ function AppShell() {
     '/orders/new': { title: 'New order',         crumbs: ['Workshop', 'Orders'] },
     '/orders/edit': { title: 'Edit order',        crumbs: ['Workshop', 'Orders'] },
     '/jobs/detail': { title: 'Job details',       crumbs: ['Workshop', 'Job queue'] },
+    '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/filaments':  { title: 'Filament library',  crumbs: ['Workshop'],
@@ -51,6 +53,8 @@ function AppShell() {
   const segments = location.pathname.split('/').filter(Boolean);
   const path = segments[0] === 'orders' && segments[2] === 'edit'
     ? '/orders/edit'
+    : segments[0] === 'jobs' && segments[2] === 'edit'
+    ? '/jobs/edit'
     : segments[0] === 'jobs' && segments.length >= 2
     ? '/jobs/detail'
     : '/' + segments.slice(0, 2).join('/');
@@ -71,6 +75,7 @@ function AppShell() {
             <Route path="/orders/new"   element={<NewOrderScreen />} />
             <Route path="/orders/:id/edit" element={<NewOrderScreen />} />
             <Route path="/jobs/:id"        element={<JobDetailScreen />} />
+            <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"        element={<FilesScreen />} />
             <Route path="/filaments"    element={<FilamentsScreen />} />
             <Route path="/settings/*"   element={<SettingsScreen />} />

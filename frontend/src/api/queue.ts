@@ -165,6 +165,17 @@ export async function unblockJob(jobId: number): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/unblock`, { method: 'POST' });
 }
 
+export async function updateJobConfigs(
+  jobId: number,
+  configs: PrinterConfigInput[],
+): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/configs`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printer_configs: configs }),
+  });
+}
+
 export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
   return request(`/api/v1/jobs/${jobId}/details`);
 }

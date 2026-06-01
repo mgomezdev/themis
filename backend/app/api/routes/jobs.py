@@ -277,6 +277,56 @@ async def cancel_job(
     return _to_dict(job)
 
 
+class JobConfigsUpdate(BaseModel):
+    printer_configs: list[PrinterConfigInput]
+
+
+@router.patch("/{job_id}/configs")
+async def update_job_configs(
+    job_id: int,
+    body: JobConfigsUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Replace printer configs for a queued/blocked/failed job and re-queue it."""
+    _EDITABLE = {"queued", "blocked", "failed"}
+    job = await _get_or_404(job_id, session)
+    if job.status not in _EDITABLE:
+        raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
+    if not body.printer_configs:
+        raise HTTPException(422, "printer_configs must not be empty")
+    for cfg in body.printer_configs:
+        if await session.get(Printer, cfg.printer_id) is None:
+            raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+
+    existing = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    for row in existing.scalars().all():
+        await session.delete(row)
+
+    for cfg in body.printer_configs:
+        session.add(JobPrinterConfig(
+            job_id=job_id,
+            printer_id=cfg.printer_id,
+            print_profile=cfg.print_profile,
+            filament_profile=cfg.filament_profile,
+            filament_id=cfg.filament_id,
+            filament_type=cfg.filament_type,
+            filament_color=cfg.filament_color,
+            slice_failed=False,
+            slice_error=None,
+        ))
+
+    job.status = "queued"
+    job.block_reason = None
+    job.assigned_printer_id = None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
+    return _to_dict(job)
+
+
 @router.post("/{job_id}/unblock")
 async def unblock_job(
     job_id: int,

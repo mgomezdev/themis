@@ -310,6 +310,18 @@ export function JobDetailScreen() {
             </div>
           )}
 
+          {(isBlocked || job.status === 'failed' || job.status === 'queued') && (
+            <div className="card" style={{ padding: 18 }}>
+              <button
+                className="btn sm"
+                style={{ width: '100%' }}
+                onClick={() => navigate(`/jobs/${job.id}/edit`)}
+              >
+                {Icons.copy} Edit slicer settings
+              </button>
+            </div>
+          )}
+
           {isBlocked && (
             <div className="card" style={{ padding: 18 }}>
               <button

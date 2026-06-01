@@ -382,6 +382,17 @@ function JobDetailPanel({
           </>
         )}
 
+        {/* Edit settings */}
+        {(isBlocked || isFailed || job.status === 'queued') && (
+          <button
+            className="btn sm"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => navigate(`/jobs/${job.rawId}/edit`)}
+          >
+            {Icons.copy} Edit slicer settings
+          </button>
+        )}
+
         {/* View full details */}
         <button
           className="btn ghost sm"
