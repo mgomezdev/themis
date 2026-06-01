@@ -5,8 +5,8 @@ import pytest
 from app.services.elegoo_centauri_client import ElegooCentauriClient, ElegooState, _CAMERA_PORT
 
 
-def _make_client() -> ElegooCentauriClient:
-    return ElegooCentauriClient(ip_address="192.168.1.20")
+def _make_client(**kwargs) -> ElegooCentauriClient:
+    return ElegooCentauriClient(ip_address="192.168.1.20", **kwargs)
 
 
 def _make_ack_responder(client: ElegooCentauriClient):
@@ -20,8 +20,8 @@ def _make_ack_responder(client: ElegooCentauriClient):
     return side_effect
 
 
-def _connected_client() -> ElegooCentauriClient:
-    client = _make_client()
+def _connected_client(**kwargs) -> ElegooCentauriClient:
+    client = _make_client(**kwargs)
     client._ws = MagicMock()
     client._ws.send.side_effect = _make_ack_responder(client)
     with client._lock:
@@ -208,8 +208,46 @@ def test_start_print_sends_cmd_128():
     client = _connected_client()
     client.start_print("model.gcode")
     sent = json.loads(client._ws.send.call_args[0][0])
+    data = sent["Data"]["Data"]
     assert sent["Data"]["Cmd"] == 128
-    assert sent["Data"]["Data"]["Filename"] == "model.gcode"
+    # Bare filename gets the /local/ prefix and the required print params.
+    assert data["Filename"] == "/local/model.gcode"
+    assert data["StartLayer"] == 0
+    assert data["Calibration_switch"] == 1  # default bed_leveling=True
+    assert data["PrintPlatformType"] == 4   # default bed_type=4
+    assert data["Tlp_Switch"] == 0          # default timelapse=False
+
+
+def test_start_print_honors_per_printer_options():
+    client = _connected_client(bed_type=2, bed_leveling="0", timelapse="1")
+    client.start_print("/local/already.gcode")
+    data = json.loads(client._ws.send.call_args[0][0])["Data"]["Data"]
+    assert data["Filename"] == "/local/already.gcode"  # absolute path left as-is
+    assert data["Calibration_switch"] == 0
+    assert data["PrintPlatformType"] == 2
+    assert data["Tlp_Switch"] == 1
+
+
+def test_print_control_ack_parsed_from_inner_data():
+    """Print-control acks nest the result as Data.Data.Ack; _send must read it."""
+    client = _connected_client()
+    import threading
+    rid_holder = {}
+    real_send = client._ws.send
+    def capture(msg):
+        rid_holder["rid"] = json.loads(msg)["Data"]["RequestID"]
+    client._ws.send = capture
+
+    def fire():
+        import time as _t
+        _t.sleep(0.02)
+        rid = rid_holder["rid"]
+        client._on_ws_message(client._ws, json.dumps({
+            "Topic": "sdcp/response/x",
+            "Data": {"Cmd": 128, "RequestID": rid, "Data": {"Ack": 0}},
+        }))
+    threading.Thread(target=fire).start()
+    assert client.start_print("model.gcode") is True
 
 
 def test_stop_print_sends_cmd_130():

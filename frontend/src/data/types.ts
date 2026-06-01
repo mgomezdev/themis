@@ -30,6 +30,7 @@ export interface Printer {
   fanBox: number;
   bedTempTarget: number;
   queueOn: boolean;
+  awaitingPlateClear: boolean;
 }
 
 export interface OrderPart {

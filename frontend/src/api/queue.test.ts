@@ -68,7 +68,7 @@ describe('getPrinterProfiles', () => {
 
 describe('createJob', () => {
   it('POSTs to /api/v1/jobs', async () => {
-    const job = { id: 1, uploaded_file_id: 1, plate_number: 1, project_id: null, assigned_printer_id: null, queue_position: 1, status: 'queued', created_at: '', updated_at: '' };
+    const job = { id: 1, uploaded_file_id: 1, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: 1, status: 'queued', created_at: '', updated_at: '' };
     mockOk(job);
     const result = await createJob({
       uploaded_file_id: 1,
@@ -91,7 +91,7 @@ describe('getQueue', () => {
 
 describe('cancelJob', () => {
   it('POSTs to cancel endpoint', async () => {
-    const job = { id: 3, uploaded_file_id: 1, plate_number: 1, project_id: null, assigned_printer_id: null, queue_position: null, status: 'cancelled', created_at: '', updated_at: '' };
+    const job = { id: 3, uploaded_file_id: 1, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: null, status: 'cancelled', created_at: '', updated_at: '' };
     mockOk(job);
     const result = await cancelJob(3);
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/jobs/3/cancel', expect.objectContaining({ method: 'POST' }));

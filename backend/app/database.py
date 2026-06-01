@@ -49,6 +49,8 @@ async def _migrate(conn) -> None:
     job_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
     if "block_reason" not in job_cols:
         await conn.execute(text("ALTER TABLE jobs ADD COLUMN block_reason TEXT"))
+    if "order_id" not in job_cols:
+        await conn.execute(text("ALTER TABLE jobs ADD COLUMN order_id INTEGER"))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

@@ -269,7 +269,7 @@ erDiagram
   printers ||--o{ job_printer_configs : "printer_id"
   printers ||--o{ gcode_files : "printer_id"
   uploaded_files ||--o{ jobs : "uploaded_file_id"
-  projects ||--o{ jobs : "project_id (nullable)"
+  orders ||--o{ jobs : "order_id (nullable)"
   jobs ||--o{ job_printer_configs : "job_id"
   jobs ||--o{ gcode_files : "job_id"
 
@@ -283,7 +283,7 @@ erDiagram
     string current_orca_printer_profile "active machine"
     bool enabled
     bool queue_on "pull from queue?"
-    json loaded_filaments "slot/type/color"
+    json loaded_filaments "slot/type/color/orca filament profile"
   }
   uploaded_files {
     int id PK
@@ -296,7 +296,7 @@ erDiagram
     int id PK
     int uploaded_file_id FK
     int plate_number
-    int project_id FK "nullable"
+    int order_id FK "nullable"
     int assigned_printer_id FK "nullable"
     float queue_position "reorder w/o renum"
     string status
@@ -320,10 +320,17 @@ erDiagram
     int printer_id FK
     string path
   }
-  projects {
+  orders {
     int id PK
-    string name
-    text description
+    string order_type "customer|internal"
+    string customer
+    string title
+    string due_date "nullable"
+    text notes "nullable"
+    bool on_hold "manual override"
+    json parts "BoM checklist"
+    string created_at
+    string updated_at
   }
   queue_config {
     int id PK

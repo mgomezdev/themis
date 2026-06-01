@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -7,12 +8,16 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, UploadedFile
+from ...models import Job, JobPrinterConfig, Order, Printer, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides
 from ...services.preset_resolver import PresetNotFoundError, PresetResolver
+from ...services.printer_manager import printer_manager
 from ...services.project_config_builder import build_project_config
 from ...services.queue_engine import queue_engine
+
+# Statuses where a printer is physically working on the job and must be told to stop.
+_PRINTER_ACTIVE_STATUSES = {"printing", "paused", "uploading"}
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
@@ -39,7 +44,7 @@ class OverrideCheckRequest(BaseModel):
 class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
-    project_id: int | None = None
+    order_id: int | None = None
     printer_configs: list[PrinterConfigInput]
 
 
@@ -48,7 +53,7 @@ def _to_dict(j: Job) -> dict:
         "id": j.id,
         "uploaded_file_id": j.uploaded_file_id,
         "plate_number": j.plate_number,
-        "project_id": j.project_id,
+        "order_id": j.order_id,
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
@@ -74,6 +79,17 @@ async def _next_queue_position(session: AsyncSession) -> float:
     return (current_max or 0.0) + 1.0
 
 
+async def _front_queue_position(session: AsyncSession) -> float:
+    """Position just ahead of the current queue front (for re-queueing at the top)."""
+    result = await session.execute(
+        select(func.min(Job.queue_position)).where(
+            Job.status.in_(["queued", "blocked"])
+        )
+    )
+    current_min = result.scalar()
+    return (current_min or 1.0) - 1.0
+
+
 @router.post("", status_code=201)
 async def create_job(
     body: JobCreate,
@@ -92,13 +108,18 @@ async def create_job(
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
 
+    if body.order_id is not None:
+        order = await session.get(Order, body.order_id)
+        if order is None:
+            raise HTTPException(404, f"Order {body.order_id} not found")
+
     now = datetime.now(timezone.utc).isoformat()
     pos = await _next_queue_position(session)
 
     job = Job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
-        project_id=body.project_id,
+        order_id=body.order_id,
         queue_position=pos,
         status="queued",
         created_at=now,
@@ -183,6 +204,68 @@ async def get_job(
     return _to_dict(await _get_or_404(job_id, session))
 
 
+@router.get("/{job_id}/details")
+async def get_job_details(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Full job detail: file name, plate stats, per-printer slicing configs, assigned printer."""
+    job = await _get_or_404(job_id, session)
+
+    # File + plate metadata
+    file_info = None
+    plate_info = None
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if uploaded_file:
+        file_info = {"id": uploaded_file.id, "original_filename": uploaded_file.original_filename}
+        plate = next(
+            (p for p in (uploaded_file.plates or []) if p.get("plate_number") == job.plate_number),
+            None,
+        )
+        if plate:
+            plate_info = {
+                "estimated_time": plate.get("estimated_time"),
+                "filament_g": plate.get("filament_g"),
+                "thumbnail_path": plate.get("thumbnail_path"),
+            }
+
+    # Per-printer slicing configs
+    result = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    printer_configs = []
+    for cfg in result.scalars().all():
+        p = await session.get(Printer, cfg.printer_id)
+        printer_configs.append({
+            "printer_id": cfg.printer_id,
+            "printer_name": p.name if p else f"Printer {cfg.printer_id}",
+            "printer_type": p.printer_type if p else "unknown",
+            "print_profile": cfg.print_profile,
+            "filament_profile": cfg.filament_profile,
+            "filament_id": cfg.filament_id,
+            "filament_type": cfg.filament_type,
+            "filament_color": cfg.filament_color,
+            "slice_failed": cfg.slice_failed,
+            "slice_error": cfg.slice_error,
+        })
+
+    # Assigned printer (if claimed)
+    assigned_printer = None
+    if job.assigned_printer_id:
+        p = await session.get(Printer, job.assigned_printer_id)
+        if p:
+            assigned_printer = {"id": p.id, "name": p.name, "printer_type": p.printer_type}
+
+    return {
+        **_to_dict(job),
+        "block_reason": job.block_reason,
+        "file": file_info,
+        "plate": plate_info,
+        "printer_configs": printer_configs,
+        "assigned_printer": assigned_printer,
+    }
+
+
 @router.post("/{job_id}/cancel")
 async def cancel_job(
     job_id: int,
@@ -191,11 +274,111 @@ async def cancel_job(
     job = await _get_or_404(job_id, session)
     if job.status not in _CANCELLABLE_STATUSES:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be cancelled")
+
+    # If a printer is physically running this job, tell it to stop and free it.
+    stop_printer_id = (
+        job.assigned_printer_id
+        if job.status in _PRINTER_ACTIVE_STATUSES else None
+    )
     job.status = "cancelled"
+    job.assigned_printer_id = None
     job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
+
+    if stop_printer_id is not None:
+        client = printer_manager._clients.get(stop_printer_id)
+        if client is not None and client.connected:
+            # stop_print blocks on the websocket ack; don't stall the event loop.
+            try:
+                await asyncio.to_thread(client.stop_print)
+            except Exception:  # best-effort — the job is already cancelled
+                pass
+        queue_engine.wake()  # let the freed printer claim the next job once idle
+
+    return _to_dict(job)
+
+
+class JobConfigsUpdate(BaseModel):
+    printer_configs: list[PrinterConfigInput]
+
+
+@router.patch("/{job_id}/configs")
+async def update_job_configs(
+    job_id: int,
+    body: JobConfigsUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Replace printer configs for a queued/blocked/failed job and re-queue it."""
+    _EDITABLE = {"queued", "blocked", "failed"}
+    job = await _get_or_404(job_id, session)
+    if job.status not in _EDITABLE:
+        raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
+    if not body.printer_configs:
+        raise HTTPException(422, "printer_configs must not be empty")
+    for cfg in body.printer_configs:
+        if await session.get(Printer, cfg.printer_id) is None:
+            raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+
+    existing = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    for row in existing.scalars().all():
+        await session.delete(row)
+
+    for cfg in body.printer_configs:
+        session.add(JobPrinterConfig(
+            job_id=job_id,
+            printer_id=cfg.printer_id,
+            print_profile=cfg.print_profile,
+            # Mirror the New Job convention: manual filaments store the type as the
+            # profile name. Never null — legacy DBs have a NOT NULL constraint here.
+            filament_profile=cfg.filament_profile or cfg.filament_type or "",
+            filament_id=cfg.filament_id,
+            filament_type=cfg.filament_type,
+            filament_color=cfg.filament_color,
+            slice_failed=False,
+            slice_error=None,
+        ))
+
+    job.status = "queued"
+    job.block_reason = None
+    job.assigned_printer_id = None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
+    return _to_dict(job)
+
+
+@router.post("/{job_id}/unblock")
+async def unblock_job(
+    job_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Re-queue a blocked job at the top of the queue and wake the engine.
+
+    Clears any prior slice-failure flags so the job is actually re-sliced — a
+    config left with ``slice_failed`` would otherwise be re-blocked on the next
+    claim with its stale error, never retrying."""
+    job = await _get_or_404(job_id, session)
+    if job.status != "blocked":
+        raise HTTPException(422, f"Job {job_id} has status {job.status!r} — only blocked jobs can be unblocked")
+    configs = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    for cfg in configs.scalars().all():
+        cfg.slice_failed = False
+        cfg.slice_error = None
+    job.status = "queued"
+    job.block_reason = None
+    job.assigned_printer_id = None
+    job.queue_position = await _front_queue_position(session)
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
     return _to_dict(job)
 
 

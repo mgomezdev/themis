@@ -3,14 +3,16 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
-import { ORDERS } from './data/mock';
 import { useQueue } from './api/queue';
+import { useOrders } from './api/orders';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
 import { OrdersScreen }    from './screens/OrdersScreen';
 import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
+import { JobDetailScreen } from './screens/JobDetailScreen';
+import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }     from './screens/FilesScreen';
 import { FilamentsScreen } from './screens/FilamentsScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
@@ -22,7 +24,8 @@ function AppShell() {
     pending: jobs.filter(j => j.status === 'queued').length,
     blocked: jobs.filter(j => j.status === 'blocked').length,
   }), [jobs]);
-  const ordersOpen = useMemo(() => ORDERS.filter(o => o.status !== 'complete').length, []);
+  const { orders } = useOrders();
+  const ordersOpen = useMemo(() => orders.filter(o => o.status !== 'complete').length, [orders]);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -34,8 +37,11 @@ function AppShell() {
     '/fleet':      { title: 'Fleet',             crumbs: ['Workshop'],
                      actions: <button className="btn sm">{Icons.refresh} Resync</button> },
     '/orders':     { title: 'Orders',            crumbs: ['Workshop'],
-                     actions: <button className="btn primary sm">{Icons.plus} New order</button> },
+                     actions: <button className="btn primary sm" onClick={() => navigate('/orders/new')}>{Icons.plus} New order</button> },
     '/orders/new': { title: 'New order',         crumbs: ['Workshop', 'Orders'] },
+    '/orders/edit': { title: 'Edit order',        crumbs: ['Workshop', 'Orders'] },
+    '/jobs/detail': { title: 'Job details',       crumbs: ['Workshop', 'Job queue'] },
+    '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/filaments':  { title: 'Filament library',  crumbs: ['Workshop'],
@@ -44,7 +50,14 @@ function AppShell() {
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
-  const path = '/' + location.pathname.split('/').filter(Boolean).slice(0, 2).join('/');
+  const segments = location.pathname.split('/').filter(Boolean);
+  const path = segments[0] === 'orders' && segments[2] === 'edit'
+    ? '/orders/edit'
+    : segments[0] === 'jobs' && segments[2] === 'edit'
+    ? '/jobs/edit'
+    : segments[0] === 'jobs' && segments.length >= 2
+    ? '/jobs/detail'
+    : '/' + segments.slice(0, 2).join('/');
   const cfg = screenConfig[path] ?? screenConfig['/queue'];
 
   return (
@@ -60,6 +73,9 @@ function AppShell() {
             <Route path="/fleet"        element={<FleetScreen />} />
             <Route path="/orders"       element={<OrdersScreen />} />
             <Route path="/orders/new"   element={<NewOrderScreen />} />
+            <Route path="/orders/:id/edit" element={<NewOrderScreen />} />
+            <Route path="/jobs/:id"        element={<JobDetailScreen />} />
+            <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"        element={<FilesScreen />} />
             <Route path="/filaments"    element={<FilamentsScreen />} />
             <Route path="/settings/*"   element={<SettingsScreen />} />

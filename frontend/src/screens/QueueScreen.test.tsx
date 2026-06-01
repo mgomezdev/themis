@@ -18,14 +18,14 @@ import * as queueApi from '../api/queue';
 const mockJobs: ApiJob[] = [
   {
     id: 1, uploaded_file_id: 10, plate_number: 1,
-    project_id: null, assigned_printer_id: 2,
-    queue_position: 1.0, status: 'printing',
+    order_id: null, assigned_printer_id: 2,
+    queue_position: 1.0, status: 'printing', block_reason: null,
     created_at: '2026-05-27T00:00:00Z', updated_at: '2026-05-27T00:00:00Z',
   },
   {
     id: 2, uploaded_file_id: 10, plate_number: 2,
-    project_id: null, assigned_printer_id: null,
-    queue_position: 2.0, status: 'queued',
+    order_id: null, assigned_printer_id: null,
+    queue_position: 2.0, status: 'queued', block_reason: null,
     created_at: '2026-05-27T00:00:00Z', updated_at: '2026-05-27T00:00:00Z',
   },
 ];

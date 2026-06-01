@@ -101,6 +101,43 @@ async def test_stop_ok(client):
     printer_manager._clients.pop(printer_id)
 
 
+async def test_stop_reconciles_running_job(client):
+    """Stopping a printer that's running a job marks that job cancelled."""
+    from datetime import datetime, timezone
+    from app.models import Job, UploadedFile
+    from app.main import app
+    from app.database import get_session
+
+    printer_id = await _create_printer(client)
+    mock = _mock_connected_client()
+    printer_manager._clients[printer_id] = mock
+
+    # Seed an uploaded file + a printing job assigned to this printer.
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    now = datetime.now(timezone.utc).isoformat()
+    uf = UploadedFile(original_filename="m.3mf", stored_path="/x/m.3mf", plates=[], uploaded_at=now)
+    session.add(uf)
+    await session.flush()
+    job = Job(uploaded_file_id=uf.id, plate_number=1, status="printing",
+              assigned_printer_id=printer_id, queue_position=1.0, created_at=now, updated_at=now)
+    session.add(job)
+    await session.commit()
+    job_id = job.id
+    await agen.aclose()
+
+    try:
+        resp = await client.post(f"/api/v1/printers/{printer_id}/stop")
+        assert resp.status_code == 200
+        mock.stop_print.assert_called_once()
+        updated = await client.get(f"/api/v1/jobs/{job_id}")
+        body = updated.json()
+        assert body["status"] == "cancelled"
+        assert body["assigned_printer_id"] is None
+    finally:
+        printer_manager._clients.pop(printer_id, None)
+
+
 # ── Light ────────────────────────────────────────────────────────────────────
 
 async def test_light_ok_on(client):

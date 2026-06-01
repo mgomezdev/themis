@@ -7,6 +7,7 @@ const BASE: FleetPrinter = {
   name: 'Forge',
   printer_type: 'elegoo_centauri',
   enabled: true,
+  queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
   loaded_filaments: [],
@@ -36,8 +37,14 @@ describe('toFleetPrinter', () => {
     expect(toFleetPrinter({ ...BASE, connected: false, state: 'RUNNING' }).status).toBe('offline');
   });
 
-  it('maps awaiting_plate_clear to claiming status', () => {
-    expect(toFleetPrinter({ ...BASE, awaiting_plate_clear: true }).status).toBe('claiming');
+  it('surfaces awaiting_plate_clear as its own field without masking the real status', () => {
+    const p = toFleetPrinter({ ...BASE, state: 'RUNNING', awaiting_plate_clear: true });
+    expect(p.awaitingPlateClear).toBe(true);
+    expect(p.status).toBe('printing');  // not masked into "claiming"
+  });
+
+  it('defaults awaitingPlateClear to false when absent', () => {
+    expect(toFleetPrinter({ ...BASE }).awaitingPlateClear).toBe(false);
   });
 
   it('maps PAUSE state to paused status', () => {

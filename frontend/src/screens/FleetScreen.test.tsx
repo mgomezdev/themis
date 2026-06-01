@@ -20,6 +20,7 @@ const PRINTER_1: FleetPrinter = {
   name: 'Forge',
   printer_type: 'elegoo_centauri',
   enabled: true,
+  queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Bambu PA-CF', type: 'PA-CF', color: '#0c0c0c' }],
@@ -31,6 +32,9 @@ const PRINTER_1: FleetPrinter = {
   temperatures: { nozzle: 285, bed: 95, chamber: 58 },
   capabilities: {},
   current_print: 'arm_bracket.gcode',
+  fan_model: 0,
+  fan_aux: 0,
+  fan_box: 0,
 };
 
 const PRINTER_CONTROLS: FleetPrinter = {
@@ -38,6 +42,7 @@ const PRINTER_CONTROLS: FleetPrinter = {
   name: 'Forge',
   printer_type: 'elegoo_centauri',
   enabled: true,
+  queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'PA-CF', type: 'PA-CF', color: '#0c0c0c' }],

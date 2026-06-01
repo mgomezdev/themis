@@ -333,6 +333,23 @@ async def stop_printer(
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     client.stop_print()
+    # Reconcile any Themis job this printer was physically running so it doesn't
+    # stay stuck "printing" after the machine is stopped.
+    from datetime import datetime, timezone
+    from ...models import Job
+    result = await session.execute(
+        select(Job).where(
+            Job.assigned_printer_id == printer_id,
+            Job.status.in_(["printing", "paused", "uploading"]),
+        )
+    )
+    now = datetime.now(timezone.utc).isoformat()
+    for job in result.scalars().all():
+        job.status = "cancelled"
+        job.assigned_printer_id = None
+        job.queue_position = None
+        job.updated_at = now
+    await session.commit()
     return {"ok": True}
 
 

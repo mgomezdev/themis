@@ -42,7 +42,7 @@ async def test_create_job(client, tmp_path):
     payload = {
         "uploaded_file_id": file_id,
         "plate_number": 1,
-        "project_id": None,
+        "order_id": None,
         "printer_configs": [
             {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
         ],
@@ -53,6 +53,7 @@ async def test_create_job(client, tmp_path):
     data = response.json()
     assert data["status"] == "queued"
     assert data["id"] is not None
+    assert data["order_id"] is None
     mock_qe.wake.assert_called_once()
 
 
@@ -135,3 +136,111 @@ async def test_get_slice_failures(client, tmp_path):
     response = await client.get(f"/api/v1/jobs/{job_id}/slice-failures")
     assert response.status_code == 200
     assert response.json() == []
+
+
+async def test_unblock_clears_slice_failure_and_requeues(client, tmp_path):
+    """Unblocking must reset slice_failed so the job actually re-slices; otherwise
+    the engine re-blocks it immediately with the stale error."""
+    from app.models import Job, JobPrinterConfig
+    from sqlalchemy import select
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    # Simulate a prior slice failure that left the job blocked, using the same
+    # session factory the API is wired to (conftest's get_session override).
+    from app.main import app
+    from app.database import get_session
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.status = "blocked"
+    job.block_reason = "slicing failed: boom"
+    cfg = (await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+    cfg.slice_failed = True
+    cfg.slice_error = "boom"
+    await session.commit()
+    await agen.aclose()
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/unblock")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "queued"
+
+    # The slice-failure flag must be cleared.
+    failures = await client.get(f"/api/v1/jobs/{job_id}/slice-failures")
+    assert failures.json() == []
+
+
+async def test_cancel_running_job_stops_printer(client, tmp_path):
+    """Cancelling a job the printer is actively running must also stop the printer."""
+    from unittest.mock import MagicMock
+    from app.models import Job
+    from app.main import app
+    from app.database import get_session
+    from app.services.printer_manager import printer_manager
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    # Put the job in a printing state assigned to the printer.
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.status = "printing"
+    job.assigned_printer_id = printer_id
+    await session.commit()
+    await agen.aclose()
+
+    mock_client = MagicMock()
+    mock_client.connected = True
+    printer_manager._clients[printer_id] = mock_client
+    try:
+        with patch("app.api.routes.jobs.queue_engine"):
+            resp = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "cancelled"
+        assert body["assigned_printer_id"] is None
+        mock_client.stop_print.assert_called_once()
+    finally:
+        printer_manager._clients.pop(printer_id, None)
+
+
+async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
+    """A queued (not yet printing) job cancel must NOT send stop to any printer."""
+    from unittest.mock import MagicMock
+    from app.services.printer_manager import printer_manager
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    mock_client = MagicMock()
+    mock_client.connected = True
+    printer_manager._clients[printer_id] = mock_client
+    try:
+        with patch("app.api.routes.jobs.queue_engine"):
+            resp = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+        assert resp.json()["status"] == "cancelled"
+        mock_client.stop_print.assert_not_called()
+    finally:
+        printer_manager._clients.pop(printer_id, None)

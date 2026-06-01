@@ -31,12 +31,41 @@ export interface ApiJob {
   id: number;
   uploaded_file_id: number;
   plate_number: number;
-  project_id: number | null;
+  order_id: number | null;
   assigned_printer_id: number | null;
   queue_position: number | null;
   status: string;
+  block_reason: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface ApiSliceFailure {
+  printer_id: number;
+  print_profile: string;
+  filament_profile: string | null;
+  slice_error: string | null;
+}
+
+export interface ApiJobPrinterConfig {
+  printer_id: number;
+  printer_name: string;
+  printer_type: string;
+  print_profile: string;
+  filament_profile: string | null;
+  filament_id: number | null;
+  filament_type: string | null;
+  filament_color: string | null;
+  slice_failed: boolean;
+  slice_error: string | null;
+}
+
+export interface ApiJobDetails extends ApiJob {
+  block_reason: string | null;
+  file: { id: number; original_filename: string } | null;
+  plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
+  printer_configs: ApiJobPrinterConfig[];
+  assigned_printer: { id: number; name: string; printer_type: string } | null;
 }
 
 /** Build the URL that serves a plate's embedded thumbnail via the files API. */
@@ -79,7 +108,7 @@ export async function createJob(body: {
   uploaded_file_id: number;
   plate_number: number;
   printer_configs: PrinterConfigInput[];
-  project_id?: number | null;
+  order_id?: number | null;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',
@@ -130,6 +159,29 @@ export async function getQueue(): Promise<ApiJob[]> {
 
 export async function cancelJob(jobId: number): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/cancel`, { method: 'POST' });
+}
+
+export async function unblockJob(jobId: number): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/unblock`, { method: 'POST' });
+}
+
+export async function updateJobConfigs(
+  jobId: number,
+  configs: PrinterConfigInput[],
+): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/configs`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printer_configs: configs }),
+  });
+}
+
+export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
+  return request(`/api/v1/jobs/${jobId}/details`);
+}
+
+export async function getSliceFailures(jobId: number): Promise<ApiSliceFailure[]> {
+  return request(`/api/v1/jobs/${jobId}/slice-failures`);
 }
 
 export async function reorderQueue(

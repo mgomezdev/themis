@@ -5,7 +5,8 @@ import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, plateThumbnailUrl, type ApiJob } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, plateThumbnailUrl, type ApiSliceFailure } from '../api/queue';
+import type { StatusKey } from '../data/types';
 
 // ---- DisplayJob: flattened shape for rendering ----
 interface DisplayJob {
@@ -13,6 +14,7 @@ interface DisplayJob {
   rawId: number;
   plateName: string;
   status: string;
+  blockReason: string | null;
   material: string;
   eligiblePrinters: string[];
   estTime: number;
@@ -85,15 +87,6 @@ function SummaryStat({
   );
 }
 
-// ---- color helper ----
-function darkenColor(hex: string): string {
-  const n = parseInt(hex.replace('#', ''), 16);
-  const r = Math.max(0, ((n >> 16) & 0xff) - 40);
-  const g = Math.max(0, ((n >> 8) & 0xff) - 40);
-  const b = Math.max(0, (n & 0xff) - 40);
-  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
-}
-
 // ---- JobCardRich ----
 function JobCardRich({
   job,
@@ -110,6 +103,7 @@ function JobCardRich({
 }) {
   const isActive = job.status === 'printing' || job.status === 'paused';
   const isFailed = job.status === 'failed';
+  const isBlocked = job.status === 'blocked';
   const color = matColor(job.material);
   const thumbUrl = plateThumbnailUrl(job.fileId, job.thumbnailPath);
 
@@ -121,7 +115,7 @@ function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.3)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.3)' : isBlocked ? 'rgba(251,191,36,0.4)' : undefined,
         boxShadow: selected ? '0 0 0 1px var(--accent)' : undefined,
       }}
     >
@@ -159,7 +153,7 @@ function JobCardRich({
             </div>
             {(showStatus || isFailed) && (
               <div className="row gap-2">
-                <StatusPill status={job.status} />
+                <StatusPill status={job.status as StatusKey} />
               </div>
             )}
           </div>
@@ -197,6 +191,23 @@ function JobCardRich({
           )}
         </div>
       </div>
+
+      {/* Error strip — visible without opening the panel */}
+      {isBlocked && job.blockReason && (
+        <div style={{ padding: '6px 14px 10px', borderTop: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)' }}>
+          <span className="tiny" style={{ color: 'var(--warn)' }}>
+            <span style={{ fontWeight: 600 }}>Blocked: </span>
+            {job.blockReason.length > 90 ? job.blockReason.slice(0, 90) + '…' : job.blockReason}
+          </span>
+        </div>
+      )}
+      {isFailed && (
+        <div style={{ padding: '6px 14px 10px', borderTop: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.06)' }}>
+          <span className="tiny" style={{ color: 'var(--err)' }}>
+            Slicing failed — click for error details
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -206,15 +217,29 @@ function JobDetailPanel({
   job,
   onClose,
   onCancel,
+  onUnblock,
 }: {
   job: DisplayJob;
   onClose: () => void;
   onCancel: (jobId: number) => void;
+  onUnblock: (jobId: number) => void;
 }) {
+  const navigate = useNavigate();
   const isActive = job.status === 'printing' || job.status === 'paused';
   const isFailed = job.status === 'failed';
+  const isBlocked = job.status === 'blocked';
   const cancellable = ['queued', 'slicing', 'uploading', 'printing', 'paused', 'failed'].includes(job.status);
   const thumbUrl = plateThumbnailUrl(job.fileId, job.thumbnailPath);
+
+  const [sliceFailures, setSliceFailures] = React.useState<ApiSliceFailure[]>([]);
+  React.useEffect(() => {
+    if (!isFailed) return;
+    let alive = true;
+    getSliceFailures(job.rawId)
+      .then(d => { if (alive) setSliceFailures(d); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [job.rawId, isFailed]);
 
   return (
     <div className="card" style={{ position: 'sticky', top: 0, padding: 0, height: 'fit-content', overflow: 'hidden' }}>
@@ -257,7 +282,7 @@ function JobDetailPanel({
             <div className="mono tiny muted" style={{ marginBottom: 2 }}>Job #{job.rawId}</div>
             <div style={{ fontSize: 15, fontWeight: 500 }}>{job.plateName}</div>
           </div>
-          <StatusPill status={job.status} />
+          <StatusPill status={job.status as StatusKey} />
         </div>
 
         {isActive && (
@@ -324,6 +349,69 @@ function JobDetailPanel({
           </>
         )}
 
+        {/* Block reason */}
+        {isBlocked && job.blockReason && (
+          <>
+            <div className="divider" />
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+              <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>Blocked</div>
+              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.blockReason}</div>
+            </div>
+          </>
+        )}
+
+        {/* Slice failures */}
+        {isFailed && sliceFailures.length > 0 && (
+          <>
+            <div className="divider" />
+            <div className="tag-key" style={{ marginBottom: 8 }}>Slice errors</div>
+            <div className="col gap-2" style={{ marginBottom: 14 }}>
+              {sliceFailures.map((f, i) => (
+                <div key={i} style={{ padding: '10px 12px', borderRadius: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
+                  <div className="tiny" style={{ fontWeight: 600, color: 'var(--err)', marginBottom: 4 }}>
+                    Printer {f.printer_id} · {f.print_profile}
+                  </div>
+                  {f.slice_error && (
+                    <div className="mono tiny" style={{ color: 'var(--text-2)', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 120, overflowY: 'auto' }}>
+                      {f.slice_error}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Edit settings */}
+        {(isBlocked || isFailed || job.status === 'queued') && (
+          <button
+            className="btn sm"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => navigate(`/jobs/${job.rawId}/edit`)}
+          >
+            {Icons.copy} Edit slicer settings
+          </button>
+        )}
+
+        {/* View full details */}
+        <button
+          className="btn ghost sm"
+          style={{ width: '100%', marginBottom: 8 }}
+          onClick={() => navigate(`/jobs/${job.rawId}`)}
+        >
+          View full details →
+        </button>
+
+        {isBlocked && (
+          <button
+            className="btn primary sm"
+            style={{ width: '100%', marginBottom: 8 }}
+            onClick={() => onUnblock(job.rawId)}
+          >
+            {Icons.refresh} Unblock — retry at top of queue
+          </button>
+        )}
+
         {cancellable && (
           <button
             className="btn ghost sm"
@@ -361,6 +449,7 @@ export function QueueScreen() {
         rawId: j.id,
         plateName: plate ? `Plate ${j.plate_number}` : `Plate ${j.plate_number}`,
         status: j.status,
+        blockReason: j.block_reason ?? null,
         material: '—',
         eligiblePrinters: [],
         estTime: plate?.estimated_time ?? 0,
@@ -413,6 +502,15 @@ export function QueueScreen() {
       refetch();
     } catch (err) {
       console.error('Failed to cancel job:', err);
+    }
+  }
+
+  async function handleUnblock(jobId: number) {
+    try {
+      await unblockJob(jobId);
+      refetch();
+    } catch (err) {
+      console.error('Failed to unblock job:', err);
     }
   }
 
@@ -512,6 +610,7 @@ export function QueueScreen() {
           job={selectedJob}
           onClose={() => setSelectedJobId(null)}
           onCancel={handleCancel}
+          onUnblock={handleUnblock}
         />
       )}
     </div>

@@ -29,6 +29,12 @@ export const PRINTERS: Printer[] = [
     material: { name: 'Polymaker PolyTerra Charcoal', type: 'PLA', color: '#3a3a3a' },
     currentJobId: 'J-1043',
     accent: '#3b82f6',
+    fanModel: 100,
+    fanAux: 0,
+    fanBox: 0,
+    bedTempTarget: 60,
+    queueOn: true,
+    awaitingPlateClear: false,
   },
   {
     id: 'ecc-01',
@@ -50,6 +56,12 @@ export const PRINTERS: Printer[] = [
     material: { name: 'Bambu PA-CF Black', type: 'PA-CF', color: '#0c0c0c' },
     currentJobId: 'J-1042',
     accent: '#22d3ee',
+    fanModel: 100,
+    fanAux: 0,
+    fanBox: 0,
+    bedTempTarget: 95,
+    queueOn: true,
+    awaitingPlateClear: false,
   },
   {
     id: 'snp-01',
@@ -72,6 +84,12 @@ export const PRINTERS: Printer[] = [
     currentJobId: null,
     accent: '#a78bfa',
     note: 'Ready for next claim',
+    fanModel: 0,
+    fanAux: 0,
+    fanBox: 0,
+    bedTempTarget: 23,
+    queueOn: true,
+    awaitingPlateClear: false,
   },
 ];
 
