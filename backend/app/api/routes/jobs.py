@@ -334,12 +334,23 @@ async def unblock_job(
     job_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Re-queue a blocked job at the top of the queue and wake the engine."""
+    """Re-queue a blocked job at the top of the queue and wake the engine.
+
+    Clears any prior slice-failure flags so the job is actually re-sliced — a
+    config left with ``slice_failed`` would otherwise be re-blocked on the next
+    claim with its stale error, never retrying."""
     job = await _get_or_404(job_id, session)
     if job.status != "blocked":
         raise HTTPException(422, f"Job {job_id} has status {job.status!r} — only blocked jobs can be unblocked")
+    configs = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+    )
+    for cfg in configs.scalars().all():
+        cfg.slice_failed = False
+        cfg.slice_error = None
     job.status = "queued"
     job.block_reason = None
+    job.assigned_printer_id = None
     job.queue_position = await _front_queue_position(session)
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()

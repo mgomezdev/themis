@@ -242,6 +242,7 @@ class QueueEngine:
             await self._handle_slice_failure(job_id, printer_id, str(exc))
             return
         except Exception as exc:
+            logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
             await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
             return
 
@@ -271,8 +272,11 @@ class QueueEngine:
                     self._executor, client.upload_file, data, gcode_filename
                 )
             except Exception:
+                logger.exception("Gcode upload failed for job %s on printer %s", job_id, printer_id)
                 upload_ok = False
             if not upload_ok:
+                logger.warning("Upload of %s to printer %s reported failure for job %s",
+                               gcode_filename, printer_id, job_id)
                 await self._fail_job_post_slice(job_id, printer_id)
                 return
 
@@ -283,8 +287,11 @@ class QueueEngine:
                 self._executor, client.start_print, gcode_filename, opts
             )
         except Exception:
+            logger.exception("start_print failed for job %s on printer %s", job_id, printer_id)
             start_ok = False
         if not start_ok:
+            logger.warning("start_print of %s on printer %s reported failure for job %s",
+                           gcode_filename, printer_id, job_id)
             await self._fail_job_post_slice(job_id, printer_id)
             return
 
