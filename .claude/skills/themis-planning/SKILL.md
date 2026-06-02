@@ -30,6 +30,7 @@ symbol/path you'll touch before committing it to the plan.
 3. **Load only the docs the task touches** (per the ownership table):
    - `backend.md` — routes, services, queue/slice/print flow, WS hub
    - `frontend.md` — screens, `api/` clients, routing, conventions
+   - `styling.md` — design tokens, no-framework CSS, `ui.tsx` components, status→pill map (any visual change)
    - `data-model.md` — tables, JSON column shapes, derived fields
    - `printers.md` — vendor contract, Bambu/Elegoo protocols, AMS, slicing
    - `recipes.md` — the step-by-step cookbook for the matched shape

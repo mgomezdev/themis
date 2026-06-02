@@ -32,6 +32,7 @@ don't silently rewrite `README.md`/`CLAUDE.md` unless asked).
    | `frontend/src/screens/*` | `frontend.md` screens table |
    | `frontend/src/api/*` | `frontend.md` api-clients table |
    | `frontend/src/App.tsx` | `frontend.md` routing section |
+   | `frontend/src/styles/app.css`, `components/ui.tsx`, `StatusKey`/`StatusPill` | `styling.md` (tokens, classes, components, status→pill map) |
    | new invariant / dev-env trap / build rule | `conventions.md` |
    | any new "how to do X" pattern | `recipes.md` |
    | new subsystem / lifecycle change / extension point | `README.md` (system-in-one-screen, lifecycle, extension points) |

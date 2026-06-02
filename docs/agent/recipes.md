@@ -33,7 +33,20 @@ Verify symbols against current code before relying on them ("code wins").
    detail route (`:id`), add a path-normalization case; add a Sidebar link if top-level.
 3. `frontend/src/api/<x>.ts` — typed client + hook (fetch on mount, merge `/ws` if live).
 4. If adding a required field to a shared `data/types.ts` type used by mocks, update `data/mock.ts`.
-5. Type-check with `npm run build` (`tsc -b`), NOT `tsc --noEmit`.
+5. Style with token-driven classes from `app.css` + shared `components/ui.tsx` — no new CSS framework.
+   See `styling.md`.
+6. Type-check with `npm run build` (`tsc -b`), NOT `tsc --noEmit`.
+
+## Style a component / add a visual element
+
+1. Compose existing utility/component classes (`styling.md` vocabulary) + tokens; prefer the
+   `components/ui.tsx` components (`Card`, `StatusPill`, `Progress`, `SectionHeader`, `Empty`, `Kv`…).
+2. Only add a new class to `frontend/src/styles/app.css` if nothing fits; reference tokens
+   (`var(--bg-2)`, `var(--accent)`, `var(--pad-3)`), never raw hex/px, so density/accent theming works.
+3. **New styled status** → add the key to `StatusKey` (`data/types.ts`) AND the tone map in
+   `components/ui.tsx` (pick an `ok/warn/err/info/idle/accent` tone), else it renders as a grey pill.
+4. **New design token** → define in `:root`; add `[data-density]`/`[data-accent]` overrides if it
+   should react to theming.
 
 ## Add a table or column
 

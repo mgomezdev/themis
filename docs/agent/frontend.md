@@ -3,6 +3,10 @@
 React 18 + Vite + TypeScript SPA in `frontend/src`. React Router. **No global store** — each screen
 uses hooks that fetch on mount and merge live `/ws` events. Entry: `main.tsx` → `App.tsx`.
 
+> **Styling lives in `styling.md`** — design tokens, the no-framework CSS approach (one global
+> `app.css`, no Tailwind), the shared `components/ui.tsx` set, and the `StatusKey`→pill-tone mapping.
+> Load it for any visual/CSS work; it's referenced inline below where it matters.
+
 ## App shell & routing (`App.tsx`)
 
 `AppShell` renders `Sidebar` + `Topbar` + `<Routes>`. Topbar title/crumbs/actions come from a
@@ -46,7 +50,8 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 - **TS strict + `noUnusedLocals`/`noUnusedParameters`** — import only what you use; unused locals fail the build.
 - **Type-check with `npx tsc -b` / `npm run build`, NOT `npx tsc --noEmit`** — the root `tsconfig.json` is references-only, so `--noEmit` is a no-op (checks nothing). See `conventions.md`.
 - Shared types in `data/types.ts`; `data/mock.ts` still backs Fleet/Filaments display fields — adding a required field to `Printer` means updating the 3 mock `PRINTERS`.
-- `StatusKey` (`data/types.ts`) lists styled statuses. Order statuses are all in it; job statuses can exceed it → cast `as never`/`as StatusKey` at `StatusPill` call sites for job status.
+- `StatusKey` (`data/types.ts`) lists styled statuses. Order statuses are all in it; job statuses can exceed it → cast `as never`/`as StatusKey` at `StatusPill` call sites for job status. The key→pill-tone map is in `components/ui.tsx`; adding a styled status means editing both. See `styling.md`.
+- **Styling**: no CSS framework — compose token-driven utility/component classes from `app.css` and the shared `components/ui.tsx` (`Card`/`StatusPill`/`Progress`/…). Full vocabulary + tokens in `styling.md`.
 - Live updates: hooks open a `/ws` WebSocket; message `{type, data}`; types `job_update`, `queue_update`, `printer_state`, `plate_clear_required`. Guard async setState after unmount with an `alive` flag (see `useOrders`).
 - Tests: Vitest + Testing Library. Stub `fetch` via `vi.stubGlobal`; stub `WebSocket` with a `FakeWS` class when a screen uses a `/ws` hook.
 
