@@ -16,6 +16,7 @@ from .api.routes.queue import router as queue_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
 from .api.websocket import connection_manager, websocket_endpoint
+from .config import get_bambu_config_dir, get_bambu_executable, get_orca_config_dir, get_orca_executable
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
@@ -46,7 +47,16 @@ async def lifespan(app: FastAPI):
         queue_engine,
         session_factory=SessionLocal,
         printer_manager=printer_manager,
-        slicer_service=SlicerService(),
+        slicer_services={
+            "orca": SlicerService(
+                executable=get_orca_executable(),
+                config_dir=str(get_orca_config_dir()),
+            ),
+            "bambu": SlicerService(
+                executable=get_bambu_executable(),
+                config_dir=str(get_bambu_config_dir()),
+            ),
+        },
         broadcast_cb=connection_manager.broadcast,
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)

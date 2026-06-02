@@ -37,6 +37,8 @@ async def _migrate(conn) -> None:
         await conn.execute(text("ALTER TABLE printers ADD COLUMN loaded_filaments JSON DEFAULT '[]'"))
     if "queue_on" not in cols:
         await conn.execute(text("ALTER TABLE printers ADD COLUMN queue_on BOOLEAN NOT NULL DEFAULT 1"))
+    if "slicer" not in cols:
+        await conn.execute(text("ALTER TABLE printers ADD COLUMN slicer VARCHAR(20) NOT NULL DEFAULT 'orca'"))
 
     jpc_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
     if "filament_id" not in jpc_cols:

@@ -64,12 +64,12 @@ class QueueEngine:
         self,
         session_factory: async_sessionmaker,
         printer_manager: PrinterManager,
-        slicer_service: SlicerService,
+        slicer_services: dict[str, SlicerService],
         broadcast_cb: Callable | None = None,
     ) -> None:
         self._factory = session_factory
         self._mgr = printer_manager
-        self._slicer = slicer_service
+        self._slicers = slicer_services
         self._broadcast_cb = broadcast_cb
         self._event = asyncio.Event()
         self._task: asyncio.Task | None = None
@@ -208,13 +208,14 @@ class QueueEngine:
             stored_path = uploaded_file.stored_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
+            printer_slicer = (printer.slicer if printer else None) or "orca"
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
         if not machine_preset:
             await self._handle_slice_failure(
-                job_id, printer_id, "printer has no OrcaSlicer machine preset selected"
+                job_id, printer_id, "printer has no slicer machine preset selected"
             )
             return
 
@@ -224,6 +225,8 @@ class QueueEngine:
         file_base = f"{safe}_p{plate_number}_j{job_id}"
         client = self._mgr.get_client(printer_id)
         export_args = client.orca_export_args(file_base) if client else []
+
+        slicer_svc = self._slicers.get(printer_slicer) or self._slicers.get("orca")
 
         loop = asyncio.get_running_loop()
         req = SliceRequest(
@@ -237,7 +240,7 @@ class QueueEngine:
             export_args=export_args,
         )
         try:
-            gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
+            gcode_path: str = await loop.run_in_executor(self._executor, slicer_svc.slice, req)
         except SliceError as exc:
             await self._handle_slice_failure(job_id, printer_id, str(exc))
             return

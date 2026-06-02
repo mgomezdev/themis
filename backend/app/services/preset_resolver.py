@@ -1,10 +1,9 @@
-"""Resolve OrcaSlicer inheritance-diff presets into flat, complete configs.
+"""Resolve slicer (OrcaSlicer / BambuStudio) inheritance-diff presets into flat configs.
 
-OrcaSlicer stores user/system presets as thin diffs that reference a parent via
-`inherits`; the real settings live up the chain (often in the bundled system
-presets, including nested subfolders like ``system/Elegoo/machine/ECC/``). The
-CLI can't consume these directly. This service walks the chain and deep-merges
-child-over-parent into a single self-contained config.
+Both slicers store user/system presets as thin diffs that reference a parent via
+`inherits`; the real settings live up the chain. The CLI can't consume these
+directly. This service walks the chain and deep-merges child-over-parent into a
+single self-contained config.
 
 See the ``slicer-cli-architecture`` project memory for the why.
 """
@@ -26,8 +25,8 @@ class PresetNotFoundError(Exception):
 
 
 class PresetResolver:
-    def __init__(self, orca_config_dir: str | None = None) -> None:
-        self._root = Path(orca_config_dir) if orca_config_dir else get_orca_config_dir()
+    def __init__(self, config_dir: str | None = None) -> None:
+        self._root = Path(config_dir) if config_dir else get_orca_config_dir()
         self._index: dict[str, dict[str, Path]] | None = None
 
     @property

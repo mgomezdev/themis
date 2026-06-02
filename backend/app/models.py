@@ -12,6 +12,7 @@ class Printer(Base):
     printer_type: Mapped[str] = mapped_column(String(50))
     connection_config: Mapped[dict] = mapped_column(JSON)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
+    slicer: Mapped[str] = mapped_column(String(20), default="orca")
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
     current_orca_printer_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)

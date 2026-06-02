@@ -19,7 +19,7 @@ def _req(tmp_path, export_args=None):
 
 
 def _make_service(tmp_path):
-    svc = SlicerService(orca_executable="orcaslicer", data_dir=str(tmp_path))
+    svc = SlicerService(executable="orcaslicer", data_dir=str(tmp_path))
     svc._resolver = MagicMock()
     svc._resolver.resolve.return_value = {"name": "x"}
     return svc
@@ -103,7 +103,7 @@ def test_stl_source_uses_stl_wrapper(mock_build, mock_stl, mock_cfg, tmp_path):
 
 def test_raises_on_unresolvable_preset(tmp_path):
     from app.services.preset_resolver import PresetNotFoundError
-    svc = SlicerService(orca_executable="orcaslicer", data_dir=str(tmp_path))
+    svc = SlicerService(executable="orcaslicer", data_dir=str(tmp_path))
     svc._resolver = MagicMock()
     svc._resolver.resolve.side_effect = PresetNotFoundError("nope")
     with pytest.raises(SliceError, match="preset resolution failed"):

@@ -46,5 +46,37 @@ def get_orca_executable() -> str:
     return _default_orca_executable()
 
 
+def _default_bambu_config_dir() -> str:
+    if "BAMBU_CONFIG_DIR" in os.environ:
+        return os.environ["BAMBU_CONFIG_DIR"]
+    if sys.platform == "win32" or os.environ.get("APPDATA"):
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            return str(Path(appdata) / "BambuStudio")
+    return "/root/.config/BambuStudio"
+
+
+def get_bambu_config_dir() -> Path:
+    return Path(_default_bambu_config_dir())
+
+
+def _default_bambu_executable() -> str:
+    if "BAMBU_EXECUTABLE" in os.environ:
+        return os.environ["BAMBU_EXECUTABLE"]
+    if sys.platform == "win32":
+        for candidate in (
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Bambu Studio" / "bambu-studio.exe",
+            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Bambu Studio" / "bambu-studio.exe",
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Bambu Studio" / "bambu-studio.exe",
+        ):
+            if candidate.is_file():
+                return str(candidate)
+    return "bambu-studio"
+
+
+def get_bambu_executable() -> str:
+    return _default_bambu_executable()
+
+
 def get_ffmpeg_executable() -> str:
     return os.environ.get("FFMPEG_EXECUTABLE", "ffmpeg")

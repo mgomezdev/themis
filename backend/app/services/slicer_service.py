@@ -25,11 +25,12 @@ class SliceRequest:
     """What a single (job, printer) slice needs.
 
     ``machine_preset`` is the printer's ``current_orca_printer_profile``;
-    ``process_preset``/``filament_presets`` are OrcaSlicer preset names.
-    ``export_args`` are the printer-specific OrcaSlicer output args (from
+    ``process_preset``/``filament_presets`` are slicer preset names.
+    ``export_args`` are the printer-specific slicer output args (from
     ``AbstractPrinterClient.orca_export_args``): ``[]`` yields raw gcode (the
-    default), ``["--export-3mf", "<name>.gcode.3mf"]`` yields the archive. Orca
-    always writes gcode to ``--outputdir``; ``--export-3mf`` adds the archive.
+    default), ``["--export-3mf", "<name>.gcode.3mf"]`` yields the archive. Both
+    OrcaSlicer and BambuStudio write gcode to ``--outputdir``; ``--export-3mf``
+    adds the archive.
     """
     job_id: int
     source_3mf: str
@@ -42,10 +43,15 @@ class SliceRequest:
 
 
 class SlicerService:
-    def __init__(self, orca_executable: str | None = None, data_dir: str | None = None) -> None:
-        self._orca = orca_executable or get_orca_executable()
+    def __init__(
+        self,
+        executable: str | None = None,
+        config_dir: str | None = None,
+        data_dir: str | None = None,
+    ) -> None:
+        self._executable = executable or get_orca_executable()
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
-        self._resolver = PresetResolver()
+        self._resolver = PresetResolver(config_dir)
 
     # ── public API ────────────────────────────────────────────────────────────
     def slice(self, req: SliceRequest) -> str:
@@ -93,12 +99,12 @@ class SlicerService:
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):
             stale.unlink(missing_ok=True)
 
-        cmd = [self._orca, "--slice", str(req.plate_number), "--outputdir", str(out_dir),
+        cmd = [self._executable, "--slice", str(req.plate_number), "--outputdir", str(out_dir),
                *req.export_args, str(input_3mf)]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=_SLICE_TIMEOUT)
         except subprocess.TimeoutExpired as e:
-            raise SliceError(f"OrcaSlicer timed out after {_SLICE_TIMEOUT}s") from e
+            raise SliceError(f"Slicer timed out after {_SLICE_TIMEOUT}s") from e
 
         # The printer asked for the 3MF archive.
         if _EXPORT_3MF in req.export_args:
@@ -111,4 +117,4 @@ class SlicerService:
                 return str(gcodes[0])
 
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        raise SliceError(detail[-500:] or "OrcaSlicer produced no output")
+        raise SliceError(detail[-500:] or "Slicer produced no output")

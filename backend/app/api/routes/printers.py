@@ -15,13 +15,21 @@ from ...models import Printer
 from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
-from ...config import get_orca_config_dir
+from ...config import get_bambu_config_dir, get_orca_config_dir
+from ...services.preset_resolver import PresetResolver
 from ...services.profile_index import ProfileIndex
 from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
 
-# Shared, cached compatibility index (rebuilds when the user's presets change).
-_profile_index = ProfileIndex()
+# Shared, cached compatibility indexes per slicer (rebuild when presets change on disk).
+_profile_indexes: dict[str, ProfileIndex] = {
+    "orca": ProfileIndex(),
+    "bambu": ProfileIndex(PresetResolver(str(get_bambu_config_dir()))),
+}
+
+
+def _get_profile_index(slicer: str) -> ProfileIndex:
+    return _profile_indexes.get(slicer) or _profile_indexes["orca"]
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -30,6 +38,7 @@ class PrinterCreate(BaseModel):
     name: str
     printer_type: str
     connection_config: dict
+    slicer: str = "orca"
     orca_printer_profiles: list[str] = []
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
@@ -38,6 +47,7 @@ class PrinterCreate(BaseModel):
 class PrinterUpdate(BaseModel):
     name: str | None = None
     connection_config: dict | None = None
+    slicer: str | None = None
     orca_printer_profiles: list[str] | None = None
     current_orca_printer_profile: str | None = None
     enabled: bool | None = None
@@ -74,6 +84,7 @@ def _to_dict(p: Printer) -> dict:
         "printer_type": p.printer_type,
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
+        "slicer": p.slicer or "orca",
         "orca_printer_profiles": p.orca_printer_profiles,
         "current_orca_printer_profile": p.current_orca_printer_profile,
         "enabled": p.enabled,
@@ -119,6 +130,7 @@ async def create_printer(
         name=body.name,
         printer_type=body.printer_type,
         connection_config=body.connection_config,
+        slicer=body.slicer,
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=body.loaded_filaments,
@@ -144,16 +156,25 @@ async def list_orca_printer_presets() -> list[str]:
 async def orca_machine_catalog() -> list[dict]:
     """Real selectable OrcaSlicer machine presets [{name, vendor, printer_model,
     nozzle, source}] for the printer-settings make/model/nozzle picker."""
-    return _profile_index.machine_catalog()
+    return _profile_indexes["orca"].machine_catalog()
+
+
+@router.get("/bambu-machine-catalog")
+async def bambu_machine_catalog() -> list[dict]:
+    """Real selectable BambuStudio machine presets [{name, vendor, printer_model,
+    nozzle, source}] for the printer-settings make/model/nozzle picker."""
+    return _profile_indexes["bambu"].machine_catalog()
 
 
 @router.post("/rescan-profiles")
 async def rescan_profiles() -> dict:
-    """Drop the cached profile index and rebuild it from disk — use after adding
-    or editing OrcaSlicer presets/printers so new options appear."""
-    _profile_index.refresh()
-    catalog = _profile_index.machine_catalog()  # forces the rebuild
-    return {"machine_presets": len(catalog)}
+    """Drop both cached profile indexes and rebuild from disk — use after adding
+    or editing slicer presets so new options appear."""
+    for idx in _profile_indexes.values():
+        idx.refresh()
+    orca_count = len(_profile_indexes["orca"].machine_catalog())
+    bambu_count = len(_profile_indexes["bambu"].machine_catalog())
+    return {"orca_machine_presets": orca_count, "bambu_machine_presets": bambu_count}
 
 
 class TestConnectionRequest(BaseModel):
@@ -208,10 +229,12 @@ async def get_profiles(
     printer = await _get_or_404(printer_id, session)
     if not printer.current_orca_printer_profile:
         return {"print_profiles": [], "filament_profiles": []}
-    # Inheritance-resolved compatibility via the precomputed index.
-    result = _profile_index.compatible_profiles(printer.current_orca_printer_profile)
+    slicer = printer.slicer or "orca"
+    idx = _get_profile_index(slicer)
+    result = idx.compatible_profiles(printer.current_orca_printer_profile)
     if not result["print_profiles"] and not result["filament_profiles"]:
-        if not get_orca_config_dir().exists():
+        config_dir = get_bambu_config_dir() if slicer == "bambu" else get_orca_config_dir()
+        if not config_dir.exists():
             return _SAMPLE_PROFILES
     return result
 
@@ -235,6 +258,8 @@ async def update_printer(
         printer.name = body.name
     if body.connection_config is not None:
         printer.connection_config = body.connection_config
+    if body.slicer is not None:
+        printer.slicer = body.slicer
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
     if body.current_orca_printer_profile is not None:

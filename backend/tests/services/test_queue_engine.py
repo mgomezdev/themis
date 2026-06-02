@@ -86,7 +86,7 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
     Path(gcode_path).write_text("G28\n")
     mock_slicer.slice.return_value = gcode_path
 
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -100,7 +100,7 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
 @pytest.mark.asyncio
 async def test_no_ready_printers_leaves_job_queued(db):
     mgr = _make_mock_printer_manager([])  # no ready printers
-    qe = QueueEngine(db, mgr, MagicMock())
+    qe = QueueEngine(db, mgr, {"orca": MagicMock()})
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -115,7 +115,7 @@ async def test_queue_off_printer_does_not_claim(db):
     # A ready printer with queue_on=False must behave like no eligible printer:
     # the top job stays queued.
     mgr = _make_mock_printer_manager([1])
-    qe = QueueEngine(db, mgr, MagicMock())
+    qe = QueueEngine(db, mgr, {"orca": MagicMock()})
     job_id = await _seed_job(db, printer_id=1)
 
     async with db() as session:
@@ -137,7 +137,7 @@ async def test_slice_failure_blocks_job(db):
     mock_slicer = MagicMock()
     mock_slicer.slice.side_effect = SliceError("Profile not found")
 
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -157,7 +157,7 @@ async def test_slice_failure_requeues_when_other_printers_available(db):
     mock_slicer = MagicMock()
     mock_slicer.slice.side_effect = SliceError("fail")
 
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
 
     async with db() as session:
         for pid in (1, 2):
@@ -204,7 +204,7 @@ async def test_slice_failure_requeues_when_other_printers_available(db):
 @pytest.mark.asyncio
 async def test_handle_print_complete_transitions_job(db):
     mgr = _make_mock_printer_manager([])
-    qe = QueueEngine(db, mgr, MagicMock())
+    qe = QueueEngine(db, mgr, {"orca": MagicMock()})
     job_id = await _seed_job(db, printer_id=1, status="printing")
 
     # Set assigned_printer_id
@@ -234,7 +234,7 @@ async def _set_filament(db, job_id, printer_id, req_type, req_color, loaded):
 @pytest.mark.asyncio
 async def test_filament_mismatch_blocks_job(db):
     mgr = _make_mock_printer_manager([1])
-    qe = QueueEngine(db, mgr, MagicMock())
+    qe = QueueEngine(db, mgr, {"orca": MagicMock()})
     job_id = await _seed_job(db, printer_id=1)
     await _set_filament(db, job_id, 1, "PETG", "#FF0000", [{"slot": 0, "type": "PLA", "color": "#FFFFFF"}])
 
@@ -253,7 +253,7 @@ async def test_filament_match_allows_claim(db, tmp_path):
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
     # case- and #-insensitive match
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "pla", "color": "FFFFFF"}])
@@ -273,7 +273,7 @@ async def test_slice_uses_filament_profile_from_loaded_slot(db, tmp_path):
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
     # Job asks for PLA white; the printer's loaded slot provides it with a real preset.
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF",
@@ -296,7 +296,7 @@ async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PLA", "color": "#FFFFFF"}])
 
@@ -315,7 +315,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
-    qe = QueueEngine(db, mgr, mock_slicer)
+    qe = QueueEngine(db, mgr, {"orca": mock_slicer})
     job_id = await _seed_job(db, printer_id=1)
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PETG", "color": "#000000"}])
 
