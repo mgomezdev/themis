@@ -10,7 +10,8 @@ export interface ApiPlate {
 export interface ApiUploadedFile {
   id: number;
   original_filename: string;
-  plates: ApiPlate[];
+  folder: string;
+  plate_count: number;
 }
 
 export interface PrinterProfiles {
@@ -85,9 +86,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return resp.json();
 }
 
-export async function uploadFile(file: File): Promise<ApiUploadedFile> {
+export async function uploadFile(file: File, folder?: string): Promise<ApiUploadedFile> {
   const body = new FormData();
   body.append('file', file);
+  if (folder) body.append('folder', folder);
   const resp = await fetch('/api/v1/files/upload', { method: 'POST', body });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);

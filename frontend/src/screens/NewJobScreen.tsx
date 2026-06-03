@@ -1,10 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { uploadFile, createJob, getPrinterProfiles, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck } from '../api/queue';
+import { uploadFile, createJob, getFilePlates, getPrinterProfiles, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck } from '../api/queue';
+import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
 import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
 
@@ -940,6 +941,7 @@ function OverrideAlertModal({ findings, onProceed, onCancel }: {
 
 export function NewJobScreen() {
   const navigate = useNavigate();
+  const location = useLocation();
   const printers = usePrinterList();
 
   const [file, setFile] = useState<FileInfo | null>(null);
@@ -953,6 +955,11 @@ export function NewJobScreen() {
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [overrideFindings, setOverrideFindings] = useState<MergedFindings | null>(null);
+
+  // Source selection: upload a new file or pick one from the library.
+  const [source, setSource] = useState<'upload' | 'library'>('upload');
+  const { files: libraryFiles } = useFiles({});
+  const [saveFolder, setSaveFolder] = useState('/Job Uploads');
 
   useEffect(() => {
     if (!successMsg) return;
@@ -973,6 +980,25 @@ export function NewJobScreen() {
   }, [plates, activePlateId]);
 
   // ---- file actions ----
+
+  // Shared path for both upload and library-pick: the /upload response no longer
+  // carries a `plates` array, so plates are always loaded via getFilePlates(id).
+  async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
+    setUploadedFileId(fileId);
+    setFile(fileInfo);
+    const apiPlates = await getFilePlates(fileId);
+    const detected = platesToLocal(apiPlates, fileId);
+    setPlates(detected);
+    const configs: Record<string, PlateConfig> = {};
+    detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p); });
+    setPlateConfigs(configs);
+    setActivePlateId(detected[0]?.id ?? null);
+  }
+
+  function fileTypeOf(name: string): 'stl' | '3mf' {
+    return name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf';
+  }
+
   async function handleFile(rawFile: File | null | undefined) {
     if (!rawFile) return;
     const nameLower = rawFile.name.toLowerCase();
@@ -983,25 +1009,53 @@ export function NewJobScreen() {
     setUploading(true);
     setError(null);
     try {
-      const uploaded = await uploadFile(rawFile);
-      setUploadedFileId(uploaded.id);
-      setFile({
+      const uploaded = await uploadFile(rawFile, saveFolder || undefined);
+      await loadFileIntoState(uploaded.id, {
         name: uploaded.original_filename,
         size: rawFile.size,
-        type: nameLower.endsWith('.stl') ? 'stl' : '3mf',
+        type: fileTypeOf(uploaded.original_filename),
       });
-      const detected = platesToLocal(uploaded.plates, uploaded.id);
-      setPlates(detected);
-      const configs: Record<string, PlateConfig> = {};
-      detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p); });
-      setPlateConfigs(configs);
-      setActivePlateId(detected[0]?.id ?? null);
     } catch (err) {
       setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setUploading(false);
     }
   }
+
+  async function selectLibraryFile(fileId: number) {
+    setUploading(true);
+    setError(null);
+    try {
+      // Prefer the already-loaded library list; fall back to a fetch if navigated
+      // here directly (e.g. from FilesScreen) before the list resolves.
+      let lib = libraryFiles.find(f => f.id === fileId);
+      if (!lib) {
+        const all = await getFiles({});
+        lib = all.find(f => f.id === fileId);
+      }
+      if (!lib) {
+        setError('That library file could not be found.');
+        return;
+      }
+      await loadFileIntoState(lib.id, {
+        name: lib.original_filename,
+        size: lib.size_bytes,
+        type: fileTypeOf(lib.original_filename),
+      });
+    } catch (err) {
+      setError(`Failed to load file: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  // Preselect a library file when navigated here from the Files screen
+  // ("Use in new job" → state.libraryFileId).
+  useEffect(() => {
+    const id = (location.state as { libraryFileId?: number } | null)?.libraryFileId;
+    if (id) { setSource('library'); selectLibraryFile(id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault(); e.stopPropagation(); setDragOver(false);
@@ -1192,28 +1246,76 @@ export function NewJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader
               title={<span><StepNum n={1} done={!!file} /> Source file</span>}
-              sub="Drop a .3mf or .stl file to get started."
+              sub="Upload a new .3mf/.stl or pick one from your library."
             />
+
+            {!file && !uploading && (
+              <div className="row gap-2" style={{ marginBottom: 14 }}>
+                <button
+                  className={`btn sm ${source === 'upload' ? 'primary' : 'ghost'}`}
+                  onClick={() => setSource('upload')}>
+                  Upload
+                </button>
+                <button
+                  className={`btn sm ${source === 'library' ? 'primary' : 'ghost'}`}
+                  onClick={() => setSource('library')}>
+                  Pick from library
+                </button>
+              </div>
+            )}
+
             {uploading ? (
               <div className="tiny muted" style={{ padding: '24px 0', textAlign: 'center' }}>
-                Uploading and parsing plates…
+                Loading and parsing plates…
               </div>
-            ) : !file ? (
-              <Dropzone
-                dragOver={dragOver}
-                onDragEnter={() => setDragOver(true)}
-                onDragLeave={() => setDragOver(false)}
-                onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-                onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
-              />
-            ) : (
+            ) : file ? (
               <FileCard
                 file={file}
                 plateCount={plates.length}
                 selectedCount={selectedPlateIds.length}
                 onClear={clearFile}
               />
+            ) : source === 'library' ? (
+              <div className="col gap-2">
+                {libraryFiles.length === 0 ? (
+                  <div className="tiny muted" style={{ padding: '12px 0' }}>
+                    No files in the library yet. Upload one or add files in the Files screen.
+                  </div>
+                ) : (
+                  libraryFiles.map(f => (
+                    <button
+                      key={f.id}
+                      className="btn ghost"
+                      style={{ justifyContent: 'space-between', width: '100%' }}
+                      onClick={() => selectLibraryFile(f.id)}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {f.original_filename}
+                      </span>
+                      <span className="tiny muted" style={{ marginLeft: 12, flexShrink: 0 }}>{f.folder}</span>
+                    </button>
+                  ))
+                )}
+              </div>
+            ) : (
+              <div className="col gap-3">
+                <Dropzone
+                  dragOver={dragOver}
+                  onDragEnter={() => setDragOver(true)}
+                  onDragLeave={() => setDragOver(false)}
+                  onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                />
+                <div>
+                  <label className="label">Save uploaded file to</label>
+                  <input
+                    className="input"
+                    value={saveFolder}
+                    onChange={e => setSaveFolder(e.target.value)}
+                    placeholder="/Job Uploads"
+                  />
+                </div>
+              </div>
             )}
             <input
               ref={fileInputRef}

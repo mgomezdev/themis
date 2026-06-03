@@ -20,8 +20,18 @@ def _make_three_mf_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _patch_dirs(tmp_path):
+    (tmp_path / "library").mkdir(exist_ok=True)
+    (tmp_path / "filecache").mkdir(exist_ok=True)
+    return (
+        patch("app.config.get_library_dir", return_value=tmp_path / "library"),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+    )
+
+
 async def test_upload_three_mf(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
         response = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.3mf", _make_three_mf_bytes(), "application/octet-stream")},
@@ -30,13 +40,14 @@ async def test_upload_three_mf(client, tmp_path):
     data = response.json()
     assert data["id"] is not None
     assert data["original_filename"] == "model.3mf"
-    assert len(data["plates"]) == 2
-    assert data["plates"][0]["plate_number"] == 1
-    assert data["plates"][0]["estimated_time"] == 3600
+    assert data["folder"] == "/Job Uploads"
+    assert data["plate_count"] == 2
+    assert (tmp_path / "library" / "Job Uploads" / "model.3mf").is_file()
 
 
 async def test_upload_rejects_unsupported_type(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
         response = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.obj", b"# obj file", "application/octet-stream")},
@@ -45,7 +56,8 @@ async def test_upload_rejects_unsupported_type(client, tmp_path):
 
 
 async def test_upload_stl_returns_single_plate(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
         response = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.stl", b"solid model\nendsolid", "application/octet-stream")},
@@ -53,22 +65,23 @@ async def test_upload_stl_returns_single_plate(client, tmp_path):
     assert response.status_code == 201
     data = response.json()
     assert data["original_filename"] == "model.stl"
-    assert len(data["plates"]) == 1
-    assert data["plates"][0]["plate_number"] == 1
-    assert data["plates"][0]["estimated_time"] == 0
+    assert data["plate_count"] == 1
 
 
 async def test_get_plates(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
         upload = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.3mf", _make_three_mf_bytes(), "application/octet-stream")},
         )
-    file_id = upload.json()["id"]
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+        file_id = upload.json()["id"]
         response = await client.get(f"/api/v1/files/{file_id}/plates")
     assert response.status_code == 200
-    assert len(response.json()) == 2
+    plates = response.json()
+    assert len(plates) == 2
+    assert plates[0]["plate_number"] == 1
+    assert plates[0]["estimated_time"] == 3600
 
 
 async def test_get_plates_not_found(client):
@@ -77,13 +90,13 @@ async def test_get_plates_not_found(client):
 
 
 async def test_thumbnail_served(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
         upload = await client.post(
             "/api/v1/files/upload",
             files={"file": ("model.3mf", _make_three_mf_bytes(), "application/octet-stream")},
         )
-    file_id = upload.json()["id"]
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+        file_id = upload.json()["id"]
         response = await client.get(f"/api/v1/files/{file_id}/thumbnails/plate_1.png")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/")

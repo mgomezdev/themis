@@ -27,6 +27,34 @@ class UploadedFile(Base):
     stored_path: Mapped[str] = mapped_column(String(1024))
     plates: Mapped[list] = mapped_column(JSON, default=list)
     uploaded_at: Mapped[str] = mapped_column(String(32))
+    # Library index fields (filesystem is the source of truth; these cache it).
+    relative_path: Mapped[str] = mapped_column(String(1024), default="")
+    folder: Mapped[str] = mapped_column(String(1024), default="/")
+    size_bytes: Mapped[int] = mapped_column(default=0)
+    content_hash: Mapped[str] = mapped_column(String(64), default="")
+    mtime: Mapped[float] = mapped_column(Float, default=0.0)
+    missing: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Tag(Base):
+    __tablename__ = "tags"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    color: Mapped[str] = mapped_column(String(20), default="#64748b")
+    category: Mapped[str] = mapped_column(String(50), default="")
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
+class FileTag(Base):
+    __tablename__ = "file_tags"
+
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[int] = mapped_column(
+        ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class Order(Base):

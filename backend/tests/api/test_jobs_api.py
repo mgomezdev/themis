@@ -18,7 +18,10 @@ def _make_3mf() -> bytes:
 
 
 async def _upload_file(client, tmp_path):
-    with patch("app.api.routes.files.get_data_dir", return_value=tmp_path):
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
+        (tmp_path / "library").mkdir(exist_ok=True)
+        (tmp_path / "filecache").mkdir(exist_ok=True)
         resp = await client.post(
             "/api/v1/files/upload",
             files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
