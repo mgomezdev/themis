@@ -134,14 +134,10 @@ class LibraryScanner:
         for rel, row in list(by_path.items()):
             if rel in seen_paths:
                 continue
-            referenced = (await self.session.execute(
-                select(Job.id).where(Job.uploaded_file_id == row.id,
-                                     Job.status.in_(ACTIVE_JOB_STATUSES)).limit(1)
-            )).first()
             any_job = (await self.session.execute(
                 select(Job.id).where(Job.uploaded_file_id == row.id).limit(1)
             )).first()
-            if referenced or any_job:
+            if any_job:
                 row.missing = True
                 summary["missing"] += 1
             else:

@@ -84,7 +84,7 @@ def _write_target(root: Path, rel: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_scan_marks_missing_when_job_references(tmp_path, monkeypatch):
+async def test_scan_marks_missing_when_job_references(tmp_path):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "x.stl")
