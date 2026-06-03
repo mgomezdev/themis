@@ -5,7 +5,7 @@ import { Icons } from '../components/icons';
 import { Empty } from '../components/ui';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
-  useFiles, uploadLibraryFile, createFolder, updateFile, deleteFile,
+  useFiles, uploadLibraryFile, createFolder, deleteFolder, updateFile, deleteFile,
   addFileTag, removeFileTag, rescanLibrary, getFolderDirs,
 } from '../api/files';
 import { useTags } from '../api/tags';
@@ -21,28 +21,8 @@ const fmtSize = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
 const FALLBACK_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#14b8a6', '#ec4899'];
 const fallbackColor = (id: number) => FALLBACK_COLORS[id % FALLBACK_COLORS.length];
 
-// -------------------------------------------------------------------------
-// Folder tree builder (client-side from files[].folder)
-// -------------------------------------------------------------------------
-
-function buildFolderTree(files: LibraryFile[]): FolderNode {
-  const root: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
-  for (const f of files) {
-    root.count++;
-    const parts = (f.folder || '').split('/').filter(Boolean);
-    let node = root;
-    let path = '';
-    for (const p of parts) {
-      path += '/' + p;
-      if (!node.children[p]) {
-        node.children[p] = { name: p, path, count: 0, children: {} };
-      }
-      node = node.children[p];
-      node.count++;
-    }
-  }
-  return root;
-}
+// Empty root for the folder tree before /dirs resolves.
+const EMPTY_TREE: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
 
 // -------------------------------------------------------------------------
 // FolderIcon
@@ -145,11 +125,12 @@ interface FolderCardProps {
   openFolders: Set<string>;
   toggleFolder: (path: string) => void;
   onNewFolder: () => void;
+  onDeleteFolder: () => void;
 }
 
 function FolderCard({
   expanded, onToggle, currentFolder, setCurrentFolder,
-  breadcrumb, tree, openFolders, toggleFolder, onNewFolder,
+  breadcrumb, tree, openFolders, toggleFolder, onNewFolder, onDeleteFolder,
 }: FolderCardProps) {
   if (!expanded) {
     return (
@@ -199,6 +180,10 @@ function FolderCard({
         <div className="row gap-2">
           <button className="btn ghost icon sm" title="New folder"
                   onClick={onNewFolder}>{Icons.plus}</button>
+          <button className="btn ghost icon sm"
+                  title={currentFolder ? `Delete folder “${breadcrumb}” (must be empty)` : 'Select a folder to delete'}
+                  disabled={!currentFolder}
+                  onClick={onDeleteFolder}>{Icons.trash}</button>
           <button className="btn ghost icon sm" title="Collapse" onClick={onToggle}>{Icons.chevL}</button>
         </div>
       </div>
@@ -614,7 +599,11 @@ export function FilesScreen() {
   const { files, refetch } = useFiles(filter);
   const { tags } = useTags();
 
-  const tree = useMemo(() => buildFolderTree(files), [files]);
+  // Folder tree comes from the real on-disk dirs (so empty folders show too);
+  // re-fetched whenever `files` changes (every mutation calls refetch()).
+  const [dirs, setDirs] = useState<FolderNode>(EMPTY_TREE);
+  useEffect(() => { getFolderDirs().then(setDirs).catch(console.error); }, [files]);
+  const tree = dirs;
 
   const tagCounts = useMemo(() => {
     const c: Record<string, number> = {};
@@ -668,6 +657,18 @@ export function FilesScreen() {
     if (!path) return;
     try { await createFolder(path); refetch(); }
     catch (err) { window.alert(String(err)); }
+  }
+
+  async function handleDeleteFolder() {
+    if (!currentFolder) return;
+    if (!window.confirm(`Delete folder "${breadcrumb}"? It must be empty.`)) return;
+    try {
+      await deleteFolder(currentFolder);
+      setCurrentFolder('');
+      refetch();
+    } catch (err) {
+      window.alert(String(err));
+    }
   }
 
   async function handleRescan() {
@@ -805,6 +806,7 @@ export function FilesScreen() {
           openFolders={openFolders}
           toggleFolder={toggleFolder}
           onNewFolder={handleNewFolder}
+          onDeleteFolder={handleDeleteFolder}
         />
 
         {/* RIGHT: header + toolbar + filters + grid */}

@@ -40,6 +40,9 @@ export async function uploadLibraryFile(file: File, folder?: string): Promise<Li
 
 export const createFolder = (path: string) =>
   request<{ path: string }>('/api/v1/files/folders', jsonInit('POST', { path }));
+export const deleteFolder = (path: string) =>
+  request<{ deleted: string }>(
+    `/api/v1/files/folders?path=${encodeURIComponent(path)}`, { method: 'DELETE' });
 export const updateFile = (id: number, b: { name?: string; folder?: string }) =>
   request<LibraryFile>(`/api/v1/files/${id}`, jsonInit('PATCH', b));
 export const deleteFile = (id: number) =>

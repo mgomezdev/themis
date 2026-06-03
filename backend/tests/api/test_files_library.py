@@ -35,6 +35,29 @@ async def test_upload_to_named_folder_and_list(client, lib):
 
 
 @pytest.mark.asyncio
+async def test_delete_empty_folder(client, lib):
+    await client.post("/api/v1/files/folders", json={"path": "/Trash"})
+    assert (lib / "Trash").is_dir()
+    r = await client.delete("/api/v1/files/folders", params={"path": "/Trash"})
+    assert r.status_code == 200, r.text
+    assert not (lib / "Trash").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_nonempty_folder_409(client, lib):
+    await client.post("/api/v1/files/upload", data={"folder": "/Keep"}, files=_stl("a.stl"))
+    r = await client.delete("/api/v1/files/folders", params={"path": "/Keep"})
+    assert r.status_code == 409
+    assert (lib / "Keep").is_dir()  # still present
+
+
+@pytest.mark.asyncio
+async def test_delete_root_folder_rejected(client, lib):
+    r = await client.delete("/api/v1/files/folders", params={"path": "/"})
+    assert r.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_move_to_same_folder_is_noop(client, lib):
     # Moving a file to the folder it already lives in must NOT suffix-rename it.
     up = (await client.post("/api/v1/files/upload", data={"folder": "/Customers"}, files=_stl("a.stl"))).json()

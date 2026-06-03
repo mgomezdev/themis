@@ -197,6 +197,22 @@ async def create_folder(body: FolderCreate) -> dict:
     return {"path": "/" + target.relative_to(library).as_posix()}
 
 
+@router.delete("/folders")
+async def delete_folder(path: str) -> dict:
+    """Delete an EMPTY folder. Refuses (409) if it contains any files or
+    subfolders, and never deletes the library root."""
+    library = config.get_library_dir()
+    target = _safe_subpath(library, path)
+    if target.resolve() == library.resolve():
+        raise HTTPException(400, "Cannot delete the library root")
+    if not target.exists() or not target.is_dir():
+        raise HTTPException(404, "Folder not found")
+    if any(target.iterdir()):
+        raise HTTPException(409, "Folder is not empty — remove its contents first")
+    target.rmdir()
+    return {"deleted": "/" + target.relative_to(library).as_posix()}
+
+
 # ---------- rename / move ----------
 
 class FilePatch(BaseModel):

@@ -14,6 +14,8 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.startsWith('/api/v1/tags')) return new Response(JSON.stringify(TAGS), { status: 200 });
+    if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
+      { name: 'All files', path: '', count: 1, children: {} }), { status: 200 });
     if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(
       { name: 'All files', path: '', count: 1, children: {} }), { status: 200 });
     if (url.startsWith('/api/v1/files')) return new Response(JSON.stringify(FILES), { status: 200 });
@@ -42,6 +44,8 @@ describe('FilesScreen', () => {
     ];
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(
+        { name: 'All files', path: '', count: 2, children: {} }), { status: 200 });
       if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(
         { name: 'All files', path: '', count: 2, children: {} }), { status: 200 });
       if (url.startsWith('/api/v1/files')) return new Response(JSON.stringify(TWO), { status: 200 });
@@ -90,8 +94,40 @@ describe('FilesScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Move$/ }));
 
     await waitFor(() => expect(screen.getByText(/Move 1 file to/i)).toBeInTheDocument());
-    // the empty on-disk folder is selectable in the picker
-    expect(screen.getByText('Archive')).toBeInTheDocument();
+    // the empty on-disk folder is selectable (appears in the sidebar and the picker)
+    expect(screen.getAllByText('Archive').length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole('button', { name: /Move here/i })).toBeInTheDocument();
+  });
+
+  it('shows empty folders in the bar and deletes a selected empty folder', async () => {
+    const dirsTree = {
+      name: 'All files', path: '', count: 0,
+      children: { Empty: { name: 'Empty', path: '/Empty', count: 0, children: {} } },
+    };
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 }); // no files anywhere
+      return new Response('[]', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('confirm', vi.fn(() => true));
+
+    render(<MemoryRouter><FilesScreen /></MemoryRouter>);
+    // empty folder is visible in the bar despite having zero files
+    await waitFor(() => expect(screen.getByText('Empty')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Empty'));                       // select it
+    fireEvent.click(screen.getByRole('button', { name: /Delete folder/i }));
+
+    await waitFor(() => {
+      const dels = fetchMock.mock.calls.filter(c =>
+        typeof c[0] === 'string'
+        && c[0].includes('/api/v1/files/folders')
+        && (c[1] as RequestInit | undefined)?.method === 'DELETE');
+      expect(dels.length).toBe(1);
+      expect(dels[0][0] as string).toContain('path=%2FEmpty');
+    });
   });
 });
