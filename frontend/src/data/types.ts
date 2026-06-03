@@ -145,3 +145,23 @@ export type StatusKey =
   | 'printing' | 'queued' | 'waiting' | 'claiming' | 'slicing'
   | 'paused' | 'error' | 'offline' | 'idle' | 'ready' | 'complete'
   | 'hold' | 'in_progress' | 'partial';
+
+export interface LibraryFile {
+  id: number;
+  original_filename: string;
+  relative_path: string;
+  folder: string;
+  size_bytes: number;
+  plate_count: number;
+  uploaded_at: string;
+  missing: boolean;
+  tags: { id: number; name: string; color: string; category: string }[];
+  thumbnail_url: string | null;
+}
+
+export interface FolderNode {
+  name: string;
+  path: string;
+  count: number;
+  children: Record<string, FolderNode>;
+}
