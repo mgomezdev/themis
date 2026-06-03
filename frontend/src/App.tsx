@@ -14,7 +14,6 @@ import { NewOrderScreen }  from './screens/NewOrderScreen';
 import { JobDetailScreen } from './screens/JobDetailScreen';
 import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }     from './screens/FilesScreen';
-import { FilamentsScreen } from './screens/FilamentsScreen';
 import { SettingsScreen }  from './screens/SettingsScreen';
 
 function AppShell() {
@@ -44,9 +43,6 @@ function AppShell() {
     '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
-    '/filaments':  { title: 'Filament library',  crumbs: ['Workshop'],
-                     actions: <><button className="btn sm">{Icons.refresh} Sync vendor prices</button>
-                                <button className="btn primary sm">{Icons.plus} Add filament</button></> },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -77,7 +73,6 @@ function AppShell() {
             <Route path="/jobs/:id"        element={<JobDetailScreen />} />
             <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"        element={<FilesScreen />} />
-            <Route path="/filaments"    element={<FilamentsScreen />} />
             <Route path="/settings/*"   element={<SettingsScreen />} />
             <Route path="*"             element={<Navigate to="/queue" replace />} />
           </Routes>

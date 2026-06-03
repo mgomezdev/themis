@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools } from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
-import { TAGS } from '../data/mock';
+import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { Icons, Icon } from '../components/icons';
-import type { Tag } from '../data/types';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -265,7 +265,7 @@ function TagEditorRow({ initial, isNew, onSave, onCancel }: {
   const [color, setColor] = useState(initial.color || TAG_COLOR_PALETTE[0]);
   const [category, setCategory] = useState(initial.category || 'Custom');
 
-  const previewTag: Tag = { id: 'preview', name: name || 'new tag', color, category };
+  const previewTag: Tag = { id: -1, name: name || 'new tag', color, category, usage_count: 0 };
 
   function submit() {
     if (!name.trim()) return;
@@ -338,11 +338,12 @@ function TagStat({ label, value, sub, tone }: { label: string; value: number; su
 }
 
 function TagsPage() {
-  const [tags, setTags] = useState<Tag[]>([...TAGS]);
+  const { tags, refetch } = useTags();
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const categories = useMemo(() => {
     const set = new Set(tags.map(t => t.category).filter(Boolean));
@@ -361,32 +362,55 @@ function TagsPage() {
   const totals = {
     total: tags.length,
     categories: new Set(tags.map(t => t.category).filter(Boolean)).size,
-    inUse: 0,
-    orphan: tags.length,
+    inUse: tags.filter(t => t.usage_count > 0).length,
+    orphan: tags.filter(t => t.usage_count === 0).length,
   };
 
-  function deleteTag(id: string) {
-    setTags(prev => prev.filter(t => t.id !== id));
-    if (editingId === id) setEditingId(null);
+  function reportError(e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    setError(msg);
   }
 
-  function saveTag(id: string, patch: Partial<Tag>) {
-    setTags(prev => prev.map(t => t.id === id ? { ...t, ...patch } : t));
-    setEditingId(null);
+  async function handleDelete(id: number) {
+    setError(null);
+    try {
+      await deleteTag(id);
+      if (editingId === id) setEditingId(null);
+      refetch();
+    } catch (e) {
+      reportError(e);
+    }
   }
 
-  function createTag(draft: Partial<Tag>) {
+  async function handleSave(id: number, patch: Partial<Tag>) {
+    setError(null);
+    try {
+      await updateTag(id, {
+        name: patch.name,
+        color: patch.color,
+        category: patch.category,
+      });
+      setEditingId(null);
+      refetch();
+    } catch (e) {
+      reportError(e);
+    }
+  }
+
+  async function handleCreate(draft: Partial<Tag>) {
     if (!draft.name?.trim()) return;
-    const dup = tags.find(t => t.name.toLowerCase() === draft.name!.trim().toLowerCase());
-    if (dup) return;
-    const newTag: Tag = {
-      id: `tag-${draft.name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Math.random().toString(36).slice(2,5)}`,
-      name: draft.name.trim(),
-      color: draft.color || TAG_COLOR_PALETTE[tags.length % TAG_COLOR_PALETTE.length],
-      category: draft.category?.trim() || 'Custom',
-    };
-    setTags(prev => [...prev, newTag]);
-    setCreating(false);
+    setError(null);
+    try {
+      await createTag({
+        name: draft.name.trim(),
+        color: draft.color || TAG_COLOR_PALETTE[tags.length % TAG_COLOR_PALETTE.length],
+        category: draft.category?.trim() || 'Custom',
+      });
+      setCreating(false);
+      refetch();
+    } catch (e) {
+      reportError(e);
+    }
   }
 
   return (
@@ -417,6 +441,12 @@ function TagsPage() {
           <button className="btn primary sm" onClick={() => setCreating(true)}>{Icons.plus} New tag</button>
         </div>
 
+        {error && (
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
         <div className="row gap-2" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
           {categories.map(c => (
             <button key={c} onClick={() => setFilter(c)}
@@ -439,7 +469,7 @@ function TagsPage() {
           </div>
           {creating && (
             <TagEditorRow isNew initial={{ name: '', color: TAG_COLOR_PALETTE[0], category: filter === 'all' ? 'Custom' : filter }}
-                          onSave={createTag} onCancel={() => setCreating(false)} />
+                          onSave={handleCreate} onCancel={() => setCreating(false)} />
           )}
           {filtered.length === 0 && !creating && (
             <div className="col" style={{ alignItems: 'center', padding: '40px 20px', color: 'var(--text-3)' }}>
@@ -449,10 +479,10 @@ function TagsPage() {
           {filtered.map(tag => (
             editingId === tag.id ? (
               <TagEditorRow key={tag.id} initial={tag}
-                            onSave={(patch) => saveTag(tag.id, patch)}
+                            onSave={(patch) => handleSave(tag.id, patch)}
                             onCancel={() => setEditingId(null)} />
             ) : (
-              <TagRow key={tag.id} tag={tag} onEdit={() => setEditingId(tag.id)} onDelete={() => deleteTag(tag.id)} />
+              <TagRow key={tag.id} tag={tag} onEdit={() => setEditingId(tag.id)} onDelete={() => handleDelete(tag.id)} />
             )
           ))}
         </div>
@@ -1104,8 +1134,18 @@ interface NavSection {
   items: NavItem[];
 }
 
+const PAGE_IDS: PageId[] = ['general', 'tags', 'print', 'spoolman', 'notifications', 'data', 'about'];
+
+function pageFromPath(pathname: string): PageId {
+  const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
+  return (PAGE_IDS as string[]).includes(seg) ? (seg as PageId) : 'general';
+}
+
 export function SettingsScreen() {
-  const [activePage, setActivePage] = useState<PageId>('general');
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activePage = pageFromPath(location.pathname);
+  const setActivePage = (id: PageId) => navigate(`/settings/${id}`);
 
   const sections: NavSection[] = [
     {

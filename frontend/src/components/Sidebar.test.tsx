@@ -30,7 +30,6 @@ describe('Sidebar nav items', () => {
     expect(screen.getByText('Fleet')).toBeTruthy();
     expect(screen.getByText('Orders')).toBeTruthy();
     expect(screen.getByText('Files')).toBeTruthy();
-    expect(screen.getByText('Filaments')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
   });
 

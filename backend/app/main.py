@@ -15,6 +15,7 @@ from .api.routes.printers import router as printers_router
 from .api.routes.queue import router as queue_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
+from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
@@ -28,6 +29,16 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # File library: migrate legacy uploads, then index the library dir.
+    from . import config as _config
+    from .services.library_scanner import LibraryScanner, migrate_legacy_uploads
+    # Ensure the default job-upload folder always exists (always shown, never deleted).
+    (_config.get_library_dir() / "Job Uploads").mkdir(parents=True, exist_ok=True)
+    async with SessionLocal() as _s:
+        await migrate_legacy_uploads(
+            _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
+        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
 
     loop = asyncio.get_running_loop()
 
@@ -70,6 +81,7 @@ app.include_router(jobs_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(spoolman_router)
+app.include_router(tags_router)
 
 
 @app.get("/api/v1/health")
