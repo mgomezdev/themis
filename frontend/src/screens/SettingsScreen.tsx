@@ -369,7 +369,6 @@ function TagsPage() {
   function reportError(e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     setError(msg);
-    window.alert(`Couldn't save tag: ${msg}`);
   }
 
   async function handleDelete(id: number) {
