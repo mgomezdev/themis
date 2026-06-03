@@ -58,6 +58,14 @@ async def test_delete_root_folder_rejected(client, lib):
 
 
 @pytest.mark.asyncio
+async def test_delete_job_uploads_rejected(client, lib):
+    (lib / "Job Uploads").mkdir()
+    r = await client.delete("/api/v1/files/folders", params={"path": "/Job Uploads"})
+    assert r.status_code == 400
+    assert (lib / "Job Uploads").is_dir()
+
+
+@pytest.mark.asyncio
 async def test_move_to_same_folder_is_noop(client, lib):
     # Moving a file to the folder it already lives in must NOT suffix-rename it.
     up = (await client.post("/api/v1/files/upload", data={"folder": "/Customers"}, files=_stl("a.stl"))).json()

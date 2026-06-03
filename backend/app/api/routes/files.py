@@ -205,6 +205,8 @@ async def delete_folder(path: str) -> dict:
     target = _safe_subpath(library, path)
     if target.resolve() == library.resolve():
         raise HTTPException(400, "Cannot delete the library root")
+    if target.resolve() == (library / "Job Uploads").resolve():
+        raise HTTPException(400, "The Job Uploads folder cannot be deleted")
     if not target.exists() or not target.is_dir():
         raise HTTPException(404, "Folder not found")
     if any(target.iterdir()):

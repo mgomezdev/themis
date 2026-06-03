@@ -130,4 +130,66 @@ describe('FilesScreen', () => {
       expect(dels[0][0] as string).toContain('path=%2FEmpty');
     });
   });
+
+  it('creates a new folder as a child of the selected folder', async () => {
+    const dirsTree = {
+      name: 'All files', path: '', count: 0,
+      children: { Customers: { name: 'Customers', path: '/Customers', count: 0, children: {} } },
+    };
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files/folders')) return new Response(
+        JSON.stringify({ path: '/Customers/Sub' }), { status: 201 });
+      if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 });
+      return new Response('[]', { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubGlobal('prompt', vi.fn(() => 'Sub'));
+
+    render(<MemoryRouter><FilesScreen /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Customers')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText('Customers'));                          // select parent
+    fireEvent.click(screen.getAllByRole('button', { name: /New folder/i })[0]);
+
+    await waitFor(() => {
+      const posts = fetchMock.mock.calls.filter(c =>
+        typeof c[0] === 'string'
+        && c[0].includes('/api/v1/files/folders')
+        && (c[1] as RequestInit | undefined)?.method === 'POST');
+      expect(posts.length).toBe(1);
+      expect(String((posts[0][1] as RequestInit).body)).toContain('/Customers/Sub');
+    });
+  });
+
+  it('pins Job Uploads to the top and forbids deleting it', async () => {
+    const dirsTree = {
+      name: 'All files', path: '', count: 0,
+      children: {
+        Aaa: { name: 'Aaa', path: '/Aaa', count: 0, children: {} },
+        'Job Uploads': { name: 'Job Uploads', path: '/Job Uploads', count: 0, children: {} },
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.startsWith('/api/v1/files/dirs')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files/tree')) return new Response(JSON.stringify(dirsTree), { status: 200 });
+      if (url.startsWith('/api/v1/files')) return new Response('[]', { status: 200 });
+      return new Response('[]', { status: 200 });
+    }));
+
+    render(<MemoryRouter><FilesScreen /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Job Uploads')).toBeInTheDocument());
+
+    // Job Uploads is ordered before the alphabetically-earlier "Aaa"
+    const ju = screen.getByText('Job Uploads');
+    const aaa = screen.getByText('Aaa');
+    expect(ju.compareDocumentPosition(aaa) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // selecting Job Uploads disables the delete-folder button
+    fireEvent.click(ju);
+    expect(screen.getByRole('button', { name: 'Delete folder' })).toBeDisabled();
+  });
 });

@@ -24,6 +24,15 @@ const fallbackColor = (id: number) => FALLBACK_COLORS[id % FALLBACK_COLORS.lengt
 // Empty root for the folder tree before /dirs resolves.
 const EMPTY_TREE: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
 
+const JOB_UPLOADS = 'Job Uploads';
+
+// Sort folder names alphabetically, but always pin "Job Uploads" to the top.
+function jobUploadsFirst(a: string, b: string): number {
+  if (a === JOB_UPLOADS) return -1;
+  if (b === JOB_UPLOADS) return 1;
+  return a.localeCompare(b);
+}
+
 // -------------------------------------------------------------------------
 // FolderIcon
 // -------------------------------------------------------------------------
@@ -100,7 +109,7 @@ function FolderTreeNode({ node, depth, openSet, toggle, current, setCurrent }: F
       </button>
       {hasChildren && isOpen && (
         <div>
-          {childKeys.sort().map(k => (
+          {childKeys.sort(jobUploadsFirst).map(k => (
             <FolderTreeNode key={k} node={node.children[k]} depth={depth + 1}
                             openSet={openSet} toggle={toggle}
                             current={current} setCurrent={setCurrent} />
@@ -181,8 +190,13 @@ function FolderCard({
           <button className="btn ghost icon sm" title="New folder"
                   onClick={onNewFolder}>{Icons.plus}</button>
           <button className="btn ghost icon sm"
-                  title={currentFolder ? `Delete folder “${breadcrumb}” (must be empty)` : 'Select a folder to delete'}
-                  disabled={!currentFolder}
+                  aria-label="Delete folder"
+                  title={
+                    !currentFolder ? 'Select a folder to delete'
+                    : currentFolder === `/${JOB_UPLOADS}` ? 'The Job Uploads folder can’t be deleted'
+                    : `Delete folder “${breadcrumb}” (must be empty)`
+                  }
+                  disabled={!currentFolder || currentFolder === `/${JOB_UPLOADS}`}
                   onClick={onDeleteFolder}>{Icons.trash}</button>
           <button className="btn ghost icon sm" title="Collapse" onClick={onToggle}>{Icons.chevL}</button>
         </div>
@@ -653,8 +667,10 @@ export function FilesScreen() {
   }
 
   async function handleNewFolder() {
-    const path = window.prompt('New folder path', `${currentFolder || ''}/New folder`);
-    if (!path) return;
+    const parentLabel = currentFolder ? `“${breadcrumb}”` : 'the library root';
+    const name = window.prompt(`New folder name (inside ${parentLabel})`);
+    if (!name) return;
+    const path = `${currentFolder || ''}/${name}`.replace(/\/+/g, '/');
     try { await createFolder(path); refetch(); }
     catch (err) { window.alert(String(err)); }
   }
