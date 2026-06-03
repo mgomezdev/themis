@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { shade } from '../data/helpers';
 import { Icons } from '../components/icons';
@@ -6,7 +6,7 @@ import { Empty } from '../components/ui';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   useFiles, uploadLibraryFile, createFolder, updateFile, deleteFile,
-  addFileTag, removeFileTag, rescanLibrary,
+  addFileTag, removeFileTag, rescanLibrary, getFolderDirs,
 } from '../api/files';
 import { useTags } from '../api/tags';
 import type { Tag } from '../api/tags';
@@ -506,6 +506,90 @@ function FileDetailPanel({
 }
 
 // -------------------------------------------------------------------------
+// FolderPicker — modal to choose an existing destination folder (+ New folder)
+// -------------------------------------------------------------------------
+
+const NO_PICK = ' '; // sentinel: a path that matches no real folder
+
+function FolderPicker({ count, onPick, onClose }: {
+  count: number;
+  onPick: (folder: string) => void;
+  onClose: () => void;
+}) {
+  const [dirs, setDirs] = useState<FolderNode | null>(null);
+  const [picked, setPicked] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const reload = () => getFolderDirs().then(setDirs).catch(err => window.alert(String(err)));
+  useEffect(() => { reload(); }, []);
+
+  const toggle = (p: string) => setOpen(prev => {
+    const n = new Set(prev); if (n.has(p)) n.delete(p); else n.add(p); return n;
+  });
+
+  async function newFolder() {
+    const parent = picked ?? '';
+    const name = window.prompt('New folder name');
+    if (!name) return;
+    const path = `${parent}/${name}`.replace(/\/+/g, '/');
+    try {
+      const res = await createFolder(path);
+      await reload();
+      setPicked(res.path);
+      const o = new Set(open);
+      let acc = '';
+      for (const part of res.path.split('/').filter(Boolean)) { acc += '/' + part; o.add(acc); }
+      setOpen(o);
+    } catch (err) { window.alert(String(err)); }
+  }
+
+  const destLabel = picked == null ? '—' : (picked === '' ? 'All files (root)' : picked);
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+      display: 'grid', placeItems: 'center', zIndex: 50,
+    }}>
+      <div onClick={e => e.stopPropagation()} className="card" style={{
+        width: 'min(460px, 92vw)', maxHeight: '80vh',
+        display: 'flex', flexDirection: 'column', padding: 0,
+      }}>
+        <div className="row between" style={{ padding: '14px 16px', borderBottom: '1px solid var(--border-1)' }}>
+          <div style={{ fontWeight: 600 }}>Move {count} file{count === 1 ? '' : 's'} to…</div>
+          <button className="btn ghost icon sm" onClick={onClose}>
+            <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.x}</span>
+          </button>
+        </div>
+        <div style={{ padding: 8, overflow: 'auto', flex: 1, minHeight: 140 }}>
+          {dirs
+            ? <FolderTreeNode node={dirs} depth={0} openSet={open} toggle={toggle}
+                              current={picked ?? NO_PICK} setCurrent={setPicked} />
+            : <div className="muted small" style={{ padding: 12 }}>Loading folders…</div>}
+        </div>
+        <div className="row between" style={{
+          padding: '12px 16px', borderTop: '1px solid var(--border-1)', alignItems: 'center', gap: 8,
+        }}>
+          <button className="btn ghost sm" onClick={newFolder}>
+            <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.plus}</span>
+            New folder
+          </button>
+          <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <span className="tiny muted" style={{
+              maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}>→ {destLabel}</span>
+            <button className="btn ghost sm" onClick={onClose}>Cancel</button>
+            <button className="btn primary sm" disabled={picked == null}
+                    onClick={() => onPick(picked === '' ? '/' : picked as string)}>
+              Move here
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// -------------------------------------------------------------------------
 // FilesScreen
 // -------------------------------------------------------------------------
 
@@ -519,6 +603,8 @@ export function FilesScreen() {
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
   const [folderExpanded, setFolderExpanded] = useState(true);
   const [filterExpanded, setFilterExpanded] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [movePicker, setMovePicker] = useState<{ ids: number[] } | null>(null);
 
   const filter = useMemo(() => ({
     folder: currentFolder || undefined,
@@ -596,17 +682,71 @@ export function FilesScreen() {
     catch (err) { window.alert(String(err)); }
   }
 
-  async function handleMove(f: LibraryFile) {
-    const folder = window.prompt('Move to folder', f.folder);
-    if (folder == null || folder === f.folder) return;
-    try { await updateFile(f.id, { folder }); setSelected(null); refetch(); }
-    catch (err) { window.alert(String(err)); }
+  function handleMove(f: LibraryFile) {
+    setMovePicker({ ids: [f.id] });
   }
 
   async function handleDelete(f: LibraryFile) {
     if (!window.confirm(`Delete ${f.original_filename}?`)) return;
     try { await deleteFile(f.id); setSelected(null); refetch(); }
     catch (err) { window.alert(String(err)); }
+  }
+
+  // -- bulk selection ----------------------------------------------------
+
+  const toggleSelect = (id: number) => setSelectedIds(prev => {
+    const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n;
+  });
+  const clearSelection = () => setSelectedIds(new Set());
+  const selectAll = () => setSelectedIds(new Set(sorted.map(f => f.id)));
+  const nameOf = (id: number) => files.find(f => f.id === id)?.original_filename ?? `#${id}`;
+
+  // drop selections for files that vanished after a refetch
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const present = new Set(files.map(f => f.id));
+      const next = new Set([...prev].filter(id => present.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [files]);
+
+  function openBulkMove() {
+    if (selectedIds.size) setMovePicker({ ids: [...selectedIds] });
+  }
+
+  async function applyMove(folder: string) {
+    const ids = movePicker?.ids ?? [];
+    const failed: string[] = [];
+    let ok = 0;
+    for (const id of ids) {
+      const f = files.find(x => x.id === id);
+      if (f && f.folder === folder) continue; // already in the destination
+      try { await updateFile(id, { folder }); ok++; }
+      catch { failed.push(nameOf(id)); }
+    }
+    setMovePicker(null);
+    clearSelection();
+    setSelected(null);
+    refetch();
+    if (failed.length) window.alert(`Moved ${ok}. Failed ${failed.length}: ${failed.join(', ')}`);
+  }
+
+  async function bulkDelete() {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    if (!window.confirm(`Delete ${ids.length} file${ids.length > 1 ? 's' : ''}?`)) return;
+    const skipped: string[] = [];
+    let ok = 0;
+    for (const id of ids) {
+      try { await deleteFile(id); ok++; }
+      catch { skipped.push(nameOf(id)); }
+    }
+    clearSelection();
+    setSelected(null);
+    refetch();
+    if (skipped.length) {
+      window.alert(`Deleted ${ok}. Skipped ${skipped.length} (in use by a job): ${skipped.join(', ')}`);
+    }
   }
 
   async function handleAddTag(f: LibraryFile, tagId: number) {
@@ -717,6 +857,28 @@ export function FilesScreen() {
             facetGroups={facetGroups}
           />
 
+          {/* Bulk action bar */}
+          {selectedIds.size > 0 && (
+            <div className="card row between" style={{
+              padding: '8px 12px', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+              borderColor: 'var(--border-3)',
+            }}>
+              <span className="small" style={{ fontWeight: 600 }}>{selectedIds.size} selected</span>
+              <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+                <button className="btn ghost sm" onClick={selectAll}>Select all</button>
+                <button className="btn ghost sm" onClick={openBulkMove}>
+                  <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.files}</span>
+                  Move
+                </button>
+                <button className="btn ghost sm" onClick={bulkDelete}>
+                  <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.trash}</span>
+                  Delete
+                </button>
+                <button className="btn ghost sm" onClick={clearSelection}>Clear</button>
+              </div>
+            </div>
+          )}
+
           {/* File grid */}
           {sorted.length === 0 ? (
             <Empty title="No files match" sub="Try removing a tag or picking a different folder." icon={Icons.files} />
@@ -727,8 +889,28 @@ export function FilesScreen() {
               gap: 12,
             }}>
               {sorted.map(f => (
-                <div key={f.id} className="card" style={{ padding: 10, cursor: 'pointer' }}
+                <div key={f.id} className="card" style={{
+                       padding: 10, cursor: 'pointer', position: 'relative',
+                       outline: selectedIds.has(f.id) ? '2px solid var(--accent)' : 'none',
+                       outlineOffset: -1,
+                     }}
                      onClick={() => setSelected(f)}>
+                  <label
+                    onClick={e => e.stopPropagation()}
+                    title="Select"
+                    style={{
+                      position: 'absolute', top: 8, left: 8, zIndex: 2,
+                      display: 'inline-flex', alignItems: 'center', cursor: 'pointer',
+                      background: 'rgba(0,0,0,0.45)', borderRadius: 5, padding: '3px 4px',
+                    }}>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${f.original_filename}`}
+                      checked={selectedIds.has(f.id)}
+                      onChange={() => toggleSelect(f.id)}
+                      style={{ cursor: 'pointer', margin: 0 }}
+                    />
+                  </label>
                   <FileThumb file={f} />
                   <div style={{
                     fontSize: 12, marginTop: 8, fontWeight: 500,
@@ -774,6 +956,14 @@ export function FilesScreen() {
           onAddTag={handleAddTag}
           onRemoveTag={handleRemoveTag}
           onUseInJob={handleUseInJob}
+        />
+      )}
+
+      {movePicker && (
+        <FolderPicker
+          count={movePicker.ids.length}
+          onPick={applyMove}
+          onClose={() => setMovePicker(null)}
         />
       )}
     </div>

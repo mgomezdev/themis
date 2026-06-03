@@ -28,6 +28,9 @@ export function getFiles(filter: FileFilter = {}): Promise<LibraryFile[]> {
 
 export const getFolderTree = () => request<FolderNode>('/api/v1/files/tree');
 
+/** Real on-disk folder hierarchy incl. empty folders (for the move picker). */
+export const getFolderDirs = () => request<FolderNode>('/api/v1/files/dirs');
+
 export async function uploadLibraryFile(file: File, folder?: string): Promise<LibraryFile> {
   const body = new FormData();
   body.append('file', file);

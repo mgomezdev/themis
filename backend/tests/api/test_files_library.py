@@ -35,6 +35,35 @@ async def test_upload_to_named_folder_and_list(client, lib):
 
 
 @pytest.mark.asyncio
+async def test_move_to_same_folder_is_noop(client, lib):
+    # Moving a file to the folder it already lives in must NOT suffix-rename it.
+    up = (await client.post("/api/v1/files/upload", data={"folder": "/Customers"}, files=_stl("a.stl"))).json()
+    r = await client.patch(f"/api/v1/files/{up['id']}", json={"folder": "/Customers"})
+    assert r.status_code == 200, r.text
+    assert r.json()["original_filename"] == "a.stl"          # not "a (2).stl"
+    assert (lib / "Customers" / "a.stl").is_file()
+    assert not (lib / "Customers" / "a (2).stl").exists()
+
+
+@pytest.mark.asyncio
+async def test_dirs_includes_empty_folders(client, lib):
+    # An empty folder created on disk must appear in /dirs (it won't in /tree).
+    await client.post("/api/v1/files/folders", json={"path": "/Empty/Nested"})
+    await client.post("/api/v1/files/upload", data={"folder": "/Customers"}, files=_stl("a.stl"))
+    r = await client.get("/api/v1/files/dirs")
+    assert r.status_code == 200, r.text
+    tree = r.json()
+    assert "Empty" in tree["children"]
+    assert "Nested" in tree["children"]["Empty"]["children"]
+    assert tree["children"]["Empty"]["path"] == "/Empty"
+    # file count overlaid on the folder that has a file
+    assert tree["children"]["Customers"]["count"] == 1
+    # /tree (index-derived) must NOT contain the empty folder
+    t = (await client.get("/api/v1/files/tree")).json()
+    assert "Empty" not in t["children"]
+
+
+@pytest.mark.asyncio
 async def test_tag_assign_filter(client, lib):
     up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
     tag = (await client.post("/api/v1/tags", json={"name": "PLA", "color": "#fff", "category": "Material"})).json()

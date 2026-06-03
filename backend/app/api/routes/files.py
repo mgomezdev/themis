@@ -111,6 +111,42 @@ async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
     return root
 
 
+@router.get("/dirs")
+async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
+    """Folder hierarchy from the actual on-disk library directory — includes
+    EMPTY folders (unlike /tree, which is index-derived) — with recursive file
+    counts overlaid from the index. Used by the move-destination picker."""
+    library = config.get_library_dir()
+    root: dict = {"name": "All files", "path": "", "count": 0, "children": {}}
+
+    def _ensure(parts: list[str]) -> None:
+        node = root
+        path = ""
+        for part in parts:
+            path += "/" + part
+            node = node["children"].setdefault(
+                part, {"name": part, "path": path, "count": 0, "children": {}})
+
+    # 1) skeleton from real directories (so empty folders appear)
+    if library.exists():
+        for d in sorted(p for p in library.rglob("*") if p.is_dir()):
+            rel = d.relative_to(library).as_posix()
+            _ensure([p for p in rel.split("/") if p])
+
+    # 2) overlay recursive file counts from the index
+    rows = (await session.execute(select(UploadedFile))).scalars().all()
+    for r in rows:
+        root["count"] += 1
+        node = root
+        path = ""
+        for part in [p for p in r.folder.split("/") if p]:
+            path += "/" + part
+            node = node["children"].setdefault(
+                part, {"name": part, "path": path, "count": 0, "children": {}})
+            node["count"] += 1
+    return root
+
+
 # ---------- upload ----------
 
 @router.post("/upload", status_code=201)
@@ -187,6 +223,11 @@ async def update_file(file_id: int, body: FilePatch,
         new_name = f.original_filename
     folder_abs = _safe_subpath(library, new_folder)
     folder_abs.mkdir(parents=True, exist_ok=True)
+    # No-op when the target is the file's existing location: skip the move so we
+    # don't collide with the file itself and rename it to "name (2).ext".
+    if src.exists() and folder_abs.resolve() == src.parent.resolve() and new_name == src.name:
+        tag_map = await _tags_for(session, [f.id])
+        return _to_dict(f, tag_map.get(f.id, []))
     dest = LibraryScanner.unique_path(folder_abs, new_name)
     # Defense-in-depth: verify dest is inside the library before touching the FS.
     library_resolved = library.resolve()
