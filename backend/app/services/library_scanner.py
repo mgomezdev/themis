@@ -146,3 +146,54 @@ class LibraryScanner:
 
         await self.session.commit()
         return summary
+
+
+async def migrate_legacy_uploads(session, data_dir, library_dir, filecache_dir) -> int:
+    """One-time, idempotent: move pre-library uploads under <data>/uploads/<uuid>/
+    into <library>/Job Uploads/ and backfill index columns. Returns count moved."""
+    data_dir, library_dir = Path(data_dir), Path(library_dir)
+    sentinel = library_dir / ".legacy_migrated"
+    if sentinel.exists():
+        return 0
+    job_uploads = library_dir / "Job Uploads"
+    job_uploads.mkdir(parents=True, exist_ok=True)
+    moved = 0
+    rows = (await session.execute(select(UploadedFile))).scalars().all()
+    uploads_root = (data_dir / "uploads").resolve()
+    for row in rows:
+        if row.relative_path:  # already indexed/migrated
+            continue
+        src = Path(row.stored_path)
+        try:
+            inside_uploads = uploads_root in src.resolve().parents
+        except OSError:
+            inside_uploads = False
+        if not (src.exists() and inside_uploads):
+            continue
+        dest = LibraryScanner.unique_path(job_uploads, row.original_filename or src.name)
+        try:
+            src.replace(dest)
+        except OSError:
+            continue
+        rel = dest.relative_to(library_dir).as_posix()
+        stat = dest.stat()
+        row.stored_path = str(dest)
+        row.relative_path = rel
+        row.folder = folder_of(rel)
+        row.size_bytes = stat.st_size
+        row.content_hash = sha256_file(dest)
+        row.mtime = stat.st_mtime
+        # Relocate any existing thumbnails into the filecache for this id.
+        old_thumbs = src.parent / "thumbnails"
+        if old_thumbs.is_dir():
+            new_thumbs = Path(filecache_dir) / str(row.id) / "thumbnails"
+            new_thumbs.mkdir(parents=True, exist_ok=True)
+            for t in old_thumbs.glob("*"):
+                try:
+                    t.replace(new_thumbs / t.name)
+                except OSError:
+                    pass
+        moved += 1
+    await session.commit()
+    sentinel.write_text("done")
+    return moved

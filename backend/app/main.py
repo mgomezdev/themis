@@ -30,6 +30,14 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 async def lifespan(app: FastAPI):
     await init_db()
 
+    # File library: migrate legacy uploads, then index the library dir.
+    from . import config as _config
+    from .services.library_scanner import LibraryScanner, migrate_legacy_uploads
+    async with SessionLocal() as _s:
+        await migrate_legacy_uploads(
+            _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
+        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
+
     loop = asyncio.get_running_loop()
 
     # Wire printer manager
