@@ -28,16 +28,16 @@ function mockErr(status: number, text: string) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('uploadFile', () => {
-  it('POSTs to /api/v1/files/upload and returns parsed file', async () => {
-    const plate = { plate_number: 1, estimated_time: 3600, filament_g: 42, thumbnail_path: null };
-    mockOk({ id: 1, original_filename: 'model.3mf', plates: [plate] });
+  it('POSTs to /api/v1/files/upload and returns the uploaded file record', async () => {
+    // Upload now returns the library file record (id/folder/plate_count), not a plates array.
+    mockOk({ id: 1, original_filename: 'model.3mf', folder: '/Job Uploads', plate_count: 1 });
 
     const file = new File(['content'], 'model.3mf', { type: 'application/octet-stream' });
     const result = await uploadFile(file);
 
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/upload', expect.objectContaining({ method: 'POST' }));
     expect(result.id).toBe(1);
-    expect(result.plates[0].plate_number).toBe(1);
+    expect(result.plate_count).toBe(1);
   });
 
   it('throws on non-ok response', async () => {
