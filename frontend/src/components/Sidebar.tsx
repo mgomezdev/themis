@@ -40,7 +40,6 @@ export function Sidebar({ queueCounts, ordersOpen }: SidebarProps) {
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
     { to: '/orders',    label: 'Orders',      icon: Icons.orders,   count: ordersOpen },
     { to: '/files',     label: 'Files',       icon: Icons.files },
-    { to: '/filaments', label: 'Filaments',   icon: Icons.spool },
   ];
 
   return (
