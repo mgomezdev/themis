@@ -81,3 +81,56 @@ async def test_create_folder_and_tree(client, lib):
     assert (lib / "Customers" / "New").is_dir()
     r = await client.get("/api/v1/files/tree")
     assert r.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_move_rejects_name_traversal(client, lib):
+    """PATCH with a traversal name must not move the file outside the library."""
+    up = (await client.post("/api/v1/files/upload", files=_stl("victim.stl"))).json()
+    file_id = up["id"]
+
+    # Craft a name that would escape the library root via path traversal.
+    r = await client.patch(f"/api/v1/files/{file_id}", json={"name": "../../../escape.stl"})
+
+    # The response must NOT be a 500 (unhandled error).
+    assert r.status_code != 500, f"Unhandled 500 means traversal reached os.replace: {r.text}"
+
+    # The escaped file must not exist anywhere outside the library.
+    assert not (lib.parent / "escape.stl").exists(), "File escaped one level above library!"
+    assert not (lib.parent.parent / "escape.stl").exists(), "File escaped two levels above library!"
+
+    # The original file must still be accessible (either unchanged or safely renamed inside lib).
+    r2 = await client.get(f"/api/v1/files/{file_id}")
+    if r.status_code == 400:
+        # Fix path: file was rejected, original still intact inside lib
+        assert r2.status_code == 200, "File record should still exist after rejected rename"
+        stored_path = r2.json()["relative_path"]
+        assert not stored_path.startswith(".."), "Stored path must not escape via .."
+        # Confirm the physical file is still inside the library
+        import pathlib
+        full = lib / stored_path.lstrip("/")
+        assert full.exists(), "Original file must still be present inside the library"
+    else:
+        # Fix applied basename-stripping: name was sanitized, file stays inside lib
+        assert r.status_code == 200, f"Expected 200 or 400, got {r.status_code}: {r.text}"
+        stored_path = r.json()["relative_path"]
+        full = lib / stored_path.lstrip("/")
+        assert full.exists(), "Renamed file must still be inside the library"
+        assert lib.resolve() in full.resolve().parents or full.resolve().parent == lib.resolve(), \
+            "Renamed file escaped the library root"
+
+
+@pytest.mark.asyncio
+async def test_move_rejects_folder_traversal(client, lib):
+    """PATCH with a traversal folder must return 400 and not move the file outside the library."""
+    up = (await client.post("/api/v1/files/upload", files=_stl("safe.stl"))).json()
+    file_id = up["id"]
+
+    r = await client.patch(f"/api/v1/files/{file_id}", json={"folder": "../../etc"})
+
+    # Must be rejected with 400 (existing _safe_subpath guard).
+    assert r.status_code == 400, f"Expected 400 for folder traversal, got {r.status_code}: {r.text}"
+
+    # The file must not have escaped — confirm it's still inside lib.
+    escaped_dir = lib.parent.parent / "etc"
+    assert not (escaped_dir / "safe.stl").exists(), "File escaped to ../../etc!"

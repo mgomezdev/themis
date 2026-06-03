@@ -177,10 +177,22 @@ async def update_file(file_id: int, body: FilePatch,
     library = config.get_library_dir()
     src = Path(f.stored_path)
     new_folder = body.folder if body.folder is not None else f.folder
-    new_name = body.name if body.name is not None else f.original_filename
+    # Strip all path components from the supplied name so that traversal
+    # sequences like "../../../evil.stl" cannot escape the library root.
+    if body.name is not None:
+        new_name = Path(body.name).name
+        if not new_name or new_name in (".", ".."):
+            raise HTTPException(400, "Invalid filename")
+    else:
+        new_name = f.original_filename
     folder_abs = _safe_subpath(library, new_folder)
     folder_abs.mkdir(parents=True, exist_ok=True)
     dest = LibraryScanner.unique_path(folder_abs, new_name)
+    # Defense-in-depth: verify dest is inside the library before touching the FS.
+    library_resolved = library.resolve()
+    dest_resolved = dest.resolve()
+    if dest_resolved != library_resolved and library_resolved not in dest_resolved.parents:
+        raise HTTPException(400, "Path escapes the library root")
     if src.exists():
         src.replace(dest)
     rel = dest.relative_to(library).as_posix()
