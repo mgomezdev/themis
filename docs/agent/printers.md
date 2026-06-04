@@ -57,6 +57,13 @@ Queue claim matches the job's **ask** (`config.filament_type`+`filament_color`) 
 slot). The matched slot supplies `filament_profile` (orca preset for slicing) and, for AMS,
 `ams_tray_id` → `StartPrintOptions.ams_mapping=[id]`. Mismatch ⇒ job **blocked** (transient).
 
+**AMS auto-sync merge** (`printer_manager.on_ams_change`): when the Bambu client fires `_on_ams_change`
+with fresh tray dicts, `on_ams_change` merges rather than overwrites — the incoming trays are joined to
+the existing `loaded_filaments` by `slot`; each matched slot's `filament_profile` and `spoolman_spool_id`
+are preserved from the previous DB value. Slots no longer reported in the AMS payload are dropped along
+with their mappings. `filament_id` in a tray dict carries the Bambu AMS material code (e.g. `"GFL99"`)
+and is never repurposed for Spoolman.
+
 ## Vendor specifics
 
 ### Elegoo Centauri (`elegoo_centauri_client.py`) — SDCP

@@ -28,8 +28,8 @@ Routes: `/queue`, `/queue/new`, `/fleet`, `/orders`, `/orders/new`, `/orders/:id
 | `JobDetailScreen` | `/jobs/:id` — full read view: thumbnail, file/plate stats, per-printer slicing config (incl. slice errors), assigned printer; actions: edit / unblock / cancel. |
 | `OrdersScreen` | `useOrders` accordion; per-order derived progress bar, parts table (Part/Material/Qty/Est), linked jobs (clickable → `/jobs/:id`), Hold/Edit/Delete. |
 | `NewOrderScreen` | Create **and** edit (`/orders/:id/edit` via `useParams`). Parts table with Spoolman-aware filament picker; `createOrder`/`updateOrder`. |
-| `FleetScreen` | Printer cards (tile/row/expanded). Live telemetry/camera. Queue-off cue (orange border + badge), **Ready for new work** button (`markPlateCleared`), AMS/loaded filament, edit-printer modal (make→model→nozzle cascade), `FilamentPicker`. |
-| `PrintersScreen` | `PrinterAddForm` (3-step wizard, used by Fleet "Add printer"). `EditForm` (loaded-filament slots). Not a top-level route. |
+| `FleetScreen` | Printer cards (tile/row/expanded). Live telemetry/camera. Queue-off cue (orange border + badge), **Ready for new work** button (`markPlateCleared`), AMS/loaded filament, edit-printer modal (`EditForm`), `FilamentPicker` (writes `spoolman_spool_id`, sets `filament_id: null`). |
+| `PrintersScreen` | `PrinterAddForm` (4-step wizard: Type → Connect → **Profile** → Review; step 3 uses `MachinePicker`, sets `current_orca_printer_profile` on create). `EditForm` (exported; make/model picker via `MachinePicker` + per-slot filament-profile `<select>` from `GET /printers/{id}/profiles` + optional Spoolman spool `<select>` writing `spoolman_spool_id`). Not a top-level route. |
 | `FilesScreen`, `FilamentsScreen`, `SettingsScreen` | Model library; filament library; settings sub-nav (general/tags/print-defaults/notifications/data/about/spoolman). |
 
 ## API clients & hooks (`src/api/*.ts`)
@@ -41,7 +41,7 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 |---|---|
 | `queue.ts` | Types `ApiJob`, `ApiJobDetails`, `ApiJobPrinterConfig`, `ApiSliceFailure`, `ApiPlate`. `useQueue()` (list + `/ws` `job_update`/`queue_update` merge). `useFilePlates(ids)` (cached plate metadata). `createJob`, `cancelJob`, `unblockJob`, `updateJobConfigs`, `getJobDetails`, `getSliceFailures`, `reorderQueue`, `uploadFile`, `getPrinterProfiles`, `checkOverrides`, `plateThumbnailUrl`. |
 | `orders.ts` | `ApiOrder`(status:`StatusKey`, progress 0..1), `ApiOrderDetail`(+jobs), `ApiOrderPart`(+filament_id/color). `useOrders()` (refetch on `/ws` job/queue events). `getOrders/getOrder/createOrder/updateOrder/deleteOrder`. |
-| `printers.ts` | `ApiPrinter`, `PrinterType`, `ConnectionField`, `LoadedFilament`(+filament_profile), `MachinePreset`. CRUD, `testConnection`, `fetchPrinterTypes`, `fetchMachineCatalog`, `rescanProfiles`, control fns, `markPlateCleared(id)`. |
+| `printers.ts` | `ApiPrinter`, `PrinterType`, `ConnectionField`, `LoadedFilament`(`filament_id`: Bambu AMS code or null; `filament_profile?`; `spoolman_spool_id?`), `MachinePreset`. CRUD, `testConnection`, `fetchPrinterTypes`, `fetchMachineCatalog`, `rescanProfiles`, control fns, `markPlateCleared(id)`. |
 | `fleet.ts` | `FleetPrinter` (raw) → `toFleetPrinter` → `Printer` (data/types). `useFleetData()` (poll + `/ws` `printer_state` merge). `mapStatus` does NOT fold `awaiting_plate_clear` into a status — it's a separate field/cue. |
 | `spoolman.ts` | `useSpoolmanConfig`, `useFilaments`, `useSpools`, `filamentDisplayName`. |
 

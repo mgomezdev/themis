@@ -26,10 +26,14 @@ spoolman_config     (enabled, url, api_key)
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
   keys passed to the client ctor). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
-- `loaded_filaments`: list of `{slot:int, filament_id, name, type, color:"#RRGGBB"}` (+ `filament_profile`
-  the OrcaSlicer filament preset for slicing; + `ams_tray_id`/`ams_unit` for Bambu AMS). For AMS
-  printers this is **auto-synced** from the live AMS (`printer_manager.on_ams_change`); for others the
-  user sets it via the Fleet filament picker. This is what the queue engine matches a job's ask against.
+- `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, type, color:"#RRGGBB",
+  filament_profile?:str|null, spoolman_spool_id?:str|null, ams_tray_id?, ams_unit?}`.
+  - `filament_id` = Bambu AMS material code (e.g. `"GFL99"`) or `null`; **not** a Spoolman id.
+  - `filament_profile` = OrcaSlicer filament preset used when slicing with this slot.
+  - `spoolman_spool_id` = optional mapped Spoolman spool id (written by EditForm/FilamentPicker).
+  For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
+  (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped); for
+  others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
 
 ### uploaded_files
 `id, original_filename, stored_path, plates: JSON, uploaded_at`.
@@ -65,5 +69,5 @@ loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color
 
 - Job API dicts emit `order_id` (not `project_id` — that was renamed; `projects` table removed).
 - `ApiOrder.status: StatusKey`, `progress: number` (0..1, ×100 for the bar).
-- `LoadedFilament` (frontend) mirrors the slot dict; `filament_profile?` optional.
+- `LoadedFilament` (frontend `api/printers.ts`) mirrors the slot dict; `filament_id` is Bambu AMS code or null (not Spoolman); `filament_profile?` and `spoolman_spool_id?` are optional.
 - `loaded_filaments` reaches the Fleet UI via `fleet.py` merging the DB row over the live state.
