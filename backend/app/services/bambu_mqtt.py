@@ -148,7 +148,9 @@ class BambuMQTTClient(AbstractPrinterClient):
         client.on_connect = self._on_connect
         client.on_message = self._on_message
         client.on_disconnect = self._on_disconnect
+        client.enable_logger(logger)  # route paho's socket/handshake errors into our log
         self._client = client
+        logger.info("Bambu %s: opening MQTT connection on %d", self._ip, MQTT_PORT)
         client.connect_async(self._ip, MQTT_PORT)
         client.loop_start()
 
@@ -335,13 +337,28 @@ class BambuMQTTClient(AbstractPrinterClient):
     def _on_connect(self, client, userdata, flags, rc) -> None:
         if rc == 0:
             self.state.connected = True
+            logger.info("Bambu %s: MQTT connected", self._ip)
             client.subscribe(f"device/{self._serial_number}/report", qos=1)
             self.request_status_update()
         else:
             self.state.connected = False
+            try:
+                reason = mqtt.connack_string(rc)
+            except Exception:
+                reason = str(rc)
+            logger.warning(
+                "Bambu %s: MQTT connection refused (rc=%s: %s) — check the access code/serial, "
+                "or the printer's single LAN connection may be held by another app (Bambu Studio/Handy).",
+                self._ip, rc, reason,
+            )
 
     def _on_disconnect(self, client, userdata, rc) -> None:
         self.state.connected = False
+        if rc != 0:
+            logger.warning("Bambu %s: MQTT disconnected unexpectedly (rc=%s)", self._ip, rc)
+
+    def control_endpoint(self) -> tuple[str, int]:
+        return (self._ip, MQTT_PORT)
 
     def _on_message(self, client, userdata, msg) -> None:
         self._last_message_time = time.time()

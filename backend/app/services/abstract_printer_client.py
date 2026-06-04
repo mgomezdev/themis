@@ -174,6 +174,12 @@ class AbstractPrinterClient(ABC):
     def camera_rtsp_url(self) -> str | None:
         return None
 
+    def control_endpoint(self) -> tuple[str, int] | None:
+        """Host/port of the primary control channel, used by the add-printer
+        'test connection' to give a useful reachability hint on failure.
+        None ⇒ no probe."""
+        return None
+
     def upload_file(self, data: bytes, filename: str) -> bool:
         return False
 
