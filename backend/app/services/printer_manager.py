@@ -177,14 +177,28 @@ class PrinterManager:
 
     async def on_ams_change(self, printer_id: int, trays: list) -> None:
         """AMS filament change → persist the printer's `loaded_filaments` from the
-        auto-detected trays, so the queue engine's filament gating and the Fleet UI
-        reflect what's actually loaded (no manual entry for AMS printers)."""
+        auto-detected trays. User-set per-slot mappings (`filament_profile`,
+        `spoolman_spool_id`) are preserved by slot across AMS reports; slots no
+        longer reported drop with their mappings."""
         if self._session_factory:
             async with self._session_factory() as session:
                 from ..models import Printer
                 printer = await session.get(Printer, printer_id)
                 if printer is not None:
-                    printer.loaded_filaments = trays
+                    prev_by_slot = {
+                        f.get("slot"): f for f in (printer.loaded_filaments or [])
+                    }
+                    merged = []
+                    for tray in trays:
+                        prev = prev_by_slot.get(tray.get("slot"))
+                        if prev is not None:
+                            tray = {
+                                **tray,
+                                "filament_profile": prev.get("filament_profile"),
+                                "spoolman_spool_id": prev.get("spoolman_spool_id"),
+                            }
+                        merged.append(tray)
+                    printer.loaded_filaments = merged
                     await session.commit()
         if self._on_state_broadcast:
             try:
