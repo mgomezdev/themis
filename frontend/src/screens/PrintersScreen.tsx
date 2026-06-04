@@ -8,11 +8,14 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
+  fetchMachineCatalog,
   type ApiPrinter,
   type PrinterType,
   type ConnectionField,
   type LoadedFilament,
+  type MachinePreset,
 } from '../api/printers';
+import { MachinePicker } from '../components/MachinePicker';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -202,6 +205,9 @@ export function PrinterAddForm({
   const [connError, setConnError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [machinePreset, setMachinePreset] = useState<string>('');
+  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
 
   async function handleTestConnection() {
     if (!data.printerType) return;
@@ -233,6 +239,8 @@ export function PrinterAddForm({
         name: data.nickname || data.printerType.display_name,
         printer_type: data.printerType.printer_type,
         connection_config: data.connectionConfig,
+        current_orca_printer_profile: machinePreset || null,
+        orca_printer_profiles: machinePreset ? [machinePreset] : [],
       });
       onCreated();
     } catch (e) {
@@ -244,7 +252,8 @@ export function PrinterAddForm({
   const steps = [
     { n: 1, label: 'Type' },
     { n: 2, label: 'Connect' },
-    { n: 3, label: 'Review' },
+    { n: 3, label: 'Profile' },
+    { n: 4, label: 'Review' },
   ] as const;
 
   return (
@@ -275,7 +284,7 @@ export function PrinterAddForm({
               <span className="small" style={{ color: step >= s.n ? 'var(--text-1)' : 'var(--text-3)' }}>
                 {s.label}
               </span>
-              {s.n < 3 && (
+              {s.n < 4 && (
                 <div style={{ width: 40, height: 1, background: 'var(--border-1)', marginLeft: 8 }} />
               )}
             </div>
@@ -372,8 +381,26 @@ export function PrinterAddForm({
           </div>
         )}
 
-        {/* Step 3: Review + finish */}
+        {/* Step 3: Printer profile (make/model) */}
         {step === 3 && data.printerType && (
+          <div className="card" style={{ padding: 24 }}>
+            <SectionHeader title="Printer profile"
+              sub="Pick the make/model so jobs slice with the right OrcaSlicer machine + filament presets. You can set this later." />
+            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
+            <div className="tiny muted" style={{ marginTop: 8 }}>
+              {machinePreset
+                ? <>Preset: <span className="mono">{machinePreset}</span></>
+                : 'Optional now — required before this printer can slice.'}
+            </div>
+            <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
+              <button className="btn primary" onClick={() => setStep(4)}>Next {Icons.chevR}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Review + finish */}
+        {step === 4 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
             <SectionHeader title="Review" sub="Confirm the details before adding." />
             <div className="col gap-2" style={{ marginBottom: 20 }}>
@@ -384,6 +411,10 @@ export function PrinterAddForm({
               <div className="row gap-3">
                 <span className="muted small" style={{ width: 120 }}>Nickname</span>
                 <span className="small">{data.nickname || data.printerType.display_name}</span>
+              </div>
+              <div className="row gap-3">
+                <span className="muted small" style={{ width: 120 }}>Printer profile</span>
+                <span className="small mono">{machinePreset || '— not set —'}</span>
               </div>
               {Object.entries(data.connectionConfig).map(([k, v]) => {
                 const field = data.printerType!.connection_fields.find(f => f.name === k);
@@ -402,7 +433,7 @@ export function PrinterAddForm({
             )}
 
             <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
+              <button className="btn" onClick={() => setStep(3)}>{Icons.chevL} Back</button>
               <button className="btn primary" onClick={handleFinish} disabled={finishing}>
                 {finishing ? 'Adding…' : <>{Icons.check} Finish</>}
               </button>
