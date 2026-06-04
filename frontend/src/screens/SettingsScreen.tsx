@@ -78,117 +78,6 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean
   );
 }
 
-function Segmented({ value, onChange, options }: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <div style={{
-      display: 'inline-flex',
-      background: 'var(--bg-1)',
-      border: '1px solid var(--border-1)',
-      borderRadius: 8,
-      padding: 3,
-      gap: 2,
-      flexWrap: 'wrap',
-    }}>
-      {options.map(o => (
-        <button key={o.value}
-                onClick={() => onChange(o.value)}
-                style={{
-                  padding: '6px 12px',
-                  background: value === o.value ? 'var(--bg-3)' : 'transparent',
-                  border: '1px solid',
-                  borderColor: value === o.value ? 'var(--border-2)' : 'transparent',
-                  borderRadius: 6,
-                  color: value === o.value ? 'var(--text-1)' : 'var(--text-3)',
-                  fontFamily: 'inherit',
-                  fontSize: 12.5,
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  fontWeight: value === o.value ? 500 : 400,
-                }}>
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// =========================================================================
-// General page
-// =========================================================================
-
-interface GeneralSettings {
-  workshopName: string;
-  units: string;
-  dateFormat: string;
-  weekStart: string;
-  defaultPriority: string;
-}
-
-function GeneralPage() {
-  const [s, set] = useState<GeneralSettings>({
-    workshopName: 'My Print Farm',
-    units: 'metric',
-    dateFormat: 'iso',
-    weekStart: 'monday',
-    defaultPriority: 'normal',
-  });
-  const update = (patch: Partial<GeneralSettings>) => set(prev => ({ ...prev, ...patch }));
-
-  return (
-    <div className="card" style={{ padding: 28 }}>
-      <PageHeader title="General" sub="Workshop-wide defaults that the rest of the app inherits." />
-
-      <FieldRow label="Workshop name"
-                hint="Shown on print labels, exported PDFs, and at the top of dashboard reports.">
-        <input className="input" value={s.workshopName}
-               onChange={e => update({ workshopName: e.target.value })}
-               style={{ width: '100%' }} />
-      </FieldRow>
-
-      <FieldRow label="Units"
-                hint="Affects build volumes, layer heights, and material lengths shown across the app.">
-        <Segmented value={s.units} onChange={v => update({ units: v })}
-                   options={[{value:'metric', label:'Metric · mm / g'},
-                             {value:'imperial', label:'Imperial · in / oz'}]} />
-      </FieldRow>
-
-      <FieldRow label="Date format"
-                hint="Used for order due dates and job timestamps.">
-        <Segmented value={s.dateFormat} onChange={v => update({ dateFormat: v })}
-                   options={[{value:'iso',label:'2026-05-25'},
-                             {value:'us', label:'05/25/2026'},
-                             {value:'eu', label:'25.05.2026'}]} />
-      </FieldRow>
-
-      <FieldRow label="Week starts on"
-                hint="Affects the weekly schedule view.">
-        <Segmented value={s.weekStart} onChange={v => update({ weekStart: v })}
-                   options={[{value:'monday',label:'Monday'},{value:'sunday',label:'Sunday'}]} />
-      </FieldRow>
-
-      <FieldRow label="Default job priority"
-                hint="Applied when creating a new job from the queue or from an order.">
-        <select className="select" value={s.defaultPriority}
-                onChange={e => update({ defaultPriority: e.target.value })}>
-          <option value="rush">Rush — top of queue</option>
-          <option value="high">High</option>
-          <option value="normal">Normal</option>
-          <option value="low">Low / fill</option>
-        </select>
-      </FieldRow>
-
-      <div className="row gap-2" style={{ marginTop: 20, justifyContent: 'flex-end' }}>
-        <button className="btn sm">Reset defaults</button>
-        <button className="btn primary sm">{Icons.check} Save changes</button>
-      </div>
-    </div>
-  );
-}
-
 // =========================================================================
 // Tags page
 // =========================================================================
@@ -492,106 +381,10 @@ function TagsPage() {
 }
 
 // =========================================================================
-// Notifications page
-// =========================================================================
-
-interface NotifSettings {
-  onJobComplete: boolean;
-  onJobFailed: boolean;
-  onClaimWaiting: boolean;
-  onPrinterIdle: boolean;
-  onLowSpool: boolean;
-  desktopNotifications: boolean;
-  soundOnAlerts: boolean;
-}
-
-function NotificationsPage() {
-  const [s, set] = useState<NotifSettings>({
-    onJobComplete: true,
-    onJobFailed: true,
-    onClaimWaiting: false,
-    onPrinterIdle: false,
-    onLowSpool: true,
-    desktopNotifications: false,
-    soundOnAlerts: false,
-  });
-  const update = (patch: Partial<NotifSettings>) => set(prev => ({ ...prev, ...patch }));
-
-  return (
-    <div className="card" style={{ padding: 28 }}>
-      <PageHeader title="Notifications"
-                  sub="Choose which events trigger an alert. All notifications stay local — nothing is sent to anyone else." />
-
-      <div style={{ marginBottom: 4, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
-        Events
-      </div>
-
-      <FieldRow label="Job completed"
-                hint="Notify when any printer finishes a print successfully.">
-        <Toggle checked={s.onJobComplete} onChange={v => update({ onJobComplete: v })} />
-      </FieldRow>
-      <FieldRow label="Job failed or paused"
-                hint="Fires on detected layer-shift, filament runout, thermal runaway, or user-paused jobs that idle for more than 10 minutes.">
-        <Toggle checked={s.onJobFailed} onChange={v => update({ onJobFailed: v })} />
-      </FieldRow>
-      <FieldRow label="Claim waiting"
-                hint="When a queued job is waiting for a free printer that just became idle.">
-        <Toggle checked={s.onClaimWaiting} onChange={v => update({ onClaimWaiting: v })} />
-      </FieldRow>
-      <FieldRow label="Printer goes idle"
-                hint="Notify whenever any printer transitions to idle — useful for back-to-back batches.">
-        <Toggle checked={s.onPrinterIdle} onChange={v => update({ onPrinterIdle: v })} />
-      </FieldRow>
-      <FieldRow label="Low spool"
-                hint="Warn when an assigned filament drops below the threshold set in Print defaults.">
-        <Toggle checked={s.onLowSpool} onChange={v => update({ onLowSpool: v })} />
-      </FieldRow>
-
-      <div style={{ marginTop: 24, marginBottom: 4, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
-        Delivery
-      </div>
-      <FieldRow label="Desktop notifications"
-                hint="Show system notifications in the corner of the screen even when Themis is in a background tab.">
-        <Toggle checked={s.desktopNotifications} onChange={v => update({ desktopNotifications: v })} />
-      </FieldRow>
-      <FieldRow label="Sound on alerts"
-                hint="Plays a chime for failure-level events only.">
-        <Toggle checked={s.soundOnAlerts} onChange={v => update({ soundOnAlerts: v })} />
-      </FieldRow>
-    </div>
-  );
-}
-
-// =========================================================================
 // Print defaults page
 // =========================================================================
 
-interface PrintSettings {
-  sliceOnClaim: boolean;
-  autoStartAfterSlice: boolean;
-  chamberPreheat: boolean;
-  requireDryBefore: string[];
-  lowSpoolPercent: number;
-  cooldownWaitMinutes: number;
-}
-
 function PrintDefaultsPage() {
-  const [s, set] = useState<PrintSettings>({
-    sliceOnClaim: true,
-    autoStartAfterSlice: false,
-    chamberPreheat: true,
-    requireDryBefore: ['PA-CF', 'PC', 'ABS'],
-    lowSpoolPercent: 20,
-    cooldownWaitMinutes: 5,
-  });
-  const update = (patch: Partial<PrintSettings>) => set(prev => ({ ...prev, ...patch }));
-
-  const allDryMaterials = ['PLA','PETG','PA-CF','ABS','ASA','PC','TPU'];
-  function toggleDry(m: string) {
-    const has = s.requireDryBefore.includes(m);
-    update({ requireDryBefore: has ? s.requireDryBefore.filter(x => x !== m) : [...s.requireDryBefore, m] });
-  }
-
   // Queue check interval — wired to the backend (how often the engine scans
   // printer availability and claims the next compatible queued job).
   const [checkInterval, setCheckInterval] = useState<number>(5);
@@ -650,58 +443,6 @@ function PrintDefaultsPage() {
         </div>
       </FieldRow>
 
-      <FieldRow label="Slice on claim"
-                hint="When a printer claims a queued job, slice immediately using its configured profile rather than waiting for a manual slice.">
-        <Toggle checked={s.sliceOnClaim} onChange={v => update({ sliceOnClaim: v })} />
-      </FieldRow>
-      <FieldRow label="Auto-start after slice"
-                hint="Once slicing finishes, start the print without waiting for confirmation.">
-        <Toggle checked={s.autoStartAfterSlice} onChange={v => update({ autoStartAfterSlice: v })} />
-      </FieldRow>
-      <FieldRow label="Chamber pre-heat"
-                hint="On chamber-heated printers, pre-heat the chamber as part of the slice-on-claim step.">
-        <Toggle checked={s.chamberPreheat} onChange={v => update({ chamberPreheat: v })} />
-      </FieldRow>
-
-      <FieldRow label="Require dry-before-print"
-                hint="Block printing until the assigned spool has been through the dryer recently.">
-        <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-          {allDryMaterials.map(m => {
-            const on = s.requireDryBefore.includes(m);
-            return (
-              <button key={m} onClick={() => toggleDry(m)}
-                      className={`btn sm ${on ? 'primary' : ''}`}
-                      style={on ? undefined : { background:'transparent', borderColor:'var(--border-1)' }}>
-                {m}
-              </button>
-            );
-          })}
-        </div>
-      </FieldRow>
-
-      <FieldRow label="Low-spool threshold"
-                hint="Warn when a spool drops below this percentage of its starting weight.">
-        <div className="row gap-3" style={{ alignItems: 'center' }}>
-          <input type="range" min="5" max="50" step="5"
-                 value={s.lowSpoolPercent}
-                 onChange={e => update({ lowSpoolPercent: Number(e.target.value) })}
-                 style={{ flex: 1 }} />
-          <span className="num" style={{ minWidth: 48, color: 'var(--text-1)', fontSize: 14, textAlign: 'right' }}>
-            {s.lowSpoolPercent}%
-          </span>
-        </div>
-      </FieldRow>
-
-      <FieldRow label="Cooldown wait after job"
-                hint="Pause this many minutes between back-to-back claims for the same printer.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
-          <input className="input num" type="number" min="0" max="60"
-                 value={s.cooldownWaitMinutes}
-                 onChange={e => update({ cooldownWaitMinutes: Number(e.target.value) })}
-                 style={{ width: 80 }}/>
-          <span className="small muted">minutes</span>
-        </div>
-      </FieldRow>
     </div>
   );
 }
@@ -980,67 +721,6 @@ function SpoolmanPage() {
 }
 
 // =========================================================================
-// Data & backup page
-// =========================================================================
-
-interface DataSettings {
-  autoBackup: boolean;
-  backupFrequency: string;
-  keepCompletedJobs: number;
-}
-
-function DataBackupPage() {
-  const [s, set] = useState<DataSettings>({
-    autoBackup: true,
-    backupFrequency: 'weekly',
-    keepCompletedJobs: 90,
-  });
-  const update = (patch: Partial<DataSettings>) => set(prev => ({ ...prev, ...patch }));
-
-  return (
-    <div className="card" style={{ padding: 28 }}>
-      <PageHeader title="Data & backup" sub="Where Themis keeps your library, and how to move it around." />
-
-      <FieldRow label="Automatic backup"
-                hint="Snapshot your library to disk at the cadence below.">
-        <Toggle checked={s.autoBackup} onChange={v => update({ autoBackup: v })} />
-      </FieldRow>
-      <FieldRow label="Backup frequency">
-        <Segmented value={s.backupFrequency} onChange={v => update({ backupFrequency: v })}
-                   options={[{value:'daily',label:'Daily'},{value:'weekly',label:'Weekly'},{value:'monthly',label:'Monthly'}]} />
-      </FieldRow>
-      <FieldRow label="Keep completed jobs"
-                hint="How long to retain completed jobs before archiving.">
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
-          <input className="input num" type="number" min="7" max="365"
-                 value={s.keepCompletedJobs}
-                 onChange={e => update({ keepCompletedJobs: Number(e.target.value) })}
-                 style={{ width: 80 }}/>
-          <span className="small muted">days</span>
-        </div>
-      </FieldRow>
-
-      <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border-1)' }}>
-        <div style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, marginBottom: 14 }}>
-          Manual actions
-        </div>
-        <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-          <button className="btn sm">{Icons.upload} Export library (.json)</button>
-          <button className="btn sm">{Icons.upload} Export jobs (.csv)</button>
-          <button className="btn sm">{Icons.copy} Import library…</button>
-          <button className="btn ghost sm" style={{ color: 'var(--err)' }}>
-            {Icons.trash} Clear completed jobs
-          </button>
-        </div>
-        <div className="tiny muted" style={{ marginTop: 14, lineHeight: 1.5, maxWidth: 540 }}>
-          Library exports include all orders, jobs, files, filament profiles, process presets, tags, and your settings.
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// =========================================================================
 // About page
 // =========================================================================
 
@@ -1077,40 +757,6 @@ function AboutPage() {
         <AboutTile k="Version"      v="0.7.2" mono />
         <AboutTile k="Released"     v="2026-05-22" mono />
         <AboutTile k="Channel"      v="Stable" />
-        <AboutTile k="Storage used" v="18.4 MB" mono />
-      </div>
-
-      <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border-1)' }}>
-        <div style={{ fontSize: 12, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500, marginBottom: 12 }}>
-          Links
-        </div>
-        <div className="col gap-2">
-          {([
-            ['Release notes',      'View what\'s new in each build'],
-            ['Documentation',      'How everything works under the hood'],
-            ['Report an issue',    'Send a bug or feature request'],
-            ['Keyboard shortcuts', 'Reference card'],
-          ] as [string, string][]).map(([label, sub]) => (
-            <a key={label} href="#" onClick={e => e.preventDefault()}
-               style={{
-                 display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                 padding: '10px 14px',
-                 background: 'var(--bg-1)',
-                 border: '1px solid var(--border-1)',
-                 borderRadius: 8,
-                 textDecoration: 'none',
-                 color: 'var(--text-1)',
-               }}>
-              <div className="col">
-                <div className="small" style={{ fontWeight: 500 }}>{label}</div>
-                <div className="tiny muted" style={{ marginTop: 2 }}>{sub}</div>
-              </div>
-              <span style={{ color: 'var(--text-3)', display: 'inline-flex' }}>
-                {React.cloneElement(Icons.external, { size: 14 } as React.SVGProps<SVGSVGElement>)}
-              </span>
-            </a>
-          ))}
-        </div>
       </div>
     </div>
   );
@@ -1120,7 +766,7 @@ function AboutPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'general' | 'tags' | 'print' | 'spoolman' | 'notifications' | 'data' | 'about';
+type PageId = 'tags' | 'print' | 'spoolman' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1134,11 +780,11 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['general', 'tags', 'print', 'spoolman', 'notifications', 'data', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
-  return (PAGE_IDS as string[]).includes(seg) ? (seg as PageId) : 'general';
+  return (PAGE_IDS as string[]).includes(seg) ? (seg as PageId) : 'tags';
 }
 
 export function SettingsScreen() {
@@ -1151,9 +797,8 @@ export function SettingsScreen() {
     {
       label: 'Workshop',
       items: [
-        { id: 'general',       label: 'General',        icon: Icons.settings,       sub: 'Units, defaults, workshop name' },
         { id: 'tags',          label: 'Tags',           icon: SettingsIcons.tag,     sub: 'Manage labels across files & jobs' },
-        { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Slicing, drying, low-spool' },
+        { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Queue interval & profile rescan' },
       ],
     },
     {
@@ -1165,9 +810,7 @@ export function SettingsScreen() {
     {
       label: 'System',
       items: [
-        { id: 'notifications', label: 'Notifications',  icon: Icons.bell,            sub: 'Alerts for jobs & spools' },
-        { id: 'data',          label: 'Data & backup',  icon: SettingsIcons.backup,  sub: 'Export, import, cleanup' },
-        { id: 'about',         label: 'About',          icon: SettingsIcons.info,    sub: 'Version & links' },
+        { id: 'about',         label: 'About',          icon: SettingsIcons.info,    sub: 'Version' },
       ],
     },
   ];
@@ -1202,12 +845,9 @@ export function SettingsScreen() {
 
       {/* page content */}
       <div style={{ minWidth: 0 }}>
-        {activePage === 'general'       && <GeneralPage />}
         {activePage === 'tags'          && <TagsPage />}
         {activePage === 'print'         && <PrintDefaultsPage />}
         {activePage === 'spoolman'      && <SpoolmanPage />}
-        {activePage === 'notifications' && <NotificationsPage />}
-        {activePage === 'data'          && <DataBackupPage />}
         {activePage === 'about'         && <AboutPage />}
       </div>
     </div>
