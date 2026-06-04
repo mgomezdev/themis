@@ -28,11 +28,12 @@ export interface PrinterType {
 
 export interface LoadedFilament {
   slot: number;
-  filament_id: string | null;
+  filament_id: string | null;          // Bambu AMS code (e.g. "GFL99") or null — NOT a Spoolman id
   name: string;
   type: string;
   color: string;
-  filament_profile?: string | null;  // OrcaSlicer filament preset used to slice with this filament
+  filament_profile?: string | null;    // OrcaSlicer filament preset used to slice with this filament
+  spoolman_spool_id?: string | null;   // optional mapped Spoolman spool id
 }
 
 export interface ApiPrinter {

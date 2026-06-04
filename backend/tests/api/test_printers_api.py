@@ -65,6 +65,23 @@ async def test_update_printer(client):
     assert response.json()["name"] == "New Name"
 
 
+async def test_patch_can_clear_and_omit_current_preset(client):
+    create = await client.post("/api/v1/printers", json={
+        "name": "P", "printer_type": "bambu", "connection_config": {},
+        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
+        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+    })
+    pid = create.json()["id"]
+    # Explicit null clears the preset.
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": None})
+    assert r.status_code == 200
+    assert r.json()["current_orca_printer_profile"] is None
+    # Set it again, then a PATCH that omits the key leaves it unchanged.
+    await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Bambu Lab P1S 0.4"})
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "P2"})
+    assert r.json()["current_orca_printer_profile"] == "Bambu Lab P1S 0.4"
+
+
 async def test_delete_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Temp", "printer_type": "bambu",
@@ -180,3 +197,45 @@ async def test_camera_503_not_connected(client: AsyncClient):
         assert resp.status_code == 503
     finally:
         del printer_manager._clients[printer_id]
+
+
+class _FakeConnClient:
+    """Minimal client for exercising the test-connection route logic."""
+    def __init__(self, connects, endpoint=None):
+        self._connects = connects
+        self._endpoint = endpoint
+        self.connected = False
+
+    def connect(self, loop=None):
+        if self._connects:
+            self.connected = True
+
+    def control_endpoint(self):
+        return self._endpoint
+
+    def disconnect(self, *a, **k):
+        pass
+
+
+async def test_test_connection_success(client, monkeypatch):
+    import app.api.routes.printers as pr
+    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.5)
+    monkeypatch.setattr(pr, "create_client_from_config", lambda *a, **k: _FakeConnClient(connects=True))
+    r = await client.post("/api/v1/printers/test-connection",
+                          json={"printer_type": "bambu", "connection_config": {}})
+    assert r.status_code == 200
+    assert r.json() == {"ok": True}
+
+
+async def test_test_connection_unreachable_gives_hint(client, monkeypatch):
+    import app.api.routes.printers as pr
+    monkeypatch.setattr(pr, "_TEST_CONNECT_POLL_S", 0.3)
+    # 127.0.0.1:59999 is closed → the probe classifies it as unreachable.
+    monkeypatch.setattr(pr, "create_client_from_config",
+                        lambda *a, **k: _FakeConnClient(connects=False, endpoint=("127.0.0.1", 59999)))
+    r = await client.post("/api/v1/printers/test-connection",
+                          json={"printer_type": "bambu", "connection_config": {}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is False
+    assert "Couldn't reach" in body["error"]

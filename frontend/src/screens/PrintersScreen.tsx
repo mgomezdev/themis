@@ -8,11 +8,16 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
+  fetchMachineCatalog,
   type ApiPrinter,
   type PrinterType,
   type ConnectionField,
   type LoadedFilament,
+  type MachinePreset,
 } from '../api/printers';
+import { MachinePicker } from '../components/MachinePicker';
+import { getPrinterProfiles } from '../api/queue';
+import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -53,7 +58,7 @@ interface WizardData {
 // EditForm — inline edit for an existing printer
 // ---------------------------------------------------------------------------
 
-function EditForm({
+export function EditForm({
   printer,
   types,
   onSave,
@@ -72,26 +77,57 @@ function EditForm({
     )
   );
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
+  const [preset, setPreset] = useState<string>(printer.current_orca_printer_profile ?? '');
+  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+  const spools = useSpools(spoolmanActive);
+
+  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
+  useEffect(() => {
+    let alive = true;
+    getPrinterProfiles(printer.id)
+      .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
+      .catch(() => { if (alive) setFilamentProfiles([]); });
+    return () => { alive = false; };
+  }, [printer.id, preset]);
 
   function addSlot() {
     setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
   }
-
   function removeSlot(i: number) {
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
   }
-
   function updateSlot(i: number, patch: Partial<LoadedFilament>) {
     setSlots(s => s.map((x, idx) => idx === i ? { ...x, ...patch } : x));
+  }
+  function pickSpool(i: number, spoolId: string) {
+    if (!spoolId) { updateSlot(i, { spoolman_spool_id: null }); return; }
+    const sp = spools.find(x => String(x.id) === spoolId);
+    if (!sp) { updateSlot(i, { spoolman_spool_id: spoolId }); return; }
+    updateSlot(i, {
+      spoolman_spool_id: String(sp.id),
+      name: spoolDisplayName(sp),
+      type: sp.filament.material,
+      color: sp.filament.color_hex ? `#${sp.filament.color_hex}` : (slots[i]?.color ?? '#888888'),
+    });
   }
 
   async function handleSave() {
     setSaving(true);
     setError(null);
     try {
-      await updatePrinter(printer.id, { name, connection_config: config, loaded_filaments: slots });
+      await updatePrinter(printer.id, {
+        name,
+        connection_config: config,
+        current_orca_printer_profile: preset || null,
+        orca_printer_profiles: preset ? [preset] : [],
+        loaded_filaments: slots,
+      });
       onSave();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Save failed');
@@ -107,6 +143,7 @@ function EditForm({
           <label className="label">Nickname</label>
           <input className="input" value={name} onChange={e => setName(e.target.value)} />
         </div>
+
         {ptype?.connection_fields.map((f: ConnectionField) => (
           <div key={f.name}>
             <label className="label">{f.label}</label>
@@ -119,52 +156,87 @@ function EditForm({
             />
           </div>
         ))}
+
+        <div>
+          <div className="label" style={{ marginBottom: 8 }}>Printer profile (make / model)</div>
+          <MachinePicker catalog={catalog} value={preset} onChange={setPreset} />
+        </div>
+
         <div>
           <div className="label" style={{ marginBottom: 8 }}>Loaded filaments</div>
-          <div className="col gap-2">
+          <div className="col gap-3">
             {slots.map((s, i) => (
-              <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
-                <input
-                  type="color"
-                  value={s.color}
-                  onChange={e => updateSlot(i, { color: e.target.value })}
-                  style={{
-                    width: 32, height: 32, padding: 2,
-                    border: '1px solid var(--border-1)', borderRadius: 6,
-                    cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0,
-                  }}
-                />
-                <select
-                  className="input"
-                  style={{ width: 90, flexShrink: 0 }}
-                  value={s.type}
-                  onChange={e => updateSlot(i, { type: e.target.value })}>
-                  {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <input
-                  className="input"
-                  style={{ flex: '1 1 140px' }}
-                  placeholder="Filament name"
-                  value={s.name}
-                  onChange={e => updateSlot(i, { name: e.target.value })}
-                />
-                <button
-                  className="btn ghost icon sm"
-                  onClick={() => removeSlot(i)}
-                  title="Remove slot">
-                  {Icons.x}
-                </button>
+              <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-1)' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
+                  <input
+                    type="color"
+                    value={s.color}
+                    onChange={e => updateSlot(i, { color: e.target.value })}
+                    style={{ width: 32, height: 32, padding: 2, border: '1px solid var(--border-1)', borderRadius: 6, cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0 }}
+                  />
+                  <select
+                    className="input"
+                    style={{ width: 90, flexShrink: 0 }}
+                    value={s.type}
+                    onChange={e => updateSlot(i, { type: e.target.value })}>
+                    {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                  </select>
+                  <input
+                    className="input"
+                    style={{ flex: '1 1 140px' }}
+                    placeholder="Filament name"
+                    value={s.name}
+                    onChange={e => updateSlot(i, { name: e.target.value })}
+                  />
+                  <button className="btn ghost icon sm" onClick={() => removeSlot(i)} title="Remove slot">
+                    {Icons.x}
+                  </button>
+                </div>
+
+                <div className="row gap-2" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+                  <div className="col gap-1" style={{ flex: '1 1 200px' }}>
+                    <label className="tiny muted" htmlFor={`fp-${i}`}>Filament profile</label>
+                    <select
+                      id={`fp-${i}`}
+                      aria-label={`Filament profile for slot ${i + 1}`}
+                      className="input"
+                      value={s.filament_profile ?? ''}
+                      onChange={e => updateSlot(i, { filament_profile: e.target.value || null })}>
+                      <option value="">— none (slicer default) —</option>
+                      {filamentProfiles.map(fp => <option key={fp} value={fp}>{fp}</option>)}
+                    </select>
+                  </div>
+                  {spoolmanActive && (
+                    <div className="col gap-1" style={{ flex: '1 1 200px' }}>
+                      <label className="tiny muted" htmlFor={`sp-${i}`}>Spoolman spool (optional)</label>
+                      <select
+                        id={`sp-${i}`}
+                        aria-label={`Spoolman spool for slot ${i + 1}`}
+                        className="input"
+                        value={s.spoolman_spool_id ?? ''}
+                        onChange={e => pickSpool(i, e.target.value)}>
+                        <option value="">— not mapped —</option>
+                        {spools.map(sp => (
+                          <option key={sp.id} value={String(sp.id)}>{spoolDisplayName(sp)}</option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+                {!s.filament_profile && (
+                  <div className="tiny" style={{ color: 'var(--warn)', marginTop: 6 }}>
+                    No filament profile — jobs slice with OrcaSlicer's default.
+                  </div>
+                )}
               </div>
             ))}
-            <button
-              className="btn ghost sm"
-              onClick={addSlot}
-              style={{ alignSelf: 'flex-start' }}>
+            <button className="btn ghost sm" onClick={addSlot} style={{ alignSelf: 'flex-start' }}>
               {Icons.plus} Add slot
             </button>
           </div>
         </div>
+
         {error && <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>}
         <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
           <button className="btn ghost sm" onClick={onCancel}>Cancel</button>
@@ -202,6 +274,9 @@ export function PrinterAddForm({
   const [connError, setConnError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
+  const [machinePreset, setMachinePreset] = useState<string>('');
+  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
 
   async function handleTestConnection() {
     if (!data.printerType) return;
@@ -233,6 +308,8 @@ export function PrinterAddForm({
         name: data.nickname || data.printerType.display_name,
         printer_type: data.printerType.printer_type,
         connection_config: data.connectionConfig,
+        current_orca_printer_profile: machinePreset || null,
+        orca_printer_profiles: machinePreset ? [machinePreset] : [],
       });
       onCreated();
     } catch (e) {
@@ -244,7 +321,8 @@ export function PrinterAddForm({
   const steps = [
     { n: 1, label: 'Type' },
     { n: 2, label: 'Connect' },
-    { n: 3, label: 'Review' },
+    { n: 3, label: 'Profile' },
+    { n: 4, label: 'Review' },
   ] as const;
 
   return (
@@ -275,7 +353,7 @@ export function PrinterAddForm({
               <span className="small" style={{ color: step >= s.n ? 'var(--text-1)' : 'var(--text-3)' }}>
                 {s.label}
               </span>
-              {s.n < 3 && (
+              {s.n < 4 && (
                 <div style={{ width: 40, height: 1, background: 'var(--border-1)', marginLeft: 8 }} />
               )}
             </div>
@@ -372,8 +450,26 @@ export function PrinterAddForm({
           </div>
         )}
 
-        {/* Step 3: Review + finish */}
+        {/* Step 3: Printer profile (make/model) */}
         {step === 3 && data.printerType && (
+          <div className="card" style={{ padding: 24 }}>
+            <SectionHeader title="Printer profile"
+              sub="Pick the make/model so jobs slice with the right OrcaSlicer machine + filament presets. You can set this later." />
+            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
+            <div className="tiny muted" style={{ marginTop: 8 }}>
+              {machinePreset
+                ? <>Preset: <span className="mono">{machinePreset}</span></>
+                : 'Optional now — required before this printer can slice.'}
+            </div>
+            <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
+              <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
+              <button className="btn primary" onClick={() => setStep(4)}>Next {Icons.chevR}</button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 4: Review + finish */}
+        {step === 4 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
             <SectionHeader title="Review" sub="Confirm the details before adding." />
             <div className="col gap-2" style={{ marginBottom: 20 }}>
@@ -384,6 +480,10 @@ export function PrinterAddForm({
               <div className="row gap-3">
                 <span className="muted small" style={{ width: 120 }}>Nickname</span>
                 <span className="small">{data.nickname || data.printerType.display_name}</span>
+              </div>
+              <div className="row gap-3">
+                <span className="muted small" style={{ width: 120 }}>Printer profile</span>
+                <span className="small mono">{machinePreset || '— not set —'}</span>
               </div>
               {Object.entries(data.connectionConfig).map(([k, v]) => {
                 const field = data.printerType!.connection_fields.find(f => f.name === k);
@@ -402,7 +502,7 @@ export function PrinterAddForm({
             )}
 
             <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
-              <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
+              <button className="btn" onClick={() => setStep(3)}>{Icons.chevL} Back</button>
               <button className="btn primary" onClick={handleFinish} disabled={finishing}>
                 {finishing ? 'Adding…' : <>{Icons.check} Finish</>}
               </button>

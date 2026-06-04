@@ -38,6 +38,9 @@ const mockTypes = [
 function makeFetch(url: string) {
   if (url.includes('/types')) return Promise.resolve({ ok: true, json: () => Promise.resolve(mockTypes) });
   if (url === '/api/v1/printers') return Promise.resolve({ ok: true, json: () => Promise.resolve(mockPrinters) });
+  if (url.includes('/orca-machine-catalog')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  if (url.includes('/spoolman')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false, url: null, api_key: null }) });
+  if (url.includes('/profiles')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ print_profiles: [], filament_profiles: [] }) });
   return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
 }
 

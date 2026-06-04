@@ -205,6 +205,8 @@ class QueueEngine:
             loaded = (printer.loaded_filaments if printer else None) or []
             slot = _matching_loaded_filament(config, loaded) if config else None
             filament_profile = (slot or {}).get("filament_profile") or None
+            # AMS printers (Bambu) map the print's filament to the matched tray.
+            ams_tray_id = (slot or {}).get("ams_tray_id")
             stored_path = uploaded_file.stored_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
@@ -281,7 +283,11 @@ class QueueEngine:
                 return
 
         from .abstract_printer_client import StartPrintOptions
-        opts = StartPrintOptions(plate_id=plate_number, gcode_path=gcode_filename)
+        opts = StartPrintOptions(
+            plate_id=plate_number,
+            gcode_path=gcode_filename,
+            ams_mapping=[ams_tray_id] if ams_tray_id is not None else None,
+        )
         try:
             start_ok = await loop.run_in_executor(
                 self._executor, client.start_print, gcode_filename, opts

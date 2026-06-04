@@ -1,7 +1,18 @@
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+# The app had no logging configuration, so service-level logger.info/warning
+# calls (printer connect attempts, MQTT errors) went nowhere. Configure a root
+# handler so they're visible. uvicorn uses disable_existing_loggers=False, so
+# this co-exists with uvicorn's own access/error logs.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("app").setLevel(logging.INFO)
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse

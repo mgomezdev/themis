@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import socket
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -161,6 +162,36 @@ class TestConnectionRequest(BaseModel):
     connection_config: dict
 
 
+_TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
+
+
+async def _connect_failure_hint(client) -> str:
+    """Classify a failed test connection by probing the control port, so the UI
+    can say *why* (unreachable vs reached-but-login-failed) instead of a bare
+    'Could not connect'."""
+    try:
+        endpoint = client.control_endpoint()
+    except Exception:
+        endpoint = None
+    if not endpoint:
+        return "Could not connect."
+    host, port = endpoint
+
+    def _probe() -> bool:
+        try:
+            with socket.create_connection((host, port), timeout=3):
+                return True
+        except Exception:
+            return False
+
+    reachable = await asyncio.get_running_loop().run_in_executor(None, _probe)
+    if reachable:
+        return (f"Reached {host}:{port} but the login didn't complete — check the access code / "
+                f"serial number, or the printer's single LAN connection is busy.")
+    return (f"Couldn't reach {host}:{port}. The printer may be off or asleep, the IP may be wrong, "
+            f"or another app is holding the printer's single LAN connection (Bambu allows only one).")
+
+
 @router.post("/test-connection")
 async def test_connection(body: TestConnectionRequest) -> dict:
     if body.printer_type not in REGISTRY:
@@ -169,11 +200,12 @@ async def test_connection(body: TestConnectionRequest) -> dict:
     try:
         client = create_client_from_config(body.printer_type, body.connection_config)
         client.connect()
-        await asyncio.sleep(5)
-        ok = client.connected
-        if ok:
+        deadline = asyncio.get_running_loop().time() + _TEST_CONNECT_POLL_S
+        while asyncio.get_running_loop().time() < deadline and not client.connected:
+            await asyncio.sleep(0.5)
+        if client.connected:
             return {"ok": True}
-        return {"ok": False, "error": "Could not connect"}
+        return {"ok": False, "error": await _connect_failure_hint(client)}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
     finally:
@@ -237,7 +269,9 @@ async def update_printer(
         printer.connection_config = body.connection_config
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
-    if body.current_orca_printer_profile is not None:
+    # Use model_fields_set so an explicit null clears the preset (EditForm sends
+    # null to unset make/model); an omitted key leaves it unchanged.
+    if "current_orca_printer_profile" in body.model_fields_set:
         printer.current_orca_printer_profile = body.current_orca_printer_profile
     if body.enabled is not None:
         printer.enabled = body.enabled
