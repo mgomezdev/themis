@@ -363,7 +363,8 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
       await updatePrinter(printerId, {
         loaded_filaments: [{
           slot: 0,
-          filament_id: String(spool.id),
+          filament_id: null,
+          spoolman_spool_id: String(spool.id),
           name: spoolDisplayName(spool),
           type: spool.filament.material,
           color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
