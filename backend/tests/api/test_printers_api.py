@@ -65,6 +65,23 @@ async def test_update_printer(client):
     assert response.json()["name"] == "New Name"
 
 
+async def test_patch_can_clear_and_omit_current_preset(client):
+    create = await client.post("/api/v1/printers", json={
+        "name": "P", "printer_type": "bambu", "connection_config": {},
+        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
+        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+    })
+    pid = create.json()["id"]
+    # Explicit null clears the preset.
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": None})
+    assert r.status_code == 200
+    assert r.json()["current_orca_printer_profile"] is None
+    # Set it again, then a PATCH that omits the key leaves it unchanged.
+    await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Bambu Lab P1S 0.4"})
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "P2"})
+    assert r.json()["current_orca_printer_profile"] == "Bambu Lab P1S 0.4"
+
+
 async def test_delete_printer(client):
     create = await client.post("/api/v1/printers", json={
         "name": "Temp", "printer_type": "bambu",

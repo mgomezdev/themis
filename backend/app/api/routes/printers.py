@@ -237,7 +237,9 @@ async def update_printer(
         printer.connection_config = body.connection_config
     if body.orca_printer_profiles is not None:
         printer.orca_printer_profiles = body.orca_printer_profiles
-    if body.current_orca_printer_profile is not None:
+    # Use model_fields_set so an explicit null clears the preset (EditForm sends
+    # null to unset make/model); an omitted key leaves it unchanged.
+    if "current_orca_printer_profile" in body.model_fields_set:
         printer.current_orca_printer_profile = body.current_orca_printer_profile
     if body.enabled is not None:
         printer.enabled = body.enabled
