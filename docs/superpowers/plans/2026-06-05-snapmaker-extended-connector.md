@@ -160,13 +160,14 @@ _STALE_TIMEOUT = 30.0
 _STALE_RECONNECT_COOLDOWN = 20.0
 
 # Klipper print_stats.state -> Themis normalized state string.
+# App vocab is IDLE/RUNNING/PAUSE/FINISH/FAILED only (frontend fleet.ts maps FAILED->error).
 _NORM_STATE = {
     "standby": "IDLE",
     "printing": "RUNNING",
     "paused": "PAUSE",
     "complete": "FINISH",
-    "cancelled": "CANCELLED",
-    "error": "ERROR",
+    "cancelled": "FAILED",
+    "error": "FAILED",
 }
 
 # Objects we subscribe to / query for live status.

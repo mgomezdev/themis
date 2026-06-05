@@ -118,9 +118,11 @@ Emit the same normalized shape the Fleet card consumes: `printer_type`, `id`, `c
 include `extruders` array for per-tool detail), plus capability flags via `get_normalized_state`'s
 generic merge. Reuse the Bambu serializer as the template.
 
-State string mapping (Klipper `print_stats.state` → Themis normalized):
-`standby → IDLE`, `printing → RUNNING`, `paused → PAUSE`, `complete → FINISH`, `cancelled → CANCELLED`,
-`error → ERROR`. `is_idle` true for IDLE/FINISH/CANCELLED.
+State string mapping (Klipper `print_stats.state` → Themis normalized). The app's normalized
+vocabulary is **IDLE / RUNNING / PAUSE / FINISH / FAILED** only (matches Bambu/Elegoo; the frontend
+`fleet.ts` maps `FAILED → error` and has no `CANCELLED`/`ERROR` case):
+`standby → IDLE`, `printing → RUNNING`, `paused → PAUSE`, `complete → FINISH`, `cancelled → FAILED`,
+`error → FAILED`. `is_idle` checks the raw `print_state` (`standby`/`complete`/`cancelled`).
 
 ### Registry: `printer_client_factory.py`
 ```python
