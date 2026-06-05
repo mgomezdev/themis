@@ -61,9 +61,32 @@ def _serialize_elegoo(state, printer_id: int) -> dict:
     }
 
 
+def _serialize_snapmaker(state, printer_id: int) -> dict:
+    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", True))
+    return {
+        "printer_type": "snapmaker_extended",
+        "id": printer_id,
+        "connected": conn,
+        "state": getattr(state, "state", "unknown"),
+        "current_print": getattr(state, "current_print", None),
+        "progress": getattr(state, "progress", 0.0),
+        "remaining_time": 0,
+        "layer_num": getattr(state, "layer_num", 0),
+        "total_layers": getattr(state, "total_layers", 0),
+        "temperatures": getattr(state, "temperatures", {}),
+        "fan_model": 0,
+        "fan_aux": 0,
+        "fan_box": 0,
+        "speed_factor": 1.0,
+        "klippy_state": "ready" if conn else "disconnected",
+        "cover_url": None,
+    }
+
+
 _STATUS_SERIALIZERS: dict[str, Callable] = {
     "bambu": _serialize_bambu,
     "elegoo_centauri": _serialize_elegoo,
+    "snapmaker_extended": _serialize_snapmaker,
 }
 
 
