@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 import json
 import logging
 import threading
@@ -30,8 +31,8 @@ _NORM_STATE = {
     "printing": "RUNNING",
     "paused": "PAUSE",
     "complete": "FINISH",
-    "cancelled": "CANCELLED",
-    "error": "ERROR",
+    "cancelled": "FAILED",
+    "error": "FAILED",
 }
 
 # Objects we subscribe to / query for live status.
@@ -120,7 +121,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._last_message_time = 0.0
         self._last_reconnect_time = 0.0
         self._prev_print_state = "standby"
-        self._rpc_id = 0
+        self._rpc_id = itertools.count(1)
 
     # ---- ABC metadata ----
     @classmethod
@@ -227,8 +228,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
 
     # ---- WebSocket JSON-RPC ----
     def _next_id(self) -> int:
-        self._rpc_id += 1
-        return self._rpc_id
+        return next(self._rpc_id)
 
     def _ws_send(self, method: str, params: dict | None = None) -> None:
         ws = self._ws
@@ -293,6 +293,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
 
     def _apply_status(self, status: dict) -> None:
         with self._lock:
+            self.state.raw = status
             ps = status.get("print_stats")
             if ps:
                 if "state" in ps:

@@ -79,3 +79,18 @@ def test_upload_file_posts_multipart():
         assert c.upload_file(b"G28\n", "cube.gcode") is True
         assert post.call_args[0][0].endswith("/server/files/upload")
         assert "files" in post.call_args.kwargs
+
+
+def test_connected_requires_klippy_ready():
+    c = _client()
+    c.state.connected = True
+    c.state.klippy_ready = False
+    assert c.connected is False
+    c.state.klippy_ready = True
+    assert c.connected is True
+
+
+def test_error_state_normalized():
+    c = _client()
+    c._apply_status({"print_stats": {"state": "error"}})
+    assert c.state.state == "FAILED"
