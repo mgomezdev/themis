@@ -62,7 +62,7 @@ def _serialize_elegoo(state, printer_id: int) -> dict:
 
 
 def _serialize_snapmaker(state, printer_id: int) -> dict:
-    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", True))
+    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", False))
     return {
         "printer_type": "snapmaker_extended",
         "id": printer_id,
