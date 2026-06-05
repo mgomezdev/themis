@@ -27,8 +27,9 @@ layer_inspect, timelapse, use_ams`. The queue engine fills `plate_id`/`gcode_pat
 
 ## Registry (`services/printer_client_factory.py`)
 
-`REGISTRY = {"bambu": "...BambuMQTTClient", "elegoo_centauri": "...ElegooCentauriClient"}` + a
-display-name map. `create_client(printer)`/`create_client_from_config(type, cfg)` pass only
+`REGISTRY = {"bambu": "...BambuMQTTClient", "elegoo_centauri": "...ElegooCentauriClient",
+"snapmaker_extended": "...SnapmakerExtendedClient"}` + a display-name map (`"snapmaker_extended"` →
+"Snapmaker U1 (Extended)"). `create_client(printer)`/`create_client_from_config(type, cfg)` pass only
 `connection_fields()` names from `connection_config` into the ctor (+ callbacks if the ctor accepts them).
 Add a vendor → add both entries; everything else auto-wires.
 
@@ -87,3 +88,27 @@ config = those flags. Status: `gcode_state` (IDLE/RUNNING/PAUSE/FINISH/FAILED), 
 gears → %). Camera: X1 = RTSP `:322`; **P1/A1 differ** (chamber image `:6000`, not yet handled).
 **Validation status**: built + unit-tested; live hardware validation (FTPS reachability, real AMS field
 names, test print with mapping) pending.
+
+### Snapmaker U1 Extended (`snapmaker_client.py`) — Moonraker/Klipper
+Custom Klipper firmware ("SnapmakerU1-Extended"). **Status** streams over the Moonraker WebSocket
+`ws://<ip>:<port>/websocket` (JSON-RPC; default port **7125**): `_on_ws_open` sends `server.info` +
+`printer.objects.subscribe` + `printer.objects.query` for `print_stats, display_status, heater_bed,
+extruder, extruder1, extruder2, extruder3, toolhead`; `notify_status_update` deltas → `_apply_status`
+(per-field merge, since Moonraker sends partial diffs); `notify_klippy_ready/disconnected/shutdown` set
+`klippy_ready`. `connected` = WS open **AND** `klippy_ready`. **Control** is Moonraker **HTTP** via
+`httpx`: `upload_file` = multipart **POST** `/server/files/upload` (`root=gcodes`); `start_print` →
+`POST /printer/print/start?filename=`; pause/resume/cancel → `/printer/print/{pause,resume,cancel}`;
+`send_gcode` → `POST /printer/gcode/script?script=` (enables `home`/`jog_z`/`set_bed_temp`=`M140`).
+Optional `api_key` → `X-Api-Key` header on the WS handshake + every httpx call (blank for an open LAN
+printer). `connection_fields` = `ip_address, port (7125), api_key`. Reconnect: bg-thread `run_forever`
+loop + `check_staleness` closes the WS to force reconnect on silence. RPC ids via `itertools.count`
+(atomic — `request_status_update` is called from the asyncio thread). **Slicing**: default
+`orca_export_args` (`[]` = raw `.gcode`; Klipper ingests plain gcode). **State** map (`_NORM_STATE`):
+`standby→IDLE, printing→RUNNING, paused→PAUSE, complete→FINISH, cancelled→FAILED, error→FAILED` (app
+vocab is IDLE/RUNNING/PAUSE/FINISH/FAILED only). **Filaments**: 4 **manual** slots (slot 0-3 ↔
+extruder0-3); `get_loaded_filaments` is unused — slots are user-set in the DB `loaded_filaments`, no
+`_on_ams_change` auto-sync. **Camera**: snapshot `http://<ip>/webcam/snapshot.jpg`; `camera_mjpeg_url` =
+`/webcam/stream` (best-effort). Per-tool temps in `state.temperatures["extruders"]`. Tool/slot mapping
+(model-filament → printer-tool, single-filament tool choice) is **Project 2**, not yet built.
+**Validation status**: built + unit-tested; live Moonraker connectivity confirmed
+(`scripts/snapmaker_smoke_test.py`, reads `SNAPMAKER_IP`); test print pending.

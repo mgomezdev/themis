@@ -16,7 +16,7 @@ architecture from source. Terse by design — every line is a fact or a pointer.
 | `frontend.md` | React screens, `api/` clients + hooks, routing, conventions | any frontend change |
 | `styling.md` | Design tokens, the no-framework CSS approach, `ui.tsx` components, status→pill mapping, density/accent theming | any visual/CSS/component-styling change |
 | `data-model.md` | SQLite tables, JSON column shapes, relationships, derived fields | schema or persisted-shape change |
-| `printers.md` | `AbstractPrinterClient` pattern, Bambu/Elegoo protocols, AMS, slicing pipeline | printer/vendor/slicing change |
+| `printers.md` | `AbstractPrinterClient` pattern, Bambu/Elegoo/Snapmaker protocols, AMS, slicing pipeline | printer/vendor/slicing change |
 | `recipes.md` | Step-by-step cookbooks (add vendor, route, screen, table, queue behavior) | implementing a known shape |
 | `conventions.md` | Non-obvious invariants, dev-env gotchas, testing patterns | always skim before editing/running |
 
