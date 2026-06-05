@@ -34,7 +34,6 @@ interface PerPrinterCfg {
 interface PlateConfig {
   selected: boolean;
   jobName: string;
-  priority: string;
   orderId: number | null;
   selectedPrinters: string[];
   perPrinter: Record<string, PerPrinterCfg>;
@@ -708,28 +707,14 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, o
             <div className="tiny muted" style={{ marginTop: 2, marginBottom: 10, marginLeft: 30 }}>
               How this plate-job appears in the queue.
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
-              <div>
-                <label className="label">Job name</label>
-                <input
-                  className="input"
-                  value={config.jobName}
-                  onChange={e => onSetField({ jobName: e.target.value })}
-                  placeholder="e.g. PA-CF arm brackets"
-                />
-              </div>
-              <div>
-                <label className="label">Priority</label>
-                <select
-                  className="select"
-                  value={config.priority}
-                  onChange={e => onSetField({ priority: e.target.value })}>
-                  <option value="rush">Rush — top of queue</option>
-                  <option value="high">High</option>
-                  <option value="normal">Normal</option>
-                  <option value="low">Low / fill</option>
-                </select>
-              </div>
+            <div>
+              <label className="label">Job name</label>
+              <input
+                className="input"
+                value={config.jobName}
+                onChange={e => onSetField({ jobName: e.target.value })}
+                placeholder="e.g. PA-CF arm brackets"
+              />
             </div>
           </div>
         </div>
@@ -865,7 +850,6 @@ function defaultConfigForPlate(plate: Plate): PlateConfig {
   return {
     selected: true,
     jobName: plate.name,
-    priority: 'normal',
     orderId: null,
     selectedPrinters: [],
     perPrinter: {},
