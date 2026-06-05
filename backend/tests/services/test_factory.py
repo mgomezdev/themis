@@ -36,7 +36,7 @@ def test_registry_does_not_have_moonraker():
 def test_get_printer_types_returns_list():
     types = get_printer_types_for_ui()
     assert isinstance(types, list)
-    assert len(types) == 2
+    assert len(types) == 3
 
 
 def test_get_printer_types_bambu_fields():

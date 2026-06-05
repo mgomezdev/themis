@@ -9,11 +9,13 @@ from .abstract_printer_client import AbstractPrinterClient
 REGISTRY: dict[str, str] = {
     "bambu": "app.services.bambu_mqtt.BambuMQTTClient",
     "elegoo_centauri": "app.services.elegoo_centauri_client.ElegooCentauriClient",
+    "snapmaker_extended": "app.services.snapmaker_client.SnapmakerExtendedClient",
 }
 
 _DISPLAY_NAMES: dict[str, str] = {
     "bambu": "Bambu Lab",
     "elegoo_centauri": "Elegoo Centauri",
+    "snapmaker_extended": "Snapmaker U1 (Extended)",
 }
 
 
