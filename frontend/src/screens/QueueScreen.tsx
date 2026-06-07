@@ -87,6 +87,37 @@ function SummaryStat({
   );
 }
 
+// ---- JobCardRich helpers ----
+function getErrorCategory(reason: string | null): string {
+  if (!reason) return 'Unknown Error';
+  const r = reason.toLowerCase();
+  if (r.includes('slicing failed') || r.includes('slice failed')) return 'Slicing Error';
+  if (r.includes('upload failed') || r.includes('upload reported failure')) return 'Upload Error';
+  if (r.includes('start print failed') || r.includes('start print reported failure')) return 'Print Startup Error';
+  return 'Queue Error';
+}
+
+function getErrorMessage(reason: string | null): string {
+  if (!reason) return 'An unexpected error occurred. Click for details.';
+  // Strip common prefixes if present to make the card clean
+  let msg = reason;
+  const prefixes = [
+    'slicing failed: ',
+    'slicing failed:',
+    'gcode upload failed: ',
+    'gcode upload failed:',
+    'start print failed: ',
+    'start print failed:',
+  ];
+  for (const prefix of prefixes) {
+    if (msg.toLowerCase().startsWith(prefix)) {
+      msg = msg.slice(prefix.length);
+      break;
+    }
+  }
+  return msg;
+}
+
 // ---- JobCardRich ----
 function JobCardRich({
   job,
@@ -178,7 +209,18 @@ function JobCardRich({
                 }
               />
             ) : isFailed ? (
-              <Kv k="Slicing" v={<span style={{ color: 'var(--err)' }}>failed</span>} />
+              <Kv k="Slicing" v="ready" />
+            ) : isBlocked ? (
+              <Kv
+                k="Slicing"
+                v={
+                  job.blockReason?.toLowerCase().includes('slice') ? (
+                    <span style={{ color: 'var(--err)' }}>failed</span>
+                  ) : (
+                    <span style={{ color: 'var(--warn)' }}>blocked</span>
+                  )
+                }
+              />
             ) : (
               <Kv k="Slicing" v={job.sliced ? 'ready' : 'on claim'} />
             )}
@@ -192,19 +234,64 @@ function JobCardRich({
         </div>
       </div>
 
-      {/* Error strip — visible without opening the panel */}
+      {/* Error / Blocked strip — visible without opening the panel */}
       {isBlocked && job.blockReason && (
-        <div style={{ padding: '6px 14px 10px', borderTop: '1px solid rgba(251,191,36,0.2)', background: 'rgba(251,191,36,0.06)' }}>
-          <span className="tiny" style={{ color: 'var(--warn)' }}>
-            <span style={{ fontWeight: 600 }}>Blocked: </span>
-            {job.blockReason.length > 90 ? job.blockReason.slice(0, 90) + '…' : job.blockReason}
+        <div
+          style={{
+            padding: '10px 14px',
+            borderTop: '1px solid rgba(251,191,36,0.2)',
+            background: 'rgba(251,191,36,0.04)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <div
+            className="row gap-1"
+            style={{
+              color: 'var(--warn)',
+              fontSize: 11,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ display: 'inline-flex', color: 'var(--warn)' }}>{Icons.alert}</span>
+            <span>Blocked / Waiting</span>
+          </div>
+          <span className="tiny" style={{ color: 'var(--text-1)', lineHeight: 1.4, wordBreak: 'break-word' }}>
+            {job.blockReason}
           </span>
         </div>
       )}
       {isFailed && (
-        <div style={{ padding: '6px 14px 10px', borderTop: '1px solid rgba(239,68,68,0.2)', background: 'rgba(239,68,68,0.06)' }}>
-          <span className="tiny" style={{ color: 'var(--err)' }}>
-            Slicing failed — click for error details
+        <div
+          style={{
+            padding: '10px 14px',
+            borderTop: '1px solid rgba(239,68,68,0.18)',
+            background: 'rgba(239,68,68,0.04)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <div
+            className="row gap-1"
+            style={{
+              color: 'var(--err)',
+              fontSize: 11,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ display: 'inline-flex', color: 'var(--err)' }}>{Icons.alert}</span>
+            <span>{getErrorCategory(job.blockReason)}</span>
+          </div>
+          <span className="tiny" style={{ color: 'var(--text-1)', lineHeight: 1.4, wordBreak: 'break-word' }}>
+            {getErrorMessage(job.blockReason)}
           </span>
         </div>
       )}
@@ -349,12 +436,14 @@ function JobDetailPanel({
           </>
         )}
 
-        {/* Block reason */}
-        {isBlocked && job.blockReason && (
+        {/* Block / Failure reason */}
+        {(isBlocked || isFailed) && job.blockReason && (
           <>
             <div className="divider" />
-            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
-              <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>Blocked</div>
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 8, background: isFailed ? 'rgba(239,68,68,0.08)' : 'rgba(251,191,36,0.1)', border: isFailed ? '1px solid rgba(239,68,68,0.25)' : '1px solid rgba(251,191,36,0.3)' }}>
+              <div className="tiny" style={{ fontWeight: 600, color: isFailed ? 'var(--err)' : 'var(--warn)', marginBottom: 4 }}>
+                {isFailed ? 'Failure Reason' : 'Blocked'}
+              </div>
               <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.blockReason}</div>
             </div>
           </>

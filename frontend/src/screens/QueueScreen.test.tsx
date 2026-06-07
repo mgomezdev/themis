@@ -82,4 +82,50 @@ describe('QueueScreen', () => {
 
     expect(vi.mocked(queueApi.cancelJob)).toHaveBeenCalled();
   });
+
+  it('renders detailed error messages and category on failed job cards', () => {
+    const failedJob: ApiJob = {
+      id: 3,
+      uploaded_file_id: 10,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 3.0,
+      status: 'failed',
+      block_reason: 'Gcode upload failed: [WinError 10054] Connection reset',
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [failedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    // Should render the categorized title "Upload Error"
+    expect(screen.getByText('Upload Error')).toBeTruthy();
+    // Should render the cleaned up error message
+    expect(screen.getByText('[WinError 10054] Connection reset')).toBeTruthy();
+  });
+
+  it('renders blocked reason on blocked job cards', () => {
+    const blockedJob: ApiJob = {
+      id: 4,
+      uploaded_file_id: 10,
+      plate_number: 2,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 4.0,
+      status: 'blocked',
+      block_reason: 'filament mismatch: PLA color #ff0000 not found',
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [blockedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    // Should render the categorized title "Blocked / Waiting"
+    expect(screen.getByText('Blocked / Waiting')).toBeTruthy();
+    // Should render the blocked reason
+    expect(screen.getByText('filament mismatch: PLA color #ff0000 not found')).toBeTruthy();
+  });
 });

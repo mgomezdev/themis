@@ -94,6 +94,7 @@ class SlicerService:
             stale.unlink(missing_ok=True)
 
         cmd = [self._orca, "--slice", str(req.plate_number), "--outputdir", str(out_dir),
+               "--arrange", "1",
                *req.export_args, str(input_3mf)]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=_SLICE_TIMEOUT)

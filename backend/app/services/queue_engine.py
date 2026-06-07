@@ -267,19 +267,22 @@ class QueueEngine:
         gcode_filename = os.path.basename(gcode_path)
 
         if client.file_upload_supported:
+            upload_error_msg = None
             try:
                 with open(gcode_path, "rb") as fh:
                     data = fh.read()
                 upload_ok = await loop.run_in_executor(
                     self._executor, client.upload_file, data, gcode_filename
                 )
-            except Exception:
+            except Exception as e:
                 logger.exception("Gcode upload failed for job %s on printer %s", job_id, printer_id)
                 upload_ok = False
+                upload_error_msg = f"Gcode upload failed: {e}"
             if not upload_ok:
                 logger.warning("Upload of %s to printer %s reported failure for job %s",
                                gcode_filename, printer_id, job_id)
-                await self._fail_job_post_slice(job_id, printer_id)
+                reason = upload_error_msg or "Gcode upload reported failure by printer"
+                await self._fail_job_post_slice(job_id, printer_id, reason)
                 return
 
         from .abstract_printer_client import StartPrintOptions
@@ -288,17 +291,20 @@ class QueueEngine:
             gcode_path=gcode_filename,
             ams_mapping=[ams_tray_id] if ams_tray_id is not None else None,
         )
+        start_error_msg = None
         try:
             start_ok = await loop.run_in_executor(
                 self._executor, client.start_print, gcode_filename, opts
             )
-        except Exception:
+        except Exception as e:
             logger.exception("start_print failed for job %s on printer %s", job_id, printer_id)
             start_ok = False
+            start_error_msg = f"Start print failed: {e}"
         if not start_ok:
             logger.warning("start_print of %s on printer %s reported failure for job %s",
                            gcode_filename, printer_id, job_id)
-            await self._fail_job_post_slice(job_id, printer_id)
+            reason = start_error_msg or "Start print reported failure by printer"
+            await self._fail_job_post_slice(job_id, printer_id, reason)
             return
 
         async with self._factory() as session:
@@ -346,11 +352,12 @@ class QueueEngine:
 
         await self._broadcast_job(job_id)
 
-    async def _fail_job_post_slice(self, job_id: int, printer_id: int) -> None:
+    async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job:
                 job.status = "failed"
+                job.block_reason = reason
                 job.assigned_printer_id = None
                 job.updated_at = _now()
             # Clean up gcode file from disk and DB

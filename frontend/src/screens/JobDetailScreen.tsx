@@ -226,8 +226,15 @@ export function JobDetailScreen() {
               )}
 
               {job.block_reason && (
-                <div style={{ padding: '8px 12px', borderRadius: 8, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)', color: 'var(--warn)', fontSize: 13 }}>
-                  Blocked: {job.block_reason}
+                <div style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  background: job.status === 'failed' ? 'rgba(239,68,68,0.1)' : 'rgba(251,191,36,0.1)',
+                  border: `1px solid ${job.status === 'failed' ? 'rgba(239,68,68,0.3)' : 'rgba(251,191,36,0.3)'}`,
+                  color: job.status === 'failed' ? 'var(--err)' : 'var(--warn)',
+                  fontSize: 13
+                }}>
+                  {job.status === 'failed' ? 'Failure Reason: ' : 'Blocked: '}{job.block_reason}
                 </div>
               )}
 
