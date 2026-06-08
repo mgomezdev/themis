@@ -45,10 +45,23 @@ def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | 
     return None
 
 
+def _slot_for_config(config, loaded: list) -> dict | None:
+    """The loaded slot this config should print with: the explicit tool_index slot
+    if set (multi-tool printers), else the type/color ask match."""
+    ti = getattr(config, "tool_index", None)
+    if ti is not None:
+        loaded = loaded or []
+        return loaded[ti] if 0 <= ti < len(loaded) else None
+    return _matching_loaded_filament(config, loaded)
+
+
 def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
-    """Return a reason string if the job's required filament (type AND color) is
-    not present in the printer's loaded filaments, else None. A job with no
-    declared filament requirement is treated as matching."""
+    """Return a reason string if the config can't be satisfied by the printer's
+    loaded filaments, else None."""
+    if getattr(config, "tool_index", None) is not None:
+        if _slot_for_config(config, loaded) is None:
+            return f"tool T{config.tool_index} has no loaded filament"
+        return None
     req_type = (config.filament_type or "").strip().lower()
     req_color = _norm_color(config.filament_color)
     if not req_type and not req_color:
@@ -203,7 +216,8 @@ class QueueEngine:
             # Filament profile is a printer-level setting: resolve the OrcaSlicer
             # filament preset from the loaded slot that satisfies the job's ask.
             loaded = (printer.loaded_filaments if printer else None) or []
-            slot = _matching_loaded_filament(config, loaded) if config else None
+            slot = _slot_for_config(config, loaded) if config else None
+            cfg_tool_index = config.tool_index if config else None
             filament_profile = (slot or {}).get("filament_profile") or None
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
@@ -237,6 +251,7 @@ class QueueEngine:
             filament_presets=[filament_profile] if filament_profile else [],
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
+            tool_index=cfg_tool_index,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
