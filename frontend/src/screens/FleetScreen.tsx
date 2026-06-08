@@ -7,7 +7,6 @@ import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
-import type { ApiSpool } from '../api/spoolman';
 import { getPrinterProfiles } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
@@ -251,6 +250,11 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 }
 
 // ── Filament picker ──────────────────────────────────────────────────────────
+const FILAMENT_TYPES = ['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'PC', 'TPU', 'Other'] as const;
+
+// Multi-slot filament editor. A printer can have N manually-defined slots
+// (e.g. the Snapmaker U1 has 4 tools); each maps to a tool index Tn and carries
+// its own type/color/name + OrcaSlicer filament profile + optional Spoolman spool.
 function FilamentPicker({ printerId, onClose, onSaved }: {
   printerId: number;
   onClose: () => void;
@@ -259,153 +263,138 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   const { config } = useSpoolmanConfig();
   const spoolmanActive = !!(config?.enabled && config?.url);
   const spools = useSpools(spoolmanActive);
-  const [manualText, setManualText] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  // OrcaSlicer filament profile for this printer — the preset used to slice with
-  // whatever filament is loaded here (a printer-level setting).
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
-  const [profile, setProfile] = useState('');
-  const [currentLoaded, setCurrentLoaded] = useState<LoadedFilament | null>(null);
+  const [slots, setSlots] = useState<LoadedFilament[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     getPrinterProfiles(printerId)
       .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
       .catch(() => {});
-    // Pre-fill from the printer's currently loaded filament, if any.
     fetchPrinter(printerId)
-      .then(p => {
-        if (!alive) return;
-        const loaded = p.loaded_filaments?.[0] ?? null;
-        setCurrentLoaded(loaded);
-        setProfile(loaded?.filament_profile ?? '');
-      })
+      .then(p => { if (alive) setSlots(p.loaded_filaments ?? []); })
       .catch(() => {});
     return () => { alive = false; };
   }, [printerId]);
 
-  async function saveProfileOnly() {
-    if (!currentLoaded) return;
-    setSaving(true);
-    try {
-      await updatePrinter(printerId, {
-        loaded_filaments: [{ ...currentLoaded, filament_profile: profile || null }],
-      });
-      onSaved();
-    } finally {
-      setSaving(false);
-    }
+  const addSlot = () =>
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+  const removeSlot = (i: number) =>
+    setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
+  const updateSlot = (i: number, patch: Partial<LoadedFilament>) =>
+    setSlots(s => s.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
+
+  function pickSpool(i: number, spoolId: string) {
+    if (!spoolId) { updateSlot(i, { spoolman_spool_id: null }); return; }
+    const sp = spools.find(s => String(s.id) === spoolId);
+    if (!sp) return;
+    updateSlot(i, {
+      spoolman_spool_id: String(sp.id),
+      name: spoolDisplayName(sp),
+      type: sp.filament.material,
+      color: sp.filament.color_hex ? `#${sp.filament.color_hex}` : (slots[i]?.color ?? '#888888'),
+    });
   }
 
-  async function unload() {
+  async function save() {
     setSaving(true);
-    try {
-      await updatePrinter(printerId, { loaded_filaments: [] });
-      onSaved();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function selectSpool(spool: ApiSpool) {
-    setSaving(true);
+    setError(null);
     try {
       await updatePrinter(printerId, {
-        loaded_filaments: [{
-          slot: 0,
-          filament_id: null,
-          spoolman_spool_id: String(spool.id),
-          name: spoolDisplayName(spool),
-          type: spool.filament.material,
-          color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
-          filament_profile: profile || null,
-        }],
+        loaded_filaments: slots.map((s, idx) => ({ ...s, slot: idx })),
       });
       onSaved();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function saveManual() {
-    if (!manualText.trim()) return;
-    setSaving(true);
-    try {
-      await updatePrinter(printerId, {
-        loaded_filaments: [{
-          slot: 0,
-          filament_id: null,
-          name: manualText.trim(),
-          type: '',
-          color: '#888888',
-          filament_profile: profile || null,
-        }],
-      });
-      onSaved();
-    } finally {
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Save failed');
       setSaving(false);
     }
   }
 
   return (
     <div style={{ marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-1)' }}>
-      {/* OrcaSlicer filament profile — applies to whichever filament is loaded */}
-      <div style={{ marginBottom: 10 }}>
-        <label className="label">OrcaSlicer filament profile</label>
-        <select className="input" value={profile} onChange={e => setProfile(e.target.value)}>
-          <option value="">— none (slicer default) —</option>
-          {filamentProfiles.map(fp => <option key={fp} value={fp}>{fp}</option>)}
-        </select>
-        <div className="tiny muted" style={{ marginTop: 4 }}>
-          {filamentProfiles.length === 0
-            ? 'No filament profiles found — set the printer’s machine profile first.'
-            : 'Used to slice jobs claimed by this printer. Pick the preset matching the loaded filament.'}
-        </div>
-        {currentLoaded && (
-          <button className="btn primary sm" style={{ marginTop: 8 }}
-                  disabled={saving || profile === (currentLoaded.filament_profile ?? '')}
-                  onClick={saveProfileOnly}>
-            Save profile for loaded {currentLoaded.type || 'filament'}
+      <div className="col gap-3">
+        {slots.map((s, i) => (
+          <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-2)' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+              <span className="tiny muted mono" style={{ width: 28, flexShrink: 0 }}>T{i}</span>
+              <input
+                type="color"
+                value={s.color}
+                onChange={e => updateSlot(i, { color: e.target.value })}
+                style={{ width: 32, height: 32, padding: 2, border: '1px solid var(--border-1)', borderRadius: 6, cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0 }}
+              />
+              <select
+                className="input"
+                style={{ width: 90, flexShrink: 0 }}
+                value={(FILAMENT_TYPES as readonly string[]).includes(s.type) ? s.type : 'Other'}
+                onChange={e => updateSlot(i, { type: e.target.value })}>
+                {FILAMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <input
+                className="input"
+                style={{ flex: '1 1 130px' }}
+                placeholder="Filament name"
+                value={s.name}
+                onChange={e => updateSlot(i, { name: e.target.value })}
+              />
+              <button className="btn ghost icon sm" onClick={() => removeSlot(i)} title="Remove slot">
+                {Icons.x}
+              </button>
+            </div>
+            <div className="row gap-2" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+              <div className="col gap-1" style={{ flex: '1 1 180px' }}>
+                <label className="tiny muted" htmlFor={`fp-${i}`}>Filament profile</label>
+                <select
+                  id={`fp-${i}`}
+                  className="input"
+                  value={s.filament_profile ?? ''}
+                  onChange={e => updateSlot(i, { filament_profile: e.target.value || null })}>
+                  <option value="">— none (slicer default) —</option>
+                  {filamentProfiles.map(fp => <option key={fp} value={fp}>{fp}</option>)}
+                </select>
+              </div>
+              {spoolmanActive && (
+                <div className="col gap-1" style={{ flex: '1 1 180px' }}>
+                  <label className="tiny muted" htmlFor={`sp-${i}`}>Spoolman spool (optional)</label>
+                  <select
+                    id={`sp-${i}`}
+                    className="input"
+                    value={s.spoolman_spool_id ?? ''}
+                    onChange={e => pickSpool(i, e.target.value)}>
+                    <option value="">— not mapped —</option>
+                    {spools.map(sp => (
+                      <option key={sp.id} value={String(sp.id)}>{spoolDisplayName(sp)}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+            {!s.filament_profile && (
+              <div className="tiny" style={{ color: 'var(--warn)', marginTop: 6 }}>
+                No filament profile — jobs slice with OrcaSlicer's default.
+              </div>
+            )}
+          </div>
+        ))}
+        <button className="btn ghost sm" onClick={addSlot} style={{ alignSelf: 'flex-start' }}>
+          {Icons.plus} Add slot
+        </button>
+      </div>
+      {error && <div className="tiny" style={{ color: 'var(--err)', marginTop: 8 }}>{error}</div>}
+      <div className="row between" style={{ marginTop: 12, alignItems: 'center' }}>
+        <span className="tiny muted">
+          {slots.length === 0
+            ? 'No filament — saving leaves this printer unloaded.'
+            : `${slots.length} slot${slots.length > 1 ? 's' : ''}`}
+        </span>
+        <div className="row gap-2">
+          <button className="btn ghost sm" onClick={onClose}>Cancel</button>
+          <button className="btn primary sm" disabled={saving} onClick={save}>
+            {saving ? 'Saving…' : 'Save filaments'}
           </button>
-        )}
-      </div>
-      {spoolmanActive && spools.length > 0 && (
-        <div className="col gap-2" style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 8 }}>
-          {spools.map(spool => (
-            <button key={spool.id} className="btn ghost sm" disabled={saving}
-                    onClick={() => selectSpool(spool)}
-                    style={{ justifyContent: 'flex-start', gap: 8, textAlign: 'left' }}>
-              <span style={{
-                width: 12, height: 12, borderRadius: 2, flexShrink: 0,
-                background: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '#888888',
-              }} />
-              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {spoolDisplayName(spool)}
-              </span>
-              <span className="tiny muted" style={{ flexShrink: 0 }}>
-                {spool.remaining_weight?.toFixed(0)}g
-              </span>
-            </button>
-          ))}
         </div>
-      )}
-      {spoolmanActive && spools.length === 0 && (
-        <div className="tiny muted" style={{ padding: '8px 0' }}>No spools found in Spoolman.</div>
-      )}
-      <div className="row gap-2" style={{ marginTop: 4 }}>
-        <input className="input" placeholder="Enter manually…" value={manualText}
-               onChange={e => setManualText(e.target.value)}
-               style={{ flex: 1 }} />
-        <button className="btn sm" disabled={!manualText.trim() || saving} onClick={saveManual}>
-          Set
-        </button>
-      </div>
-      <div className="row between" style={{ marginTop: 10 }}>
-        <button className="btn ghost sm" disabled={saving} onClick={unload}>
-          {Icons.x} Unload spool
-        </button>
-        <button className="btn ghost sm" onClick={onClose}>Cancel</button>
       </div>
     </div>
   );
@@ -428,6 +417,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
   useEffect(() => { setNickname(p.nickname); }, [p.nickname]);
 
   const job: Job | undefined = p.currentJobId ? JOBS.find(j => j.id === p.currentJobId) : undefined;
+  const mats = p.materials ?? [p.material];
 
   return (
     <>
@@ -566,20 +556,29 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           <div className="col gap-4">
             <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
               <div className="row between" style={{ alignItems: 'center' }}>
-                <span className="tag-key">Loaded filament</span>
+                <span className="tag-key">Loaded filament{mats.length > 1 ? 's' : ''}</span>
                 <button className="btn ghost sm" onClick={() => setPickingFilament(v => !v)}>
                   {pickingFilament ? 'Cancel' : 'Change'}
                 </button>
               </div>
-              <div className="row gap-3" style={{ marginTop: 10 }}>
-                <Swatch color={p.material.color} large />
-                <div className="col" style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {p.material.name}
-                  </div>
-                  <div className="tiny muted">{p.material.type}</div>
+              {mats.length === 0 ? (
+                <div className="tiny muted" style={{ marginTop: 10 }}>— no filament loaded</div>
+              ) : (
+                <div className="col gap-2" style={{ marginTop: 10 }}>
+                  {mats.map((m, i) => (
+                    <div key={i} className="row gap-3" style={{ alignItems: 'center' }}>
+                      <Swatch color={m.color} large={mats.length === 1} />
+                      <div className="col" style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {m.name}
+                        </div>
+                        <div className="tiny muted">{m.type}</div>
+                      </div>
+                      {mats.length > 1 && <span className="tiny muted mono" style={{ flexShrink: 0 }}>T{i}</span>}
+                    </div>
+                  ))}
                 </div>
-              </div>
+              )}
               {pickingFilament && (
                 <FilamentPicker
                   printerId={Number(p.id)}

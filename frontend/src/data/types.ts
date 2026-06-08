@@ -22,6 +22,7 @@ export interface Printer {
   bedTemp: number;
   chamberTemp: number | null;
   material: Material;
+  materials?: Material[];
   currentJobId: string | null;
   accent: string;
   note?: string;

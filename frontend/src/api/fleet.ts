@@ -73,6 +73,9 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     material: mat
       ? { name: mat.name || '—', type: mat.type || '—', color: mat.color || '#475472' }
       : { name: '—', type: '—', color: '#475472' },
+    materials: p.loaded_filaments.map(m => ({
+      name: m.name || '—', type: m.type || '—', color: m.color || '#475472',
+    })),
     currentJobId: p.current_print ?? null,
     accent: ACCENT[p.printer_type] ?? '#888888',
     fanModel: p.fan_model ?? 0,
