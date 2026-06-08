@@ -70,7 +70,7 @@ def _serialize_snapmaker(state, printer_id: int) -> dict:
         "state": getattr(state, "state", "unknown"),
         "current_print": getattr(state, "current_print", None),
         "progress": getattr(state, "progress", 0.0),
-        "remaining_time": 0,
+        "remaining_time": getattr(state, "remaining_time", 0) or 0,
         "layer_num": getattr(state, "layer_num", 0),
         "total_layers": getattr(state, "total_layers", 0),
         "temperatures": getattr(state, "temperatures", {}),

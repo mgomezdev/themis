@@ -436,7 +436,7 @@ class BambuMQTTClient(AbstractPrinterClient):
             asyncio.run_coroutine_threadsafe(
                 self._on_state_change(self.state), self._loop
             )
-        if self._on_print_complete and self._loop and self.state.state == "FINISH" and prev_state in ("RUNNING", "PAUSE"):
+        if self._on_print_complete and self._loop and self.state.state == "FINISH" and prev_state != "FINISH":
             import asyncio
             asyncio.run_coroutine_threadsafe(
                 self._on_print_complete(self.state), self._loop
