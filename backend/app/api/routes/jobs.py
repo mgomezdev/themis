@@ -247,6 +247,7 @@ async def get_job_details(
             "filament_id": cfg.filament_id,
             "filament_type": cfg.filament_type,
             "filament_color": cfg.filament_color,
+            "tool_index": cfg.tool_index,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
         })
@@ -340,6 +341,7 @@ async def update_job_configs(
             filament_id=cfg.filament_id,
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
+            tool_index=cfg.tool_index,
             slice_failed=False,
             slice_error=None,
         ))
