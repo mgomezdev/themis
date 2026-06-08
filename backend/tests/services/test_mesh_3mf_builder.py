@@ -2,7 +2,64 @@ import json
 import struct
 import zipfile
 
-from app.services.mesh_3mf_builder import build_sliceable_3mf, source_has_project_settings, stl_to_3mf
+from app.services.mesh_3mf_builder import (
+    _model_settings_with_extruder, _patch_model_settings_extruder,
+    _object_ids_from_model, build_sliceable_3mf, source_has_project_settings, stl_to_3mf,
+)
+
+_ONE_TRI_STL = """solid t
+facet normal 0 0 1
+ outer loop
+  vertex 0 0 0
+  vertex 10 0 0
+  vertex 0 10 0
+ endloop
+endfacet
+endsolid t
+"""
+
+
+def test_model_settings_with_extruder_builds_objects():
+    xml = _model_settings_with_extruder(["1", "2"], 3).decode("utf-8")
+    assert '<object id="1">' in xml and '<object id="2">' in xml
+    assert xml.count('key="extruder" value="3"') == 2
+
+
+def test_patch_overrides_existing_object_extruder_and_preserves_others():
+    src = (b'<?xml version="1.0" encoding="UTF-8"?>\n<config>'
+           b'<object id="5"><metadata key="name" value="x"/>'
+           b'<metadata key="extruder" value="1"/></object></config>')
+    out = _patch_model_settings_extruder(src, 4).decode("utf-8")
+    assert 'value="4"' in out and 'value="1"' not in out
+    assert 'key="name"' in out  # unrelated metadata preserved
+
+
+def test_patch_adds_extruder_when_absent():
+    src = b'<?xml version="1.0"?>\n<config><object id="7"><metadata key="name" value="y"/></object></config>'
+    out = _patch_model_settings_extruder(src, 2).decode("utf-8")
+    assert 'key="extruder" value="2"' in out
+
+
+def test_object_ids_from_model():
+    model = b'<model><resources><object id="1" type="model"></object><object id="3"></object></resources></model>'
+    assert _object_ids_from_model(model) == ["1", "3"]
+
+
+def test_stl_to_3mf_writes_object_extruder(tmp_path):
+    stl = tmp_path / "c.stl"; stl.write_text(_ONE_TRI_STL)
+    out = tmp_path / "c.3mf"
+    stl_to_3mf(str(stl), {"nozzle_diameter": ["0.4"]}, out, tool_index=2)
+    with zipfile.ZipFile(out) as z:
+        ms = z.read("Metadata/model_settings.config").decode("utf-8")
+    assert 'key="extruder" value="3"' in ms  # tool 2 (0-based) -> extruder 3 (1-based)
+
+
+def test_stl_to_3mf_omits_model_settings_when_tool_index_none(tmp_path):
+    stl = tmp_path / "c.stl"; stl.write_text(_ONE_TRI_STL)
+    out = tmp_path / "c.3mf"
+    stl_to_3mf(str(stl), {"nozzle_diameter": ["0.4"]}, out)
+    with zipfile.ZipFile(out) as z:
+        assert "Metadata/model_settings.config" not in z.namelist()
 
 
 def _binary_stl(path, triangles):

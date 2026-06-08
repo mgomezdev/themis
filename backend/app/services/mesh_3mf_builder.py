@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import struct
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -36,11 +37,40 @@ _MODEL = "metadata/model_settings.config"
 _DROPPED = ()
 
 
+def _model_settings_with_extruder(object_ids: list[str], extruder_1based: int) -> bytes:
+    """A fresh model_settings.config assigning each object id to the given extruder."""
+    objs = "".join(
+        f'<object id="{oid}"><metadata key="extruder" value="{extruder_1based}"/></object>'
+        for oid in object_ids
+    )
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<config>{objs}</config>'.encode("utf-8")
+
+
+def _object_ids_from_model(model_xml: bytes) -> list[str]:
+    """Object ids declared in a 3D/3dmodel.model (resources/object id=...)."""
+    return [m.decode() for m in re.findall(rb'<object[^>]*\bid="([^"]+)"', model_xml)]
+
+
+def _patch_model_settings_extruder(model_settings: bytes, extruder_1based: int) -> bytes:
+    """Set/override every <object>'s extruder metadata, preserving all other content."""
+    root = ET.fromstring(model_settings)
+    for obj in root.findall("object"):
+        for md in list(obj.findall("metadata")):
+            if md.get("key") == "extruder":
+                obj.remove(md)
+        md = ET.SubElement(obj, "metadata")
+        md.set("key", "extruder")
+        md.set("value", str(extruder_1based))
+    body = ET.tostring(root, encoding="unicode")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
+
+
 def build_sliceable_3mf(
     source_3mf: str | Path,
     project_config: dict,
     out_path: str | Path,
     geometry_only: bool = False,
+    tool_index: int | None = None,
 ) -> Path:
     """Copy ``source_3mf`` preserving geometry, replacing ``project_settings.config``
     with ``project_config``.
@@ -56,13 +86,29 @@ def build_sliceable_3mf(
     drop = set(_DROPPED) | {_REPLACED}
     if geometry_only:
         drop.add(_MODEL)
+    if tool_index is not None:
+        drop.add(_MODEL)  # we re-emit model_settings ourselves below
 
     with zipfile.ZipFile(source_3mf) as zin, zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
+        model_xml = b""
+        src_model_settings = b""
         for item in zin.namelist():
-            if item.lower() in drop:
+            low = item.lower()
+            if low == "3d/3dmodel.model":
+                model_xml = zin.read(item)
+            if low == _MODEL:
+                src_model_settings = zin.read(item)
+            if low in drop:
                 continue
             zout.writestr(item, zin.read(item))
         zout.writestr("Metadata/project_settings.config", config_bytes)
+        if tool_index is not None:
+            ext = tool_index + 1
+            if src_model_settings and not geometry_only:
+                ms = _patch_model_settings_extruder(src_model_settings, ext)
+            else:
+                ms = _model_settings_with_extruder(_object_ids_from_model(model_xml) or ["1"], ext)
+            zout.writestr("Metadata/model_settings.config", ms)
     return out_path
 
 
@@ -85,7 +131,8 @@ def _parse_stl(path: Path) -> list[tuple[tuple[float, float, float], ...]]:
     return [tuple(verts[i:i + 3]) for i in range(0, len(verts) - 2, 3)]
 
 
-def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path) -> Path:
+def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path,
+               tool_index: int | None = None) -> Path:
     """Wrap an STL mesh into a sliceable 3MF carrying the generated project config.
 
     Deduplicates vertices and emits a single model object. Used when the upload is
@@ -128,6 +175,9 @@ def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path)
         z.writestr("_rels/.rels", _RELS)
         z.writestr("3D/3dmodel.model", model)
         z.writestr("Metadata/project_settings.config", json.dumps(project_config))
+        if tool_index is not None:
+            z.writestr("Metadata/model_settings.config",
+                       _model_settings_with_extruder(["1"], tool_index + 1))
     return out_path
 
 
