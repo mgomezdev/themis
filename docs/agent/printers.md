@@ -51,6 +51,20 @@ input]` → return artifact. Recovery tier: on `SliceError`, retry `geometry_onl
 (from the matched loaded slot) is passed as the filament preset; `filament_colours` from the job ask.
 See the `slicer-cli-architecture` memory for the multicolor model.
 
+**Single-filament tool selection** (`SliceRequest.tool_index` → `mesh_3mf_builder`):
+- Mechanism: **per-object `extruder` metadata** in `Metadata/model_settings.config` —
+  `<object id="…"><metadata key="extruder" value="{tool_index+1}"/></object>` (1-based).
+- Injected by `stl_to_3mf` and `build_sliceable_3mf` when `tool_index is not None`:
+  helpers `_model_settings_with_extruder` (fresh config), `_patch_model_settings_extruder`
+  (patch existing), `_object_ids_from_model` (parse object ids from `3D/3dmodel.model`).
+- NOT via `filament_map` / `filament_map_mode` — spike (`scripts/spike_filament_map.py`)
+  confirmed those do not route a single filament (always falls back to T0).
+- Filament arrays in `project_settings.config` **must stay padded to `n_extruders`**
+  (`build_project_config` already does this; single-extruder arrays silently fall back to T0).
+- Queue resolves the slot via `_slot_for_config(config, loaded)`: uses `loaded[tool_index]`
+  when `tool_index` is set; otherwise falls back to `_matching_loaded_filament` (type/color ask).
+  `_filament_mismatch` gates eligibility on that resolved slot being present.
+
 ## Filament gating & AMS
 
 Queue claim matches the job's **ask** (`config.filament_type`+`filament_color`) against the printer's
@@ -108,7 +122,10 @@ loop + `check_staleness` closes the WS to force reconnect on silence. RPC ids vi
 vocab is IDLE/RUNNING/PAUSE/FINISH/FAILED only). **Filaments**: 4 **manual** slots (slot 0-3 ↔
 extruder0-3); `get_loaded_filaments` is unused — slots are user-set in the DB `loaded_filaments`, no
 `_on_ams_change` auto-sync. **Camera**: snapshot `http://<ip>/webcam/snapshot.jpg`; `camera_mjpeg_url` =
-`/webcam/stream` (best-effort). Per-tool temps in `state.temperatures["extruders"]`. Tool/slot mapping
-(model-filament → printer-tool, single-filament tool choice) is **Project 2**, not yet built.
+`/webcam/stream` (best-effort). Per-tool temps in `state.temperatures["extruders"]`.
+**Single-filament tool pick** (Project 2 — delivered): user selects a tool (T0–T3) per printer in
+`NewJobScreen`; persisted as `job_printer_configs.tool_index`; queue routes via `_slot_for_config` and
+injects per-object `extruder` metadata in the sliceable 3MF (see Slicing pipeline above).
+Multi-material model→tool mapping (Project 2b) remains unbuilt.
 **Validation status**: built + unit-tested; live Moonraker connectivity confirmed
 (`scripts/snapmaker_smoke_test.py`, reads `SNAPMAKER_IP`); test print pending.

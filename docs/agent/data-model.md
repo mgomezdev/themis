@@ -55,9 +55,13 @@ spoolman_config     (enabled, url, api_key)
 `id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
 loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
-**ask** → matched against `printer.loaded_filaments`), `slice_failed: bool, slice_error: text?`.
+**ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
+tool/slot; `None` = default/legacy — queue uses type+color ask instead), `slice_failed: bool, slice_error: text?`.
 - `filament_type`+`filament_color` = the eligibility "ask". `slice_failed` blocks the job on that
   printer until cleared (by `unblock` or `updateJobConfigs`).
+- `tool_index`: when set, `_slot_for_config` resolves `loaded_filaments[tool_index]` directly (bypasses
+  type/color match); `_filament_mismatch` checks that slot is loaded. Added via `_migrate` `ALTER TABLE`
+  guard (`database.py`).
 
 ### gcode_files
 `id, job_id FK, printer_id FK, path`.
