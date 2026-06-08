@@ -450,7 +450,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 )
             if (
                 new.print_state == "complete"
-                and self._prev_print_state in ("printing", "warming_up", "leveling", "pausing")
+                and self._prev_print_state != "complete"
                 and self._on_print_complete
             ):
                 asyncio.run_coroutine_threadsafe(
