@@ -143,3 +143,25 @@ def test_geometry_only_drops_model_settings(tmp_path):
     assert "3D/3dmodel.model" in names                     # geometry kept
     assert "Metadata/model_settings.config" not in names   # dropped in recovery
     assert "Metadata/project_settings.config" in names
+
+
+def test_build_sliceable_3mf_tool_index_patches_object_extruder(tmp_path):
+    # Source has a model_settings.config; non-geometry_only → patch path.
+    src = _make_source(tmp_path)
+    out = build_sliceable_3mf(src, {"printer_model": "X"}, tmp_path / "tool.3mf", tool_index=1)
+    with zipfile.ZipFile(out) as z:
+        ms = z.read("Metadata/model_settings.config").decode("utf-8")
+        ps = json.loads(z.read("Metadata/project_settings.config"))
+    assert 'key="extruder" value="2"' in ms                # tool 1 (0-based) -> extruder 2 (1-based)
+    assert ps == {"printer_model": "X"}                    # project settings still swapped
+
+
+def test_build_sliceable_3mf_geometry_only_tool_index_creates_object_extruder(tmp_path):
+    # geometry_only drops the source model_settings → recreate from the model's object ids
+    # (this source's <model/> has none, so it falls back to id "1").
+    src = _make_source(tmp_path)
+    out = build_sliceable_3mf(src, {"printer_model": "X"}, tmp_path / "geo_tool.3mf",
+                              geometry_only=True, tool_index=2)
+    with zipfile.ZipFile(out) as z:
+        ms = z.read("Metadata/model_settings.config").decode("utf-8")
+    assert '<object id="1">' in ms and 'key="extruder" value="3"' in ms  # tool 2 -> extruder 3
