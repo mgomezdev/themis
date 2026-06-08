@@ -58,6 +58,7 @@ export interface ApiJobPrinterConfig {
   filament_id: number | null;
   filament_type: string | null;
   filament_color: string | null;
+  tool_index: number | null;
   slice_failed: boolean;
   slice_error: string | null;
 }

@@ -3,18 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { getJobDetails, getPrinterProfiles, updateJobConfigs, type ApiJobDetails } from '../api/queue';
-import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
-
-// ---- types ----
-
-interface PerPrinterCfg {
-  printProfile: string | null;
-  filamentProfile: string | null;
-  filamentId: number | null;
-  filamentType: string | null;
-  filamentColor: string | null;
-}
+import { getJobDetails, updateJobConfigs, type ApiJobDetails } from '../api/queue';
+import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 
 // ---- hooks ----
 
@@ -26,19 +16,6 @@ function usePrinterList(): ApiPrinter[] {
     return () => { alive = false; };
   }, []);
   return printers;
-}
-
-function usePrinterProfiles(printerId: number | null) {
-  const [data, setData] = useState({ printProfiles: [] as string[], filamentProfiles: [] as string[] });
-  useEffect(() => {
-    if (printerId == null) return;
-    let alive = true;
-    getPrinterProfiles(printerId)
-      .then(p => { if (alive) setData({ printProfiles: p.print_profiles, filamentProfiles: p.filament_profiles }); })
-      .catch(console.error);
-    return () => { alive = false; };
-  }, [printerId]);
-  return data;
 }
 
 // ---- Checkbox ----
@@ -99,111 +76,6 @@ function PrinterPicker({ printers, selected, onToggle }: {
   );
 }
 
-// ---- PerPrinterConfigEditor ----
-
-function PerPrinterConfigEditor({ printerId, printers, config, onChange }: {
-  printerId: string;
-  printers: ApiPrinter[];
-  config: PerPrinterCfg;
-  onChange: (patch: Partial<PerPrinterCfg>) => void;
-}) {
-  const pid = Number(printerId);
-  const printer = printers.find(p => p.id === pid);
-  const { printProfiles } = usePrinterProfiles(pid);
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const filaments = useFilaments(spoolmanActive);
-  const [manualMode, setManualMode] = useState(
-    () => !spoolmanActive || (config.filamentId === null && config.filamentColor !== null),
-  );
-
-  useEffect(() => {
-    if ((!spoolmanActive || manualMode) && config.filamentColor === null) {
-      onChange({ filamentColor: '#888888' });
-    }
-  }, [spoolmanActive, manualMode]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  if (!printer) return null;
-  const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
-
-  const catalogValue = config.filamentId != null
-    ? (filaments.find(f => f.id === config.filamentId) != null
-        ? filamentDisplayName(filaments.find(f => f.id === config.filamentId)!)
-        : '')
-    : '';
-
-  return (
-    <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
-      <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 12 }}>
-        <span className="elig on">{badge}</span>
-        <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{printer.name}</div>
-          <div className="tiny muted">{printer.printer_type}</div>
-        </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        {/* Print profile */}
-        <div>
-          <label className="label">Print profile</label>
-          <select className="select" value={config.printProfile ?? ''}
-                  onChange={e => onChange({ printProfile: e.target.value || null })}>
-            <option value="">— select profile —</option>
-            {printProfiles.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
-          {printProfiles.length === 0 && (
-            <div className="tiny muted" style={{ marginTop: 4 }}>No profiles found for this printer</div>
-          )}
-        </div>
-
-        {/* Filament */}
-        <div>
-          <label className="label">Filament</label>
-          {spoolmanActive && !manualMode ? (
-            <div className="col gap-1">
-              <select className="select" value={catalogValue}
-                      onChange={e => {
-                        const v = e.target.value;
-                        if (v === '__manual__') { setManualMode(true); onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null }); return; }
-                        const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
-                        onChange({ filamentProfile: v || null, filamentId: f?.id ?? null, filamentType: f?.material ?? null, filamentColor: f?.color_hex ? `#${f.color_hex}` : null });
-                      }}>
-                <option value="">— select filament —</option>
-                {filaments.map(f => <option key={f.id} value={filamentDisplayName(f)}>{filamentDisplayName(f)} · {f.material}</option>)}
-                <option value="__manual__">Enter manually…</option>
-              </select>
-              {filaments.length === 0 && <div className="tiny muted">No filaments in Spoolman</div>}
-            </div>
-          ) : (
-            <div className="col gap-1">
-              <div className="row gap-2">
-                <input className="input" list="edit-filament-types" placeholder="Type (PLA, PETG…)"
-                       value={config.filamentType ?? ''}
-                       onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
-                       style={{ flex: 1 }} />
-                {spoolmanActive && (
-                  <button className="btn ghost sm" onClick={() => { setManualMode(false); onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null }); }}>
-                    ↩ Catalog
-                  </button>
-                )}
-              </div>
-              <datalist id="edit-filament-types">
-                {['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'PA-CF', 'Nylon', 'PC'].map(t => <option key={t} value={t} />)}
-              </datalist>
-              <div className="row gap-2" style={{ alignItems: 'center' }}>
-                <input type="color" value={config.filamentColor ?? '#888888'}
-                       onChange={e => onChange({ filamentColor: e.target.value })}
-                       style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }} />
-                <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ---- Main screen ----
 
 export function EditJobScreen() {
@@ -236,6 +108,7 @@ export function EditJobScreen() {
           filamentId: c.filament_id,
           filamentType: c.filament_type,
           filamentColor: c.filament_color,
+          toolIndex: c.tool_index ?? null,
         };
       }
       setPerPrinter(pp);
@@ -251,7 +124,7 @@ export function EditJobScreen() {
         setPerPrinter(next);
         return prev.filter(id => id !== sid);
       }
-      setPerPrinter(p => ({ ...p, [sid]: { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null } }));
+      setPerPrinter(p => ({ ...p, [sid]: defaultPerPrinterCfg() }));
       return [...prev, sid];
     });
   }
@@ -262,7 +135,7 @@ export function EditJobScreen() {
 
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return !!(pp?.printProfile && pp?.filamentType && pp?.filamentColor);
+    return !!(pp?.printProfile);
   });
 
   async function handleSave() {
@@ -277,6 +150,7 @@ export function EditJobScreen() {
         filament_id: perPrinter[sid].filamentId ?? null,
         filament_type: perPrinter[sid].filamentType,
         filament_color: perPrinter[sid].filamentColor,
+        tool_index: perPrinter[sid].toolIndex ?? null,
       })));
       navigate(`/jobs/${jobId}`);
     } catch (e) {
@@ -350,11 +224,11 @@ export function EditJobScreen() {
                              sub="Print profile and filament for each eligible printer." />
               <div className="col gap-3">
                 {selectedPrinters.map(sid => (
-                  <PerPrinterConfigEditor
+                  <PerPrinterConfig
                     key={sid}
                     printerId={sid}
                     printers={printers}
-                    config={perPrinter[sid] ?? { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null }}
+                    config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                     onChange={patch => patchPerPrinter(sid, patch)}
                   />
                 ))}
@@ -388,7 +262,7 @@ export function EditJobScreen() {
                 {selectedPrinters.map(sid => {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
-                  const done = !!(pp?.printProfile && pp?.filamentType && pp?.filamentColor);
+                  const done = !!(pp?.printProfile);
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
