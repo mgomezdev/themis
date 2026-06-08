@@ -26,13 +26,27 @@ manually-defined slots, which are the tools the picker chooses among. And `42e9d
 `project_config_builder` multi-extruder-aware (`printer_extruder_id`, `filament_self_index`,
 per-extruder array expansion) and added the `snapmaker blank single/2 plates.3mf` references.
 
-## Mechanism: OrcaSlicer `filament_map`
+## Mechanism: per-object `extruder` metadata (Approach C — verified)
+
+> **SUPERSEDED HYPOTHESIS:** the original design proposed OrcaSlicer `filament_map`. The verification
+> spike disproved it — `filament_map`/`filament_map_mode` do **not** route a single-filament job off T0
+> (see the spike results at the end of this doc). The **real, verified mechanism is per-object `extruder`
+> metadata in `model_settings.config`**, described here. The `filament_map` paragraph below is kept only
+> as the rejected-hypothesis record.
+
+The tool a sliced object prints on is set by `<metadata key="extruder" value="N"/>` (N = **1-based**
+extruder index) on that object inside the 3MF's `Metadata/model_settings.config` — exactly what the
+OrcaSlicer GUI writes when you assign an object to a tool. Verified: object `extruder=3` → gcode emits
+`T2` (0-based tool); `extruder=1` → `T0`. **Hard dependency:** the per-filament arrays must be padded to
+the machine's extruder count so the target extruder has a filament — `build_project_config` already pads
+every `filament_*` list to `n_extruders` (=4 for the U1), so this holds for free. The project
+`filament_map`/`filament_map_mode` and the per-`<part>` extruder are **not** involved.
+
+### Rejected hypothesis (record only): project `filament_map`
 
 OrcaSlicer's `filament_map` is an array with one entry per filament; each value is the **1-based
-extruder index** that filament prints on. For a single-filament print on a multi-extruder machine,
-`filament_map=[k]` binds the filament to extruder `k`, and OrcaSlicer bakes the corresponding tool-change
-gcode. `project_config_builder` already lists `filament_map` among known keys but never sets it, so it
-currently carries the reference default.
+extruder index** that filament prints on. The spike proved OrcaSlicer 2.3.2 ignores it for a
+single-filament job on the U1 profile (always emits T0), in every map mode — so it is NOT the mechanism.
 
 `tool_index` is **0-based** (T0–T3, matching the Klipper extruder/extruder1/extruder2/extruder3 and the
 loaded-slot index); `filament_map` is **1-based**, so `filament_map = [tool_index + 1]`.
@@ -64,19 +78,22 @@ tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)  # 0-based extr
 (try/except like the other added columns). `None` preserves today's behavior (single-tool printers, and
 existing rows).
 
-### 2. Slice config — `project_config_builder.build_project_config`
-Add a `tool_index: int | None = None` parameter. After the `n_extruders > 1` block, when `tool_index is
-not None and n_extruders > 1`:
-```python
-config["filament_map"] = [str(tool_index + 1)]
-```
-For `n_extruders <= 1` or `tool_index is None`, leave `filament_map` at its reference default (no
-behavior change for existing printers). `project_config_json` forwards the new param.
+### 2. Slice 3MF prep — `mesh_3mf_builder` (object `extruder` metadata)
+`build_project_config` is **unchanged** (it already pads filament arrays to `n_extruders`, the hard
+dependency). The object-extruder injection lives in the 3MF prep, keyed off `tool_index`:
+- `stl_to_3mf(..., tool_index=None)`: when `tool_index is not None`, write a `Metadata/model_settings.config`
+  setting the emitted object (`id="1"`) to `<metadata key="extruder" value="{tool_index+1}"/>`.
+- `build_sliceable_3mf(..., tool_index=None)`: when `tool_index is not None`, set/override the `extruder`
+  metadata on the source's object(s) in `model_settings.config` (parse it; if absent, derive object ids
+  from `3D/3dmodel.model`). For `geometry_only=True` (recovery tier, which drops `model_settings.config`),
+  re-create a minimal `model_settings.config` with the object ids + extruder so routing survives recovery.
+- Only the object-level `extruder` is needed (verified); per-`<part>` extruder and plate `filament_maps`
+  are not. `tool_index is None` writes nothing → today's behavior.
 
 ### 3. Slice request — `slicer_service.SliceRequest` + `SlicerService.slice`
-`SliceRequest` gains `tool_index: int | None = None`. Wherever `slice()` calls `build_project_config`
-(via `_build_config`), forward `tool_index`. No other slice logic changes — still one filament in,
-raw gcode out.
+`SliceRequest` gains `tool_index: int | None = None`. `SlicerService.slice` forwards `req.tool_index` to
+`stl_to_3mf` / `build_sliceable_3mf` (the model_settings writer) — NOT to `build_project_config`. No other
+slice logic changes.
 
 ### 4. Queue — `queue_engine._run_slice_and_print`
 When `config.tool_index is not None`:
@@ -135,17 +152,19 @@ is free.
 
 ## File structure
 **Modify:** `backend/app/models.py`, `backend/app/database.py` (`_migrate`),
-`backend/app/services/project_config_builder.py`, `backend/app/services/slicer_service.py`,
+`backend/app/services/mesh_3mf_builder.py` (object-extruder injection), `backend/app/services/slicer_service.py`,
 `backend/app/services/queue_engine.py`, `backend/app/api/routes/jobs.py`,
-`frontend/src/screens/NewJobScreen.tsx` (+ its test).
-**Add tests:** `backend/tests/services/test_project_config_builder.py` (extend),
+`frontend/src/screens/NewJobScreen.tsx` (+ its test). (`project_config_builder.py` is **unchanged** —
+its existing filament padding is the dependency.)
+**Add tests:** `backend/tests/services/test_mesh_3mf_builder.py` (extend — object extruder),
 queue + migration tests, `NewJobScreen` test cases.
 **Docs:** `themis-docs-sync` after implementation (`printers.md` slicing section, `data-model.md` for the
 new column).
 
 ## Verification status / sequencing
-1. Local slice spike → confirm `filament_map` routes the tool (decides A vs B).
-2. Build the data + slice + queue + UI changes (TDD).
+1. ✅ Local slice spike — **Approach C confirmed** (per-object `extruder` metadata routes the tool;
+   `filament_map` does not). See the spike results below.
+2. Build the data + slice (model_settings writer) + queue + UI changes (TDD).
 3. Live: print on T2 vs T3 on the U1 when free.
 Project 2b (multi-material model→tool mapping) is a separate spec, started after this lands and the
 mechanism is hardware-verified.

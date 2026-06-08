@@ -4,7 +4,7 @@
 
 **Goal:** Let a job pick which physical tool/extruder (T0–T3) a single-material print runs on, on multi-tool printers like the Snapmaker U1, by binding the slice's filament to the chosen extruder via OrcaSlicer `filament_map`.
 
-**Architecture:** A new nullable `tool_index` on `JobPrinterConfig` flows New Job → create-route → queue → `SliceRequest` → `build_project_config`, which sets `filament_map = [tool_index + 1]` for multi-extruder profiles. New Job shows a tool picker for any printer with ≥2 loaded slots; the picked slot supplies the filament profile/colour and the queue resolves `loaded_filaments[tool_index]` directly. A **verification spike** (Task 1) confirms `filament_map` routing before the rest is built.
+**Architecture:** A new nullable `tool_index` on `JobPrinterConfig` flows New Job → create-route → queue → `SliceRequest` → the **3MF prep** (`mesh_3mf_builder`), which sets the sliced object's `<metadata key="extruder" value="{tool_index+1}"/>` in `model_settings.config` so OrcaSlicer emits the chosen tool's gcode. New Job shows a tool picker for any printer with ≥2 loaded slots; the picked slot supplies the filament profile/colour and the queue resolves `loaded_filaments[tool_index]` directly. **The verification spike (Task 1) is already done — it proved `filament_map` does NOT route the tool; the per-object `extruder` metadata does (Approach C).** `build_project_config` is unchanged (its existing filament-array padding to `n_extruders` is the load-bearing dependency).
 
 **Tech Stack:** Python/FastAPI/SQLAlchemy/aiosqlite, OrcaSlicer CLI, React/Vite/TS, pytest, vitest.
 
@@ -18,12 +18,15 @@
 - `tool_index` is **0-based** (T0–T3, = loaded-slot index). OrcaSlicer `filament_map` is **1-based** → `filament_map = [str(tool_index + 1)]`.
 
 ## Model tuning
-**Task 1** (spike) and **Tasks 6, 7, 8** are **Sonnet** (judgment/integration/UI/docs). **Tasks 2, 3, 4, 5** are **Haiku** (mechanical, complete code).
+**Tasks 1, 2, 6, 7, 8** are **Sonnet** (spike done; T2 = 3MF/XML judgment; integration/UI/docs). **Tasks 3, 4, 5** are **Haiku** (mechanical, complete code).
+
+## Status
+**Task 1 (spike) is COMPLETE** (commits `ceb3f48`, `263c773`, `4a479ba`): it disproved `filament_map` (Approach A/B) and proved **Approach C — per-object `extruder` metadata in `model_settings.config`**. The plan below is the Approach-C revision. Start execution at **Task 2**.
 
 ## File structure
-- Spike: `backend/scripts/spike_filament_map.py` (Task 1, throwaway helper, kept for re-runs).
-- `backend/app/services/project_config_builder.py` — `filament_map` (Task 2).
-- `backend/app/services/slicer_service.py` — `SliceRequest.tool_index` + forward (Task 3).
+- Spike: `backend/scripts/spike_filament_map.py` (Task 1 — DONE; kept for re-runs).
+- `backend/app/services/mesh_3mf_builder.py` — object `extruder` metadata injection (Task 2).
+- `backend/app/services/slicer_service.py` — `SliceRequest.tool_index` + forward to the 3MF prep (Task 3).
 - `backend/app/models.py` + `backend/app/database.py` — column + migration (Task 4).
 - `backend/app/api/routes/jobs.py` — `PrinterConfigInput.tool_index` + persist (Task 5).
 - `backend/app/services/queue_engine.py` — slot-by-index + eligibility + pass through (Task 6).
@@ -243,109 +246,198 @@ git commit -m "spike(tool-mapping): verify filament_map routes a single filament
 
 ---
 
-## Task 2: `build_project_config` sets `filament_map` from `tool_index`
+## Task 2: Inject object `extruder` metadata into `model_settings.config`
 
-**Model: Haiku.** (Assumes Task 1 = Approach A.)
+**Model: Sonnet.** (3MF/XML judgment.) **This is the verified Approach-C mechanism.** `build_project_config` is NOT touched (its filament padding to `n_extruders` already satisfies the dependency).
 
 **Files:**
-- Modify: `backend/app/services/project_config_builder.py`
-- Test: `backend/tests/services/test_project_config_builder.py` (extend)
+- Modify: `backend/app/services/mesh_3mf_builder.py`
+- Test: `backend/tests/services/test_mesh_3mf_builder.py` (extend)
 
-- [ ] **Step 1: Write the failing test**
+Add two pure helpers + a `tool_index` param to `stl_to_3mf` and `build_sliceable_3mf` so the sliced object(s) carry `<metadata key="extruder" value="{tool_index+1}"/>` in `Metadata/model_settings.config`. `tool_index=None` ⇒ write nothing new (today's behavior, byte-identical).
 
-Add to `backend/tests/services/test_project_config_builder.py`:
+- [ ] **Step 1: Write the failing tests**
+
+Add to `backend/tests/services/test_mesh_3mf_builder.py`:
 
 ```python
-from app.services.project_config_builder import build_project_config
+import zipfile
+from app.services.mesh_3mf_builder import (
+    _model_settings_with_extruder, _patch_model_settings_extruder,
+    _object_ids_from_model, stl_to_3mf,
+)
+
+_ONE_TRI_STL = """solid t
+facet normal 0 0 1
+ outer loop
+  vertex 0 0 0
+  vertex 10 0 0
+  vertex 0 10 0
+ endloop
+endfacet
+endsolid t
+"""
 
 
-def _multi_extruder_machine():
-    # 4-nozzle machine: n_extruders derives from len(nozzle_diameter).
-    return {"name": "U1", "printer_model": "U1",
-            "nozzle_diameter": ["0.4", "0.4", "0.4", "0.4"]}
+def test_model_settings_with_extruder_builds_objects():
+    xml = _model_settings_with_extruder(["1", "2"], 3).decode("utf-8")
+    assert '<object id="1">' in xml and '<object id="2">' in xml
+    assert xml.count('key="extruder" value="3"') == 2
 
 
-def _filament():
-    return {"name": "PLA", "filament_type": ["PLA"]}
+def test_patch_overrides_existing_object_extruder_and_preserves_others():
+    src = (b'<?xml version="1.0" encoding="UTF-8"?>\n<config>'
+           b'<object id="5"><metadata key="name" value="x"/>'
+           b'<metadata key="extruder" value="1"/></object></config>')
+    out = _patch_model_settings_extruder(src, 4).decode("utf-8")
+    assert 'value="4"' in out and 'value="1"' not in out
+    assert 'key="name"' in out  # unrelated metadata preserved
 
 
-def test_filament_map_set_for_tool_index_on_multi_extruder():
-    cfg = build_project_config(_multi_extruder_machine(), {"name": "proc"},
-                               [_filament()], None, plate_count=1, tool_index=2)
-    assert cfg["filament_map"] == ["3"]  # 0-based tool 2 -> 1-based extruder 3
+def test_patch_adds_extruder_when_absent():
+    src = b'<?xml version="1.0"?>\n<config><object id="7"><metadata key="name" value="y"/></object></config>'
+    out = _patch_model_settings_extruder(src, 2).decode("utf-8")
+    assert 'key="extruder" value="2"' in out
 
 
-def test_filament_map_untouched_when_tool_index_none():
-    cfg = build_project_config(_multi_extruder_machine(), {"name": "proc"},
-                               [_filament()], None, plate_count=1, tool_index=None)
-    # default tool_index leaves whatever the reference default is; not forced to a slot.
-    assert cfg.get("filament_map") != ["3"]
+def test_object_ids_from_model():
+    model = b'<model><resources><object id="1" type="model"></object><object id="3"></object></resources></model>'
+    assert _object_ids_from_model(model) == ["1", "3"]
 
 
-def test_filament_map_untouched_on_single_extruder():
-    machine = {"name": "Mono", "printer_model": "Mono", "nozzle_diameter": ["0.4"]}
-    cfg = build_project_config(machine, {"name": "proc"}, [_filament()], None,
-                               plate_count=1, tool_index=2)
-    assert cfg.get("filament_map") != ["3"]
+def test_stl_to_3mf_writes_object_extruder(tmp_path):
+    stl = tmp_path / "c.stl"; stl.write_text(_ONE_TRI_STL)
+    out = tmp_path / "c.3mf"
+    stl_to_3mf(str(stl), {"nozzle_diameter": ["0.4"]}, out, tool_index=2)
+    with zipfile.ZipFile(out) as z:
+        ms = z.read("Metadata/model_settings.config").decode("utf-8")
+    assert 'key="extruder" value="3"' in ms  # tool 2 (0-based) -> extruder 3 (1-based)
+
+
+def test_stl_to_3mf_omits_model_settings_when_tool_index_none(tmp_path):
+    stl = tmp_path / "c.stl"; stl.write_text(_ONE_TRI_STL)
+    out = tmp_path / "c.3mf"
+    stl_to_3mf(str(stl), {"nozzle_diameter": ["0.4"]}, out)
+    with zipfile.ZipFile(out) as z:
+        assert "Metadata/model_settings.config" not in z.namelist()
 ```
 
 - [ ] **Step 2: Run — confirm FAIL**
 
-Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/test_project_config_builder.py -k filament_map -v`
-Expected: FAIL — `build_project_config() got an unexpected keyword argument 'tool_index'`.
+Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/test_mesh_3mf_builder.py -k "extruder or object_ids or model_settings" -v`
+Expected: FAIL — the helpers don't exist / `stl_to_3mf` has no `tool_index`.
 
 - [ ] **Step 3: Implement**
 
-In `backend/app/services/project_config_builder.py`, change the `build_project_config` signature (around line 202) to add the param:
+In `backend/app/services/mesh_3mf_builder.py`, add `import xml.etree.ElementTree as ET` near the other imports (it already imports `re`, `zipfile`, `json`). Add the helpers (place them above `build_sliceable_3mf`):
 
 ```python
-def build_project_config(
-    machine: dict,
-    process: dict,
-    filaments: list[dict],
-    filament_colours: list[str] | None = None,
-    plate_count: int = 1,
-    tool_index: int | None = None,
-) -> dict:
+def _model_settings_with_extruder(object_ids: list[str], extruder_1based: int) -> bytes:
+    """A fresh model_settings.config assigning each object id to the given extruder."""
+    objs = "".join(
+        f'<object id="{oid}"><metadata key="extruder" value="{extruder_1based}"/></object>'
+        for oid in object_ids
+    )
+    return f'<?xml version="1.0" encoding="UTF-8"?>\n<config>{objs}</config>'.encode("utf-8")
+
+
+def _object_ids_from_model(model_xml: bytes) -> list[str]:
+    """Object ids declared in a 3D/3dmodel.model (resources/object id=...)."""
+    return [m.decode() for m in re.findall(rb'<object[^>]*\bid="([^"]+)"', model_xml)]
+
+
+def _patch_model_settings_extruder(model_settings: bytes, extruder_1based: int) -> bytes:
+    """Set/override every <object>'s extruder metadata, preserving all other content."""
+    root = ET.fromstring(model_settings)
+    for obj in root.findall("object"):
+        for md in list(obj.findall("metadata")):
+            if md.get("key") == "extruder":
+                obj.remove(md)
+        md = ET.SubElement(obj, "metadata")
+        md.set("key", "extruder")
+        md.set("value", str(extruder_1based))
+    body = ET.tostring(root, encoding="unicode")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
 ```
 
-Then, inside the existing `if n_extruders > 1:` block (after the `printer_extruder_id`/`filament_self_index` lines, ~line 268), add:
+Add `tool_index: int | None = None` to `stl_to_3mf` and write the model_settings inside its `ZipFile` block (after the `project_settings.config` line):
 
 ```python
-        # Route the (single) filament to the chosen physical extruder/tool.
-        # tool_index is 0-based (T0-T3); OrcaSlicer filament_map is 1-based.
+def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path,
+               tool_index: int | None = None) -> Path:
+    ...
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml", _CONTENT_TYPES)
+        z.writestr("_rels/.rels", _RELS)
+        z.writestr("3D/3dmodel.model", model)
+        z.writestr("Metadata/project_settings.config", json.dumps(project_config))
         if tool_index is not None:
-            config["filament_map"] = [str(tool_index + 1)]
+            z.writestr("Metadata/model_settings.config",
+                       _model_settings_with_extruder(["1"], tool_index + 1))
+    return out_path
 ```
 
-Update `project_config_json` (the wrapper just below `build_project_config`) to forward the param:
+Add `tool_index: int | None = None` to `build_sliceable_3mf` and manage model_settings when it's set (capture the source's model_settings + model even while dropping them, then re-emit patched/created):
 
 ```python
-def project_config_json(machine, process, filaments, filament_colours=None, plate_count=1, tool_index=None) -> str:
-    return json.dumps(build_project_config(machine, process, filaments, filament_colours, plate_count, tool_index))
+def build_sliceable_3mf(source_3mf, project_config, out_path, geometry_only=False,
+                        tool_index=None) -> Path:
+    source_3mf, out_path = Path(source_3mf), Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    config_bytes = json.dumps(project_config).encode("utf-8")
+    drop = set(_DROPPED) | {_REPLACED}
+    if geometry_only:
+        drop.add(_MODEL)
+    if tool_index is not None:
+        drop.add(_MODEL)  # we re-emit model_settings ourselves below
+
+    with zipfile.ZipFile(source_3mf) as zin, zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
+        model_xml = b""
+        src_model_settings = b""
+        for item in zin.namelist():
+            low = item.lower()
+            if low == "3d/3dmodel.model":
+                model_xml = zin.read(item)
+            if low == _MODEL:
+                src_model_settings = zin.read(item)
+            if low in drop:
+                continue
+            zout.writestr(item, zin.read(item))
+        zout.writestr("Metadata/project_settings.config", config_bytes)
+        if tool_index is not None:
+            ext = tool_index + 1
+            if src_model_settings and not geometry_only:
+                ms = _patch_model_settings_extruder(src_model_settings, ext)
+            else:
+                ms = _model_settings_with_extruder(_object_ids_from_model(model_xml) or ["1"], ext)
+            zout.writestr("Metadata/model_settings.config", ms)
+    return out_path
 ```
+
+(`_MODEL` is `"metadata/model_settings.config"` lowercase — the `low in drop` check is case-insensitive; we always WRITE the canonical `"Metadata/model_settings.config"`.)
 
 - [ ] **Step 4: Run — confirm PASS + full suite**
 
-Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/test_project_config_builder.py -v` → PASS.
-Then `cd backend && backend\.venv\Scripts\python.exe -m pytest -q` → green.
+Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/test_mesh_3mf_builder.py -v` → PASS. Then `cd backend && backend\.venv\Scripts\python.exe -m pytest -q` → green (the existing `build_sliceable_3mf` tests must still pass — `tool_index=None` is byte-identical to before).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/app/services/project_config_builder.py backend/tests/services/test_project_config_builder.py
-git commit -m "feat(slice): build_project_config sets filament_map from tool_index (multi-extruder)"
+git add backend/app/services/mesh_3mf_builder.py backend/tests/services/test_mesh_3mf_builder.py
+git commit -m "feat(slice): inject per-object extruder metadata for tool selection"
 ```
 
 ---
 
-## Task 3: Thread `tool_index` through `SliceRequest`
+## Task 3: Thread `tool_index` through `SliceRequest` → the 3MF prep
 
 **Model: Haiku.**
 
 **Files:**
 - Modify: `backend/app/services/slicer_service.py`
 - Test: `backend/tests/services/test_slicer_service.py` (create if absent, else extend)
+
+`SliceRequest` gains `tool_index`; `slice()` forwards it to `stl_to_3mf` / `build_sliceable_3mf` (the model_settings writer from Task 2). `_build_config` / `build_project_config` are NOT changed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -357,7 +449,7 @@ from app.services.slicer_service import SlicerService, SliceRequest
 
 
 def _req(**kw):
-    base = dict(job_id=1, source_3mf="x.3mf", plate_number=0, machine_preset="M",
+    base = dict(job_id=1, source_3mf="x.stl", plate_number=0, machine_preset="M",
                 process_preset="P", filament_presets=["F"])
     base.update(kw)
     return SliceRequest(**base)
@@ -368,19 +460,30 @@ def test_slice_request_has_tool_index_default_none():
     assert _req(tool_index=2).tool_index == 2
 
 
-def test_build_config_forwards_tool_index():
-    svc = SlicerService.__new__(SlicerService)  # skip __init__ (no orca needed)
-    svc._resolver = type("R", (), {"resolve": staticmethod(lambda name, kind: {"name": name})})()
-    svc._data_dir = None
-    with patch("app.services.slicer_service.build_project_config") as bpc:
-        svc._build_config(_req(source_3mf="x.obj", tool_index=2))
-        assert bpc.call_args.kwargs.get("tool_index") == 2 or bpc.call_args.args[-1] == 2
+def test_slice_forwards_tool_index_to_stl_builder(tmp_path):
+    svc = SlicerService.__new__(SlicerService)  # skip __init__
+    svc._data_dir = tmp_path
+    with patch.object(SlicerService, "_build_config", return_value={"k": "v"}), \
+         patch("app.services.slicer_service.stl_to_3mf") as stl, \
+         patch.object(SlicerService, "_run", return_value="out.gcode"):
+        svc.slice(_req(source_3mf="x.stl", tool_index=2))
+        assert stl.call_args.kwargs.get("tool_index") == 2
+
+
+def test_slice_forwards_tool_index_to_3mf_builder(tmp_path):
+    svc = SlicerService.__new__(SlicerService)
+    svc._data_dir = tmp_path
+    with patch.object(SlicerService, "_build_config", return_value={"k": "v"}), \
+         patch("app.services.slicer_service.build_sliceable_3mf") as b3, \
+         patch.object(SlicerService, "_run", return_value="out.gcode"):
+        svc.slice(_req(source_3mf="x.3mf", tool_index=2))
+        assert b3.call_args.kwargs.get("tool_index") == 2
 ```
 
 - [ ] **Step 2: Run — confirm FAIL**
 
 Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/test_slicer_service.py -v`
-Expected: FAIL — `SliceRequest` has no `tool_index` / not forwarded.
+Expected: FAIL — `SliceRequest` has no `tool_index` / not forwarded to the builders.
 
 - [ ] **Step 3: Implement**
 
@@ -391,12 +494,26 @@ In `backend/app/services/slicer_service.py`, add the field to `SliceRequest` (af
     tool_index: int | None = None
 ```
 
-In `_build_config` (the final return, ~line 103), forward it:
+In `slice()` (~lines 65-78), forward `req.tool_index` to all three 3MF-prep call sites:
 
 ```python
-        return build_project_config(machine, process, filaments, req.filament_colours or None,
-                                    plate_count=plate_count, tool_index=req.tool_index)
+        if Path(req.source_3mf).suffix.lower() == ".stl":
+            stl_to_3mf(req.source_3mf, config, prepared, tool_index=req.tool_index)
+            return self._run(prepared, req, out_dir)
+
+        # Primary: preserve model_settings (per-object overrides / paint).
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False, tool_index=req.tool_index)
+        try:
+            return self._run(prepared, req, out_dir)
+        except SliceError as primary_err:
+            logger.warning("Slice failed for job %s; retrying geometry-only: %s", req.job_id, primary_err)
+
+        # Recovery: drop the file's own settings/overrides, apply ours fresh.
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True, tool_index=req.tool_index)
+        return self._run(prepared, req, out_dir)
 ```
+
+(Leave `_build_config` and its `build_project_config(...)` call exactly as they are.)
 
 - [ ] **Step 4: Run — confirm PASS + full suite**
 
@@ -406,7 +523,7 @@ Run: `cd backend && backend\.venv\Scripts\python.exe -m pytest tests/services/te
 
 ```bash
 git add backend/app/services/slicer_service.py backend/tests/services/test_slicer_service.py
-git commit -m "feat(slice): SliceRequest.tool_index forwarded to build_project_config"
+git commit -m "feat(slice): SliceRequest.tool_index forwarded to the 3MF prep"
 ```
 
 ---
@@ -808,7 +925,7 @@ git commit -m "feat(newjob): tool picker for multi-slot printers; send tool_inde
 **Model: Sonnet** (skill-driven).
 
 Run `themis-docs-sync` against this branch's diff. Update:
-- `docs/agent/printers.md` — slicing section: `filament_map = [tool_index+1]` for single-filament tool selection on multi-extruder profiles; the queue resolves the slot by `tool_index`; the Snapmaker vendor note's "Project 2" line → now partially delivered (single-filament tool pick), multi-material model→tool mapping still Project 2b.
+- `docs/agent/printers.md` — slicing section: single-filament tool selection routes via **per-object `extruder` metadata** in `model_settings.config` (`extruder = tool_index+1`, 1-based), injected by `mesh_3mf_builder` (`stl_to_3mf`/`build_sliceable_3mf`); NOT `filament_map` (spike-disproven). The queue resolves the slot by `tool_index`. The Snapmaker vendor note's "Project 2" line → now partially delivered (single-filament tool pick), multi-material model→tool mapping still Project 2b.
 - `docs/agent/data-model.md` — `job_printer_configs.tool_index` (nullable int, 0-based tool/slot; `None` = default/legacy) + the new `_migrate` guard.
 
 Commit `docs(agent): sync for single-filament tool selection`.
@@ -818,8 +935,9 @@ Commit `docs(agent): sync for single-filament tool selection`.
 ## Final verification
 After all tasks: `cd backend && backend\.venv\Scripts\python.exe -m pytest -q` (green) and `cd frontend && npm run build` + `npx vitest run` (green). Then, when the U1 is free: queue a single-material job picking T2 vs T3 and confirm the print runs on the chosen tool. Multi-material model→tool mapping is Project 2b (separate spec).
 
-## Self-review notes (author)
-- **Spec coverage:** mechanism/spike (T1), `filament_map` (T2), `SliceRequest.tool_index` (T3), model+migration (T4), create-route (T5), queue slot-by-index + gating + pass-through (T6), New Job ≥2-slot tool picker + payload (T7), docs (T8). All spec sections mapped. The Approach-B fallback is explicit in T1 step 4.
-- **Type/name consistency:** `tool_index` (snake, backend: model/SliceRequest/PrinterConfigInput/build_project_config) vs `toolIndex` (camel, frontend `PerPrinterCfg`) — deliberate per-layer naming; the API boundary key is `tool_index` (queue.ts `PrinterConfigInput` + payload). 0-based everywhere; `filament_map=[tool_index+1]` the only 1-based conversion (T2). `_slot_for_config` used in both T6 helper + `_filament_mismatch`.
-- **Haiku-safety:** T2–T5 are mechanical with complete code + exact line anchors. T1/T6/T7/T8 are Sonnet (slicer/queue/UI/docs judgment).
-- **Backward compatibility:** every change keys off `tool_index is not None`; `None` (all existing rows, single-tool printers) preserves current behavior exactly — explicitly re-asserted by T2/T6 tests.
+## Self-review notes (author) — revised for Approach C
+- **Spec coverage:** spike DONE → Approach C (T1); object-`extruder` injection in `mesh_3mf_builder` (T2); `SliceRequest.tool_index` → 3MF prep (T3); model+migration (T4); create-route (T5); queue slot-by-index + gating + pass-through (T6); New Job ≥2-slot tool picker + payload (T7); docs (T8). All spec sections mapped.
+- **Type/name consistency:** `tool_index` (snake, backend: model/SliceRequest/PrinterConfigInput) vs `toolIndex` (camel, frontend `PerPrinterCfg`) — deliberate per-layer; the API boundary key is `tool_index`. 0-based everywhere; `extruder = tool_index+1` the only 1-based conversion (T2, in `model_settings.config`). `_slot_for_config` used in both T6 helper + `_filament_mismatch`.
+- **Mechanism:** verified per-object `extruder` metadata (not `filament_map`). `build_project_config` is untouched — its existing filament-array padding to `n_extruders` is the load-bearing dependency (don't remove it).
+- **Haiku-safety:** T3–T5 are mechanical with complete code + exact line anchors. T1 (done), T2 (XML/3MF), T6 (queue), T7 (UI), T8 (docs) are Sonnet.
+- **Backward compatibility:** every change keys off `tool_index is not None`; `None` (all existing rows, single-tool printers) → byte-identical slice output and current queue behavior — re-asserted by T2/T3/T6 tests.
