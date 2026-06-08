@@ -77,6 +77,12 @@ class SnapmakerState:
         return self.filename or None
 
     @property
+    def remaining_time(self) -> int:
+        if self.progress > 0.001 and self.progress < 1.0:
+            return int(self.print_duration * (1.0 - self.progress) / self.progress / 60.0)
+        return 0
+
+    @property
     def temperatures(self) -> dict:
         i = self.active_extruder if 0 <= self.active_extruder < 4 else 0
         return {
