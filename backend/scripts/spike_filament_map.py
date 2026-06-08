@@ -128,18 +128,24 @@ def _run_slice(orca: str, prepared: Path, out: Path, plate: str) -> list[Path]:
 
 
 def slice_with_map(orca: str, machine: str, process: str, filament: str,
-                   fmap: list[str], workdir: Path) -> str:
+                   fmap: list[str], workdir: Path,
+                   map_mode: str | None = None, semm: str | None = None,
+                   tag: str = "") -> str:
     resolver = PresetResolver()
     m = resolver.resolve(machine, "machine")
     p = resolver.resolve(process, "process")
     f = resolver.resolve(filament, "filament")
     cfg = build_project_config(m, p, [f], None, plate_count=1)
     cfg["filament_map"] = fmap  # <-- the thing under test
+    if map_mode is not None:
+        cfg["filament_map_mode"] = map_mode  # MANUAL should make filament_map take effect
+    if semm is not None:
+        cfg["single_extruder_multi_material"] = semm
     stl = workdir / "cube.stl"
     stl.write_text(CUBE_STL)
-    prepared = workdir / f"prepared_{fmap[0]}.3mf"
+    prepared = workdir / f"prepared_{tag}_{fmap[0]}.3mf"
     stl_to_3mf(str(stl), cfg, prepared)
-    out = workdir / f"out_{fmap[0]}"
+    out = workdir / f"out_{tag}_{fmap[0]}"
     out.mkdir(exist_ok=True)
 
     # Try --slice 0 first (plate numbering can be 0-based or 1-based).
@@ -166,6 +172,20 @@ def slice_with_map(orca: str, machine: str, process: str, filament: str,
     return hits[0] if hits else "(no tool-select line found)"
 
 
+def _run_variant(orca, machine, process, filament, wd, *, map_mode, semm, tag, label) -> bool:
+    """Run the [1] vs [3] pair for one config variant; return True if it routes by tool."""
+    print(f"\n=== variant: {label} ===")
+    a = slice_with_map(orca, machine, process, filament, ["1"], wd,
+                       map_mode=map_mode, semm=semm, tag=tag)
+    b = slice_with_map(orca, machine, process, filament, ["3"], wd,
+                       map_mode=map_mode, semm=semm, tag=tag)
+    print(f"  filament_map=[1] -> {a!r}")
+    print(f"  filament_map=[3] -> {b!r}")
+    routes = a != b
+    print(f"  => {'ROUTES BY TOOL' if routes else 'NO DIFFERENCE'}")
+    return routes
+
+
 def main() -> int:
     if len(sys.argv) != 4:
         print("usage: spike_filament_map.py <machine> <process> <filament>")
@@ -173,13 +193,35 @@ def main() -> int:
     machine, process, filament = sys.argv[1:4]
     orca = get_orca_executable()
     print(f"OrcaSlicer: {orca}", file=sys.stderr)
+
+    # Variants to test, in order. The reference config defaults filament_map_mode to
+    # "Auto For Flush"; in AUTO modes OrcaSlicer ignores the manual filament_map and
+    # routes the single filament to the master extruder (T0). MANUAL mode should make
+    # filament_map take effect.
+    variants = [
+        ("baseline (no mode override)", None, None, "base"),
+        ("filament_map_mode=Manual", "Manual", None, "manual"),
+        ("filament_map_mode=manual (lowercase)", "manual", None, "manuallc"),
+        ("filament_map_mode=Auto For Match", "Auto For Match", None, "automatch"),
+        ("Manual + single_extruder_multi_material=0", "Manual", "0", "manual_semm0"),
+    ]
+
+    routed_with: list[str] = []
     with tempfile.TemporaryDirectory() as td:
         wd = Path(td)
-        a = slice_with_map(orca, machine, process, filament, ["1"], wd)
-        b = slice_with_map(orca, machine, process, filament, ["3"], wd)
-    print(f"filament_map=[1] -> {a!r}")
-    print(f"filament_map=[3] -> {b!r}")
-    print("ROUTES BY TOOL" if a != b else "NO DIFFERENCE — use Approach B")
+        for label, mode, semm, tag in variants:
+            try:
+                if _run_variant(orca, machine, process, filament, wd,
+                                map_mode=mode, semm=semm, tag=tag, label=label):
+                    routed_with.append(label)
+            except Exception as exc:  # noqa: BLE001 — spike: surface and continue
+                print(f"  variant {label!r} raised: {exc!r}", file=sys.stderr)
+
+    print("\n=== VERDICT ===")
+    if routed_with:
+        print(f"ROUTES BY TOOL with: {routed_with}  (Approach A viable)")
+    else:
+        print("NO DIFFERENCE in any variant — use Approach B")
     return 0
 
 

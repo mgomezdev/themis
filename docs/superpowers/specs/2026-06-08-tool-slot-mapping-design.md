@@ -172,3 +172,19 @@ Full tool-select inventory (identical in both files, 8 lines each):
 The two gcode files are byte-for-byte identical except for the timestamp comment on line 2. OrcaSlicer's `filament_map` setting does **not** route a single-filament job to a different extruder for the Snapmaker U1 profile.
 
 **Verdict: Approach B confirmed — `filament_map` does NOT route the tool.** Tasks 2 and 6 must be re-planned: the `SnapmakerExtendedClient` (or equivalent connector layer) must prepend `ACTIVATE_EXTRUDER EXTRUDER=extruder{tool_index}` (and a matching temp set) before the print begins; the slice leaves `filament_map` at its default. The data model (`tool_index` column), UI tool picker, queue gating, and `SliceRequest.tool_index` field are all still needed — only the mechanism that applies the routing shifts from the slicer config to the connector's print-start path.
+
+#### `filament_map_mode=Manual` retest (2026-06-08)
+
+Hypothesis: the reference defaults `filament_map_mode = "Auto For Flush"`, and in AUTO modes OrcaSlicer ignores the manual `filament_map` and routes the lone filament to the master extruder (T0). Setting the mode to MANUAL should make `filament_map` take effect. The spike was extended to sweep five config variants ([1] vs [3] each):
+
+| Variant | filament_map=[1] | filament_map=[3] | Result |
+|---|---|---|---|
+| baseline (no mode override) | `M104 T0 S140` | `M104 T0 S140` | NO DIFFERENCE |
+| `filament_map_mode="Manual"` | `M104 T0 S140` | `M104 T0 S140` | NO DIFFERENCE |
+| `filament_map_mode="manual"` (lowercase) | `M104 T0 S140` | `M104 T0 S140` | NO DIFFERENCE |
+| `filament_map_mode="Auto For Match"` | `M104 T0 S140` | `M104 T0 S140` | NO DIFFERENCE |
+| `Manual` + `single_extruder_multi_material="0"` | `M104 T0 S140` | `M104 T0 S140` | NO DIFFERENCE |
+
+Verified the overrides actually reach the slicer: the prepared 3MF's `Metadata/project_settings.config` serializes `filament_map: ["3"]` and `filament_map_mode: "Manual"` correctly (not dropped). A full-file diff of the Manual-mode `[1]` vs `[3]` gcode shows **only the timestamp comment differs** (0 non-timestamp differing lines). Notes: `build_project_config` already yields `single_extruder_multi_material="0"` for the U1 (the machine preset overrides the reference's `"1"`), so the U1 is treated as a true multi-extruder toolchanger, not an AMS-style SEMM; and the slice log emits a non-fatal `could not found extruder_type "Direct Drive"` warning but still produces gcode.
+
+**Conclusion: still Approach B.** Manual map mode does not revive the slice-level approach — for a single-filament print there is only one filament to map, and OrcaSlicer 2.3.2 always emits `T0`. Tool routing must be applied by the connector at print-start (`ACTIVATE_EXTRUDER`), as above.
