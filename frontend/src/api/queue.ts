@@ -26,6 +26,7 @@ export interface PrinterConfigInput {
   filament_id?: number | null;
   filament_type?: string | null;
   filament_color?: string | null;
+  tool_index?: number | null;
 }
 
 export interface ApiJob {

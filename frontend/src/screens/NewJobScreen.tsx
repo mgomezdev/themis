@@ -29,6 +29,7 @@ interface PerPrinterCfg {
   filamentId: number | null;       // Spoolman filament ID when sourced from catalog
   filamentType: string | null;     // material: PLA, PETG, ABS, …
   filamentColor: string | null;    // hex color: #RRGGBB
+  toolIndex: number | null;        // tool slot index for multi-tool printers (0-based)
 }
 
 interface PlateConfig {
@@ -434,7 +435,7 @@ function PrinterPicker({ printers, selectedPrinters, onToggle }: {
 // PerPrinterConfig — uses real OrcaSlicer profiles from API
 // ============================================================
 
-function PerPrinterConfig({ printerId, printers, config, onChange }: {
+export function PerPrinterConfig({ printerId, printers, config, onChange }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
@@ -490,76 +491,109 @@ function PerPrinterConfig({ printerId, printers, config, onChange }: {
           )}
         </div>
 
-        <div>
-          <label className="label">Filament</label>
-          {spoolmanActive && !manualMode ? (
+        {(printer.loaded_filaments?.length ?? 0) >= 2 ? (
+          <div>
+            <label className="label">Tool</label>
             <select
-              data-testid="filament-catalog-select"
+              data-testid="tool-select"
               className="select"
-              value={config.filamentProfile ?? ''}
+              value={config.toolIndex ?? ''}
               onChange={e => {
                 const v = e.target.value;
-                if (v === '__manual__') {
-                  setManualMode(true);
-                  onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
-                  return;
-                }
-                const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
+                if (v === '') { onChange({ toolIndex: null }); return; }
+                const ti = Number(v);
+                const s = printer.loaded_filaments[ti];
                 onChange({
-                  filamentProfile: v || null,
-                  filamentId: f?.id ?? null,
-                  filamentType: f?.material ?? null,
-                  filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
+                  toolIndex: ti,
+                  filamentProfile: s?.filament_profile ?? null,
+                  filamentId: null,
+                  filamentType: s?.type ?? null,
+                  filamentColor: s?.color ?? null,
                 });
               }}>
-              <option value="">— select filament —</option>
-              {filaments.map(f => (
-                <option key={f.id} value={filamentDisplayName(f)}>
-                  {filamentDisplayName(f)} · {f.material}
+              <option value="">— select tool —</option>
+              {printer.loaded_filaments.map((s, i) => (
+                <option key={i} value={i}>
+                  T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}
                 </option>
               ))}
-              <option value="__manual__">Enter manually…</option>
             </select>
-          ) : (
-            <div className="col gap-2" style={{ marginTop: 2 }}>
-              <div className="row gap-2">
-                <input
-                  data-testid="filament-type-input"
-                  className="input"
-                  list="filament-types"
-                  placeholder="Type (PLA, PETG, ABS…)"
-                  value={config.filamentType ?? ''}
-                  onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
-                  style={{ flex: 1 }}
-                />
-                {spoolmanActive && (
-                  <button className="btn ghost sm" onClick={() => {
-                    setManualMode(false);
-                    onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
-                  }}>↩ Catalog</button>
-                )}
-              </div>
-              <datalist id="filament-types">
-                {['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC'].map(t => (
-                  <option key={t} value={t} />
-                ))}
-              </datalist>
-              <div className="row gap-2" style={{ alignItems: 'center' }}>
-                <input
-                  data-testid="filament-color-input"
-                  type="color"
-                  value={config.filamentColor ?? '#888888'}
-                  onChange={e => onChange({ filamentColor: e.target.value })}
-                  style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }}
-                />
-                <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
-              </div>
+            <div className="tiny muted" style={{ marginTop: 4 }}>
+              Prints on this physical tool; its loaded filament profile is used to slice.
             </div>
-          )}
-          {spoolmanActive && !manualMode && filaments.length === 0 && (
-            <div className="tiny muted" style={{ marginTop: 4 }}>No filaments in Spoolman</div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div>
+            <label className="label">Filament</label>
+            {spoolmanActive && !manualMode ? (
+              <select
+                data-testid="filament-catalog-select"
+                className="select"
+                value={config.filamentProfile ?? ''}
+                onChange={e => {
+                  const v = e.target.value;
+                  if (v === '__manual__') {
+                    setManualMode(true);
+                    onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+                    return;
+                  }
+                  const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
+                  onChange({
+                    filamentProfile: v || null,
+                    filamentId: f?.id ?? null,
+                    filamentType: f?.material ?? null,
+                    filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
+                  });
+                }}>
+                <option value="">— select filament —</option>
+                {filaments.map(f => (
+                  <option key={f.id} value={filamentDisplayName(f)}>
+                    {filamentDisplayName(f)} · {f.material}
+                  </option>
+                ))}
+                <option value="__manual__">Enter manually…</option>
+              </select>
+            ) : (
+              <div className="col gap-2" style={{ marginTop: 2 }}>
+                <div className="row gap-2">
+                  <input
+                    data-testid="filament-type-input"
+                    className="input"
+                    list="filament-types"
+                    placeholder="Type (PLA, PETG, ABS…)"
+                    value={config.filamentType ?? ''}
+                    onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
+                    style={{ flex: 1 }}
+                  />
+                  {spoolmanActive && (
+                    <button className="btn ghost sm" onClick={() => {
+                      setManualMode(false);
+                      onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+                    }}>↩ Catalog</button>
+                  )}
+                </div>
+                <datalist id="filament-types">
+                  {['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC'].map(t => (
+                    <option key={t} value={t} />
+                  ))}
+                </datalist>
+                <div className="row gap-2" style={{ alignItems: 'center' }}>
+                  <input
+                    data-testid="filament-color-input"
+                    type="color"
+                    value={config.filamentColor ?? '#888888'}
+                    onChange={e => onChange({ filamentColor: e.target.value })}
+                    style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }}
+                  />
+                  <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
+                </div>
+              </div>
+            )}
+            {spoolmanActive && !manualMode && filaments.length === 0 && (
+              <div className="tiny muted" style={{ marginTop: 4 }}>No filaments in Spoolman</div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -674,7 +708,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, o
                     key={pid}
                     printerId={pid}
                     printers={printers}
-                    config={config.perPrinter[pid] ?? { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null }}
+                    config={config.perPrinter[pid] ?? { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null, toolIndex: null }}
                     onChange={patch => onSetPerPrinter(pid, patch)}
                   />
                 ))}
@@ -1085,7 +1119,7 @@ export function NewJobScreen() {
             selectedPrinters: [...cfg.selectedPrinters, printerId],
             perPrinter: {
               ...cfg.perPrinter,
-              [printerId]: { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null },
+              [printerId]: { printProfile: null, filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null, toolIndex: null },
             },
           },
         };
@@ -1177,6 +1211,7 @@ export function NewJobScreen() {
             filament_id: cfg.perPrinter[pid].filamentId ?? null,
             filament_type: cfg.perPrinter[pid].filamentType,
             filament_color: cfg.perPrinter[pid].filamentColor,
+            tool_index: cfg.perPrinter[pid].toolIndex ?? null,
           })),
         });
       }
