@@ -31,6 +31,7 @@ class PrinterConfigInput(BaseModel):
     filament_id: int | None = None
     filament_type: str | None = None
     filament_color: str | None = None
+    tool_index: int | None = None
 
 
 class OverrideCheckRequest(BaseModel):
@@ -137,6 +138,7 @@ async def create_job(
             filament_id=cfg.filament_id,
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
+            tool_index=cfg.tool_index,
         )
         session.add(config)
 
