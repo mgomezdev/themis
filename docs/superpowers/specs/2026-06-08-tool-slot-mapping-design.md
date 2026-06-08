@@ -188,3 +188,45 @@ Hypothesis: the reference defaults `filament_map_mode = "Auto For Flush"`, and i
 Verified the overrides actually reach the slicer: the prepared 3MF's `Metadata/project_settings.config` serializes `filament_map: ["3"]` and `filament_map_mode: "Manual"` correctly (not dropped). A full-file diff of the Manual-mode `[1]` vs `[3]` gcode shows **only the timestamp comment differs** (0 non-timestamp differing lines). Notes: `build_project_config` already yields `single_extruder_multi_material="0"` for the U1 (the machine preset overrides the reference's `"1"`), so the U1 is treated as a true multi-extruder toolchanger, not an AMS-style SEMM; and the slice log emits a non-fatal `could not found extruder_type "Direct Drive"` warning but still produces gcode.
 
 **Conclusion: still Approach B.** Manual map mode does not revive the slice-level approach — for a single-filament print there is only one filament to map, and OrcaSlicer 2.3.2 always emits `T0`. Tool routing must be applied by the connector at print-start (`ACTIVATE_EXTRUDER`), as above.
+
+#### Per-object `extruder` routing — BREAKTHROUGH (2026-06-08): Approach C is the real mechanism
+
+A real multi-filament U1 export from OrcaSlicer (`Hausdeko #41 — Welcome Home — Türschild`) revealed that the tool assignment is **not** the project `filament_map` (it is `['1','1','1','1']` there) — it is a **per-object property in `Metadata/model_settings.config`**:
+
+```xml
+<object id="2">
+  <metadata key="extruder" value="2"/>   <!-- object → extruder 2 (1-based) -->
+  ...
+</object>
+```
+
+A third spike (`slice_with_object_extruder` in `scripts/spike_filament_map.py`) sliced the cube with this metadata injected into the prepared 3MF:
+
+| Mechanism | extruder=1 | extruder=3 | Result |
+|---|---|---|---|
+| object `extruder` metadata (model_settings.config) | `M104 T0 S140` | `M104 T2 S140` | **ROUTES BY TOOL** |
+
+1-based `extruder=N` → 0-based tool `T(N-1)` (`extruder=3` → `T2`), and the routing holds through the whole gcode (the `T<n>` select line follows too).
+
+**Minimal working recipe (verified by sweeping each component on/off):**
+1. **Object-level `extruder` metadata only** is required:
+   ```xml
+   <?xml version="1.0" encoding="UTF-8"?>
+   <config>
+     <object id="1"><metadata key="extruder" value="3"/></object>
+   </config>
+   ```
+   The object `id` must match what `stl_to_3mf` emits — it writes a single `<object id="1">` and **no** `model_settings.config`, so we inject one.
+2. **Per-filament arrays must be padded to the extruder count** so the target extruder has a filament. `build_project_config` already pads every `filament_*` list to `n_extruders` (=4 for the U1), so this is satisfied for free. Proof it matters: forcing the filament arrays back to length 1 makes `extruder=3` silently fall back to `T0`.
+3. **NOT required:** a per-`<part>` `extruder` metadata, and a `<plate> filament_maps="1 2 3 4"` entry — both present in the real file but neither changes the emitted tool. The project `filament_map` / `filament_map_mode` are irrelevant (left at defaults).
+4. `filament_map_mode` in the real file is `"Auto For Flush"` (not Manual) — consistent with the finding that map mode is orthogonal to per-object routing.
+
+**Final verdict: Approach C — per-object `extruder` metadata in `model_settings.config`, slice-level.** This is *better* than Approach B (connector gcode hacking): the routing is applied entirely at slice time, so the connector stays vendor-agnostic and the gcode is correct as produced.
+
+**Re-plan impact:**
+- **Task 2** (`build_project_config`): no longer sets `filament_map`. Instead the slice path must write `model_settings.config` with `<object id="..."><metadata key="extruder" value="{tool_index+1}"/></object>` for the sliced object(s). Since `stl_to_3mf` (and the 3MF passthrough path) controls the 3MF contents, the object-extruder injection belongs in the mesh/3MF builder (`mesh_3mf_builder` / `slicer_service` prep), keyed off `tool_index`. The filament-array padding to `n_extruders` already exists and is a hard dependency — keep it.
+- **Task 3** (`SliceRequest.tool_index`): unchanged — still threads the index; the consumer is now the model_settings writer, not `filament_map`.
+- **Tasks 4, 5, 7** (model column, create-route, UI tool picker): unchanged.
+- **Task 6** (queue): unchanged — slot-by-index + gating; it just forwards `tool_index` to the slice as before.
+- The `SnapmakerExtendedClient` `ACTIVATE_EXTRUDER` connector hack (Approach B) is **not needed**.
+- Open question for the 3MF-passthrough (non-STL) path: the uploaded 3MF may already carry its own `model_settings.config` with object ids — the writer must set/override the `extruder` metadata on the correct object id(s) rather than blindly replacing the file. STL uploads are the simple case (single `id="1"`).
