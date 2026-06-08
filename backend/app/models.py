@@ -98,6 +98,7 @@ class JobPrinterConfig(Base):
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
     filament_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     filament_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
