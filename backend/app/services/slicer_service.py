@@ -1,4 +1,6 @@
 from __future__ import annotations
+import zipfile
+import xml.etree.ElementTree as ET
 
 import logging
 import subprocess
@@ -83,7 +85,22 @@ class SlicerService:
             filaments = [self._resolver.resolve(name, "filament") for name in req.filament_presets]
         except PresetNotFoundError as e:
             raise SliceError(f"preset resolution failed: {e}") from e
-        return build_project_config(machine, process, filaments, req.filament_colours or None)
+
+        # Resolve the plate count from the source 3MF if possible
+        plate_count = 1
+        source_path = Path(req.source_3mf)
+        if source_path.suffix.lower() == ".3mf":
+            try:
+                with zipfile.ZipFile(source_path) as z:
+                    if "Metadata/model_settings.config" in z.namelist():
+                        root = ET.fromstring(z.read("Metadata/model_settings.config"))
+                        plates = root.findall(".//plate")
+                        if plates:
+                            plate_count = len(plates)
+            except Exception as e:
+                logger.warning("Failed to parse plate count from %s: %s", req.source_3mf, e)
+
+        return build_project_config(machine, process, filaments, req.filament_colours or None, plate_count=plate_count)
 
     def _run(self, input_3mf: Path, req: SliceRequest, out_dir: Path) -> str:
         """Run OrcaSlicer with the universal base + the printer's export args, then

@@ -839,7 +839,7 @@ function platesToLocal(apiPlates: ApiPlate[], fileId: number): Plate[] {
     id: `plate-${p.plate_number}`,
     index: p.plate_number,
     name: `Plate ${p.plate_number}`,
-    estTime: p.estimated_time,
+    estTime: Math.round(p.estimated_time / 60),
     thumbColor: '#2a3552',
     thumbnailPath: p.thumbnail_path,
     fileId,

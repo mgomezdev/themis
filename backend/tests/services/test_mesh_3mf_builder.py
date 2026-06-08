@@ -67,13 +67,13 @@ def test_source_has_project_settings(tmp_path):
     assert source_has_project_settings(bare) is False
 
 
-def test_preserves_model_settings_swaps_project_drops_slice_info(tmp_path):
+def test_preserves_model_settings_swaps_project_keeps_slice_info(tmp_path):
     src = _make_source(tmp_path)
     out = build_sliceable_3mf(src, {"printer_model": "X"}, tmp_path / "out.3mf")
     names = _names(out)
     assert "3D/3dmodel.model" in names and "3D/Objects/obj_1.model" in names
     assert "Metadata/model_settings.config" in names      # preserved
-    assert "Metadata/slice_info.config" not in names       # dropped
+    assert "Metadata/slice_info.config" in names          # preserved
     with zipfile.ZipFile(out) as z:
         cfg = json.loads(z.read("Metadata/project_settings.config"))
     assert cfg == {"printer_model": "X"}                   # swapped

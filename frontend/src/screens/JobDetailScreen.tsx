@@ -240,7 +240,7 @@ export function JobDetailScreen() {
 
               <div className="row gap-5" style={{ flexWrap: 'wrap' }}>
                 {job.plate?.estimated_time != null && (
-                  <Kv k="Est. print" v={<span className="num small">{fmtTime(job.plate.estimated_time)}</span>} />
+                  <Kv k="Est. print" v={<span className="num small">{fmtTime(Math.round(job.plate.estimated_time / 60))}</span>} />
                 )}
                 {job.plate?.filament_g != null && (
                   <Kv k="Filament" v={<span className="num small">{job.plate.filament_g.toFixed(1)} g</span>} />

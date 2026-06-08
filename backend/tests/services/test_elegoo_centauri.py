@@ -592,3 +592,106 @@ def test_set_bed_temp_zero_turns_off():
 def test_set_bed_temp_returns_false_when_not_connected():
     client = _make_client()
     assert client.set_bed_temp(60) is False
+
+
+# ---------------------------------------------------------------------------
+# upload_file
+# ---------------------------------------------------------------------------
+
+def test_upload_file_small_file():
+    import hashlib
+    from unittest.mock import patch
+    client = _make_client()
+    data = b"small file content" * 1000  # 18000 bytes, well below 1MB
+    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True}
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        res = client.upload_file(data, "test_small.gcode")
+        assert res is True
+        mock_post.assert_called_once()
+        args, kwargs = mock_post.call_args
+        url = args[0]
+        assert url == "http://192.168.1.20:3030/uploadFile/upload"
+        
+        post_data = kwargs["data"]
+        assert post_data["TotalSize"] == str(len(data))
+        assert post_data["Offset"] == "0"
+        assert post_data["Check"] == "1"
+        assert len(post_data["Uuid"]) > 0
+        assert post_data["S-File-MD5"] == hashlib.md5(data).hexdigest()
+
+        files = kwargs["files"]
+        assert "File" in files
+        assert files["File"][0] == "test_small.gcode"
+
+
+def test_upload_file_large_file():
+    import hashlib
+    from unittest.mock import patch
+    client = _make_client()
+    # 2.5 MB = 2 * 1024 * 1024 + 512 * 1024 bytes
+    data = b"A" * (2 * 1024 * 1024 + 512 * 1024)
+    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": True}
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        res = client.upload_file(data, "test_large.gcode")
+        assert res is True
+        assert mock_post.call_count == 3
+
+        call_args_list = mock_post.call_args_list
+        
+        # Check first chunk (1MB)
+        args1, kwargs1 = call_args_list[0]
+        assert kwargs1["data"]["Offset"] == "0"
+        assert kwargs1["data"]["TotalSize"] == str(len(data))
+        assert kwargs1["data"]["S-File-MD5"] == hashlib.md5(data).hexdigest()
+        chunk1 = kwargs1["files"]["File"][1].read()
+        assert len(chunk1) == 1024 * 1024
+        assert chunk1 == b"A" * (1024 * 1024)
+        uuid1 = kwargs1["data"]["Uuid"]
+
+        # Check second chunk (1MB)
+        args2, kwargs2 = call_args_list[1]
+        assert kwargs2["data"]["Offset"] == str(1024 * 1024)
+        assert kwargs2["data"]["TotalSize"] == str(len(data))
+        assert kwargs2["data"]["Uuid"] == uuid1
+        assert kwargs2["data"]["S-File-MD5"] == hashlib.md5(data).hexdigest()
+        chunk2 = kwargs2["files"]["File"][1].read()
+        assert len(chunk2) == 1024 * 1024
+        assert chunk2 == b"A" * (1024 * 1024)
+
+        # Check third chunk (0.5MB)
+        args3, kwargs3 = call_args_list[2]
+        assert kwargs3["data"]["Offset"] == str(2 * 1024 * 1024)
+        assert kwargs3["data"]["TotalSize"] == str(len(data))
+        assert kwargs3["data"]["Uuid"] == uuid1
+        assert kwargs3["data"]["S-File-MD5"] == hashlib.md5(data).hexdigest()
+        chunk3 = kwargs3["files"]["File"][1].read()
+        assert len(chunk3) == 512 * 1024
+        assert chunk3 == b"A" * (512 * 1024)
+
+
+def test_upload_file_failure():
+    from unittest.mock import patch
+    client = _make_client()
+    data = b"some data"
+    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+        # Mock connection error
+        mock_post.side_effect = Exception("Connection refused")
+        res = client.upload_file(data, "test.gcode")
+        assert res is False
+
+    with patch("app.services.elegoo_centauri_client.httpx.post") as mock_post:
+        # Mock bad status code / response rejection
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"success": False, "code": "123456"}
+        mock_response.status_code = 400
+        mock_post.return_value = mock_response
+        res = client.upload_file(data, "test.gcode")
+        assert res is False

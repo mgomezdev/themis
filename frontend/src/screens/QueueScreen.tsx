@@ -6,6 +6,7 @@ import {
 } from '../components/ui';
 import { Icons } from '../components/icons';
 import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, plateThumbnailUrl, type ApiSliceFailure } from '../api/queue';
+import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 
 // ---- DisplayJob: flattened shape for rendering ----
@@ -524,6 +525,7 @@ export function QueueScreen() {
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
 
   const { jobs: rawJobs, refetch } = useQueue();
+  const [printers] = useFleetData();
 
   // Collect unique file IDs to load plate metadata
   const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
@@ -533,6 +535,20 @@ export function QueueScreen() {
   const jobs: DisplayJob[] = useMemo(() => {
     return rawJobs.map(j => {
       const plate = getPlate(j.uploaded_file_id, j.plate_number);
+      
+      let elapsed = 0;
+      let progress = 0;
+      let layer = null;
+      const estTime = Math.round((plate?.estimated_time ?? 0) / 60);
+      if (j.status === 'printing' || j.status === 'paused') {
+        const printer = printers.find(p => p.id === String(j.assigned_printer_id));
+        if (printer) {
+          progress = printer.progress;
+          layer = printer.layer;
+          elapsed = estTime - printer.timeRemaining;
+        }
+      }
+
       return {
         id: String(j.id),
         rawId: j.id,
@@ -541,11 +557,11 @@ export function QueueScreen() {
         blockReason: j.block_reason ?? null,
         material: '—',
         eligiblePrinters: [],
-        estTime: plate?.estimated_time ?? 0,
+        estTime,
         filamentG: plate?.filament_g ?? 0,
-        elapsed: 0,
-        progress: 0,
-        layer: null,
+        elapsed,
+        progress,
+        layer,
         sliced: j.status !== 'queued',
         queuePosition: j.queue_position ?? 0,
         fileId: j.uploaded_file_id,
@@ -558,7 +574,7 @@ export function QueueScreen() {
       if (sa !== sb) return sa - sb;
       return a.queuePosition - b.queuePosition;
     });
-  }, [rawJobs, getPlate]);
+  }, [rawJobs, getPlate, printers]);
 
   const filtered = jobs.filter(j => {
     if (filter === 'all') return true;

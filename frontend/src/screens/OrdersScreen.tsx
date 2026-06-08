@@ -70,7 +70,7 @@ function JobsFilling({ jobs }: { jobs: OrderJobSummary[] }) {
               <StatusPill status={j.status as never} />
             </div>
             <div className="row gap-3" style={{ alignItems: 'center', flexShrink: 0 }}>
-              <span className="num tiny muted">{plate?.estimated_time ? fmtTime(plate.estimated_time) : '—'}</span>
+              <span className="num tiny muted">{plate?.estimated_time ? fmtTime(Math.round(plate.estimated_time / 60)) : '—'}</span>
               <span className="tiny muted" style={{ opacity: 0.5 }}>→</span>
             </div>
           </button>

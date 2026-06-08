@@ -13,7 +13,12 @@ vi.mock('../api/queue', () => ({
   plateThumbnailUrl: vi.fn(() => null),
 }));
 
+vi.mock('../api/fleet', () => ({
+  useFleetData: vi.fn(() => [[], vi.fn()]),
+}));
+
 import * as queueApi from '../api/queue';
+import * as fleetApi from '../api/fleet';
 
 const mockJobs: ApiJob[] = [
   {
@@ -128,4 +133,64 @@ describe('QueueScreen', () => {
     // Should render the blocked reason
     expect(screen.getByText('filament mismatch: PLA color #ff0000 not found')).toBeTruthy();
   });
+
+  it('renders correct remaining print time for active jobs', () => {
+    const activeJob: ApiJob = {
+      id: 9,
+      uploaded_file_id: 1,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: 1,
+      queue_position: 1.0,
+      status: 'printing',
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [activeJob], refetch: vi.fn() });
+    
+    // Mock printer 1 with 61 minutes remaining
+    const mockPrinter = {
+      id: '1',
+      name: 'Barnabus',
+      nickname: 'Barnabus',
+      model: 'elegoo_centauri',
+      badge: 'ELE',
+      buildVolume: '',
+      capabilities: [],
+      chamber: false,
+      status: 'printing' as const,
+      progress: 15,
+      timeRemaining: 61,
+      timeElapsed: 10,
+      layer: { now: 3, total: 120 },
+      nozzleTemp: 220,
+      bedTemp: 55,
+      chamberTemp: null,
+      material: { name: 'PLA', type: 'PLA', color: '#000000' },
+      currentJobId: 'plate_1.gcode',
+      accent: '#888888',
+      fanModel: 100,
+      fanAux: 69,
+      fanBox: 100,
+      bedTempTarget: 55,
+      queueOn: true,
+      awaitingPlateClear: false,
+    };
+    vi.mocked(fleetApi.useFleetData).mockReturnValue([[mockPrinter], vi.fn()]);
+
+    // Mock useFilePlates to return estimated_time = 0
+    vi.mocked(queueApi.useFilePlates).mockReturnValue(() => ({
+      plate_number: 1,
+      thumbnail_path: null,
+      estimated_time: 0,
+      filament_g: 0,
+    }));
+
+    render(<QueueScreen />, { wrapper });
+    
+    // We expect the remaining time (61m = 1h 1m) to be rendered on the page
+    expect(screen.getByText('1h 1m')).toBeTruthy();
+  });
 });
+

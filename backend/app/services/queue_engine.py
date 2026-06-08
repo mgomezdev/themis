@@ -428,7 +428,7 @@ class QueueEngine:
                 # Full queue broadcast (active jobs only)
                 result = await session.execute(
                     select(Job)
-                    .where(Job.status.not_in(["complete", "failed", "cancelled"]))
+                    .where(Job.status.not_in(["complete", "cancelled"]))
                     .order_by(Job.queue_position.asc())
                 )
                 all_jobs = result.scalars().all()

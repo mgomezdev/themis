@@ -669,34 +669,42 @@ class ElegooCentauriClient(AbstractPrinterClient):
     def upload_file(self, data: bytes, filename: str) -> bool:
         url = f"http://{self._ip}:{self._port}/uploadFile/upload"
         md5 = hashlib.md5(data).hexdigest()
-        try:
-            resp = httpx.post(
-                url,
-                data={
-                    "TotalSize": str(len(data)),
-                    "Uuid": uuid.uuid4().hex,
-                    "Offset": "0",
-                    "Check": "1",
-                    "S-File-MD5": md5,
-                },
-                files={"File": (filename, io.BytesIO(data), "application/octet-stream")},
-                timeout=120.0,
-            )
-        except Exception:
-            logger.exception("Upload POST to %s failed (%s, %d bytes) — printer HTTP "
-                             "endpoint unreachable/refused", url, filename, len(data))
-            return False
-        try:
-            result = resp.json()
-        except Exception:
-            logger.warning("Upload of %s: non-JSON response (HTTP %s): %s",
-                           filename, resp.status_code, resp.text[:300])
-            return False
-        if result.get("success") is True or result.get("code") == "000000":
-            return True
-        logger.warning("Upload of %s rejected by printer (HTTP %s): %s",
-                       filename, resp.status_code, result)
-        return False
+        chunk_size = 1024 * 1024  # 1MB per packet maximum as per SDCP spec
+        total_size = len(data)
+        transfer_uuid = uuid.uuid4().hex
+
+        offset = 0
+        while offset < total_size:
+            chunk = data[offset:offset + chunk_size]
+            try:
+                resp = httpx.post(
+                    url,
+                    data={
+                        "TotalSize": str(total_size),
+                        "Uuid": transfer_uuid,
+                        "Offset": str(offset),
+                        "Check": "1",
+                        "S-File-MD5": md5,
+                    },
+                    files={"File": (filename, io.BytesIO(chunk), "application/octet-stream")},
+                    timeout=120.0,
+                )
+            except Exception:
+                logger.exception("Upload POST to %s failed at offset %d (%s, %d bytes) — printer HTTP "
+                                 "endpoint unreachable/refused", url, offset, filename, total_size)
+                return False
+            try:
+                result = resp.json()
+            except Exception:
+                logger.warning("Upload of %s at offset %d: non-JSON response (HTTP %s): %s",
+                               filename, offset, resp.status_code, resp.text[:300])
+                return False
+            if result.get("success") is not True and result.get("code") != "000000":
+                logger.warning("Upload of %s at offset %d rejected by printer (HTTP %s): %s",
+                               filename, offset, resp.status_code, result)
+                return False
+            offset += len(chunk)
+        return True
 
     def list_files(self, directory: str = "/") -> list[PrinterFile]:
         if directory == "/":

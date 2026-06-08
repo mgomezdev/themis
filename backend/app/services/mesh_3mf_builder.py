@@ -33,7 +33,7 @@ _RELS = (
 # Embedded files Themis owns / regenerates — everything else is copied verbatim.
 _REPLACED = "metadata/project_settings.config"
 _MODEL = "metadata/model_settings.config"
-_DROPPED = ("metadata/slice_info.config",)
+_DROPPED = ()
 
 
 def build_sliceable_3mf(

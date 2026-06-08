@@ -60,3 +60,28 @@ def test_requires_at_least_one_filament():
     import pytest
     with pytest.raises(ValueError):
         build_project_config(_machine(), _process(), [])
+
+
+def test_multi_extruder_expansion():
+    machine = {
+        "name": "MultiExtruderMachine",
+        "type": "machine",
+        "printer_model": "MultiExtruder",
+        "nozzle_diameter": ["0.4", "0.4", "0.4"],  # 3 extruders
+        "nozzle_volume": "120",  # scalar coerced to ["120"] of length 1, then expanded to 3
+    }
+    process = {
+        "name": "TestProcess",
+        "type": "process",
+        "layer_height": "0.2",
+    }
+    # 1 filament supplied, but printer has 3 extruders
+    filaments = [{"name": "MyFil", "type": "filament", "filament_type": ["PLA"]}]
+
+    cfg = build_project_config(machine, process, filaments)
+
+    # Verify arrays are expanded to length 3
+    assert cfg["nozzle_diameter"] == ["0.4", "0.4", "0.4"]
+    assert cfg["nozzle_volume"] == ["120", "120", "120"]
+    assert cfg["nozzle_volume_type"] == ["Standard", "Standard", "Standard"]  # defaulted & expanded
+    assert cfg["filament_type"] == ["PLA", "PLA", "PLA"]  # filament type expanded
