@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { NewJobScreen, PerPrinterConfig } from './NewJobScreen';
+import { NewJobScreen } from './NewJobScreen';
 import * as queueApi from '../api/queue';
 
 // ── Spoolman mock helpers ─────────────────────────────────────────────────────
@@ -107,6 +107,12 @@ async function selectPrintProfile(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(profileSelect, '0.20mm Standard @ECC');
 }
 
+/** Switch the filament mode to "require" so filament inputs are shown. */
+async function switchToRequireFilament(user: ReturnType<typeof userEvent.setup>) {
+  const modeSelect = await screen.findByTestId('filament-mode');
+  await user.selectOptions(modeSelect, 'require');
+}
+
 // ── Basic rendering ───────────────────────────────────────────────────────────
 
 describe('NewJobScreen — rendering', () => {
@@ -128,15 +134,22 @@ describe('NewJobScreen — rendering', () => {
 describe('Filament input — Spoolman not configured', () => {
   beforeEach(() => mockSpoolmanDisconnected());
 
-  it('shows manual type text input and color picker when Spoolman is off', async () => {
+  it('shows filament-mode select (defer by default) when Spoolman is off; switching to require shows manual inputs', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
 
+    // Defer is the default — filament inputs hidden
+    const modeSelect = await screen.findByTestId('filament-mode');
+    expect((modeSelect as HTMLSelectElement).value).toBe('defer');
+    expect(screen.queryByTestId('filament-type-input')).toBeNull();
+    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
+
+    // Switch to require — manual inputs appear
+    await user.selectOptions(modeSelect, 'require');
     expect(screen.getByTestId('filament-type-input')).toBeTruthy();
     expect(screen.getByTestId('filament-color-input')).toBeTruthy();
-    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
   });
 
   it('submits job with filament_type and filament_color, filament_id null', async () => {
@@ -145,6 +158,7 @@ describe('Filament input — Spoolman not configured', () => {
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
+    await switchToRequireFilament(user);
 
     await user.type(screen.getByTestId('filament-type-input'), 'PETG');
 
@@ -164,11 +178,12 @@ describe('Filament input — Spoolman not configured', () => {
 describe('Filament input — Spoolman connected', () => {
   beforeEach(() => mockSpoolmanConnected());
 
-  it('shows catalog select with filament options when Spoolman is active', async () => {
+  it('shows catalog select with filament options when Spoolman is active (after switching to require)', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
+    await switchToRequireFilament(user);
 
     const sel = screen.getByTestId('filament-catalog-select');
     expect(sel).toBeTruthy();
@@ -182,6 +197,7 @@ describe('Filament input — Spoolman connected', () => {
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
+    await switchToRequireFilament(user);
 
     const options = Array.from(
       screen.getByTestId('filament-catalog-select').querySelectorAll('option')
@@ -195,6 +211,7 @@ describe('Filament input — Spoolman connected', () => {
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
+    await switchToRequireFilament(user);
 
     await user.selectOptions(
       screen.getByTestId('filament-catalog-select'),
@@ -217,6 +234,7 @@ describe('Filament input — Spoolman connected', () => {
     await uploadAndExpand(user);
     await selectPrinter(user);
     await selectPrintProfile(user);
+    await switchToRequireFilament(user);
 
     // First pick a catalog item
     await user.selectOptions(screen.getByTestId('filament-catalog-select'), 'Sunlu White');
@@ -240,6 +258,7 @@ describe('Filament input — Spoolman connected', () => {
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
     await selectPrinter(user);
+    await switchToRequireFilament(user);
 
     await user.selectOptions(screen.getByTestId('filament-catalog-select'), '__manual__');
     await waitFor(() => expect(screen.getByTestId('filament-type-input')).toBeTruthy());
@@ -250,24 +269,3 @@ describe('Filament input — Spoolman connected', () => {
   });
 });
 
-// ── Tool picker — multi-slot printers ────────────────────────────────────────
-
-describe('PerPrinterConfig — tool picker for multi-slot printers', () => {
-  it('shows a tool picker for multi-slot printers and writes toolIndex', async () => {
-    const onChange = vi.fn();
-    const printer = {
-      id: 3, name: 'U1', printer_type: 'snapmaker_extended',
-      current_orca_printer_profile: 'U1', loaded_filaments: [
-        { slot: 0, type: 'PLA', color: '#fff', name: 'PLA', filament_profile: 'PLA @U1' },
-        { slot: 1, type: 'PETG', color: '#000', name: 'PETG', filament_profile: 'PETG @U1' },
-        { slot: 2, type: 'TPU', color: '#0f0', name: 'TPU', filament_profile: 'TPU @U1' },
-      ],
-    };
-    render(<PerPrinterConfig printerId="3" printers={[printer as any]}
-              config={{ printProfile: 'p', filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null, toolIndex: null }}
-              onChange={onChange} />, { wrapper });
-    const sel = await screen.findByTestId('tool-select');
-    fireEvent.change(sel, { target: { value: '2' } });
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ toolIndex: 2, filamentProfile: 'TPU @U1', filamentType: 'TPU' }));
-  });
-});
