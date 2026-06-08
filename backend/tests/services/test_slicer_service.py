@@ -108,3 +108,38 @@ def test_raises_on_unresolvable_preset(tmp_path):
     svc._resolver.resolve.side_effect = PresetNotFoundError("nope")
     with pytest.raises(SliceError, match="preset resolution failed"):
         svc.slice(_req(tmp_path))
+
+
+# ── Task 3: tool_index forwarding ────────────────────────────────────────────
+
+def _req_tool_index(**kw):
+    """Helper for tool_index tests matching the minimal pattern from the spec."""
+    base = dict(job_id=1, source_3mf="x.stl", plate_number=0, machine_preset="M",
+                process_preset="P", filament_presets=["F"])
+    base.update(kw)
+    return SliceRequest(**base)
+
+
+def test_slice_request_has_tool_index_default_none():
+    assert _req_tool_index().tool_index is None
+    assert _req_tool_index(tool_index=2).tool_index == 2
+
+
+@patch("app.services.slicer_service.stl_to_3mf")
+def test_slice_forwards_tool_index_to_stl_builder(mock_stl, tmp_path):
+    svc = SlicerService.__new__(SlicerService)  # skip __init__
+    svc._data_dir = tmp_path
+    with patch.object(SlicerService, "_build_config", return_value={"k": "v"}), \
+         patch.object(SlicerService, "_run", return_value="out.gcode"):
+        svc.slice(_req_tool_index(source_3mf="x.stl", tool_index=2))
+        assert mock_stl.call_args.kwargs.get("tool_index") == 2
+
+
+@patch("app.services.slicer_service.build_sliceable_3mf")
+def test_slice_forwards_tool_index_to_3mf_builder(mock_b3, tmp_path):
+    svc = SlicerService.__new__(SlicerService)
+    svc._data_dir = tmp_path
+    with patch.object(SlicerService, "_build_config", return_value={"k": "v"}), \
+         patch.object(SlicerService, "_run", return_value="out.gcode"):
+        svc.slice(_req_tool_index(source_3mf="x.3mf", tool_index=2))
+        assert mock_b3.call_args.kwargs.get("tool_index") == 2

@@ -41,6 +41,7 @@ class SliceRequest:
     filament_presets: list[str]
     filament_colours: list[str] = field(default_factory=list)
     export_args: list[str] = field(default_factory=list)
+    tool_index: int | None = None
 
 
 class SlicerService:
@@ -63,18 +64,18 @@ class SlicerService:
         # Bare STL: wrap the mesh into a fresh 3MF with our config (no model_settings
         # to preserve, so the recovery tier doesn't apply).
         if Path(req.source_3mf).suffix.lower() == ".stl":
-            stl_to_3mf(req.source_3mf, config, prepared)
+            stl_to_3mf(req.source_3mf, config, prepared, tool_index=req.tool_index)
             return self._run(prepared, req, out_dir)
 
         # Primary: preserve model_settings (per-object overrides / paint).
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False)
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False, tool_index=req.tool_index)
         try:
             return self._run(prepared, req, out_dir)
         except SliceError as primary_err:
             logger.warning("Slice failed for job %s; retrying geometry-only: %s", req.job_id, primary_err)
 
         # Recovery: drop the file's own settings/overrides, apply ours fresh.
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True)
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True, tool_index=req.tool_index)
         return self._run(prepared, req, out_dir)
 
     # ── internals ─────────────────────────────────────────────────────────────
