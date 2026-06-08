@@ -149,3 +149,26 @@ new column).
 3. Live: print on T2 vs T3 on the U1 when free.
 Project 2b (multi-material model→tool mapping) is a separate spec, started after this lands and the
 mechanism is hardware-verified.
+
+### Spike result (2026-06-08)
+
+**Presets used:** machine `Snapmaker U1 (0.4 nozzle)`, process `0.08 Extra Fine @Snapmaker U1 (0.4 nozzle)`, filament `AliZ PA-CF @System`.
+**`--slice` index that produced gcode:** `0` (both runs).
+
+Tool-select lines observed (first hit, line 32 of gcode):
+
+```
+filament_map=[1] -> 'M104 T0 S140'
+filament_map=[3] -> 'M104 T0 S140'
+```
+
+Full tool-select inventory (identical in both files, 8 lines each):
+- L32: `M104 T0 S140`
+- L37: `T0`
+- L55–L58: `M104 S0 T0/T1/T2/T3 A0` (all-extruder cool-down)
+- L59: `M104 T0 S200`
+- L62: `T0`
+
+The two gcode files are byte-for-byte identical except for the timestamp comment on line 2. OrcaSlicer's `filament_map` setting does **not** route a single-filament job to a different extruder for the Snapmaker U1 profile.
+
+**Verdict: Approach B confirmed — `filament_map` does NOT route the tool.** Tasks 2 and 6 must be re-planned: the `SnapmakerExtendedClient` (or equivalent connector layer) must prepend `ACTIVATE_EXTRUDER EXTRUDER=extruder{tool_index}` (and a matching temp set) before the print begins; the slice leaves `filament_map` at its default. The data model (`tool_index` column), UI tool picker, queue gating, and `SliceRequest.tool_index` field are all still needed — only the mechanism that applies the routing shifts from the slicer config to the connector's print-start path.
