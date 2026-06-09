@@ -290,68 +290,146 @@ git commit -m "feat(jobs): plumb filament_map through SliceRequest + create/edit
 
 ---
 
-## Task 5: Slice remap in `mesh_3mf_builder` (GATED on Task 1)
+## Task 5: Paint-bitstream remap (mechanism b — RE-PLANNED per Task 1 verdict)
 
-**Model: Sonnet.** **Do not start until Task 1's verdict is recorded.** This task is written for **mechanism (a): rewrite the plate `filament_maps`.** If Task 1 chose mechanism (b), STOP and have the controller re-plan this task for the paint-reference rewrite (the data model, queue, and UI tasks are unaffected).
+**Spike verdict (Task 1, commit `60d325e`):** rewriting plate `filament_maps` does **NOT** reroute a painted model — OrcaSlicer ignores it. Tool routing lives in the `paint_color` 3-bit tree in `3D/Objects/*.model`: node values **3–6 = filaments 1–4**, **7 = SPLIT** (4 children follow), **0 = NONE** (inherits the object's base `extruder` metadata), **1/2 = support enforcer/blocker** (preserve). So the remap = **rewrite paint leaf nodes + the object's base `extruder` metadata**. Two tasks (5a codec, 5b integration) because the binary codec must be validated in isolation first.
 
-**Files:** Modify `backend/app/services/mesh_3mf_builder.py`, `backend/app/services/slicer_service.py` (forward the map). Test: extend `backend/tests/services/test_mesh_3mf_builder.py`.
+### Task 5a: `paint_remap.py` — decode/encode/remap codec (round-trip validated)
 
-- [ ] **Step 1: Write the failing test**
+**Model: Sonnet.**
+
+**Files:** Create `backend/app/services/paint_remap.py`, `backend/tests/services/test_paint_remap.py`.
+
+- [ ] **Step 1: Write the failing tests** (the round-trip on REAL data is the spec for bit-order/padding correctness)
 
 ```python
-def test_filament_maps_rewritten_from_filament_map(tmp_path):
-    # source 3MF with a plate filament_maps="1 2 3 4"; remap model filament 2 -> tool 3 (1-based extruder 4)
-    import zipfile
-    src = tmp_path / "src.3mf"
-    with zipfile.ZipFile(src, "w") as z:
-        z.writestr("3D/3dmodel.model", "<model/>")
-        z.writestr("Metadata/project_settings.config", '{"old":1}')
-        z.writestr("Metadata/model_settings.config",
-                   '<?xml version="1.0"?>\n<config><plate>'
-                   '<metadata key="filament_maps" value="1 2 3 4"/></plate></config>')
-    out = tmp_path / "out.3mf"
-    from app.services.mesh_3mf_builder import build_sliceable_3mf
-    build_sliceable_3mf(str(src), {"new": 1}, out,
-                        filament_map=[{"model_filament": 2, "tool_index": 3}])
-    with zipfile.ZipFile(out) as z:
-        ms = z.read("Metadata/model_settings.config").decode("utf-8")
-    # position 2 (model filament 2, 1-based) becomes 4 (tool_index 3 + 1)
-    assert 'value="1 4 3 4"' in ms
+# backend/tests/services/test_paint_remap.py
+import zipfile, re
+from pathlib import Path
+from app.services.paint_remap import decode_nodes, encode_nodes, remap_paint_color
+
+_FIXTURE = Path(r"C:/Users/mgome/Downloads/Hausdeko+#41+-+Welcome+Home+-+Türschild+-+Makerworld.3mf")
+
+
+def _fixture_paint_colors():
+    with zipfile.ZipFile(_FIXTURE) as z:
+        raw = next(z.read(n).decode("utf-8", "ignore") for n in z.namelist() if n.endswith(".model") and z.read(n))
+    return re.findall(r'paint_color="([^"]+)"', raw)
+
+
+def test_decode_encode_roundtrip_on_real_paint():
+    pcs = [p for p in _fixture_paint_colors() if p]
+    assert pcs, "fixture has painted triangles"
+    for pc in pcs[:200]:
+        assert encode_nodes(decode_nodes(pc)) == pc   # exact inverse — validates bit order + padding
+
+
+def test_remap_swaps_filament_leaf_nodes():
+    # nodes 3..6 == filaments 1..4. Map filament 1 -> tool 2 (extruder 3 == node 5); identity elsewhere.
+    # mapping arg is {model_filament(1-based): tool_index(0-based)}.
+    nodes = [3, 7, 4, 5, 0, 1, 6]          # leaves 3,4,5,6 + SPLIT(7) + NONE(0) + ENFORCER(1)
+    out = decode_nodes(encode_nodes([n for n in nodes]))  # sanity
+    assert out == nodes
+    hexed = encode_nodes(nodes)
+    remapped = decode_nodes(remap_paint_color(hexed, {1: 2}))
+    assert remapped == [5, 7, 4, 5, 0, 1, 6]   # node 3 (filament1) -> extruder3 -> node 5; others unchanged
+
+
+def test_remap_identity_is_noop():
+    pc = next(p for p in _fixture_paint_colors() if p)
+    assert remap_paint_color(pc, {}) == pc
 ```
 
 - [ ] **Step 2: Run — confirm FAIL.**
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 3: Implement** `backend/app/services/paint_remap.py`. Reuse the proven decode from the spike (`backend/scripts/spike_filament_remap.py` `_decode_nodes`) and write the EXACT-inverse encoder; the round-trip test on real data is the correctness gate. Functions:
+  - `decode_nodes(hex_str) -> list[int]` — 3-bit nodes; LSB-first within each hex-byte; odd-length strings padded with a trailing `'0'`. (Match the spike's `_decode_nodes` exactly — it is proven against the fixture.)
+  - `encode_nodes(nodes) -> str` — inverse: pack 3-bit values LSB-first into bytes, emit hex, applying the same trailing-`'0'` padding rule so `encode(decode(pc)) == pc`.
+  - `remap_paint_color(hex_str, mapping) -> str` — `mapping` is `{model_filament(1-based): tool_index(0-based)}`. decode → for each node `v` in `3..6`: `model_filament = v - 2`; if in `mapping`, `v = mapping[model_filament] + 3` (tool_index 0-based → extruder 1-based → node value); clamp to `3..6` — preserve `0,1,2,7` → encode.
 
-In `mesh_3mf_builder.py`, add a helper that rewrites the plate `filament_maps` per the map (default identity for unmapped positions), preserving the count:
-
-```python
-def _remap_filament_maps(model_settings: bytes, filament_map: list, n: int) -> bytes:
-    """Rewrite each plate's <metadata key="filament_maps"> so model filament k
-    (1-based) routes to tool_index m (0-based) -> extruder m+1. Unmapped stay identity."""
-    import xml.etree.ElementTree as ET
-    mapping = {e["model_filament"]: e["tool_index"] + 1 for e in (filament_map or [])}
-    root = ET.fromstring(model_settings)
-    for plate in root.findall("plate"):
-        for md in plate.findall("metadata"):
-            if md.get("key") == "filament_maps":
-                count = len(md.get("value", "").split()) or n
-                md.set("value", " ".join(str(mapping.get(i + 1, i + 1)) for i in range(count)))
-    body = ET.tostring(root, encoding="unicode")
-    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
-```
-
-Add `filament_map: list | None = None` to `build_sliceable_3mf` (and `stl_to_3mf` for signature parity — STL has no plate, so it's a no-op there). In `build_sliceable_3mf`, when `filament_map` is set, capture the source `model_settings.config` (as the `tool_index` path already does) and write `_remap_filament_maps(src_model_settings, filament_map, n_filaments)` instead of (or alongside) the single-tool patch. `tool_index` (single) and `filament_map` (multi) are mutually exclusive — if `filament_map` is set, use the remap path; else the existing `tool_index` path. Derive `n_filaments` from the source's filament count if needed, else the max model_filament in the map.
-
-In `slicer_service.py` `slice()`, forward `req.filament_map` to `build_sliceable_3mf` (both call sites) and `stl_to_3mf`.
-
-- [ ] **Step 4: Run — PASS + full suite** (the `tool_index=None`/`filament_map=None` paths must stay byte-identical — existing mesh tests green).
+- [ ] **Step 4: Run — PASS** (esp. the real-data round-trip). Then `... -m pytest -q` green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add backend/app/services/mesh_3mf_builder.py backend/app/services/slicer_service.py backend/tests/services/test_mesh_3mf_builder.py
-git commit -m "feat(slice): remap plate filament_maps from a model-filament->tool map"
+git add backend/app/services/paint_remap.py backend/tests/services/test_paint_remap.py
+git commit -m "feat(slice): paint_color bitstream codec + filament remap (round-trip validated)"
+```
+
+### Task 5b: Apply the remap in `mesh_3mf_builder` + slice() + end-to-end verify
+
+**Model: Sonnet.**
+
+**Files:** Modify `backend/app/services/mesh_3mf_builder.py`, `backend/app/services/slicer_service.py`. Test: extend `backend/tests/services/test_mesh_3mf_builder.py`; add `backend/tests/services/test_filament_map_e2e.py`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# in test_mesh_3mf_builder.py — paint + object-extruder remap on build
+def test_build_sliceable_3mf_remaps_paint_and_object_extruder(tmp_path):
+    import zipfile
+    from app.services.paint_remap import encode_nodes, decode_nodes
+    from app.services.mesh_3mf_builder import build_sliceable_3mf
+    painted = encode_nodes([3])                      # one triangle on filament 1
+    src = tmp_path / "src.3mf"
+    with zipfile.ZipFile(src, "w") as z:
+        z.writestr("3D/3dmodel.model", "<model/>")
+        z.writestr("3D/Objects/o.model", f'<model><triangle paint_color="{painted}"/></model>')
+        z.writestr("Metadata/project_settings.config", '{"old":1}')
+        z.writestr("Metadata/model_settings.config",
+                   '<?xml version="1.0"?>\n<config><object id="1">'
+                   '<metadata key="extruder" value="1"/></object></config>')
+    out = tmp_path / "out.3mf"
+    build_sliceable_3mf(str(src), {"new": 1}, out,
+                        filament_map=[{"model_filament": 1, "tool_index": 2}])  # filament1 -> tool2 (ext3)
+    with zipfile.ZipFile(out) as z:
+        obj = z.read("3D/Objects/o.model").decode("utf-8")
+        ms = z.read("Metadata/model_settings.config").decode("utf-8")
+    import re
+    pc = re.search(r'paint_color="([^"]+)"', obj).group(1)
+    assert decode_nodes(pc) == [5]                   # filament1 -> extruder3 -> node 5
+    assert 'key="extruder" value="3"' in ms          # object base extruder remapped too
+```
+
+```python
+# backend/tests/services/test_filament_map_e2e.py — the real proof (slices; needs OrcaSlicer)
+import zipfile
+from pathlib import Path
+import pytest
+_FIXTURE = Path(r"C:/Users/mgome/Downloads/Hausdeko+#41+-+Welcome+Home+-+Türschild+-+Makerworld.3mf")
+
+@pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture not present")
+def test_remap_changes_emitted_tool_usage(tmp_path):
+    # Reuse the spike's slice+extract helpers to prove the remap actually reroutes in gcode.
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
+    from spike_filament_remap import _build_config, _run_slice, _extract_tool_info  # proven helpers
+    from app.services.preset_resolver import PresetResolver
+    from app.services.mesh_3mf_builder import build_sliceable_3mf
+    from app.config import get_orca_executable
+    cfg = _build_config(PresetResolver())
+    ident = tmp_path / "id.3mf"; swap = tmp_path / "sw.3mf"
+    build_sliceable_3mf(str(_FIXTURE), cfg, ident, filament_map=[])
+    build_sliceable_3mf(str(_FIXTURE), cfg, swap,
+                        filament_map=[{"model_filament": 1, "tool_index": 1}, {"model_filament": 2, "tool_index": 0}])
+    a = _extract_tool_info((_run_slice(get_orca_executable(), ident, tmp_path/"a")[0]).read_text(errors="ignore"))
+    b = _extract_tool_info((_run_slice(get_orca_executable(), swap,  tmp_path/"b")[0]).read_text(errors="ignore"))
+    assert a != b   # remapping the paint changes which tools the gcode uses
+```
+(Adapt the imported helper names to what `spike_filament_remap.py` actually defines — read it.)
+
+- [ ] **Step 2: Run — confirm FAIL.**
+
+- [ ] **Step 3: Implement** in `mesh_3mf_builder.py`: add `filament_map: list | None = None` to `build_sliceable_3mf` (and `stl_to_3mf` for parity — no-op there). When `filament_map` is set (and non-empty), in the copy loop, for every entry whose name matches `3D/.*\.model` (the geometry, incl. `3D/Objects/*`), rewrite each `paint_color="..."` via `paint_remap.remap_paint_color(pc, {e["model_filament"]: e["tool_index"] for e in filament_map})` before writing it; and set each `<object>`'s base `extruder` metadata in `model_settings.config` to the remapped value (object extruder `e` 1-based → `mapping.get(e, e-1)+1`), reusing the Project-2 model_settings patching approach but per-object via the map. Leave the plate `filament_maps` untouched. `filament_map` and `tool_index` are mutually exclusive (prefer `filament_map` when set). `filament_map=None` ⇒ byte-identical to today.
+  In `slicer_service.py` `slice()`, forward `req.filament_map` to `build_sliceable_3mf` (both call sites).
+
+- [ ] **Step 4: Run — PASS + full suite.** The mesh unit test must pass; run the e2e test (it slices — allow a couple minutes; if OrcaSlicer is unavailable it skips). Existing mesh tests (`filament_map=None`) stay byte-identical.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add backend/app/services/mesh_3mf_builder.py backend/app/services/slicer_service.py backend/tests/services/test_mesh_3mf_builder.py backend/tests/services/test_filament_map_e2e.py
+git commit -m "feat(slice): apply paint+object-extruder remap in mesh_3mf_builder (e2e verified)"
 ```
 
 ---
