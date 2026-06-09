@@ -42,6 +42,7 @@ class SliceRequest:
     filament_colours: list[str] = field(default_factory=list)
     export_args: list[str] = field(default_factory=list)
     tool_index: int | None = None
+    filament_map: list | None = None
 
 
 class SlicerService:

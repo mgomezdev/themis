@@ -32,6 +32,7 @@ class PrinterConfigInput(BaseModel):
     filament_type: str | None = None
     filament_color: str | None = None
     tool_index: int | None = None
+    filament_map: list | None = None
 
 
 class OverrideCheckRequest(BaseModel):
@@ -139,6 +140,7 @@ async def create_job(
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
             tool_index=cfg.tool_index,
+            filament_map=cfg.filament_map,
         )
         session.add(config)
 
@@ -248,6 +250,7 @@ async def get_job_details(
             "filament_type": cfg.filament_type,
             "filament_color": cfg.filament_color,
             "tool_index": cfg.tool_index,
+            "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
         })
@@ -342,6 +345,7 @@ async def update_job_configs(
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
             tool_index=cfg.tool_index,
+            filament_map=cfg.filament_map,
             slice_failed=False,
             slice_error=None,
         ))
