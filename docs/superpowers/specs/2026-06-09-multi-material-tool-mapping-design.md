@@ -125,3 +125,69 @@ single-tool gate (`_filament_mismatch` / `_slot_for_config` extended for the map
 3. Slice remap + queue + gating.
 4. Mapping UI in the shared component (New + Edit).
 5. Docs; live verification when the U1 is free.
+
+---
+
+## Spike result (2026-06-09)
+
+**Script:** `backend/scripts/spike_filament_remap.py`
+**Fixture:** Hausdeko #41 (single painted object, 4 declared filaments, ~9049 painted triangles)
+**Machine/process:** Snapmaker U1 (0.4 nozzle) / 0.08 Extra Fine, 4× Generic PLA High Speed @System
+
+### Per-variant tool-select sequences
+
+All three variants of `filament_maps` produced **identical** gcode tool usage:
+
+| `filament_maps` value | Ordered distinct tools | Extruders with M104/M109 |
+|---|---|---|
+| `1 2 3 4` (identity) | T1 → T0 → T2 | T0, T1, T2, T3 |
+| `2 1 4 3` (swapped)  | T1 → T0 → T2 | T0, T1, T2, T3 |
+| `3 4 1 2` (rotated)  | T1 → T0 → T2 | T0, T1, T2, T3 |
+
+The `filament_maps` rewrite is ignored by OrcaSlicer when slicing a painted model.
+
+### Mechanism (a) verdict: FAILS
+
+Rewriting the plate `<metadata key="filament_maps">` array has **no effect** on which physical
+tools the painted regions are assigned to. OrcaSlicer routes painted models by the logical
+filament index stored in the `paint_color` triangle attribute, not by `filament_maps`.
+
+### paint_color encoding (mechanism b analysis)
+
+The `paint_color` attribute in `3D/Objects/*.model` encodes a recursive **triangle subdivision
+tree** as a hex bitstream, 3 bits per node, **LSB-first within bytes** (odd-length hex strings
+padded with a trailing `'0'` nibble). Node values (from `EnforcerBlockerType` in
+`libslic3r/TriangleSelector.cpp`):
+
+| Node value | Meaning |
+|---|---|
+| 0 | NONE — inherits the object's base extruder |
+| 1 | Support ENFORCER (not a filament) |
+| 2 | Support BLOCKER (not a filament) |
+| 3 | Extruder1 — logical filament 1 |
+| 4 | Extruder2 — logical filament 2 |
+| 5 | Extruder3 — logical filament 3 |
+| 6 | Extruder4 — logical filament 4 |
+| 7 | SPLIT — exactly 4 children follow in the stream |
+
+Fixture node distribution (1,278,676 total nodes): NONE=610348, ENFORCER=157984, BLOCKER=63555,
+fil1=120660, fil2=159434, fil3=26712, fil4=128084, SPLIT=11899. All filaments 1–4 are present;
+11899 SPLIT nodes confirm real tree depth. Logical filament k (1-based) → node value k+2.
+
+### Mechanism (b) verdict: FEASIBLE
+
+To remap logical filament A → physical tool B:
+1. Read the hex bitstream LSB-first in 3-bit chunks.
+2. When a leaf node value is in 3–6 (a filament index), apply the remap table: `old_val − 2` → lookup `filament_map` → `new_val + 2`.
+3. Structural SPLIT (7) nodes and support ENFORCER/BLOCKER (1, 2) nodes are preserved unchanged.
+4. Re-pack the remapped node values back to a hex string with the same total bit count.
+
+This is a single O(N) pass with no third-party libraries. The recursion is deterministic (SPLIT
+always has exactly 4 children). Re-encoding is the exact inverse of decoding.
+
+### **VERDICT: a fails, b feasible**
+
+Task 5 (`mesh_3mf_builder` remap) must implement **mechanism (b)**: rewrite the logical filament
+references inside the `paint_color` bitstream for each painted triangle in `3D/Objects/*.model`.
+The `filament_maps` array in `model_settings.config` is irrelevant to painted-model routing and
+should be left at identity (`1 2 3 4`) in the sliceable 3MF.
