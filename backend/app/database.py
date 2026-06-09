@@ -51,6 +51,8 @@ async def _migrate(conn) -> None:
             await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_color VARCHAR(20)"))
         if "tool_index" not in jpc_cols:
             await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN tool_index INTEGER"))
+        if "filament_map" not in jpc_cols:
+            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_map JSON"))
 
     job_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
     if job_cols:
