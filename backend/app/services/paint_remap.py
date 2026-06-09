@@ -29,12 +29,15 @@ Encoding rules
   nibble alignment; this makes ``decode_nodes(encode_nodes(nodes)) == nodes``
   hold for all node lists.
 
-Round-trip validated against the real Hausdeko #41 fixture:
-``encode_nodes(decode_nodes(pc)) == pc`` for the vast majority of
-paint_color strings in the fixture.  A small number of strings (~0.03 %)
-have non-zero bits in their trailing nibble alignment positions (an
-OrcaSlicer encoder artefact); those strings are intentionally excluded from
-the round-trip gate.
+Remapping is done by ``remap_paint_color`` as a SURGICAL in-place bit edit:
+it overwrites only the 3-bit fields of remapped filament leaves and leaves
+every other bit — structure, support nodes, NONE nodes, and OrcaSlicer's
+non-canonical trailing padding bits — byte-for-byte untouched.  This makes
+an identity remap (``mapping={}``) byte-exact for ALL fixture strings, and a
+real remap change only the intended leaf fields.  The decode/encode helpers
+are node-level and self-consistent (``decode_nodes(encode_nodes(nodes)) ==
+nodes``), but the remap path deliberately does NOT round-trip through them,
+so it is unaffected by OrcaSlicer's padding-bit artefact.
 """
 from __future__ import annotations
 
@@ -103,36 +106,67 @@ def encode_nodes(nodes: list[int]) -> str:
 
 
 def remap_paint_color(hex_str: str, mapping: dict) -> str:
-    """Remap filament indices in a paint_color hex string.
+    """Remap filament indices in a paint_color hex string — SURGICAL in-place edit.
+
+    Remapping a filament leaf node (3..6 → 3..6) is a same-width (3-bit) field
+    change.  Rather than decode→re-encode (which would drop OrcaSlicer's
+    non-canonical trailing padding bits and re-emit a "clean" but not
+    byte-identical string), this rewrites ONLY the 3 bits of each remapped
+    leaf field IN PLACE.  Every other bit — tree structure (SPLIT), support
+    nodes (ENFORCER/BLOCKER), NONE nodes, and trailing nibble padding — is
+    left byte-for-byte untouched.  The output preserves the original length
+    and uppercase casing.
 
     Args:
         hex_str:  The ``paint_color`` attribute value from the 3MF model file.
         mapping:  ``{model_filament (1-based int): tool_index (0-based int)}``.
-                  Empty dict is a no-op.
+                  Empty dict is a no-op (returns the input byte-exact).
 
     Returns:
-        A new paint_color hex string with filament leaf nodes remapped.
+        A new paint_color hex string with only the remapped leaf fields changed.
 
     Node values 0 (NONE), 1 (ENFORCER), 2 (BLOCKER), and 7 (SPLIT) are
-    preserved unchanged.  For leaf nodes with value v in 3..6:
+    preserved.  For leaf nodes with value v in 3..6:
         filament = v - 2          # 1-based logical filament
         if filament in mapping:
             v = mapping[filament] + 3   # tool_index (0-based) + 3 = new node value
-    The result is clamped to 3..6 to guard against out-of-range mappings.
+    New values are clamped to 3..6 to guard against out-of-range mappings.
     """
     if not hex_str:
         return hex_str
     if not mapping:
+        # Identity remap touches nothing — return byte-exact input.
         return hex_str
 
-    nodes = decode_nodes(hex_str)
-    remapped: list[int] = []
-    for v in nodes:
+    # Expand to a mutable bit array (nibble-LSB), preserving every bit.
+    bits: list[int] = []
+    for ch in hex_str:
+        nib = int(ch, 16)
+        for i in range(4):            # LSB first within each nibble
+            bits.append((nib >> i) & 1)
+
+    # Walk every complete 3-bit field the same way decode_nodes reads them,
+    # editing in place.  Only fields holding a remapped filament are touched;
+    # all other bits (incl. trailing padding) stay exactly as they were.
+    total = len(bits)
+    bit_pos = 0
+    while bit_pos + 3 <= total:
+        v = bits[bit_pos] + bits[bit_pos + 1] * 2 + bits[bit_pos + 2] * 4
         if 3 <= v <= 6:
-            filament = v - 2      # 1-based filament index
+            filament = v - 2          # 1-based filament index
             if filament in mapping:
-                new_v = mapping[filament] + 3   # tool_index(0-based) + 3
-                new_v = max(3, min(6, new_v))   # clamp to valid filament range
-                v = new_v
-        remapped.append(v)
-    return encode_nodes(remapped)
+                new_v = mapping[filament] + 3       # tool_index(0-based) + 3
+                new_v = max(3, min(6, new_v))       # clamp to valid range
+                if new_v != v:
+                    # Overwrite exactly these 3 bits, same nibble-LSB packing.
+                    bits[bit_pos] = new_v & 1
+                    bits[bit_pos + 1] = (new_v >> 1) & 1
+                    bits[bit_pos + 2] = (new_v >> 2) & 1
+        bit_pos += 3
+
+    # Re-emit hex, preserving original length and uppercase casing.
+    result: list[str] = []
+    for i in range(0, len(bits), 4):
+        nib = bits[i] + bits[i + 1] * 2 + bits[i + 2] * 4 + bits[i + 3] * 8
+        result.append(format(nib, "X"))
+    return "".join(result)
