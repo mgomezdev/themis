@@ -16,6 +16,8 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
+from . import paint_remap as _paint_remap
+
 _CONTENT_TYPES = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'
     '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
@@ -65,12 +67,40 @@ def _patch_model_settings_extruder(model_settings: bytes, extruder_1based: int) 
     return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
 
 
+def _patch_model_settings_filament_map(model_settings: bytes, mapping: dict) -> bytes:
+    """Remap each <object>'s base extruder per the filament mapping.
+
+    For each object's extruder value ``e`` (1-based filament):
+      new value = mapping.get(e, e - 1) + 1
+    i.e. if ``e`` is in the mapping → its tool's extruder number (1-based);
+    else identity (extruder stays the same as the logical filament).
+
+    All other metadata on each object is preserved unchanged.
+    """
+    root = ET.fromstring(model_settings)
+    for obj in root.findall("object"):
+        for md in list(obj.findall("metadata")):
+            if md.get("key") == "extruder":
+                try:
+                    old_e = int(md.get("value", "1"))
+                except ValueError:
+                    old_e = 1
+                new_e = mapping.get(old_e, old_e - 1) + 1
+                obj.remove(md)
+                new_md = ET.SubElement(obj, "metadata")
+                new_md.set("key", "extruder")
+                new_md.set("value", str(new_e))
+    body = ET.tostring(root, encoding="unicode")
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
+
+
 def build_sliceable_3mf(
     source_3mf: str | Path,
     project_config: dict,
     out_path: str | Path,
     geometry_only: bool = False,
     tool_index: int | None = None,
+    filament_map: list | None = None,
 ) -> Path:
     """Copy ``source_3mf`` preserving geometry, replacing ``project_settings.config``
     with ``project_config``.
@@ -79,15 +109,35 @@ def build_sliceable_3mf(
     refs) is preserved. ``geometry_only=True`` drops it too — the recovery tier,
     mirroring the GUI's "import geometry only": discard all the file's settings
     and apply ours fresh.
+
+    ``filament_map`` and ``tool_index`` are mutually exclusive:
+    - ``filament_map`` (non-empty list of ``{model_filament, tool_index}`` dicts):
+      remap paint_color attributes in all ``3D/*.model`` files and patch each
+      object's base extruder in ``model_settings.config`` per the map.
+    - ``tool_index`` (int, 0-based): set all objects to a single extruder.
+    - ``filament_map=None`` or ``filament_map=[]``: no extruder rewriting; the
+      source model_settings is copied verbatim (byte-identical to old behaviour).
     """
     source_3mf, out_path = Path(source_3mf), Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     config_bytes = json.dumps(project_config).encode("utf-8")
+
+    # Determine which path to take.
+    use_filament_map = bool(filament_map)  # non-None AND non-empty
     drop = set(_DROPPED) | {_REPLACED}
     if geometry_only:
         drop.add(_MODEL)
-    if tool_index is not None:
-        drop.add(_MODEL)  # we re-emit model_settings ourselves below
+    if tool_index is not None and not use_filament_map:
+        drop.add(_MODEL)  # single-extruder path re-emits model_settings below
+    if use_filament_map:
+        drop.add(_MODEL)  # multi-material path re-emits model_settings below
+
+    # Build the {model_filament(1-based): tool_index(0-based)} mapping dict.
+    mapping: dict[int, int] = {}
+    if use_filament_map:
+        mapping = {e["model_filament"]: e["tool_index"] for e in filament_map}
+
+    _3D_MODEL_RE = re.compile(r"3D/.*\.model$", re.IGNORECASE)
 
     with zipfile.ZipFile(source_3mf) as zin, zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED) as zout:
         model_xml = b""
@@ -100,9 +150,28 @@ def build_sliceable_3mf(
                 src_model_settings = zin.read(item)
             if low in drop:
                 continue
-            zout.writestr(item, zin.read(item))
+            if use_filament_map and _3D_MODEL_RE.match(item):
+                # Rewrite paint_color attributes in-place for all 3D model files.
+                content = zin.read(item).decode("utf-8")
+                content = re.sub(
+                    r'paint_color="([^"]+)"',
+                    lambda m: f'paint_color="{_paint_remap.remap_paint_color(m.group(1), mapping)}"',
+                    content,
+                )
+                zout.writestr(item, content.encode("utf-8"))
+            else:
+                zout.writestr(item, zin.read(item))
         zout.writestr("Metadata/project_settings.config", config_bytes)
-        if tool_index is not None:
+        if use_filament_map:
+            if src_model_settings:
+                ms = _patch_model_settings_filament_map(src_model_settings, mapping)
+            else:
+                # No source model_settings (geometry_only or bare 3MF) — nothing to remap.
+                ms = _model_settings_with_extruder(
+                    _object_ids_from_model(model_xml) or ["1"], 1
+                )
+            zout.writestr("Metadata/model_settings.config", ms)
+        elif tool_index is not None:
             ext = tool_index + 1
             if src_model_settings and not geometry_only:
                 ms = _patch_model_settings_extruder(src_model_settings, ext)
@@ -132,7 +201,7 @@ def _parse_stl(path: Path) -> list[tuple[tuple[float, float, float], ...]]:
 
 
 def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path,
-               tool_index: int | None = None) -> Path:
+               tool_index: int | None = None, filament_map: list | None = None) -> Path:
     """Wrap an STL mesh into a sliceable 3MF carrying the generated project config.
 
     Deduplicates vertices and emits a single model object. Used when the upload is

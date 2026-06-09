@@ -69,14 +69,16 @@ class SlicerService:
             return self._run(prepared, req, out_dir)
 
         # Primary: preserve model_settings (per-object overrides / paint).
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False, tool_index=req.tool_index)
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False,
+                            tool_index=req.tool_index, filament_map=req.filament_map)
         try:
             return self._run(prepared, req, out_dir)
         except SliceError as primary_err:
             logger.warning("Slice failed for job %s; retrying geometry-only: %s", req.job_id, primary_err)
 
         # Recovery: drop the file's own settings/overrides, apply ours fresh.
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True, tool_index=req.tool_index)
+        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True,
+                            tool_index=req.tool_index, filament_map=req.filament_map)
         return self._run(prepared, req, out_dir)
 
     # ── internals ─────────────────────────────────────────────────────────────
