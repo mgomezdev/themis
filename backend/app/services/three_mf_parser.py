@@ -15,6 +15,25 @@ class PlateInfo:
     filament_g: float
 
 
+def parse_model_filaments(file_path: str) -> list[dict]:
+    """The filaments a 3MF declares: [{index(1-based), color, type}], from
+    project_settings.config (filament_colour / filament_type). [] if none/not a 3MF."""
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            if "Metadata/project_settings.config" not in zf.namelist():
+                return []
+            ps = json.loads(zf.read("Metadata/project_settings.config"))
+    except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, OSError):
+        return []
+    colours = ps.get("filament_colour") or []
+    types = ps.get("filament_type") or []
+    out = []
+    for i, colour in enumerate(colours):
+        out.append({"index": i + 1, "color": colour,
+                    "type": types[i] if i < len(types) else ""})
+    return out
+
+
 def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[PlateInfo]:
     """Parse a 3MF ZIP and return plate metadata. Extracts thumbnails if thumbnail_dir given."""
     plates: list[PlateInfo] = []
