@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 import pytest
 
-from app.services.paint_remap import remap_paint_color, decode_nodes, encode_nodes
+from app.services.snapmaker.paint_remap import remap_paint_color, decode_nodes, encode_nodes
 
 _FIXTURE = Path(r"C:/Users/mgome/Downloads/Hausdeko+#41+-+Welcome+Home+-+Türschild+-+Makerworld.3mf")
 

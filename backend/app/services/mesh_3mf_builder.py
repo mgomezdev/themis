@@ -16,7 +16,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from . import paint_remap as _paint_remap
+from .snapmaker import paint_remap as _paint_remap
 
 _CONTENT_TYPES = (
     '<?xml version="1.0" encoding="UTF-8"?>\n'

@@ -169,7 +169,7 @@ def test_build_sliceable_3mf_geometry_only_tool_index_creates_object_extruder(tm
 
 def test_build_sliceable_3mf_remaps_paint_and_object_extruder(tmp_path):
     import re as _re
-    from app.services.paint_remap import encode_nodes, decode_nodes
+    from app.services.snapmaker.paint_remap import encode_nodes, decode_nodes
     painted = encode_nodes(("L", 3))                 # one triangle on filament 1 (state=3)
     src = tmp_path / "src.3mf"
     with zipfile.ZipFile(src, "w") as z:
