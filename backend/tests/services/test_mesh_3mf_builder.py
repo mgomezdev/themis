@@ -170,7 +170,7 @@ def test_build_sliceable_3mf_geometry_only_tool_index_creates_object_extruder(tm
 def test_build_sliceable_3mf_remaps_paint_and_object_extruder(tmp_path):
     import re as _re
     from app.services.paint_remap import encode_nodes, decode_nodes
-    painted = encode_nodes([3])                      # one triangle on filament 1
+    painted = encode_nodes(("L", 3))                 # one triangle on filament 1 (state=3)
     src = tmp_path / "src.3mf"
     with zipfile.ZipFile(src, "w") as z:
         z.writestr("3D/3dmodel.model", "<model/>")
@@ -186,5 +186,5 @@ def test_build_sliceable_3mf_remaps_paint_and_object_extruder(tmp_path):
         obj = z.read("3D/Objects/o.model").decode("utf-8")
         ms = z.read("Metadata/model_settings.config").decode("utf-8")
     pc = _re.search(r'paint_color="([^"]+)"', obj).group(1)
-    assert decode_nodes(pc) == [5]                   # filament1 -> extruder3 -> node 5
+    assert decode_nodes(pc) == ("L", 5)              # filament1 -> extruder3 -> state=5
     assert 'key="extruder" value="3"' in ms          # object base extruder remapped too

@@ -1,172 +1,230 @@
-"""paint_remap.py — OrcaSlicer paint_color bitstream codec + filament remap.
+"""paint_remap.py — OrcaSlicer TriangleSelector paint_color codec + filament remap.
 
-OrcaSlicer encodes the triangle-selector tree as a hex string in the
-``paint_color`` attribute of ``3D/Objects/*.model``.  Each node is 3 bits,
-packed LSB-first within each nibble (4-bit group), reading nibbles left to
-right.  The hex string length equals the minimum number of nibbles needed to
-hold all node bits; trailing zero-valued nodes that arise only from nibble
-alignment padding are stripped on decode.
+OrcaSlicer encodes each triangle's subdivision tree as a hex string in the
+``paint_color`` attribute of ``3D/Objects/*.model``.  The bitstream layout is:
 
-Node values (EnforcerBlockerType from libslic3r/TriangleSelector.cpp):
-    0 = NONE      — unpainted, inherits the object's base extruder
-    1 = ENFORCER  — support enforcer (not a filament)
-    2 = BLOCKER   — support blocker  (not a filament)
-    3 = Extruder1 — logical filament 1 (1-based)
-    4 = Extruder2 — logical filament 2
-    5 = Extruder3 — logical filament 3
-    6 = Extruder4 — logical filament 4
-    7 = SPLIT     — structural; exactly 4 children follow in the stream
+**Bit ↔ hex mapping (authoritative from libslic3r/TriangleSelector.cpp):**
+  Nibbles are read/written **right-to-left** (the last hex character is the
+  start of the bitstream).  Within each nibble bits are LSB-first:
+  bit i of nibble n = ``(n >> i) & 1``.
 
-Encoding rules
---------------
-* Each node value (0-7) is stored as 3 bits, LSB-first within each nibble
-  and across nibble boundaries.  Adjacent nodes pack contiguously into the
-  nibble stream; there are no per-node separators.
-* The hex string output is uppercase and has length ``ceil(n_nodes * 3 / 4)``
-  (minimum nibbles to hold the bitstream).  Trailing alignment bits in the
-  last nibble are zero-padded by the encoder.
-* ``decode_nodes`` strips any trailing NONE (0) nodes that are artefacts of
-  nibble alignment; this makes ``decode_nodes(encode_nodes(nodes)) == nodes``
-  hold for all node lists.
+  This means the tree root occupies the LSB of the *last* nibble, and the hex
+  string grows leftward as the tree grows.  When serializing, bits are packed
+  into nibbles LSB-first, the final (leftmost) nibble is zero-padded, and the
+  nibble sequence is reversed before converting to a hex string.
 
-Remapping is done by ``remap_paint_color`` as a SURGICAL in-place bit edit:
-it overwrites only the 3-bit fields of remapped filament leaves and leaves
-every other bit — structure, support nodes, NONE nodes, and OrcaSlicer's
-non-canonical trailing padding bits — byte-for-byte untouched.  This makes
-an identity remap (``mapping={}``) byte-exact for ALL fixture strings, and a
-real remap change only the intended leaf fields.  The decode/encode helpers
-are node-level and self-consistent (``decode_nodes(encode_nodes(nodes)) ==
-nodes``), but the remap path deliberately does NOT round-trip through them,
-so it is unaffected by OrcaSlicer's padding-bit artefact.
+**Tree encoding — one node at a time:**
+  1. Read 2 bits ``split_sides`` (LSB-first: ``b0 | (b1<<1)``).
+  2. If ``split_sides == 0`` → **LEAF**: read 2 bits ``code``.
+     - ``code == 3`` (both bits set): read a 4-bit nibble ``n``; ``state = n + 3``.
+     - Else ``state = code`` (0, 1, or 2).
+  3. If ``split_sides ∈ {1,2,3}`` → **SPLIT**: read 2 bits ``special_side``,
+     then read ``split_sides + 1`` child nodes **in reverse order**
+     (the serializer wrote child[split_sides], …, child[0]); recurse.
+
+**State values:**
+  0 = NONE (unpainted), 1 = ENFORCER, 2 = BLOCKER,
+  state s ≥ 3 → filament (s − 2) in 1-based numbering
+  (filament f → state f + 2; tool_index t (0-based) → state t + 3).
+
+**Remap:**
+  For every LEAF with state ≥ 3: if ``filament = state − 2`` is in *mapping*,
+  replace ``state = mapping[filament] + 3`` (mapping value is 0-based
+  tool_index).  NONE / ENFORCER / BLOCKER / SPLIT nodes are preserved exactly.
 """
 from __future__ import annotations
 
+from typing import Any
 
-def decode_nodes(hex_str: str) -> list[int]:
-    """Decode a paint_color hex string to a list of 3-bit node values.
 
-    Reads each hex character (nibble) as 4 bits, LSB-first, and extracts
-    consecutive 3-bit node values.  Trailing NONE (0) nodes that arise
-    solely from nibble-alignment padding are stripped so that
-    ``decode_nodes(encode_nodes(nodes)) == nodes``.
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def _hex_to_bitstream(hex_str: str) -> list[int]:
+    """Unpack hex string to a flat bit list (RTL nibble order, LSB-first per nibble)."""
+    bits: list[int] = []
+    for ch in reversed(hex_str):
+        nib = int(ch, 16)
+        for i in range(4):
+            bits.append((nib >> i) & 1)
+    return bits
+
+
+def _bitstream_to_hex(bits: list[int]) -> str:
+    """Pack a flat bit list back to a hex string (RTL nibble order, LSB-first per nibble)."""
+    bits = list(bits)
+    while len(bits) % 4:
+        bits.append(0)
+    nibbles: list[str] = []
+    for i in range(0, len(bits), 4):
+        nib = bits[i] | (bits[i+1] << 1) | (bits[i+2] << 2) | (bits[i+3] << 3)
+        nibbles.append(format(nib, "X"))
+    return "".join(reversed(nibbles))
+
+
+def _parse_node(bits: list[int], pos: int) -> tuple[Any, int]:
+    """Parse one tree node from *bits* starting at *pos*.
+
+    Returns ``(node, new_pos)`` or ``(None, pos)`` on underflow.
+
+    Node representation:
+      LEAF  → ``('L', state)``
+      SPLIT → ``('S', split_sides, special_side, [child0, child1, …])``
+    """
+    if pos + 2 > len(bits):
+        return None, pos
+    split_sides = bits[pos] | (bits[pos + 1] << 1)
+    pos += 2
+    if split_sides == 0:  # LEAF
+        if pos + 2 > len(bits):
+            return None, pos
+        code = bits[pos] | (bits[pos + 1] << 1)
+        pos += 2
+        if code == 3:  # extended state: read 4-bit n, state = n + 3
+            if pos + 4 > len(bits):
+                return None, pos
+            n = (bits[pos]
+                 | (bits[pos + 1] << 1)
+                 | (bits[pos + 2] << 2)
+                 | (bits[pos + 3] << 3))
+            pos += 4
+            return ("L", n + 3), pos
+        return ("L", code), pos
+    else:  # SPLIT
+        if pos + 2 > len(bits):
+            return None, pos
+        special_side = bits[pos] | (bits[pos + 1] << 1)
+        pos += 2
+        children: list[Any] = []
+        # Serializer wrote children in *reverse* order; read them in that order
+        # then reverse to restore child[0], child[1], … ordering.
+        for _ in range(split_sides + 1):
+            child, pos = _parse_node(bits, pos)
+            if child is None:
+                return None, pos
+            children.append(child)
+        children.reverse()
+        return ("S", split_sides, special_side, children), pos
+
+
+def _serialize_node(node: Any, bits: list[int]) -> None:
+    """Append the serialized form of *node* to *bits* (exact inverse of _parse_node)."""
+    if node[0] == "L":
+        state: int = node[1]
+        bits.append(0); bits.append(0)           # split_sides = 0
+        if state <= 2:
+            bits.append(state & 1)
+            bits.append((state >> 1) & 1)
+        else:                                      # code = 3 (extended)
+            bits.append(1); bits.append(1)
+            n = state - 3
+            for i in range(4):
+                bits.append((n >> i) & 1)
+    else:  # SPLIT
+        _, split_sides, special_side, children = node
+        bits.append(split_sides & 1)
+        bits.append((split_sides >> 1) & 1)
+        bits.append(special_side & 1)
+        bits.append((special_side >> 1) & 1)
+        # Write children in *reverse* order (as the original serializer does)
+        for child in reversed(children):
+            _serialize_node(child, bits)
+
+
+def _remap_node(node: Any, mapping: dict) -> Any:
+    """Return a (possibly new) node with filament states remapped.
+
+    *mapping* maps 1-based filament numbers to 0-based tool indices.
+    NONE / ENFORCER / BLOCKER leaves and SPLIT nodes are returned unchanged.
+    """
+    if node[0] == "L":
+        state: int = node[1]
+        if state >= 3:                             # filament leaf
+            filament = state - 2                   # 1-based filament
+            if filament in mapping:
+                new_state = mapping[filament] + 3  # tool_index (0-based) + 3
+                if new_state != state:
+                    return ("L", new_state)
+        return node
+    else:  # SPLIT — recurse into children
+        _, split_sides, special_side, children = node
+        new_children = [_remap_node(c, mapping) for c in children]
+        # Only allocate a new tuple if something actually changed
+        if all(nc is oc for nc, oc in zip(new_children, children)):
+            return node
+        return ("S", split_sides, special_side, new_children)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+def decode_nodes(hex_str: str) -> Any:
+    """Decode a paint_color hex string to a tree node structure.
+
+    Returns the root node of the parsed TriangleSelector tree:
+      ``('L', state)`` for a LEAF (state: 0=NONE, 1=ENFORCER, 2=BLOCKER, ≥3=filament)
+      ``('S', split_sides, special_side, [children])`` for a SPLIT node.
 
     Args:
         hex_str: The ``paint_color`` attribute value from the 3MF model.
 
     Returns:
-        List of 3-bit node values (integers 0-7).
+        Root node of the tree, or ``('L', 0)`` for an empty string.
     """
     if not hex_str:
-        return []
-    bits: list[int] = []
-    for ch in hex_str:
-        nib = int(ch, 16)
-        for i in range(4):        # LSB first within each nibble
-            bits.append((nib >> i) & 1)
-    nodes: list[int] = []
-    # Read complete 3-bit groups from the bitstream.
-    for i in range(0, len(bits) - 2, 3):
-        nodes.append(bits[i] + bits[i + 1] * 2 + bits[i + 2] * 4)
-    # Strip trailing NONE (0) nodes that are pure padding artefacts.
-    # These arise when encode_nodes zero-pads the last nibble to alignment.
-    while nodes and nodes[-1] == 0:
-        nodes.pop()
-    return nodes
+        return ("L", 0)
+    bits = _hex_to_bitstream(hex_str)
+    node, _ = _parse_node(bits, 0)
+    if node is None:
+        raise ValueError(f"Failed to parse paint_color: {hex_str!r}")
+    return node
 
 
-def encode_nodes(nodes: list[int]) -> str:
-    """Encode a list of 3-bit node values to a paint_color hex string.
+def encode_nodes(node: Any) -> str:
+    """Encode a tree node structure back to a paint_color hex string.
 
-    Exact inverse of decode_nodes (modulo trailing padding zeros):
-    - Pack each 3-bit value LSB-first into the nibble bitstream.
-    - Emit uppercase hex of length ``ceil(n_nodes * 3 / 4)`` nibbles.
-    - Trailing alignment bits in the last nibble are set to zero.
+    Exact inverse of ``decode_nodes``: ``encode_nodes(decode_nodes(s)) == s``
+    for all valid OrcaSlicer paint_color strings.
 
     Args:
-        nodes: List of 3-bit node values (integers 0-7).
+        node: Root node as returned by ``decode_nodes``.
 
     Returns:
         Uppercase hex string suitable for the ``paint_color`` attribute.
     """
-    if not nodes:
+    if node is None:
         return ""
     bits: list[int] = []
-    for v in nodes:
-        v = v & 0x7          # ensure 3-bit
-        for i in range(3):   # LSB first
-            bits.append((v >> i) & 1)
-    # Pad to nibble boundary (multiple of 4 bits).
-    while len(bits) % 4:
-        bits.append(0)
-    result: list[str] = []
-    for i in range(0, len(bits), 4):
-        nib = bits[i] + bits[i + 1] * 2 + bits[i + 2] * 4 + bits[i + 3] * 8
-        result.append(format(nib, "X"))
-    return "".join(result)
+    _serialize_node(node, bits)
+    return _bitstream_to_hex(bits)
 
 
 def remap_paint_color(hex_str: str, mapping: dict) -> str:
-    """Remap filament indices in a paint_color hex string — SURGICAL in-place edit.
+    """Remap filament indices in a paint_color hex string.
 
-    Remapping a filament leaf node (3..6 → 3..6) is a same-width (3-bit) field
-    change.  Rather than decode→re-encode (which would drop OrcaSlicer's
-    non-canonical trailing padding bits and re-emit a "clean" but not
-    byte-identical string), this rewrites ONLY the 3 bits of each remapped
-    leaf field IN PLACE.  Every other bit — tree structure (SPLIT), support
-    nodes (ENFORCER/BLOCKER), NONE nodes, and trailing nibble padding — is
-    left byte-for-byte untouched.  The output preserves the original length
-    and uppercase casing.
+    Deserializes the TriangleSelector tree, swaps every filament leaf state
+    according to *mapping*, and re-serializes.  The result is byte-exact when
+    *mapping* is empty (identity remap).
 
     Args:
         hex_str:  The ``paint_color`` attribute value from the 3MF model file.
-        mapping:  ``{model_filament (1-based int): tool_index (0-based int)}``.
+        mapping:  ``{filament (1-based int): tool_index (0-based int)}``.
                   Empty dict is a no-op (returns the input byte-exact).
 
     Returns:
-        A new paint_color hex string with only the remapped leaf fields changed.
+        A new paint_color hex string with remapped filament leaves.
 
-    Node values 0 (NONE), 1 (ENFORCER), 2 (BLOCKER), and 7 (SPLIT) are
-    preserved.  For leaf nodes with value v in 3..6:
-        filament = v - 2          # 1-based logical filament
-        if filament in mapping:
-            v = mapping[filament] + 3   # tool_index (0-based) + 3 = new node value
-    New values are clamped to 3..6 to guard against out-of-range mappings.
+    State semantics:
+        0 (NONE), 1 (ENFORCER), 2 (BLOCKER) — preserved unchanged.
+        state s ≥ 3 → filament = s − 2 (1-based); if in mapping →
+        new_state = mapping[filament] + 3.
     """
     if not hex_str:
         return hex_str
     if not mapping:
-        # Identity remap touches nothing — return byte-exact input.
         return hex_str
-
-    # Expand to a mutable bit array (nibble-LSB), preserving every bit.
-    bits: list[int] = []
-    for ch in hex_str:
-        nib = int(ch, 16)
-        for i in range(4):            # LSB first within each nibble
-            bits.append((nib >> i) & 1)
-
-    # Walk every complete 3-bit field the same way decode_nodes reads them,
-    # editing in place.  Only fields holding a remapped filament are touched;
-    # all other bits (incl. trailing padding) stay exactly as they were.
-    total = len(bits)
-    bit_pos = 0
-    while bit_pos + 3 <= total:
-        v = bits[bit_pos] + bits[bit_pos + 1] * 2 + bits[bit_pos + 2] * 4
-        if 3 <= v <= 6:
-            filament = v - 2          # 1-based filament index
-            if filament in mapping:
-                new_v = mapping[filament] + 3       # tool_index(0-based) + 3
-                new_v = max(3, min(6, new_v))       # clamp to valid range
-                if new_v != v:
-                    # Overwrite exactly these 3 bits, same nibble-LSB packing.
-                    bits[bit_pos] = new_v & 1
-                    bits[bit_pos + 1] = (new_v >> 1) & 1
-                    bits[bit_pos + 2] = (new_v >> 2) & 1
-        bit_pos += 3
-
-    # Re-emit hex, preserving original length and uppercase casing.
-    result: list[str] = []
-    for i in range(0, len(bits), 4):
-        nib = bits[i] + bits[i + 1] * 2 + bits[i + 2] * 4 + bits[i + 3] * 8
-        result.append(format(nib, "X"))
-    return "".join(result)
+    node = decode_nodes(hex_str)
+    remapped = _remap_node(node, mapping)
+    return encode_nodes(remapped)
