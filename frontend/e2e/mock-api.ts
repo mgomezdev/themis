@@ -82,6 +82,9 @@ export async function mockApi(page: Page, over: Partial<{
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
     if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5 });
+    if (path === '/queue' || path === '/jobs') return ok(route, []);
+    if (path === '/orders') return ok(route, []);
+    if (path === '/machine-catalog') return ok(route, []);
     return ok(route, {});  // permissive default for any unlisted GET
   });
   return mocks;
