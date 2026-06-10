@@ -395,3 +395,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
 
     def set_bed_temp(self, celsius: int) -> bool:
         return self.send_gcode(f"M140 S{int(celsius)}")
+
+    def remap_sliceable_3mf(self, sliceable_3mf, *, tool_index=None, filament_map=None) -> None:
+        from .snapmaker.remap import remap_3mf
+        remap_3mf(sliceable_3mf, tool_index=tool_index, filament_map=filament_map)
