@@ -55,9 +55,18 @@ def _slot_for_config(config, loaded: list) -> dict | None:
     return _matching_loaded_filament(config, loaded)
 
 
+def _mapped_tools_loaded(filament_map: list, loaded: list) -> bool:
+    """True if every mapped tool_index slot is loaded."""
+    loaded = loaded or []
+    return all(0 <= e["tool_index"] < len(loaded) for e in (filament_map or []))
+
+
 def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
     """Return a reason string if the config can't be satisfied by the printer's
     loaded filaments, else None."""
+    fmap = getattr(config, "filament_map", None)
+    if fmap:
+        return None if _mapped_tools_loaded(fmap, loaded) else "a mapped tool has no loaded filament"
     if getattr(config, "tool_index", None) is not None:
         if _slot_for_config(config, loaded) is None:
             return f"tool T{config.tool_index} has no loaded filament"
@@ -218,6 +227,7 @@ class QueueEngine:
             loaded = (printer.loaded_filaments if printer else None) or []
             slot = _slot_for_config(config, loaded) if config else None
             cfg_tool_index = config.tool_index if config else None
+            cfg_filament_map = config.filament_map if config else None
             filament_profile = (slot or {}).get("filament_profile") or None
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
@@ -242,16 +252,20 @@ class QueueEngine:
         export_args = client.orca_export_args(file_base) if client else []
 
         loop = asyncio.get_running_loop()
+        if cfg_filament_map:
+            ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
+            multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
         req = SliceRequest(
             job_id=job_id,
             source_3mf=stored_path,
             plate_number=plate_number,
             machine_preset=machine_preset,
             process_preset=print_profile,
-            filament_presets=[filament_profile] if filament_profile else [],
+            filament_presets=multi_presets if cfg_filament_map else ([filament_profile] if filament_profile else []),
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
             tool_index=cfg_tool_index,
+            filament_map=cfg_filament_map,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
