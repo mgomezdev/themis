@@ -21,14 +21,15 @@ def test_remap_changes_emitted_tool_usage(tmp_path):
     from spike_filament_remap import _build_config, _run_slice, _extract_tool_info
     from app.services.preset_resolver import PresetResolver
     from app.services.mesh_3mf_builder import build_sliceable_3mf
+    from app.services.snapmaker.remap import remap_3mf
     from app.config import get_orca_executable
     cfg = _build_config(PresetResolver())
     ident = tmp_path / "id.3mf"
     swap = tmp_path / "sw.3mf"
-    build_sliceable_3mf(str(_FIXTURE), cfg, ident, filament_map=[])
-    build_sliceable_3mf(str(_FIXTURE), cfg, swap,
-                        filament_map=[{"model_filament": 1, "tool_index": 1},
-                                      {"model_filament": 2, "tool_index": 0}])
+    build_sliceable_3mf(str(_FIXTURE), cfg, ident)
+    build_sliceable_3mf(str(_FIXTURE), cfg, swap)
+    remap_3mf(swap, filament_map=[{"model_filament": 1, "tool_index": 1},
+                                   {"model_filament": 2, "tool_index": 0}])
     orca = get_orca_executable()
     gcodes_a = _run_slice(orca, ident, tmp_path / "a")
     gcodes_b = _run_slice(orca, swap, tmp_path / "b")

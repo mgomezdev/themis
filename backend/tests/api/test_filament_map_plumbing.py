@@ -4,13 +4,10 @@ from app.api.routes import jobs
 from app.api.routes.jobs import PrinterConfigInput
 
 
-def test_slice_request_has_filament_map_default_none():
+def test_slice_request_has_prepare_hook_default_none():
     req = SliceRequest(job_id=1, source_3mf="x", plate_number=0, machine_preset="M",
                        process_preset="P", filament_presets=["F"])
-    assert req.filament_map is None
-    assert SliceRequest(job_id=1, source_3mf="x", plate_number=0, machine_preset="M",
-                        process_preset="P", filament_presets=["F"],
-                        filament_map=[{"model_filament": 1, "tool_index": 2}]).filament_map is not None
+    assert req.prepare_hook is None
 
 
 def test_printer_config_input_accepts_filament_map():

@@ -251,6 +251,11 @@ class QueueEngine:
         client = self._mgr.get_client(printer_id)
         export_args = client.orca_export_args(file_base) if client else []
 
+        prepare_hook = None
+        if client is not None and (cfg_tool_index is not None or cfg_filament_map):
+            prepare_hook = (lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
+                            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm))
+
         loop = asyncio.get_running_loop()
         if cfg_filament_map:
             ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
@@ -264,8 +269,7 @@ class QueueEngine:
             filament_presets=multi_presets if cfg_filament_map else ([filament_profile] if filament_profile else []),
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
-            tool_index=cfg_tool_index,
-            filament_map=cfg_filament_map,
+            prepare_hook=prepare_hook,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
