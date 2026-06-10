@@ -4,7 +4,7 @@ import { fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { uploadFile, createJob, getFilePlates, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck } from '../api/queue';
+import { uploadFile, createJob, getFilePlates, getModelFilaments, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck, type ModelFilament } from '../api/queue';
 import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
@@ -440,11 +440,12 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilaments, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
   printers: ApiPrinter[];
+  modelFilaments: ModelFilament[];
   onSetField: (patch: Partial<PlateConfig>) => void;
   onTogglePrinter: (id: string) => void;
   onSetPerPrinter: (printerId: string, patch: Partial<PerPrinterCfg>) => void;
@@ -510,6 +511,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, onSetField, o
                     printers={printers}
                     config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
                     onChange={patch => onSetPerPrinter(pid, patch)}
+                    modelFilaments={modelFilaments}
                   />
                 ))}
               </div>
@@ -766,6 +768,7 @@ export function NewJobScreen() {
   const [uploadedFileId, setUploadedFileId] = useState<number | null>(null);
   const [plates, setPlates] = useState<Plate[]>([]);
   const [plateConfigs, setPlateConfigs] = useState<Record<string, PlateConfig>>({});
+  const [modelFilaments, setModelFilaments] = useState<ModelFilament[]>([]);
   const [activePlateId, setActivePlateId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -804,7 +807,11 @@ export function NewJobScreen() {
   async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
     setUploadedFileId(fileId);
     setFile(fileInfo);
-    const apiPlates = await getFilePlates(fileId);
+    const [apiPlates, filaments] = await Promise.all([
+      getFilePlates(fileId),
+      getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
+    ]);
+    setModelFilaments(filaments);
     const detected = platesToLocal(apiPlates, fileId);
     setPlates(detected);
     const configs: Record<string, PlateConfig> = {};
@@ -883,7 +890,7 @@ export function NewJobScreen() {
 
   function clearFile() {
     setFile(null); setUploadedFileId(null); setPlates([]);
-    setPlateConfigs({}); setActivePlateId(null); setError(null);
+    setPlateConfigs({}); setActivePlateId(null); setError(null); setModelFilaments([]);
   }
 
   // ---- plate config mutators ----
@@ -1012,6 +1019,7 @@ export function NewJobScreen() {
             filament_type: cfg.perPrinter[pid].filamentType,
             filament_color: cfg.perPrinter[pid].filamentColor,
             tool_index: cfg.perPrinter[pid].toolIndex ?? null,
+            filament_map: cfg.perPrinter[pid].filamentMap ?? null,
           })),
         });
       }
@@ -1203,6 +1211,7 @@ export function NewJobScreen() {
                   config={plateConfigs[activePlateId]}
                   isMultiPlate={plates.length > 1}
                   printers={printers}
+                  modelFilaments={modelFilaments}
                   onSetField={patch => setPlateConfig(activePlateId, patch)}
                   onTogglePrinter={pid => togglePrinterForPlate(activePlateId, pid)}
                   onSetPerPrinter={(pid, patch) => setPerPrinter(activePlateId, pid, patch)}

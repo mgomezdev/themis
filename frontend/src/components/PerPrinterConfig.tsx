@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
-import { getPrinterProfiles } from '../api/queue';
+import { getPrinterProfiles, type ModelFilament } from '../api/queue';
 import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
 
 export interface PerPrinterCfg {
@@ -10,12 +10,14 @@ export interface PerPrinterCfg {
   filamentType: string | null;
   filamentColor: string | null;
   toolIndex: number | null;
+  filamentMap: { model_filament: number; tool_index: number }[] | null;
 }
 
 export function defaultPerPrinterCfg(): PerPrinterCfg {
   return {
     printProfile: null, filamentProfile: null, filamentId: null,
     filamentType: null, filamentColor: null, toolIndex: null,
+    filamentMap: null,
   };
 }
 
@@ -39,11 +41,12 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-export function PerPrinterConfig({ printerId, printers, config, onChange }: {
+export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
   onChange: (patch: Partial<PerPrinterCfg>) => void;
+  modelFilaments?: ModelFilament[];
 }) {
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
@@ -103,7 +106,62 @@ export function PerPrinterConfig({ printerId, printers, config, onChange }: {
           )}
         </div>
 
-        {slots.length >= 2 ? (
+        {(modelFilaments && modelFilaments.length > 1 && slots.length >= 1) ? (
+          <div>
+            <label className="label">Filament mapping</label>
+            <div className="col gap-2" style={{ marginTop: 4 }}>
+              {modelFilaments.map(f => {
+                // Build current map from config or use identity (f.index - 1, clamped)
+                const currentMap: { model_filament: number; tool_index: number }[] =
+                  config.filamentMap ??
+                  modelFilaments.map(mf => ({
+                    model_filament: mf.index,
+                    tool_index: Math.min(mf.index - 1, slots.length - 1),
+                  }));
+                const entry = currentMap.find(e => e.model_filament === f.index);
+                const currentToolIndex = entry != null ? entry.tool_index : Math.min(f.index - 1, slots.length - 1);
+
+                function handleMapChange(chosenTool: number) {
+                  // Start from current map (or identity) and replace/insert this filament's entry
+                  const base: { model_filament: number; tool_index: number }[] =
+                    config.filamentMap ??
+                    modelFilaments!.map(mf => ({
+                      model_filament: mf.index,
+                      tool_index: Math.min(mf.index - 1, slots.length - 1),
+                    }));
+                  const newMap = base.filter(e => e.model_filament !== f.index);
+                  newMap.push({ model_filament: f.index, tool_index: chosenTool });
+                  // Sort by model_filament for stable ordering
+                  newMap.sort((a, b) => a.model_filament - b.model_filament);
+                  onChange({ filamentMap: newMap });
+                }
+
+                return (
+                  <div key={f.index} className="row gap-2" style={{ alignItems: 'center' }}>
+                    <div style={{
+                      width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                      background: f.color || '#888', border: '1px solid var(--border-2)',
+                    }} />
+                    <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
+                      Filament {f.index}{f.type ? ` · ${f.type}` : ''}
+                    </span>
+                    <select
+                      data-testid={`map-tool-${f.index}`}
+                      className="select"
+                      style={{ flex: '0 0 auto', minWidth: 110 }}
+                      value={currentToolIndex}
+                      onChange={e => handleMapChange(Number(e.target.value))}
+                    >
+                      {slots.map((s, i) => (
+                        <option key={i} value={i}>T{i} · {s.type || '—'}</option>
+                      ))}
+                    </select>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : slots.length >= 2 ? (
           <div>
             <label className="label">Tool</label>
             <select data-testid="tool-select" className="select"

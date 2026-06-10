@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { getJobDetails, updateJobConfigs, type ApiJobDetails } from '../api/queue';
+import { getJobDetails, updateJobConfigs, getModelFilaments, type ApiJobDetails, type ModelFilament } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 
 // ---- hooks ----
@@ -91,6 +91,7 @@ export function EditJobScreen() {
   const printers = usePrinterList();
   const [selectedPrinters, setSelectedPrinters] = useState<string[]>([]);
   const [perPrinter, setPerPrinter] = useState<Record<string, PerPrinterCfg>>({});
+  const [modelFilaments, setModelFilaments] = useState<ModelFilament[]>([]);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -109,9 +110,16 @@ export function EditJobScreen() {
           filamentType: c.filament_type,
           filamentColor: c.filament_color,
           toolIndex: c.tool_index ?? null,
+          filamentMap: c.filament_map ?? null,
         };
       }
       setPerPrinter(pp);
+      // Fetch model filaments for the job's file
+      if (j.file?.id) {
+        getModelFilaments(j.file.id)
+          .then(f => { if (alive) setModelFilaments(f); })
+          .catch(() => {});
+      }
     }).catch(e => { if (alive) setLoadError(String(e)); });
     return () => { alive = false; };
   }, [jobId]);
@@ -151,6 +159,7 @@ export function EditJobScreen() {
         filament_type: perPrinter[sid].filamentType,
         filament_color: perPrinter[sid].filamentColor,
         tool_index: perPrinter[sid].toolIndex ?? null,
+        filament_map: perPrinter[sid].filamentMap ?? null,
       })));
       navigate(`/jobs/${jobId}`);
     } catch (e) {
@@ -230,6 +239,7 @@ export function EditJobScreen() {
                     printers={printers}
                     config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                     onChange={patch => patchPerPrinter(sid, patch)}
+                    modelFilaments={modelFilaments}
                   />
                 ))}
               </div>

@@ -19,6 +19,12 @@ export interface PrinterProfiles {
   filament_profiles: string[];
 }
 
+export interface ModelFilament {
+  index: number;
+  color: string;
+  type: string;
+}
+
 export interface PrinterConfigInput {
   printer_id: number;
   print_profile: string;
@@ -27,6 +33,7 @@ export interface PrinterConfigInput {
   filament_type?: string | null;
   filament_color?: string | null;
   tool_index?: number | null;
+  filament_map?: { model_filament: number; tool_index: number }[] | null;
 }
 
 export interface ApiJob {
@@ -59,6 +66,7 @@ export interface ApiJobPrinterConfig {
   filament_type: string | null;
   filament_color: string | null;
   tool_index: number | null;
+  filament_map?: { model_filament: number; tool_index: number }[] | null;
   slice_failed: boolean;
   slice_error: string | null;
 }
@@ -102,6 +110,10 @@ export async function uploadFile(file: File, folder?: string): Promise<ApiUpload
 
 export async function getFilePlates(fileId: number): Promise<ApiPlate[]> {
   return request(`/api/v1/files/${fileId}/plates`);
+}
+
+export async function getModelFilaments(fileId: number): Promise<ModelFilament[]> {
+  return request(`/api/v1/files/${fileId}/model-filaments`);
 }
 
 export async function getPrinterProfiles(printerId: number): Promise<PrinterProfiles> {

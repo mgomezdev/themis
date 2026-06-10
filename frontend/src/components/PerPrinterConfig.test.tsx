@@ -32,17 +32,23 @@ const MULTI = {
 };
 const SINGLE = { id: 1, name: 'Mono', printer_type: 'elegoo_centauri', current_orca_printer_profile: 'M', loaded_filaments: [] };
 
-function renderCfg(printer: any, config = defaultPerPrinterCfg()) {
+function renderCfg(printer: any, config = defaultPerPrinterCfg(), modelFilaments?: any[]) {
   const onChange = vi.fn();
-  render(<PerPrinterConfig printerId={String(printer.id)} printers={[printer as any]} config={config} onChange={onChange} />);
+  render(<PerPrinterConfig printerId={String(printer.id)} printers={[printer as any]} config={config} onChange={onChange} modelFilaments={modelFilaments} />);
   return onChange;
 }
+
+const MODEL_FILAMENTS_3 = [
+  { index: 1, color: '#ff0000', type: 'PLA' },
+  { index: 2, color: '#00ff00', type: 'PETG' },
+  { index: 3, color: '#0000ff', type: 'TPU' },
+];
 
 describe('PerPrinterConfig', () => {
   it('defaultPerPrinterCfg is all-null (defer)', () => {
     expect(defaultPerPrinterCfg()).toEqual({
       printProfile: null, filamentProfile: null, filamentId: null,
-      filamentType: null, filamentColor: null, toolIndex: null,
+      filamentType: null, filamentColor: null, toolIndex: null, filamentMap: null,
     });
   });
 
@@ -70,5 +76,45 @@ describe('PerPrinterConfig', () => {
     fireEvent.change(mode, { target: { value: 'require' } });
     // require mode shows either the catalog select or the manual type input
     expect(screen.queryByTestId('filament-catalog-select') || screen.queryByTestId('filament-type-input')).not.toBeNull();
+  });
+
+  it('multi-material: renders three map-tool-* selects when modelFilaments has 3 items', async () => {
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel1 = await screen.findByTestId('map-tool-1');
+    const sel2 = await screen.findByTestId('map-tool-2');
+    const sel3 = await screen.findByTestId('map-tool-3');
+    expect(sel1).not.toBeNull();
+    expect(sel2).not.toBeNull();
+    expect(sel3).not.toBeNull();
+    // tool-select (single-tool select) should NOT be present in this mode
+    expect(screen.queryByTestId('tool-select')).toBeNull();
+  });
+
+  it('multi-material: changing map-tool-2 calls onChange with filamentMap containing {model_filament:2, tool_index:chosen}', async () => {
+    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel2 = await screen.findByTestId('map-tool-2');
+    // MULTI has 3 slots (T0, T1, T2); choose T2 (value=2)
+    fireEvent.change(sel2, { target: { value: '2' } });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filamentMap: expect.arrayContaining([
+          { model_filament: 2, tool_index: 2 },
+        ]),
+      }),
+    );
+  });
+
+  it('multi-material: single modelFilament still shows Sub-project A tool control', async () => {
+    // Only 1 model filament — must NOT show mapping list, must show tool-select instead
+    renderCfg(MULTI, defaultPerPrinterCfg(), [{ index: 1, color: '#ff0000', type: 'PLA' }]);
+    const toolSel = await screen.findByTestId('tool-select');
+    expect(toolSel).not.toBeNull();
+    expect(screen.queryByTestId('map-tool-1')).toBeNull();
+  });
+
+  it('multi-material: no modelFilaments prop still shows Sub-project A tool control', async () => {
+    renderCfg(MULTI);
+    const toolSel = await screen.findByTestId('tool-select');
+    expect(toolSel).not.toBeNull();
   });
 });
