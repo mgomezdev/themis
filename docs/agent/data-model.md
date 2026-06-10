@@ -56,12 +56,18 @@ spoolman_config     (enabled, url, api_key)
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
 loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
 **ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
-tool/slot; `None` = default/legacy — queue uses type+color ask instead), `slice_failed: bool, slice_error: text?`.
+tool/slot; `None` = default/legacy — queue uses type+color ask instead),
+`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`.
 - `filament_type`+`filament_color` = the eligibility "ask". `slice_failed` blocks the job on that
   printer until cleared (by `unblock` or `updateJobConfigs`).
 - `tool_index`: when set, `_slot_for_config` resolves `loaded_filaments[tool_index]` directly (bypasses
   type/color match); `_filament_mismatch` checks that slot is loaded. Added via `_migrate` `ALTER TABLE`
   guard (`database.py`).
+- `filament_map`: multi-material model→tool mapping. Shape: `[{model_filament: int (1-based),
+  tool_index: int (0-based)}, …]`; `null` = single-material (no remap). Mutually exclusive with
+  `tool_index`. Added via `_migrate` `ALTER TABLE` guard (`database.py`). When set, queue passes
+  loaded slots ordered by tool as N `filament_presets` and forwards the map into `SliceRequest`;
+  `_mapped_tools_loaded` gates eligibility on every mapped tool having a loaded filament.
 
 ### gcode_files
 `id, job_id FK, printer_id FK, path`.

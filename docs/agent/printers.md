@@ -65,6 +65,25 @@ See the `slicer-cli-architecture` memory for the multicolor model.
   when `tool_index` is set; otherwise falls back to `_matching_loaded_filament` (type/color ask).
   `_filament_mismatch` gates eligibility on that resolved slot being present.
 
+**Multi-material model→tool mapping** (`SliceRequest.filament_map` → `mesh_3mf_builder`):
+- `filament_map` is a list of `{model_filament(1-based), tool_index(0-based)}` dicts stored in
+  `job_printer_configs.filament_map`; `null` / empty = single-material (no remap).
+- `filament_map` and `tool_index` are mutually exclusive in `build_sliceable_3mf`.
+- Two rewrite passes in `build_sliceable_3mf` when `filament_map` is non-empty:
+  1. **`paint_color` rewrite** (per-triangle TriangleSelector codec in `paint_remap.py`):
+     `remap_paint_color(hex, mapping)` — deserializes the nibble-packed bitstream, swaps every
+     filament leaf state (`state = filament+2`→`state = tool_index+3`), re-serializes byte-exact.
+     Codec detail: nibbles read/written right-to-left; bits LSB-first within a nibble; 2-bit
+     `split_sides`; leaf `code==3` uses a 4-bit nibble for states ≥ 3.
+  2. **Object `extruder` metadata** (`_patch_model_settings_filament_map`): rewrites
+     `Metadata/model_settings.config` object extruder assignments per the map.
+  - Plate `filament_maps` in `project_settings.config` is **left untouched** — OrcaSlicer
+    ignores it for CLI slicing (spike-proven); `paint_color` + `extruder` metadata is authoritative.
+- Queue with `filament_map`: `_mapped_tools_loaded(fmap, loaded)` checks every mapped `tool_index`
+  has a loaded filament (`_filament_mismatch` returns error string if not). Passes loaded slots
+  ordered by tool (index 0, 1, …) as `filament_presets` (N presets, one per extruder) into
+  `SliceRequest`, plus the `filament_map` list.
+
 ## Filament gating & AMS
 
 Queue claim matches the job's **ask** (`config.filament_type`+`filament_color`) against the printer's
@@ -126,6 +145,8 @@ extruder0-3); `get_loaded_filaments` is unused — slots are user-set in the DB 
 **Single-filament tool pick** (Project 2 — delivered): user selects a tool (T0–T3) per printer in
 `NewJobScreen`; persisted as `job_printer_configs.tool_index`; queue routes via `_slot_for_config` and
 injects per-object `extruder` metadata in the sliceable 3MF (see Slicing pipeline above).
-Multi-material model→tool mapping (Project 2b) remains unbuilt.
+**Multi-material model→tool mapping** (Project 2b — delivered): `job_printer_configs.filament_map`
+maps each declared model filament to a physical tool; `build_sliceable_3mf` rewrites `paint_color`
+bitstreams + object `extruder` metadata (see Slicing pipeline above).
 **Validation status**: built + unit-tested; live Moonraker connectivity confirmed
 (`scripts/snapmaker_smoke_test.py`, reads `SNAPMAKER_IP`); test print pending.
