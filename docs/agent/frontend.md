@@ -65,3 +65,20 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 ## Build/run
 
 `npm run dev` (Vite :5173, proxies `/api`+`/ws`→:8001; `vite.config.ts` has `host:true` + `allowedHosts` for LAN/Tailscale). `npm run build` = `tsc -b && vite build` → `dist/`. `npm test` / `npx vitest run`.
+
+## End-to-end (Playwright)
+
+Suite under `frontend/e2e/`. Config: `frontend/playwright.config.ts` (Chromium, baseURL `:5173`, `webServer: npm run dev` with `reuseExistingServer`).
+
+**Deterministic / no backend:** `e2e/mock-api.ts` exports `mockApi(page, over?)` which route-mocks `**/api/v1/**` with canned data and captures mutating request bodies into `mocks.captured` for payload assertions. Also mocks `/ws`. No backend process, no printers, zero print risk.
+
+Canned data includes: a 4-slot U1 printer + a single-tool printer; a multi-material file with 2 model filaments + 2 plates; Spoolman disabled; list endpoints → `[]`.
+
+| Spec | Covers |
+|---|---|
+| `smoke.spec.ts` | Fleet screen loads |
+| `fleet.spec.ts` | Multi-slot loaded-filament editor |
+| `new-job.spec.ts` | Multi-material mapping rows + defer toggle; asserts `createJob` payload carries `filament_map` |
+| `edit-job.spec.ts` | Pre-fills a saved `filament_map`; asserts `updateJobConfigs` round-trip |
+
+**Run:** one-time `npx playwright install chromium`, then `npm run test:e2e` (headless) or `npm run test:e2e:ui` (interactive).
