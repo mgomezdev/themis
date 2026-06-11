@@ -101,6 +101,18 @@ class QueueEngine:
         self._event.set()
 
     async def start(self) -> None:
+        async with self._factory() as session:
+            result = await session.execute(select(Job).where(Job.status == "slicing"))
+            orphans = result.scalars().all()
+            for job in orphans:
+                job.status = "queued"
+                job.assigned_printer_id = None
+            if orphans:
+                await session.commit()
+                for job in orphans:
+                    if self._broadcast_cb:
+                        await self._broadcast_cb("job_updated", {"job_id": job.id})
+
         self._task = asyncio.create_task(self._loop(), name="queue_engine")
 
     async def stop(self) -> None:
