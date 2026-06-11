@@ -154,7 +154,7 @@ class PrinterManager:
         client = self._clients.get(printer_id)
         if client is None:
             return False
-        return client.is_idle and printer_id not in self._awaiting_plate_clear
+        return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 
     def set_awaiting_plate_clear(self, printer_id: int, awaiting: bool) -> None:
         if awaiting:
