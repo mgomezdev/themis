@@ -110,3 +110,110 @@ def test_raises_on_unresolvable_preset(tmp_path):
         svc.slice(_req(tmp_path))
 
 
+# ── _inject_thumbnail ──────────────────────────────────────────────────────────
+
+import struct
+import zipfile as _zipfile
+
+
+def _png(width: int = 64, height: int = 64) -> bytes:
+    """Minimal valid PNG: signature + IHDR (with real dimensions) + IEND."""
+    sig = b"\x89PNG\r\n\x1a\n"
+    ihdr_data = struct.pack(">II", width, height) + b"\x08\x02\x00\x00\x00"
+    ihdr = struct.pack(">I", 13) + b"IHDR" + ihdr_data + b"\x00\x00\x00\x00"
+    iend = b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    return sig + ihdr + iend
+
+
+def _3mf_with_thumb(tmp_path, *, plate: int | None = 1, name: str | None = None) -> Path:
+    """3MF ZIP containing a thumbnail at Metadata/<name> or Metadata/plate_<plate>.png."""
+    path = tmp_path / "model.3mf"
+    entry = name or f"plate_{plate}.png"
+    with _zipfile.ZipFile(path, "w") as z:
+        z.writestr(f"Metadata/{entry}", _png())
+    return path
+
+
+def test_inject_thumbnail_prepends_header_to_gcode(tmp_path):
+    svc = _make_service(tmp_path)
+    three_mf = _3mf_with_thumb(tmp_path, plate=1)
+    gcode = tmp_path / "out.gcode"
+    gcode.write_text("G28\nG1 X0\n")
+
+    svc._inject_thumbnail(str(gcode), str(three_mf), plate_number=1)
+
+    content = gcode.read_text()
+    assert content.startswith("; thumbnail begin 64x64 ")
+    assert "; thumbnail end" in content
+    assert "G28" in content  # original gcode preserved after the header
+
+
+def test_inject_thumbnail_falls_back_to_thumbnail_png(tmp_path):
+    svc = _make_service(tmp_path)
+    three_mf = _3mf_with_thumb(tmp_path, name="thumbnail.png")
+    gcode = tmp_path / "out.gcode"
+    gcode.write_text("G28\n")
+
+    svc._inject_thumbnail(str(gcode), str(three_mf), plate_number=1)
+
+    assert "; thumbnail begin" in gcode.read_text()
+
+
+def test_inject_thumbnail_falls_back_to_preview_png(tmp_path):
+    svc = _make_service(tmp_path)
+    three_mf = _3mf_with_thumb(tmp_path, name="preview.png")
+    gcode = tmp_path / "out.gcode"
+    gcode.write_text("G28\n")
+
+    svc._inject_thumbnail(str(gcode), str(three_mf), plate_number=1)
+
+    assert "; thumbnail begin" in gcode.read_text()
+
+
+def test_inject_thumbnail_noop_when_no_thumbnail_in_zip(tmp_path):
+    svc = _make_service(tmp_path)
+    path = tmp_path / "model.3mf"
+    with _zipfile.ZipFile(path, "w") as z:
+        z.writestr("Metadata/model_settings.config", "<config/>")
+    gcode = tmp_path / "out.gcode"
+    original = "G28\nG1 X0\n"
+    gcode.write_text(original)
+
+    svc._inject_thumbnail(str(gcode), str(path), plate_number=1)
+
+    assert gcode.read_text() == original
+
+
+def test_inject_thumbnail_noop_for_invalid_png_magic(tmp_path):
+    svc = _make_service(tmp_path)
+    path = tmp_path / "model.3mf"
+    with _zipfile.ZipFile(path, "w") as z:
+        z.writestr("Metadata/plate_1.png", b"not-a-png-at-all")
+    gcode = tmp_path / "out.gcode"
+    original = "G28\n"
+    gcode.write_text(original)
+
+    svc._inject_thumbnail(str(gcode), str(path), plate_number=1)
+
+    assert gcode.read_text() == original
+
+
+@patch("app.services.slicer_service.build_project_config", return_value={})
+@patch("app.services.slicer_service.build_sliceable_3mf")
+def test_slice_calls_inject_thumbnail_for_3mf_source(mock_build, mock_cfg, tmp_path):
+    svc = _make_service(tmp_path)
+    three_mf = _3mf_with_thumb(tmp_path, plate=1)
+    req = _req(tmp_path)
+    req.source_3mf = str(three_mf)
+
+    with patch("app.services.slicer_service.subprocess.run", side_effect=_fake_run(True)):
+        with patch.object(svc, "_inject_thumbnail") as mock_inject:
+            svc.slice(req)
+
+    mock_inject.assert_called_once()
+    args = mock_inject.call_args[0]
+    assert args[0].endswith(".gcode")
+    assert args[1] == str(three_mf)
+    assert args[2] == 1  # plate_number
+
+

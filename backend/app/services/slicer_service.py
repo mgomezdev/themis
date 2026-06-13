@@ -134,7 +134,55 @@ class SlicerService:
         else:
             gcodes = sorted(out_dir.glob("*.gcode"))
             if gcodes:
-                return str(gcodes[0])
+                gcode_path = str(gcodes[0])
+                if req.source_3mf.lower().endswith(".3mf"):
+                    self._inject_thumbnail(gcode_path, req.source_3mf, req.plate_number)
+                return gcode_path
 
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
         raise SliceError(detail[-500:] or "OrcaSlicer produced no output")
+
+    def _inject_thumbnail(self, gcode_path: str, source_3mf: str, plate_number: int) -> None:
+        """Extract the plate's thumbnail from the source 3MF and embed it into the generated G-code
+        as base64 comments so Elegoo/Snapmaker screens can display a preview (headless Orca drops it)."""
+        import base64
+        try:
+            with zipfile.ZipFile(source_3mf, "r") as z:
+                names = z.namelist()
+                thumb_path = f"Metadata/plate_{plate_number}.png"
+                if thumb_path not in names:
+                    if "Metadata/thumbnail.png" in names:
+                        thumb_path = "Metadata/thumbnail.png"
+                    elif "Metadata/preview.png" in names:
+                        thumb_path = "Metadata/preview.png"
+                    else:
+                        return
+
+                thumb_data = z.read(thumb_path)
+
+            if thumb_data[:8] != b"\x89PNG\r\n\x1a\n":
+                return
+
+            width = int.from_bytes(thumb_data[16:20], byteorder="big")
+            height = int.from_bytes(thumb_data[20:24], byteorder="big")
+            encoded = base64.b64encode(thumb_data).decode("ascii")
+            chunks = [encoded[i:i+78] for i in range(0, len(encoded), 78)]
+
+            # Klipper/Marlin standard thumbnail header
+            buf = [f"; thumbnail begin {width}x{height} {len(thumb_data)}"]
+            for chunk in chunks:
+                buf.append(f"; {chunk}")
+            buf.append("; thumbnail end")
+            buf.append("\n")
+
+            # Prepend to the gcode file
+            with open(gcode_path, "rb") as f:
+                content = f.read()
+
+            with open(gcode_path, "wb") as f:
+                f.write("\n".join(buf).encode("utf-8"))
+                f.write(content)
+
+        except Exception as e:
+            logger.warning("Failed to inject thumbnail into %s: %s", gcode_path, e)
+
