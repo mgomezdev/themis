@@ -434,7 +434,7 @@ async def verify_slice(
     # Mirror _run_slice_and_print: resolve the filament slot and build the SliceRequest.
     loaded = printer.loaded_filaments or []
     slot = _slot_for_config(config, loaded)
-    filament_profile = (slot or {}).get("filament_profile") or None
+    filament_profile = (slot or {}).get("filament_profile") or config.filament_profile or None
 
     stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"

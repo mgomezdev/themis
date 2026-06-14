@@ -41,7 +41,8 @@ async def _migrate(conn) -> None:
         if "queue_on" not in cols:
             await conn.execute(text("ALTER TABLE printers ADD COLUMN queue_on BOOLEAN NOT NULL DEFAULT 1"))
 
-    jpc_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
+    jpc_info = (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()
+    jpc_cols = {row[1] for row in jpc_info}
     if jpc_cols:
         if "filament_id" not in jpc_cols:
             await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_id INTEGER"))
@@ -53,6 +54,36 @@ async def _migrate(conn) -> None:
             await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN tool_index INTEGER"))
         if "filament_map" not in jpc_cols:
             await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_map JSON"))
+
+        # filament_profile changed from NOT NULL to nullable; SQLite can't ALTER COLUMN so recreate.
+        jpc_notnull = {row[1]: row[3] for row in jpc_info}
+        if jpc_notnull.get("filament_profile", 0) == 1:
+            await conn.execute(text("""
+                CREATE TABLE job_printer_configs_new (
+                    id INTEGER NOT NULL,
+                    job_id INTEGER NOT NULL,
+                    printer_id INTEGER NOT NULL,
+                    print_profile VARCHAR(512) NOT NULL,
+                    filament_profile VARCHAR(512),
+                    slice_failed BOOLEAN NOT NULL DEFAULT 0,
+                    slice_error TEXT,
+                    filament_type VARCHAR(100),
+                    filament_color VARCHAR(20),
+                    filament_id INTEGER,
+                    tool_index INTEGER,
+                    filament_map JSON,
+                    PRIMARY KEY (id),
+                    FOREIGN KEY(job_id) REFERENCES jobs (id),
+                    FOREIGN KEY(printer_id) REFERENCES printers (id)
+                )
+            """))
+            await conn.execute(text(
+                "INSERT INTO job_printer_configs_new SELECT * FROM job_printer_configs"
+            ))
+            await conn.execute(text("DROP TABLE job_printer_configs"))
+            await conn.execute(text(
+                "ALTER TABLE job_printer_configs_new RENAME TO job_printer_configs"
+            ))
 
     job_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
     if job_cols:
