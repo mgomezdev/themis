@@ -223,6 +223,80 @@ async def test_cancel_running_job_stops_printer(client, tmp_path):
         printer_manager._clients.pop(printer_id, None)
 
 
+async def test_verify_slice_success(client, tmp_path):
+    from unittest.mock import MagicMock
+    from app.services.slicer_service import SliceError  # noqa: F401
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    gcode_file = tmp_path / "out.gcode"
+    gcode_file.write_text("G28")
+
+    mock_qe = MagicMock()
+    mock_qe._executor = None  # use default thread pool so run_in_executor works
+    mock_qe._slicer.slice.return_value = str(gcode_file)
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
+                                  json={"printer_id": printer_id})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["error"] is None
+    assert not gcode_file.exists()  # cleaned up after test run
+
+
+async def test_verify_slice_slice_error(client, tmp_path):
+    from unittest.mock import MagicMock
+    from app.services.slicer_service import SliceError
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    mock_qe = MagicMock()
+    mock_qe._executor = None
+    mock_qe._slicer.slice.side_effect = SliceError("OrcaSlicer exited with code 1\nboom")
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
+                                  json={"printer_id": printer_id})
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["ok"] is False
+    assert "OrcaSlicer" in data["error"]
+
+
+async def test_verify_slice_missing_printer_config(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    # Use a printer_id that has no config for this job
+    resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
+                              json={"printer_id": 9999})
+    assert resp.status_code == 404
+
+
 async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
     """A queued (not yet printing) job cancel must NOT send stop to any printer."""
     from unittest.mock import MagicMock

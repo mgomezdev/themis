@@ -200,6 +200,17 @@ export async function getSliceFailures(jobId: number): Promise<ApiSliceFailure[]
   return request(`/api/v1/jobs/${jobId}/slice-failures`);
 }
 
+export async function verifySlice(
+  jobId: number,
+  printerId: number,
+): Promise<{ ok: boolean; error: string | null }> {
+  return request(`/api/v1/jobs/${jobId}/verify-slice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printer_id: printerId }),
+  });
+}
+
 export async function reorderQueue(
   positions: { job_id: number; queue_position: number }[],
 ): Promise<ApiJob[]> {

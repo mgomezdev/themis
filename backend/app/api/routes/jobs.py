@@ -1,6 +1,10 @@
 from __future__ import annotations
 import asyncio
+import logging
+import os
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,7 +18,10 @@ from ...services.override_inspector import inspect_overrides
 from ...services.preset_resolver import PresetNotFoundError, PresetResolver
 from ...services.printer_manager import printer_manager
 from ...services.project_config_builder import build_project_config
-from ...services.queue_engine import queue_engine
+from ...services.queue_engine import queue_engine, _slot_for_config
+from ...services.slicer_service import SliceError, SliceRequest
+
+logger = logging.getLogger(__name__)
 
 # Statuses where a printer is physically working on the job and must be told to stop.
 _PRINTER_ACTIVE_STATUSES = {"printing", "paused", "uploading"}
@@ -388,6 +395,96 @@ async def unblock_job(
     await session.refresh(job)
     queue_engine.wake()
     return _to_dict(job)
+
+
+class VerifySliceBody(BaseModel):
+    printer_id: int
+
+
+@router.post("/{job_id}/verify-slice")
+async def verify_slice(
+    job_id: int,
+    body: VerifySliceBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Test-slice without printing or modifying job state. Debug use only."""
+    job = await _get_or_404(job_id, session)
+
+    printer = await session.get(Printer, body.printer_id)
+    if printer is None:
+        raise HTTPException(404, f"Printer {body.printer_id} not found")
+
+    cfg_result = await session.execute(
+        select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id,
+            JobPrinterConfig.printer_id == body.printer_id,
+        )
+    )
+    config = cfg_result.scalar_one_or_none()
+    if config is None:
+        raise HTTPException(404, f"Job {job_id} has no config for printer {body.printer_id}")
+
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if uploaded_file is None:
+        raise HTTPException(404, f"File {job.uploaded_file_id} not found")
+
+    if not printer.current_orca_printer_profile:
+        return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
+
+    # Mirror _run_slice_and_print: resolve the filament slot and build the SliceRequest.
+    loaded = printer.loaded_filaments or []
+    slot = _slot_for_config(config, loaded)
+    filament_profile = (slot or {}).get("filament_profile") or None
+
+    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+    file_base = f"{safe}_p{job.plate_number}_j{job_id}"
+
+    client = printer_manager._clients.get(body.printer_id)
+    export_args = client.orca_export_args(file_base) if client else []
+
+    cfg_tool_index = config.tool_index
+    cfg_filament_map = config.filament_map
+    prepare_hook = None
+    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
+        prepare_hook = (
+            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
+            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
+        )
+
+    if cfg_filament_map:
+        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
+        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
+    else:
+        filament_presets = [filament_profile] if filament_profile else []
+
+    req = SliceRequest(
+        job_id=job_id,
+        source_3mf=uploaded_file.stored_path,
+        plate_number=job.plate_number,
+        machine_preset=printer.current_orca_printer_profile,
+        process_preset=config.print_profile,
+        filament_presets=filament_presets,
+        filament_colours=[config.filament_color] if config.filament_color else [],
+        export_args=export_args,
+        prepare_hook=prepare_hook,
+    )
+
+    loop = asyncio.get_running_loop()
+    try:
+        gcode_path: str = await loop.run_in_executor(
+            queue_engine._executor, queue_engine._slicer.slice, req
+        )
+        try:
+            Path(gcode_path).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"ok": True, "error": None}
+    except SliceError as exc:
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        logger.exception("Unexpected error in verify-slice for job %s", job_id)
+        return {"ok": False, "error": f"Unexpected error: {exc}"}
 
 
 @router.get("/{job_id}/slice-failures")

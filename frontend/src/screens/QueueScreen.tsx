@@ -5,7 +5,7 @@ import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, plateThumbnailUrl, type ApiSliceFailure } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 
@@ -329,6 +329,39 @@ function JobDetailPanel({
     return () => { alive = false; };
   }, [job.rawId, isFailed]);
 
+  const [verifyOpen, setVerifyOpen] = React.useState(false);
+  const [verifyConfigs, setVerifyConfigs] = React.useState<ApiJobPrinterConfig[] | null>(null);
+  const [verifyPrinterId, setVerifyPrinterId] = React.useState<number | null>(null);
+  const [verifyRunning, setVerifyRunning] = React.useState(false);
+  const [verifyResult, setVerifyResult] = React.useState<{ ok: boolean; error: string | null } | null>(null);
+
+  React.useEffect(() => {
+    if (!verifyOpen || verifyConfigs !== null) return;
+    let alive = true;
+    getJobDetails(job.rawId)
+      .then(d => {
+        if (!alive) return;
+        setVerifyConfigs(d.printer_configs);
+        if (d.printer_configs.length === 1) setVerifyPrinterId(d.printer_configs[0].printer_id);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [verifyOpen, job.rawId, verifyConfigs]);
+
+  const runVerify = async () => {
+    if (verifyPrinterId === null) return;
+    setVerifyRunning(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifySlice(job.rawId, verifyPrinterId);
+      setVerifyResult(result);
+    } catch (e: unknown) {
+      setVerifyResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setVerifyRunning(false);
+    }
+  };
+
   return (
     <div className="card" style={{ position: 'sticky', top: 0, padding: 0, height: 'fit-content', overflow: 'hidden' }}>
       {/* Thumbnail header */}
@@ -470,6 +503,68 @@ function JobDetailPanel({
                 </div>
               ))}
             </div>
+          </>
+        )}
+
+        {/* Verify slicing (debug) */}
+        {!isActive && (
+          <>
+            <div className="divider" />
+            <button
+              className="btn ghost sm"
+              style={{ width: '100%', marginBottom: verifyOpen ? 8 : 0, textAlign: 'left' }}
+              onClick={() => { setVerifyOpen(o => !o); setVerifyResult(null); }}
+            >
+              {Icons.refresh} Verify slicing…
+            </button>
+            {verifyOpen && (
+              <div className="col gap-2" style={{ marginBottom: 8 }}>
+                <select
+                  className="select"
+                  value={verifyPrinterId ?? ''}
+                  onChange={e => { setVerifyPrinterId(Number(e.target.value)); setVerifyResult(null); }}
+                  disabled={verifyRunning}
+                >
+                  {verifyConfigs === null
+                    ? <option value="">Loading…</option>
+                    : verifyConfigs.map(c => (
+                        <option key={c.printer_id} value={c.printer_id}>{c.printer_name}</option>
+                      ))
+                  }
+                </select>
+                <button
+                  className="btn sm primary"
+                  style={{ width: '100%' }}
+                  disabled={verifyRunning || verifyPrinterId === null}
+                  onClick={runVerify}
+                >
+                  {verifyRunning ? 'Slicing…' : 'Run test slice'}
+                </button>
+                {verifyResult && (
+                  <div style={{
+                    padding: '10px 12px', borderRadius: 8,
+                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
+                  }}>
+                    <div className="tiny" style={{
+                      fontWeight: 600,
+                      color: verifyResult.ok ? 'var(--ok, #22c55e)' : 'var(--err)',
+                      marginBottom: verifyResult.error ? 4 : 0,
+                    }}>
+                      {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
+                    </div>
+                    {verifyResult.error && (
+                      <div className="mono tiny" style={{
+                        color: 'var(--text-2)', whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto',
+                      }}>
+                        {verifyResult.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
           </>
         )}
 
