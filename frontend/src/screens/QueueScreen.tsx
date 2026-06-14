@@ -336,10 +336,11 @@ function JobDetailPanel({
         width: '100%', height: 180, position: 'relative',
         background: 'linear-gradient(135deg, #1e3a6e, #3b82f6)',
         display: 'grid', placeItems: 'center',
+        overflow: 'hidden',
       }}>
         {thumbUrl ? (
           <img src={thumbUrl} alt={job.plateName}
-               style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+               style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', display: 'block' }} />
         ) : (
           <span style={{ color: 'rgba(255,255,255,0.35)', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
             No preview
