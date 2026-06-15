@@ -21,9 +21,13 @@ export function parseOrcaProfiles(f: ApiFilament): Record<string, string[]> {
     if (!raw) return {};
     const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
-    return parsed as Record<string, string[]>;
-  } catch {
-    console.warn('[Themis] orca_profiles parse error for filament', f.id);
+    const result: Record<string, string[]> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (Array.isArray(v) && v.every(x => typeof x === 'string')) result[k] = v;
+    }
+    return result;
+  } catch (err) {
+    console.warn('[Themis] orca_profiles parse error for filament', f.id, err);
     return {};
   }
 }
@@ -31,8 +35,8 @@ export function parseOrcaProfiles(f: ApiFilament): Record<string, string[]> {
 export async function patchFilamentOrcaProfiles(
   filamentId: number,
   orcaProfiles: Record<string, string[]>,
-): Promise<unknown> {
-  return request('/api/v1/spoolman/filaments/' + filamentId, {
+): Promise<ApiFilament> {
+  return request<ApiFilament>(`/api/v1/spoolman/filaments/${filamentId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ orca_profiles: orcaProfiles }),
