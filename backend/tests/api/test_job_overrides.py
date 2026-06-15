@@ -49,7 +49,7 @@ async def test_create_job_stores_overrides(client: AsyncClient, tmp_path):
         resp = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
             "plate_number": 1,
-            "overrides": {"fill_pattern": "grid", "layer_height": "0.15"},
+            "overrides": {"sparse_infill_pattern": "grid", "layer_height": "0.15"},
             "printer_configs": [{
                 "printer_id": printer_id,
                 "print_profile": "0.16mm Profile",
@@ -60,7 +60,24 @@ async def test_create_job_stores_overrides(client: AsyncClient, tmp_path):
 
     detail = await client.get(f"/api/v1/jobs/{job_id}/details")
     assert detail.status_code == 200
-    assert detail.json()["overrides"] == {"fill_pattern": "grid", "layer_height": "0.15"}
+    assert detail.json()["overrides"] == {"sparse_infill_pattern": "grid", "layer_height": "0.15"}
+
+
+async def test_create_job_strips_non_curated_override_keys(client: AsyncClient, tmp_path):
+    """Non-curated keys (e.g. post_process) are silently dropped at the API boundary."""
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id,
+            "plate_number": 1,
+            "overrides": {"layer_height": "0.15", "post_process": "rm -rf /", "unknown_key": "x"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+        })
+    assert resp.status_code == 201
+    detail = await client.get(f"/api/v1/jobs/{resp.json()['id']}/details")
+    assert detail.json()["overrides"] == {"layer_height": "0.15"}
 
 
 async def test_create_job_without_overrides_is_null(client: AsyncClient, tmp_path):

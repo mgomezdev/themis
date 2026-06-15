@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Order, Printer, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
-from ...services.override_inspector import inspect_overrides
+from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.preset_resolver import PresetNotFoundError, PresetResolver
 from ...services.printer_manager import printer_manager
 from ...services.project_config_builder import build_project_config
@@ -22,6 +22,17 @@ from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
 
 logger = logging.getLogger(__name__)
+
+_CURATED_KEYS_SET: frozenset[str] = frozenset(CURATED_KEYS)
+
+
+def _clean_overrides(o: dict | None) -> dict | None:
+    """Strip any key not in the curated allowlist before storing."""
+    if not o:
+        return None
+    cleaned = {k: str(v) for k, v in o.items() if k in _CURATED_KEYS_SET}
+    return cleaned or None
+
 
 # Statuses where a printer is physically working on the job and must be told to stop.
 _PRINTER_ACTIVE_STATUSES = {"printing", "paused", "uploading"}
@@ -131,7 +142,7 @@ async def create_job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
         order_id=body.order_id,
-        overrides=body.overrides,
+        overrides=_clean_overrides(body.overrides),
         queue_position=pos,
         status="queued",
         created_at=now,
@@ -364,7 +375,7 @@ async def update_job_configs(
     job.status = "queued"
     job.block_reason = None
     job.assigned_printer_id = None
-    job.overrides = body.overrides
+    job.overrides = _clean_overrides(body.overrides)
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
