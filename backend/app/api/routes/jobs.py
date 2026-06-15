@@ -55,6 +55,7 @@ class JobCreate(BaseModel):
     plate_number: int = 1
     order_id: int | None = None
     printer_configs: list[PrinterConfigInput]
+    overrides: dict | None = None
 
 
 def _to_dict(j: Job) -> dict:
@@ -66,6 +67,7 @@ def _to_dict(j: Job) -> dict:
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
+        "overrides": j.overrides,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
     }
@@ -129,6 +131,7 @@ async def create_job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
         order_id=body.order_id,
+        overrides=body.overrides,
         queue_position=pos,
         status="queued",
         created_at=now,
@@ -315,6 +318,7 @@ async def cancel_job(
 
 class JobConfigsUpdate(BaseModel):
     printer_configs: list[PrinterConfigInput]
+    overrides: dict | None = None
 
 
 @router.patch("/{job_id}/configs")
@@ -360,6 +364,7 @@ async def update_job_configs(
     job.status = "queued"
     job.block_reason = None
     job.assigned_printer_id = None
+    job.overrides = body.overrides
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
