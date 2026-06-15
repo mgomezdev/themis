@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
+import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
 
@@ -95,6 +95,9 @@ export function EditJobScreen() {
   const [modelFilaments, setModelFilaments] = useState<ModelFilament[]>([]);
   const [embeddedSettings, setEmbeddedSettings] = useState<EmbeddedSetting[]>([]);
   const [confirmedOverrides, setConfirmedOverrides] = useState<Record<string, string>>({});
+  const [verifyPrinterId, setVerifyPrinterId] = useState<number | null>(null);
+  const [verifyRunning, setVerifyRunning] = useState(false);
+  const [verifyResult, setVerifyResult] = useState<{ ok: boolean; error: string | null } | null>(null);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -117,6 +120,7 @@ export function EditJobScreen() {
         };
       }
       setPerPrinter(pp);
+      if (j.printer_configs.length === 1) setVerifyPrinterId(j.printer_configs[0].printer_id);
       // Pre-populate overrides from saved job data
       setConfirmedOverrides(j.overrides ?? {});
 
@@ -180,6 +184,20 @@ export function EditJobScreen() {
       setSaveError(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function runVerify() {
+    if (!jobId || verifyPrinterId === null) return;
+    setVerifyRunning(true);
+    setVerifyResult(null);
+    try {
+      const result = await verifySlice(jobId, verifyPrinterId);
+      setVerifyResult(result);
+    } catch (e) {
+      setVerifyResult({ ok: false, error: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setVerifyRunning(false);
     }
   }
 
@@ -309,6 +327,61 @@ export function EditJobScreen() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {job && job.printer_configs.length > 0 && (
+            <div className="card" style={{ padding: 18 }}>
+              <div className="tag-key" style={{ marginBottom: 8 }}>Test slicer</div>
+              <div className="col gap-2">
+                {job.printer_configs.length > 1 && (
+                  <select
+                    className="select"
+                    value={verifyPrinterId ?? ''}
+                    onChange={e => { setVerifyPrinterId(Number(e.target.value)); setVerifyResult(null); }}
+                    disabled={verifyRunning}
+                  >
+                    <option value="" disabled>Pick a printer…</option>
+                    {job.printer_configs.map(c => (
+                      <option key={c.printer_id} value={c.printer_id}>{c.printer_name}</option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  className="btn ghost sm"
+                  style={{ width: '100%' }}
+                  disabled={verifyRunning || verifyPrinterId === null}
+                  onClick={runVerify}
+                >
+                  {verifyRunning ? 'Slicing…' : `${Icons.refresh} Run test slice`}
+                </button>
+                {verifyResult && (
+                  <div style={{
+                    padding: '10px 12px', borderRadius: 8,
+                    background: verifyResult.ok ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                    border: `1px solid ${verifyResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.25)'}`,
+                  }}>
+                    <div className="tiny" style={{
+                      fontWeight: 600,
+                      color: verifyResult.ok ? 'var(--ok)' : 'var(--err)',
+                      marginBottom: verifyResult.error ? 4 : 0,
+                    }}>
+                      {verifyResult.ok ? '✓ Sliced OK' : '✗ Slice failed'}
+                    </div>
+                    {verifyResult.error && (
+                      <div className="mono tiny" style={{
+                        color: 'var(--text-2)', whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-all', maxHeight: 160, overflowY: 'auto',
+                      }}>
+                        {verifyResult.error}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="tiny muted" style={{ lineHeight: 1.5 }}>
+                  Runs a real slice against the saved settings. Save first to test your latest changes.
+                </div>
               </div>
             </div>
           )}
