@@ -43,6 +43,7 @@ class SliceRequest:
     filament_colours: list[str] = field(default_factory=list)
     export_args: list[str] = field(default_factory=list)
     prepare_hook: "Callable[[Path], None] | None" = None
+    extra_config: dict = field(default_factory=dict)
 
 
 class SlicerService:
@@ -108,7 +109,10 @@ class SlicerService:
             except Exception as e:
                 logger.warning("Failed to parse plate count from %s: %s", req.source_3mf, e)
 
-        return build_project_config(machine, process, filaments, req.filament_colours or None, plate_count=plate_count)
+        config = build_project_config(machine, process, filaments, req.filament_colours or None, plate_count=plate_count)
+        if req.extra_config:
+            config.update(req.extra_config)
+        return config
 
     def _run(self, input_3mf: Path, req: SliceRequest, out_dir: Path) -> str:
         """Run OrcaSlicer with the universal base + the printer's export args, then

@@ -246,6 +246,7 @@ class QueueEngine:
             stored_path = uploaded_file.stored_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
+            job_overrides = job.overrides or {} if job else {}  # capture before session closes
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
@@ -282,6 +283,7 @@ class QueueEngine:
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
             prepare_hook=prepare_hook,
+            extra_config=job_overrides,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
