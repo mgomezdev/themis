@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { getJobDetails, updateJobConfigs, getModelFilaments, type ApiJobDetails, type ModelFilament } from '../api/queue';
+import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
+import { OverridePanel } from '../components/OverridePanel';
 
 // ---- hooks ----
 
@@ -92,6 +93,8 @@ export function EditJobScreen() {
   const [selectedPrinters, setSelectedPrinters] = useState<string[]>([]);
   const [perPrinter, setPerPrinter] = useState<Record<string, PerPrinterCfg>>({});
   const [modelFilaments, setModelFilaments] = useState<ModelFilament[]>([]);
+  const [embeddedSettings, setEmbeddedSettings] = useState<EmbeddedSetting[]>([]);
+  const [confirmedOverrides, setConfirmedOverrides] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (jobId == null) return;
@@ -114,11 +117,18 @@ export function EditJobScreen() {
         };
       }
       setPerPrinter(pp);
-      // Fetch model filaments for the job's file
+      // Pre-populate overrides from saved job data
+      setConfirmedOverrides(j.overrides ?? {});
+
       if (j.file?.id) {
-        getModelFilaments(j.file.id)
-          .then(f => { if (alive) setModelFilaments(f); })
-          .catch(() => {});
+        Promise.all([
+          getModelFilaments(j.file.id).catch(() => [] as ModelFilament[]),
+          getEmbeddedSettings(j.file.id).catch(() => [] as EmbeddedSetting[]),
+        ]).then(([filaments, settings]) => {
+          if (!alive) return;
+          setModelFilaments(filaments);
+          setEmbeddedSettings(settings);
+        });
       }
     }).catch(e => { if (alive) setLoadError(String(e)); });
     return () => { alive = false; };
@@ -151,16 +161,20 @@ export function EditJobScreen() {
     setSaving(true);
     setSaveError(null);
     try {
-      await updateJobConfigs(jobId, selectedPrinters.map(sid => ({
-        printer_id: Number(sid),
-        print_profile: perPrinter[sid].printProfile!,
-        filament_profile: perPrinter[sid].filamentProfile ?? null,
-        filament_id: perPrinter[sid].filamentId ?? null,
-        filament_type: perPrinter[sid].filamentType,
-        filament_color: perPrinter[sid].filamentColor,
-        tool_index: perPrinter[sid].toolIndex ?? null,
-        filament_map: perPrinter[sid].filamentMap ?? null,
-      })));
+      await updateJobConfigs(
+        jobId,
+        selectedPrinters.map(sid => ({
+          printer_id: Number(sid),
+          print_profile: perPrinter[sid].printProfile!,
+          filament_profile: perPrinter[sid].filamentProfile ?? null,
+          filament_id: perPrinter[sid].filamentId ?? null,
+          filament_type: perPrinter[sid].filamentType,
+          filament_color: perPrinter[sid].filamentColor,
+          tool_index: perPrinter[sid].toolIndex ?? null,
+          filament_map: perPrinter[sid].filamentMap ?? null,
+        })),
+        Object.keys(confirmedOverrides).length > 0 ? confirmedOverrides : null,
+      );
       navigate(`/jobs/${jobId}`);
     } catch (e) {
       setSaveError(`Save failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -243,6 +257,19 @@ export function EditJobScreen() {
                   />
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Embedded settings overrides */}
+          {embeddedSettings.length > 0 && (
+            <div className="card" style={{ padding: 20 }}>
+              <SectionHeader title="3MF Embedded Settings"
+                             sub="Settings baked into the file. Check the ones you want to apply — unchecked ones use the profile default." />
+              <OverridePanel
+                settings={embeddedSettings}
+                value={confirmedOverrides}
+                onChange={setConfirmedOverrides}
+              />
             </div>
           )}
         </div>
