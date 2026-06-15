@@ -89,7 +89,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   }
 
   function computeSlotMatch(): { state: 'match' | 'no-match' | 'defer'; label: string; color: string | null } {
-    if (filamentConstraint === 'defer' && !config.filamentId) {
+    if (filamentConstraint === 'defer') {
       return { state: 'defer', label: 'Any loaded filament', color: null };
     }
     const reqType = (config.filamentType ?? '').toLowerCase();

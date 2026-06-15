@@ -473,6 +473,7 @@ async def verify_slice(
         filament_colours=[config.filament_color] if config.filament_color else [],
         export_args=export_args,
         prepare_hook=prepare_hook,
+        extra_config=job.overrides or {},
     )
 
     loop = asyncio.get_running_loop()
