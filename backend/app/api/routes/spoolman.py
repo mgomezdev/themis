@@ -37,7 +37,7 @@ async def get_spools(session: AsyncSession = Depends(get_session)):
 
 
 class FilamentPatchBody(BaseModel):
-    orca_profiles: dict
+    orca_profiles: dict[str, list[str]]
 
 
 @router.patch("/filaments/{filament_id}")

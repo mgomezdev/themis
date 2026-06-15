@@ -234,8 +234,7 @@ class QueueEngine:
             # Capture scalar values before session closes
             print_profile = config.print_profile if config else None
             filament_color = config.filament_color if config else None
-            # Filament profile is a printer-level setting: resolve the OrcaSlicer
-            # filament preset from the loaded slot that satisfies the job's ask.
+            # Filament profile: job-level config takes priority; slot's preset is the fallback.
             loaded = (printer.loaded_filaments if printer else None) or []
             slot = _slot_for_config(config, loaded) if config else None
             cfg_tool_index = config.tool_index if config else None
