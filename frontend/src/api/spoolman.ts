@@ -8,10 +8,35 @@ export interface ApiFilament {
   color_hex?: string;
   settings_extruder_temp?: number;
   settings_bed_temp?: number;
+  extra?: Record<string, unknown>;
 }
 
 export function filamentDisplayName(f: ApiFilament): string {
   return f.vendor?.name ? `${f.vendor.name} ${f.name}` : f.name;
+}
+
+export function parseOrcaProfiles(f: ApiFilament): Record<string, string[]> {
+  try {
+    const raw = f.extra?.orca_profiles;
+    if (!raw) return {};
+    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
+    return parsed as Record<string, string[]>;
+  } catch {
+    console.warn('[Themis] orca_profiles parse error for filament', f.id);
+    return {};
+  }
+}
+
+export async function patchFilamentOrcaProfiles(
+  filamentId: number,
+  orcaProfiles: Record<string, string[]>,
+): Promise<unknown> {
+  return request('/api/v1/spoolman/filaments/' + filamentId, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ orca_profiles: orcaProfiles }),
+  });
 }
 
 export interface ApiSpool {
