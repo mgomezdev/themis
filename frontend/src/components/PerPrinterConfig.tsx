@@ -55,20 +55,22 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
   const filaments = useFilaments(spoolmanActive);
 
-  // Single-tool filament mode: 'defer' (use loaded) vs 'require'. Derived so Edit
-  // Job restores it; default = defer.
-  const [requireFilament, setRequireFilament] = useState(
-    () => !!(config.filamentType || config.filamentProfile),
+  const [filamentConstraint, setFilamentConstraint] = useState<'defer' | 'type-only' | 'type-color'>(
+    () => {
+      if (!config.filamentType && !config.filamentId) return 'defer';
+      if (config.filamentType && !config.filamentColor) return 'type-only';
+      return 'type-color';
+    },
   );
   const [manualMode, setManualMode] = useState(
     () => !spoolmanActive || (config.filamentId === null && !!config.filamentType),
   );
 
   useEffect(() => {
-    if (requireFilament && (!spoolmanActive || manualMode) && config.filamentColor === null) {
+    if (filamentConstraint === 'type-color' && (!spoolmanActive || manualMode) && config.filamentColor === null) {
       onChange({ filamentColor: '#888888' });
     }
-  }, [spoolmanActive, manualMode, requireFilament]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [spoolmanActive, manualMode, filamentConstraint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!printer) return null;
   const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
@@ -81,6 +83,35 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   function clearAsk() {
     onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
   }
+
+  function _normColor(c: string | null | undefined): string {
+    return (c ?? '').replace('#', '').toLowerCase();
+  }
+
+  function computeSlotMatch(): { state: 'match' | 'no-match' | 'defer'; label: string; color: string | null } {
+    if (filamentConstraint === 'defer' && !config.filamentId) {
+      return { state: 'defer', label: 'Any loaded filament', color: null };
+    }
+    const reqType = (config.filamentType ?? '').toLowerCase();
+    const reqColor = _normColor(config.filamentColor);
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const sType = (s.type ?? '').toLowerCase();
+      if (!reqType) continue;
+      if (sType === reqType) {
+        if (filamentConstraint === 'type-only' || !reqColor || _normColor(s.color) === reqColor) {
+          const label = `${s.type ?? '?'} · slot ${i}`;
+          return { state: 'match', label, color: s.color ?? null };
+        }
+      }
+    }
+    const desc = filamentConstraint === 'type-only'
+      ? `No ${config.filamentType ?? '?'} loaded`
+      : `No ${config.filamentType ?? '?'} match`;
+    return { state: 'no-match', label: desc, color: null };
+  }
+
+  const slotMatch = computeSlotMatch();
 
   return (
     <div style={{ padding: 14, background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
@@ -193,17 +224,23 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
         ) : (
           <div>
             <label className="label">Filament</label>
-            <select data-testid="filament-mode" className="select"
-                    value={requireFilament ? 'require' : 'defer'}
-                    onChange={e => {
-                      const req = e.target.value === 'require';
-                      setRequireFilament(req);
-                      if (!req) clearAsk();
-                    }}>
+            <select
+              data-testid="filament-mode"
+              className="select"
+              value={filamentConstraint}
+              onChange={e => {
+                const mode = e.target.value as 'defer' | 'type-only' | 'type-color';
+                setFilamentConstraint(mode);
+                if (mode === 'defer') { clearAsk(); }
+                else if (mode === 'type-only') { onChange({ filamentColor: null }); }
+              }}
+            >
               <option value="defer">Use loaded filament</option>
-              <option value="require">Require specific filament</option>
+              <option value="type-only">Require by type</option>
+              <option value="type-color">Require by type + color</option>
             </select>
-            {requireFilament && (
+
+            {filamentConstraint !== 'defer' && (
               <div style={{ marginTop: 8 }}>
                 {spoolmanActive && !manualMode ? (
                   <select data-testid="filament-catalog-select" className="select" value={catalogValue}
@@ -216,6 +253,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                               filamentType: f?.material ?? null,
                               filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
                             });
+                            setFilamentConstraint('type-color');
                           }}>
                     <option value="">— select filament —</option>
                     {filaments.map(f => (
@@ -237,16 +275,50 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                     <datalist id="filament-types">
                       {FILAMENT_TYPES.map(t => <option key={t} value={t} />)}
                     </datalist>
-                    <div className="row gap-2" style={{ alignItems: 'center' }}>
-                      <input data-testid="filament-color-input" type="color" value={config.filamentColor ?? '#888888'}
-                             onChange={e => onChange({ filamentColor: e.target.value })}
-                             style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }} />
-                      <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
-                    </div>
+                    {filamentConstraint === 'type-color' && (
+                      <div className="row gap-2" style={{ alignItems: 'center' }}>
+                        <input data-testid="filament-color-input" type="color" value={config.filamentColor ?? '#888888'}
+                               onChange={e => onChange({ filamentColor: e.target.value })}
+                               style={{ width: 36, height: 28, padding: 2, borderRadius: 6, border: '1px solid var(--border-2)', background: 'var(--bg-1)', cursor: 'pointer', flexShrink: 0 }} />
+                        <span className="tiny muted">{config.filamentColor ?? '#888888'}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
+
+            {/* Chip badge — slot match status */}
+            <div style={{ marginTop: 8 }}>
+              {slotMatch.state === 'defer' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
+                               padding: '3px 8px', borderRadius: 4,
+                               background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)',
+                               color: 'var(--warn)' }}>
+                  ◉ {slotMatch.label}
+                </span>
+              )}
+              {slotMatch.state === 'match' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
+                               padding: '3px 8px', borderRadius: 4,
+                               background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)',
+                               color: 'var(--ok)' }}>
+                  {slotMatch.color && (
+                    <span style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0,
+                                   background: slotMatch.color, display: 'inline-block' }} />
+                  )}
+                  ✓ {slotMatch.label}
+                </span>
+              )}
+              {slotMatch.state === 'no-match' && (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11,
+                               padding: '3px 8px', borderRadius: 4,
+                               background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.30)',
+                               color: 'var(--err)' }}>
+                  ✗ {slotMatch.label}
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>

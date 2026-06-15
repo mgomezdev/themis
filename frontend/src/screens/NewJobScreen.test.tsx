@@ -107,10 +107,10 @@ async function selectPrintProfile(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(profileSelect, '0.20mm Standard @ECC');
 }
 
-/** Switch the filament mode to "require" so filament inputs are shown. */
+/** Switch the filament mode to "type-color" so filament inputs (including color) are shown. */
 async function switchToRequireFilament(user: ReturnType<typeof userEvent.setup>) {
   const modeSelect = await screen.findByTestId('filament-mode');
-  await user.selectOptions(modeSelect, 'require');
+  await user.selectOptions(modeSelect, 'type-color');
 }
 
 // ── Basic rendering ───────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ describe('NewJobScreen — rendering', () => {
 describe('Filament input — Spoolman not configured', () => {
   beforeEach(() => mockSpoolmanDisconnected());
 
-  it('shows filament-mode select (defer by default) when Spoolman is off; switching to require shows manual inputs', async () => {
+  it('shows filament-mode select (defer by default) when Spoolman is off; switching to type-color shows manual inputs', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
@@ -146,8 +146,8 @@ describe('Filament input — Spoolman not configured', () => {
     expect(screen.queryByTestId('filament-type-input')).toBeNull();
     expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
 
-    // Switch to require — manual inputs appear
-    await user.selectOptions(modeSelect, 'require');
+    // Switch to type-color — manual inputs (type + color) appear
+    await user.selectOptions(modeSelect, 'type-color');
     expect(screen.getByTestId('filament-type-input')).toBeTruthy();
     expect(screen.getByTestId('filament-color-input')).toBeTruthy();
   });
