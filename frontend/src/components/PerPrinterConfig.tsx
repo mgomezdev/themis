@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
 import { getPrinterProfiles, type ModelFilament } from '../api/queue';
-import { useSpoolmanConfig, useFilaments, filamentDisplayName } from '../api/spoolman';
+import { useSpoolmanConfig, useFilaments, filamentDisplayName, parseOrcaProfiles } from '../api/spoolman';
+import { FilamentProfileSelect } from './FilamentProfileSelect';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
@@ -50,10 +51,30 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
 }) {
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
-  const { printProfiles } = usePrinterProfiles(pid);
+  const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
   const { config: spoolmanCfg } = useSpoolmanConfig();
   const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
   const filaments = useFilaments(spoolmanActive);
+
+  const selectedFilament = config.filamentId != null
+    ? filaments.find(f => f.id === config.filamentId) ?? null
+    : null;
+
+  const mappedProfiles: string[] | null = useMemo(() => {
+    if (!selectedFilament || !printer?.current_orca_printer_profile) return null;
+    const orcaProfiles = parseOrcaProfiles(selectedFilament);
+    const list = orcaProfiles[printer.current_orca_printer_profile];
+    return list && list.length > 0 ? list : null;
+  }, [selectedFilament, printer]);
+
+  useEffect(() => {
+    if (mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile !== mappedProfiles[0]) {
+      onChange({ filamentProfile: mappedProfiles[0] });
+    }
+    if (mappedProfiles === null && config.filamentId == null) {
+      onChange({ filamentProfile: null });
+    }
+  }, [mappedProfiles, config.filamentId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [filamentConstraint, setFilamentConstraint] = useState<'defer' | 'type-only' | 'type-color'>(
     () => {
@@ -322,6 +343,41 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
           </div>
         )}
       </div>
+
+      {/* Filament profile section — appears when Spoolman filament is selected */}
+      {spoolmanActive && config.filamentId != null && (
+        <div style={{ marginTop: 12 }}>
+          <label className="label">Filament profile</label>
+          {mappedProfiles !== null && mappedProfiles.length === 1 ? (
+            <div className="tiny" style={{ marginTop: 4, color: 'var(--text-2)' }}>
+              {config.filamentProfile === mappedProfiles[0] ? (
+                <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from Spoolman mapping)</>
+              ) : (
+                <FilamentProfileSelect
+                  profiles={mappedProfiles}
+                  value={config.filamentProfile ?? null}
+                  onChange={v => onChange({ filamentProfile: v })}
+                  placeholder="— use printer default —"
+                />
+              )}
+            </div>
+          ) : (
+            <FilamentProfileSelect
+              profiles={mappedProfiles ?? filamentProfiles}
+              value={config.filamentProfile ?? null}
+              onChange={v => onChange({ filamentProfile: v })}
+              placeholder="— use printer default —"
+            />
+          )}
+          {mappedProfiles !== null && (
+            <div className="tiny muted" style={{ marginTop: 4 }}>
+              {mappedProfiles.length === 1
+                ? 'Profile set from Spoolman mapping. Select another to override.'
+                : `Showing ${mappedProfiles.length} profiles from Spoolman mapping.`}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
