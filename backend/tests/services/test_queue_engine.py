@@ -267,14 +267,21 @@ async def test_filament_match_allows_claim(db, tmp_path):
 
 @pytest.mark.asyncio
 async def test_slice_uses_filament_profile_from_loaded_slot(db, tmp_path):
-    """The OrcaSlicer filament preset is a printer-level setting: slicing must use
-    the matched loaded slot's filament_profile, not the job config's."""
+    """When the job config has no filament_profile, the matched loaded slot's
+    filament_profile is used as the fallback."""
     mgr = _make_mock_printer_manager([1])
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
     qe = QueueEngine(db, mgr, mock_slicer)
     job_id = await _seed_job(db, printer_id=1)
+    # Clear the job-level filament_profile so the slot's preset is the only option.
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id,
+            JobPrinterConfig.printer_id == 1))).scalar_one()
+        cfg.filament_profile = None
+        await session.commit()
     # Job asks for PLA white; the printer's loaded slot provides it with a real preset.
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF",
                         [{"type": "PLA", "color": "#FFFFFF",

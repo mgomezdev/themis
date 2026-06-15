@@ -240,7 +240,7 @@ class QueueEngine:
             slot = _slot_for_config(config, loaded) if config else None
             cfg_tool_index = config.tool_index if config else None
             cfg_filament_map = config.filament_map if config else None
-            filament_profile = (slot or {}).get("filament_profile") or (config.filament_profile if config else None) or None
+            filament_profile = (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
             stored_path = uploaded_file.stored_path if uploaded_file else None

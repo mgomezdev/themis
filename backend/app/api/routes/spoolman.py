@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
@@ -33,3 +34,22 @@ async def get_spools(session: AsyncSession = Depends(get_session)):
         return await spoolman_service.fetch_spools(row.url, row.api_key)
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+class FilamentPatchBody(BaseModel):
+    orca_profiles: dict
+
+
+@router.patch("/filaments/{filament_id}")
+async def patch_filament(
+    filament_id: int,
+    body: FilamentPatchBody,
+    session: AsyncSession = Depends(get_session),
+):
+    row = await _config_or_503(session)
+    try:
+        return await spoolman_service.patch_filament(
+            row.url, row.api_key, filament_id, body.orca_profiles
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc))
