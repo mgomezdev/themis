@@ -44,6 +44,7 @@ export interface ApiJob {
   assigned_printer_id: number | null;
   queue_position: number | null;
   status: string;
+  overrides: Record<string, string> | null;
   block_reason: string | null;
   created_at: string;
   updated_at: string;
@@ -116,6 +117,16 @@ export async function getModelFilaments(fileId: number): Promise<ModelFilament[]
   return request(`/api/v1/files/${fileId}/model-filaments`);
 }
 
+export interface EmbeddedSetting {
+  key: string;
+  label: string;
+  value: string;
+}
+
+export async function getEmbeddedSettings(fileId: number): Promise<EmbeddedSetting[]> {
+  return request(`/api/v1/files/${fileId}/embedded-settings`);
+}
+
 export async function getPrinterProfiles(printerId: number): Promise<PrinterProfiles> {
   return request(`/api/v1/printers/${printerId}/profiles`);
 }
@@ -125,6 +136,7 @@ export async function createJob(body: {
   plate_number: number;
   printer_configs: PrinterConfigInput[];
   order_id?: number | null;
+  overrides?: Record<string, string> | null;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',
@@ -184,11 +196,12 @@ export async function unblockJob(jobId: number): Promise<ApiJob> {
 export async function updateJobConfigs(
   jobId: number,
   configs: PrinterConfigInput[],
+  overrides?: Record<string, string> | null,
 ): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/configs`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ printer_configs: configs }),
+    body: JSON.stringify({ printer_configs: configs, overrides: overrides ?? null }),
   });
 }
 

@@ -63,6 +63,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   assigned_printer_id: null,
   queue_position: 1,
   status: 'blocked',
+  overrides: null,
   block_reason: 'slice failed',
   created_at: '2026-06-08T00:00:00Z',
   updated_at: '2026-06-08T00:00:00Z',

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   uploadFile, getFilePlates, getPrinterProfiles, createJob,
-  getQueue, cancelJob, reorderQueue,
+  getQueue, cancelJob, reorderQueue, getEmbeddedSettings, updateJobConfigs,
 } from './queue';
 
 const mockFetch = vi.fn();
@@ -68,7 +68,7 @@ describe('getPrinterProfiles', () => {
 
 describe('createJob', () => {
   it('POSTs to /api/v1/jobs', async () => {
-    const job = { id: 1, uploaded_file_id: 1, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: 1, status: 'queued', created_at: '', updated_at: '' };
+    const job = { id: 1, uploaded_file_id: 1, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: 1, status: 'queued', overrides: null, block_reason: null, created_at: '', updated_at: '' };
     mockOk(job);
     const result = await createJob({
       uploaded_file_id: 1,
@@ -104,5 +104,43 @@ describe('reorderQueue', () => {
     mockOk([]);
     await reorderQueue([{ job_id: 1, queue_position: 3.0 }]);
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/queue/reorder', expect.objectContaining({ method: 'PATCH' }));
+  });
+});
+
+describe('getEmbeddedSettings', () => {
+  it('fetches from /api/v1/files/{id}/embedded-settings', async () => {
+    const settings = [{ key: 'fill_pattern', label: 'Fill pattern', value: 'grid' }];
+    mockOk(settings);
+    const result = await getEmbeddedSettings(7);
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/7/embedded-settings');
+    expect(result).toEqual(settings);
+  });
+});
+
+describe('createJob with overrides', () => {
+  it('includes overrides in POST body', async () => {
+    mockOk({ id: 42, status: 'queued', uploaded_file_id: 1, plate_number: 1,
+             order_id: null, assigned_printer_id: null, queue_position: 1,
+             overrides: { fill_pattern: 'grid' }, block_reason: null,
+             created_at: '', updated_at: '' });
+    await createJob({
+      uploaded_file_id: 1, plate_number: 1,
+      printer_configs: [{ printer_id: 1, print_profile: 'p' }],
+      overrides: { fill_pattern: 'grid' },
+    });
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.overrides).toEqual({ fill_pattern: 'grid' });
+  });
+});
+
+describe('updateJobConfigs with overrides', () => {
+  it('includes overrides in PATCH body', async () => {
+    mockOk({ id: 1, status: 'queued', uploaded_file_id: 1, plate_number: 1,
+             order_id: null, assigned_printer_id: null, queue_position: null,
+             overrides: { layer_height: '0.15' }, block_reason: null,
+             created_at: '', updated_at: '' });
+    await updateJobConfigs(1, [{ printer_id: 2, print_profile: 'p' }], { layer_height: '0.15' });
+    const body = JSON.parse((mockFetch.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.overrides).toEqual({ layer_height: '0.15' });
   });
 });
