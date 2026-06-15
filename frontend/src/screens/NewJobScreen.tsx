@@ -4,10 +4,11 @@ import { fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { uploadFile, createJob, getFilePlates, getModelFilaments, plateThumbnailUrl, checkOverrides, type ApiPlate, type OverrideCheck, type ModelFilament } from '../api/queue';
+import { uploadFile, createJob, getFilePlates, getModelFilaments, getEmbeddedSettings, plateThumbnailUrl, type ApiPlate, type EmbeddedSetting, type ModelFilament } from '../api/queue';
 import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
+import { OverridePanel } from '../components/OverridePanel';
 
 // ============================================================
 // Types
@@ -30,6 +31,7 @@ interface PlateConfig {
   orderId: number | null;
   selectedPrinters: string[];
   perPrinter: Record<string, PerPrinterCfg>;
+  confirmedOverrides: Record<string, string>;
 }
 
 interface FileInfo {
@@ -440,17 +442,19 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilaments, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
   printers: ApiPrinter[];
   modelFilaments: ModelFilament[];
+  embeddedSettings: EmbeddedSetting[];
   onSetField: (patch: Partial<PlateConfig>) => void;
   onTogglePrinter: (id: string) => void;
   onSetPerPrinter: (printerId: string, patch: Partial<PerPrinterCfg>) => void;
   onSetOrder: (id: number | null) => void;
   onToggleQueued: (v: boolean) => void;
+  onSetOverrides: (v: Record<string, string>) => void;
 }) {
   const queued = !!config.selected;
 
@@ -553,6 +557,17 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilament
               />
             </div>
           </div>
+
+          {embeddedSettings.length > 0 && (
+            <>
+              <div className="divider" style={{ margin: 0 }} />
+              <OverridePanel
+                settings={embeddedSettings}
+                value={config.confirmedOverrides}
+                onChange={onSetOverrides}
+              />
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -689,75 +704,10 @@ function defaultConfigForPlate(plate: Plate): PlateConfig {
     orderId: null,
     selectedPrinters: [],
     perPrinter: {},
+    confirmedOverrides: {},
   };
 }
 
-interface MergedFindings {
-  changes: { key: string; from: string; to: string }[];
-  slotWarning: { used_slots: number; printer_slots: number } | null;
-}
-
-function mergeFindings(checks: OverrideCheck[]): MergedFindings {
-  const seen = new Set<string>();
-  const changes: MergedFindings['changes'] = [];
-  let slotWarning: MergedFindings['slotWarning'] = null;
-  for (const c of checks) {
-    for (const ch of c.setting_changes) {
-      const k = `${ch.key}|${ch.from}|${ch.to}`;
-      if (!seen.has(k)) { seen.add(k); changes.push(ch); }
-    }
-    if (c.slot_warning) slotWarning = c.slot_warning;
-  }
-  return { changes, slotWarning };
-}
-
-function OverrideAlertModal({ findings, onProceed, onCancel }: {
-  findings: MergedFindings;
-  onProceed: () => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div onClick={onCancel} style={{
-      position: 'fixed', inset: 0, background: 'rgba(2,6,16,0.65)', backdropFilter: 'blur(4px)',
-      zIndex: 200, display: 'grid', placeItems: 'center', padding: 24,
-    }}>
-      <div onClick={e => e.stopPropagation()} className="card" style={{ width: 'min(560px,100%)', padding: 24 }}>
-        <div className="row gap-2" style={{ alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ color: 'var(--warn)' }}>{Icons.alert}</span>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>This file has settings that won't carry over</h2>
-        </div>
-        <div className="muted small" style={{ marginBottom: 14, lineHeight: 1.5 }}>
-          Slicing applies the printer and presets you selected, replacing these settings baked into the uploaded file.
-          Per-object overrides, modifiers, and paint are kept.
-        </div>
-        {findings.slotWarning && (
-          <div style={{ padding: '10px 12px', borderRadius: 8, marginBottom: 12,
-                        background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)', fontSize: 13 }}>
-            File uses <strong>{findings.slotWarning.used_slots}</strong> filament slots, but the printer has{' '}
-            <strong>{findings.slotWarning.printer_slots}</strong>. Some parts may not map to a loaded filament.
-          </div>
-        )}
-        {findings.changes.length > 0 && (
-          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflow: 'hidden', marginBottom: 16 }}>
-            {findings.changes.map((c, i) => (
-              <div key={c.key} className="row between" style={{
-                padding: '8px 12px', fontSize: 13,
-                borderTop: i ? '1px solid var(--border-1)' : 'none', background: i % 2 ? 'var(--bg-1)' : 'transparent',
-              }}>
-                <span className="mono" style={{ color: 'var(--text-2)' }}>{c.key}</span>
-                <span><span style={{ color: 'var(--text-3)' }}>{c.from}</span> → <span style={{ color: 'var(--text-1)', fontWeight: 500 }}>{c.to}</span></span>
-              </div>
-            ))}
-          </div>
-        )}
-        <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
-          <button className="btn" onClick={onCancel}>Change preset/printer</button>
-          <button className="btn primary" onClick={onProceed}>Proceed, accept changes</button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export function NewJobScreen() {
   const navigate = useNavigate();
@@ -769,13 +719,13 @@ export function NewJobScreen() {
   const [plates, setPlates] = useState<Plate[]>([]);
   const [plateConfigs, setPlateConfigs] = useState<Record<string, PlateConfig>>({});
   const [modelFilaments, setModelFilaments] = useState<ModelFilament[]>([]);
+  const [embeddedSettings, setEmbeddedSettings] = useState<EmbeddedSetting[]>([]);
   const [activePlateId, setActivePlateId] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
-  const [overrideFindings, setOverrideFindings] = useState<MergedFindings | null>(null);
 
   // Source selection: upload a new file or pick one from the library.
   const [source, setSource] = useState<'upload' | 'library'>('upload');
@@ -807,11 +757,13 @@ export function NewJobScreen() {
   async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
     setUploadedFileId(fileId);
     setFile(fileInfo);
-    const [apiPlates, filaments] = await Promise.all([
+    const [apiPlates, filaments, settings] = await Promise.all([
       getFilePlates(fileId),
       getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
+      getEmbeddedSettings(fileId).catch(() => [] as EmbeddedSetting[]),
     ]);
     setModelFilaments(filaments);
+    setEmbeddedSettings(settings);
     const detected = platesToLocal(apiPlates, fileId);
     setPlates(detected);
     const configs: Record<string, PlateConfig> = {};
@@ -890,7 +842,7 @@ export function NewJobScreen() {
 
   function clearFile() {
     setFile(null); setUploadedFileId(null); setPlates([]);
-    setPlateConfigs({}); setActivePlateId(null); setError(null); setModelFilaments([]);
+    setPlateConfigs({}); setActivePlateId(null); setError(null); setModelFilaments([]); setEmbeddedSettings([]);
   }
 
   // ---- plate config mutators ----
@@ -965,43 +917,10 @@ export function NewJobScreen() {
 
   const isComplete = uploadedFileId != null && selectedPlateIds.length > 0 && selectedPlateIds.every(plateIsComplete);
 
-  // Override-loss check: warn before slicing replaces settings baked into the 3MF.
-  async function handleCreate() {
-    if (!uploadedFileId || !isComplete) return;
-    setSubmitting(true);
-    setError(null);
-    try {
-      const checks = await Promise.all(
-        selectedPlateIds.flatMap(id => {
-          const cfg = plateConfigs[id];
-          return cfg.selectedPrinters.map(pid =>
-            checkOverrides({
-              uploaded_file_id: uploadedFileId,
-              printer_id: Number(pid),
-              print_profile: cfg.perPrinter[pid].printProfile!,
-              filament_profile: cfg.perPrinter[pid].filamentProfile,
-              filament_color: cfg.perPrinter[pid].filamentColor,
-            }).catch(() => null),
-          );
-        }),
-      );
-      const withFindings = checks.filter((c): c is OverrideCheck => !!c && c.has_findings);
-      if (withFindings.length > 0) {
-        setOverrideFindings(mergeFindings(withFindings));
-        setSubmitting(false);
-        return;  // wait for the user's decision in the modal
-      }
-    } catch {
-      // Non-fatal: if the check itself errors, fall through to creation.
-    }
-    await doCreate();
-  }
-
   async function doCreate() {
     if (!uploadedFileId) return;
     setSubmitting(true);
     setError(null);
-    setOverrideFindings(null);
     const count = selectedPlateIds.length;
     try {
       for (const id of selectedPlateIds) {
@@ -1021,6 +940,7 @@ export function NewJobScreen() {
             tool_index: cfg.perPrinter[pid].toolIndex ?? null,
             filament_map: cfg.perPrinter[pid].filamentMap ?? null,
           })),
+          overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
         });
       }
       clearFile();
@@ -1034,13 +954,6 @@ export function NewJobScreen() {
 
   return (
     <div className="col gap-4">
-      {overrideFindings && (
-        <OverrideAlertModal
-          findings={overrideFindings}
-          onProceed={doCreate}
-          onCancel={() => setOverrideFindings(null)}
-        />
-      )}
       <div className="row gap-2">
         <button className="btn ghost sm" onClick={() => navigate('/queue')}>{Icons.chevL} Queue</button>
         <span className="muted small">/</span>
@@ -1212,11 +1125,13 @@ export function NewJobScreen() {
                   isMultiPlate={plates.length > 1}
                   printers={printers}
                   modelFilaments={modelFilaments}
+                  embeddedSettings={embeddedSettings}
                   onSetField={patch => setPlateConfig(activePlateId, patch)}
                   onTogglePrinter={pid => togglePrinterForPlate(activePlateId, pid)}
                   onSetPerPrinter={(pid, patch) => setPerPrinter(activePlateId, pid, patch)}
                   onSetOrder={oid => setOrderForPlate(activePlateId, oid)}
                   onToggleQueued={v => togglePlate(activePlateId, v)}
+                  onSetOverrides={v => setPlateConfig(activePlateId, { confirmedOverrides: v })}
                 />
               </div>
             </div>
@@ -1238,7 +1153,7 @@ export function NewJobScreen() {
               className="btn primary"
               style={{ width: '100%' }}
               disabled={!isComplete || submitting}
-              onClick={handleCreate}>
+              onClick={doCreate}>
               {submitting
                 ? 'Adding to queue…'
                 : <>{Icons.check} Add {selectedPlateIds.length || ''} job{selectedPlateIds.length === 1 ? '' : 's'} to queue</>
