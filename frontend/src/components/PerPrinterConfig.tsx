@@ -348,19 +348,17 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
       {spoolmanActive && config.filamentId != null && (
         <div style={{ marginTop: 12 }}>
           <label className="label">Filament profile</label>
-          {mappedProfiles !== null && mappedProfiles.length === 1 ? (
+          {mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile === mappedProfiles[0] ? (
             <div className="tiny" style={{ marginTop: 4, color: 'var(--text-2)' }}>
-              {config.filamentProfile === mappedProfiles[0] ? (
-                <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from Spoolman mapping)</>
-              ) : (
-                <FilamentProfileSelect
-                  profiles={mappedProfiles}
-                  value={config.filamentProfile ?? null}
-                  onChange={v => onChange({ filamentProfile: v })}
-                  placeholder="— use printer default —"
-                />
-              )}
+              <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from Spoolman mapping)</>
             </div>
+          ) : mappedProfiles !== null && mappedProfiles.length === 1 ? (
+            <FilamentProfileSelect
+              profiles={mappedProfiles}
+              value={config.filamentProfile ?? null}
+              onChange={v => onChange({ filamentProfile: v })}
+              placeholder="— use printer default —"
+            />
           ) : (
             <FilamentProfileSelect
               profiles={mappedProfiles ?? filamentProfiles}
