@@ -5,6 +5,7 @@ import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { Icons, Icon } from '../components/icons';
+import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -766,7 +767,7 @@ function AboutPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'spoolman' | 'about';
+type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -780,7 +781,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -804,7 +805,8 @@ export function SettingsScreen() {
     {
       label: 'Integrations',
       items: [
-        { id: 'spoolman',      label: 'Spoolman',       icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
+        { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
+        { id: 'spoolman-mappings', label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' },
       ],
     },
     {
@@ -847,8 +849,9 @@ export function SettingsScreen() {
       <div style={{ minWidth: 0 }}>
         {activePage === 'tags'          && <TagsPage />}
         {activePage === 'print'         && <PrintDefaultsPage />}
-        {activePage === 'spoolman'      && <SpoolmanPage />}
-        {activePage === 'about'         && <AboutPage />}
+        {activePage === 'spoolman'          && <SpoolmanPage />}
+        {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
+        {activePage === 'about'             && <AboutPage />}
       </div>
     </div>
   );
