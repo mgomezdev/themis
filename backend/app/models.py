@@ -83,6 +83,7 @@ class Job(Base):
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued")
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
 

@@ -91,6 +91,8 @@ async def _migrate(conn) -> None:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN block_reason TEXT"))
         if "order_id" not in job_cols:
             await conn.execute(text("ALTER TABLE jobs ADD COLUMN order_id INTEGER"))
+        if "overrides" not in job_cols:
+            await conn.execute(text("ALTER TABLE jobs ADD COLUMN overrides JSON"))
 
     uf_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(uploaded_files)"))).fetchall()}
     if "relative_path" not in uf_cols:
