@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools } from '../api/spoolman';
+import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools, useSpoolmanConfig } from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
@@ -793,6 +793,8 @@ export function SettingsScreen() {
   const navigate = useNavigate();
   const activePage = pageFromPath(location.pathname);
   const setActivePage = (id: PageId) => navigate(`/settings/${id}`);
+  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
 
   const sections: NavSection[] = [
     {
@@ -806,7 +808,7 @@ export function SettingsScreen() {
       label: 'Integrations',
       items: [
         { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
-        { id: 'spoolman-mappings', label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' },
+        ...(spoolmanEnabled ? [{ id: 'spoolman-mappings' as PageId, label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' }] : []),
       ],
     },
     {

@@ -71,10 +71,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
     if (mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile !== mappedProfiles[0]) {
       onChange({ filamentProfile: mappedProfiles[0] });
     }
-    if (mappedProfiles === null && config.filamentId == null) {
-      onChange({ filamentProfile: null });
-    }
-  }, [mappedProfiles, config.filamentId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mappedProfiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [filamentConstraint, setFilamentConstraint] = useState<'defer' | 'type-only' | 'type-color'>(
     () => {

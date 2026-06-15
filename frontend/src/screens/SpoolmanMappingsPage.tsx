@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchPrinters, type ApiPrinter } from '../api/printers';
 import { getPrinterProfiles } from '../api/queue';
-import { fetchFilaments, filamentDisplayName, parseOrcaProfiles, patchFilamentOrcaProfiles, type ApiFilament } from '../api/spoolman';
+import { fetchFilaments, filamentDisplayName, parseOrcaProfiles, patchFilamentOrcaProfiles, useSpoolmanConfig, type ApiFilament } from '../api/spoolman';
 import { FilamentProfileMultiSelect } from '../components/FilamentProfileMultiSelect';
 
 // Map from machine preset name → one printer ID that uses it (for profile lookup)
@@ -133,6 +133,9 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
 }
 
 export function SpoolmanMappingsPage() {
+  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+
   const [filaments, setFilaments] = useState<ApiFilament[]>([]);
   const [printers, setPrinters] = useState<ApiPrinter[]>([]);
   const [presetProfiles, setPresetProfiles] = useState<Map<string, string[]>>(new Map());
@@ -209,6 +212,15 @@ export function SpoolmanMappingsPage() {
     setActiveIds(ids => { const next = new Set(ids); next.delete(id); return next; });
   }
 
+  if (!spoolmanEnabled) {
+    return (
+      <div className="card" style={{ padding: 28 }}>
+        <div className="small muted">
+          Spoolman is not configured. Set up Spoolman under Settings → Integrations → Spoolman first.
+        </div>
+      </div>
+    );
+  }
   if (loading) {
     return <div className="small muted" style={{ padding: 24 }}>Loading filaments…</div>;
   }

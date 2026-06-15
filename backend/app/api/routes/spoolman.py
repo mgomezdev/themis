@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -51,5 +52,7 @@ async def patch_filament(
         return await spoolman_service.patch_filament(
             row.url, row.api_key, filament_id, body.orca_profiles
         )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=exc.response.status_code, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
