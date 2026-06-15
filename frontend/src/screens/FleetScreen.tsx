@@ -373,24 +373,23 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
               </button>
             </div>
             <div className="row gap-2" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-              <div className="col gap-1" style={{ flex: '1 1 180px' }}>
-                <label className="tiny muted" htmlFor={`fp-${i}`}>Filament profile</label>
-                {(() => {
-                  const mapped = getMappedProfiles(s.spoolman_spool_id);
-                  const profiles = mapped ?? filamentProfiles;
-                  return (
+              {(() => {
+                const mapped = getMappedProfiles(s.spoolman_spool_id);
+                return (
+                  <div className="col gap-1" style={{ flex: '1 1 180px' }}>
+                    <label className="tiny muted">Filament profile</label>
                     <FilamentProfileSelect
-                      profiles={profiles}
+                      profiles={mapped ?? filamentProfiles}
                       value={s.filament_profile ?? null}
                       onChange={v => updateSlot(i, { filament_profile: v })}
                       placeholder="— none (slicer default) —"
                     />
-                  );
-                })()}
-                {getMappedProfiles(s.spoolman_spool_id) !== null && (
-                  <div className="tiny muted" style={{ marginTop: 2 }}>From Spoolman mapping</div>
-                )}
-              </div>
+                    {mapped !== null && (
+                      <div className="tiny muted" style={{ marginTop: 2 }}>From Spoolman mapping</div>
+                    )}
+                  </div>
+                );
+              })()}
               {spoolmanActive && (
                 <div className="col gap-1" style={{ flex: '1 1 180px' }}>
                   <label className="tiny muted" htmlFor={`sp-${i}`}>Spoolman spool (optional)</label>
