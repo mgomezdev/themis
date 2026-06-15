@@ -23,7 +23,7 @@ Stored on each Spoolman filament object in the `extra` (custom fields) bag, keye
 - **Values**: array of OrcaSlicer filament preset name strings — the same names returned by `GET /api/v1/printers/{id}/profiles` → `filament_profiles`.
 - An empty array for a key means the mapping is cleared for that machine preset.
 
-**Read path**: The existing `GET /api/v1/spoolman/filaments` endpoint is a raw passthrough that already includes Spoolman's `extra` field. No backend changes needed for reads. Frontend reads `filament.extra?.orca_profiles ?? {}`.
+**Read path**: The existing `GET /api/v1/spoolman/filaments` endpoint is a raw passthrough that already includes Spoolman's `extra` field. No backend changes needed for reads. Spoolman stores the custom field as a JSON-encoded string (confirmed default value is `"{}"`), so the frontend must parse it: `JSON.parse(filament.extra?.orca_profiles ?? '{}')`. Malformed values are treated as empty mapping.
 
 **Write path**: A new backend proxy endpoint (see Backend section) routes writes through the Themis server to avoid exposing the Spoolman API key to the browser.
 
