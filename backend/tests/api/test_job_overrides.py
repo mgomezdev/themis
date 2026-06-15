@@ -3,7 +3,6 @@ import json
 import zipfile
 from unittest.mock import patch
 
-import pytest
 from httpx import AsyncClient
 
 
@@ -73,5 +72,30 @@ async def test_create_job_without_overrides_is_null(client: AsyncClient, tmp_pat
         })
     assert resp.status_code == 201
     job_id = resp.json()["id"]
+    detail = await client.get(f"/api/v1/jobs/{job_id}/details")
+    assert detail.json()["overrides"] is None
+
+
+async def test_update_job_configs_clears_overrides_when_omitted(client: AsyncClient, tmp_path):
+    """PATCH /configs without overrides field clears any previously-stored overrides."""
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    # Create job with overrides
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id,
+            "plate_number": 1,
+            "overrides": {"layer_height": "0.15"},
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+        })
+    job_id = resp.json()["id"]
+
+    # PATCH without overrides field → overrides cleared
+    with patch("app.api.routes.jobs.queue_engine"):
+        await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+        })
+
     detail = await client.get(f"/api/v1/jobs/{job_id}/details")
     assert detail.json()["overrides"] is None
