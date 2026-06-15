@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .override_inspector import CURATED_KEYS
+
 
 @dataclass
 class PlateInfo:
@@ -31,6 +33,52 @@ def parse_model_filaments(file_path: str) -> list[dict]:
     for i, colour in enumerate(colours):
         out.append({"index": i + 1, "color": colour,
                     "type": types[i] if i < len(types) else ""})
+    return out
+
+
+_SETTING_LABELS: dict[str, str] = {
+    "enable_support": "Enable supports",
+    "support_type": "Support type",
+    "support_threshold_angle": "Support threshold angle",
+    "support_on_build_plate_only": "Support on build plate only",
+    "raft_layers": "Raft layers",
+    "brim_type": "Brim type",
+    "brim_width": "Brim width",
+    "sparse_infill_density": "Infill density",
+    "sparse_infill_pattern": "Infill pattern",
+    "wall_loops": "Wall loops",
+    "top_shell_layers": "Top layers",
+    "bottom_shell_layers": "Bottom layers",
+    "layer_height": "Layer height",
+    "ironing_type": "Ironing type",
+}
+
+
+def parse_embedded_settings(file_path: str) -> list[dict]:
+    """Return curated print settings baked into the 3MF's project_settings.config."""
+    try:
+        with zipfile.ZipFile(file_path) as zf:
+            actual = next(
+                (n for n in zf.namelist()
+                 if n.lower() == "metadata/project_settings.config"),
+                None,
+            )
+            if actual is None:
+                return []
+            ps = json.loads(zf.read(actual))
+    except (zipfile.BadZipFile, json.JSONDecodeError, OSError):
+        return []
+
+    out = []
+    for key in CURATED_KEYS:
+        if key not in ps:
+            continue
+        val = ps[key]
+        if isinstance(val, list):
+            val = ", ".join(str(v) for v in val)
+        else:
+            val = str(val)
+        out.append({"key": key, "label": _SETTING_LABELS.get(key, key), "value": val})
     return out
 
 
