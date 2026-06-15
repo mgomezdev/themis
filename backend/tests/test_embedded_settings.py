@@ -5,16 +5,14 @@ import pytest
 from app.services.three_mf_parser import parse_embedded_settings
 
 
-def _make_3mf(settings: dict) -> str:
+def _make_3mf(settings: dict, tmp_path) -> str:
     """Return path to a temp 3MF zip with the given project_settings.config."""
-    import tempfile, os
+    path = tmp_path / "test.3mf"
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("Metadata/project_settings.config", json.dumps(settings))
-    tmp = tempfile.NamedTemporaryFile(suffix=".3mf", delete=False)
-    tmp.write(buf.getvalue())
-    tmp.close()
-    return tmp.name
+    path.write_bytes(buf.getvalue())
+    return str(path)
 
 
 def test_returns_empty_for_non_3mf(tmp_path):
@@ -24,13 +22,13 @@ def test_returns_empty_for_non_3mf(tmp_path):
 
 
 def test_returns_empty_when_no_curated_keys(tmp_path):
-    path = _make_3mf({"some_other_key": "value"})
+    path = _make_3mf({"some_other_key": "value"}, tmp_path)
     result = parse_embedded_settings(path)
     assert result == []
 
 
 def test_returns_curated_keys_present_in_file(tmp_path):
-    path = _make_3mf({"sparse_infill_pattern": "grid", "layer_height": "0.15", "some_ignored": "x"})
+    path = _make_3mf({"sparse_infill_pattern": "grid", "layer_height": "0.15", "some_ignored": "x"}, tmp_path)
     result = parse_embedded_settings(path)
     keys = {r["key"] for r in result}
     assert "sparse_infill_pattern" in keys
@@ -43,7 +41,7 @@ def test_returns_curated_keys_present_in_file(tmp_path):
 
 
 def test_list_values_joined_as_string(tmp_path):
-    path = _make_3mf({"enable_support": ["1"]})
+    path = _make_3mf({"enable_support": ["1"]}, tmp_path)
     result = parse_embedded_settings(path)
     assert result[0]["value"] == "1"
 
