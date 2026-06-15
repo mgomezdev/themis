@@ -352,6 +352,15 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
     return parse_model_filaments(record.stored_path)
 
 
+@router.get("/{file_id}/embedded-settings")
+async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    from ...services.three_mf_parser import parse_embedded_settings
+    record = await session.get(UploadedFile, file_id)
+    if record is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    return parse_embedded_settings(record.stored_path)
+
+
 @router.get("/{file_id}/thumbnails/{filename}")
 async def get_thumbnail(file_id: int, filename: str,
                         session: AsyncSession = Depends(get_session)) -> FileResponse:

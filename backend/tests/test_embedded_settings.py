@@ -50,3 +50,15 @@ def test_returns_empty_for_bad_zip(tmp_path):
     f = tmp_path / "bad.3mf"
     f.write_bytes(b"not a zip file")
     assert parse_embedded_settings(str(f)) == []
+
+
+# ---------- endpoint tests ----------
+
+import pytest
+from httpx import AsyncClient
+
+
+@pytest.mark.asyncio
+async def test_embedded_settings_endpoint_404(client: AsyncClient):
+    resp = await client.get("/api/v1/files/9999/embedded-settings")
+    assert resp.status_code == 404
