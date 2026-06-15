@@ -538,8 +538,23 @@ function JobDetailPanel({
                   disabled={verifyRunning || verifyPrinterId === null}
                   onClick={runVerify}
                 >
-                  {verifyRunning ? 'Slicing…' : 'Run test slice'}
+                  <span style={verifyRunning ? { display: 'inline-flex', animation: 'spin 1s linear infinite' } : undefined}>
+                    {Icons.refresh}
+                  </span>
+                  {verifyRunning ? ' Slicing…' : ' Run test slice'}
                 </button>
+                {verifyRunning && (
+                  <div style={{
+                    padding: '8px 12px', borderRadius: 8,
+                    background: 'rgba(245,158,11,0.08)',
+                    border: '1px solid rgba(245,158,11,0.25)',
+                    animation: 'pulse-soft 1.5s ease-in-out infinite',
+                  }}>
+                    <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 500 }}>
+                      Slicing in progress — this can take 30–90 seconds…
+                    </div>
+                  </div>
+                )}
                 {verifyResult && (
                   <div style={{
                     padding: '10px 12px', borderRadius: 8,
