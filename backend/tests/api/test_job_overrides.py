@@ -1,9 +1,12 @@
 import io
 import json
 import zipfile
-from unittest.mock import patch
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from httpx import AsyncClient
+
+from app.services.slicer_service import SliceRequest, SlicerService
 
 
 def _make_3mf() -> bytes:
@@ -101,10 +104,6 @@ async def test_update_job_configs_clears_overrides_when_omitted(client: AsyncCli
     assert detail.json()["overrides"] is None
 
 
-from app.services.slicer_service import SliceRequest, SlicerService
-from unittest.mock import patch as mock_patch
-
-
 def test_slice_request_extra_config_defaults_empty():
     req = SliceRequest(
         job_id=1, source_3mf="/tmp/m.3mf", plate_number=1,
@@ -114,13 +113,11 @@ def test_slice_request_extra_config_defaults_empty():
     assert req.extra_config == {}
 
 
-def test_slicer_build_config_merges_extra_config(monkeypatch):
+def test_slicer_build_config_merges_extra_config():
     """extra_config values override profile values in the built config."""
-    from unittest.mock import MagicMock, patch
-
     svc = SlicerService.__new__(SlicerService)
     svc._orca = "orca"
-    svc._data_dir = __import__('pathlib').Path("/tmp")
+    svc._data_dir = Path("/tmp")
     svc._resolver = MagicMock()  # must exist before patch.object can replace it
 
     mock_machine = {"fill_pattern": "gyroid", "layer_height": "0.20", "type": "machine"}
