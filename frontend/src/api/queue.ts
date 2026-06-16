@@ -167,18 +167,35 @@ export async function checkOverrides(body: {
   });
 }
 
-export interface QueueConfig { check_interval_minutes: number; }
+export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; }
 
 export async function getQueueConfig(): Promise<QueueConfig> {
   return request('/api/v1/settings/queue');
 }
 
-export async function saveQueueConfig(body: QueueConfig): Promise<QueueConfig> {
+export async function saveQueueConfig(body: Partial<QueueConfig>): Promise<QueueConfig> {
   return request('/api/v1/settings/queue', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+export function useQueueConfig(): { config: QueueConfig | null; refetch: () => void } {
+  const [config, setConfig] = useState<QueueConfig | null>(null);
+  const [tick, setTick] = useState(0);
+
+  const refetch = useCallback(() => setTick(t => t + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    getQueueConfig()
+      .then(data => { if (alive) setConfig(data); })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, [tick]);
+
+  return { config, refetch };
 }
 
 export async function getQueue(): Promise<ApiJob[]> {
