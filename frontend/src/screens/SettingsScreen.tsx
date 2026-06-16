@@ -401,6 +401,18 @@ function PrintDefaultsPage() {
     finally { setSavingInterval(false); }
   }
 
+  // Operator display name — shown in the Sidebar footer. Blank hides it entirely.
+  const [operatorName, setOperatorName] = useState<string>('');
+  const [savingName, setSavingName] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => setOperatorName(c.operator_name ?? '')).catch(console.error);
+  }, []);
+  async function commitOperatorName(name: string) {
+    setSavingName(true);
+    try { await saveQueueConfig({ operator_name: name.trim() || null }); }
+    finally { setSavingName(false); }
+  }
+
   // Rescan OrcaSlicer presets (pick up models/profiles added since startup).
   const [rescanning, setRescanning] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
@@ -432,6 +444,14 @@ function PrintDefaultsPage() {
                  style={{ width: 90 }} />
           <span className="muted small">min{savingInterval ? ' · saving…' : ''}</span>
         </div>
+      </FieldRow>
+
+      <FieldRow label="Display name" hint="Shown in the sidebar. Leave blank to hide it.">
+        <input className="input" value={operatorName}
+               onChange={e => setOperatorName(e.target.value)}
+               onBlur={e => commitOperatorName(e.target.value)}
+               placeholder="e.g. Workshop Lead" style={{ width: '100%' }} />
+        {savingName && <span className="muted small">saving…</span>}
       </FieldRow>
 
       <FieldRow label="OrcaSlicer profiles"

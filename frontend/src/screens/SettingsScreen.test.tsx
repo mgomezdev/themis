@@ -11,7 +11,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-    if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5 }), { status: 200 });
+    if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
     if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
     return new Response('{}', { status: 200 });
   }));
@@ -34,5 +34,31 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen />, { wrapper });
     await user.click(screen.getByRole('button', { name: /print defaults/i }));
     await waitFor(() => expect(screen.getByText('Queue check interval')).toBeTruthy());
+  });
+
+  it('Print defaults Display name field loads, saves on blur, and clears to null when blanked', async () => {
+    const user = userEvent.setup();
+    const putBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/queue') && init?.method === 'PUT') {
+        putBodies.push(JSON.parse(init.body as string));
+        return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      }
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: 'Workshop Lead' }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /print defaults/i }));
+
+    const input = await screen.findByPlaceholderText('e.g. Workshop Lead') as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe('Workshop Lead'));
+
+    await user.clear(input);
+    input.blur();
+
+    await waitFor(() => expect(putBodies).toContainEqual({ operator_name: null }));
   });
 });
