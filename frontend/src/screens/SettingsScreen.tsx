@@ -775,9 +775,7 @@ function AboutPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
-        <AboutTile k="Version"      v="0.7.2" mono />
-        <AboutTile k="Released"     v="2026-05-22" mono />
-        <AboutTile k="Channel"      v="Stable" />
+        <AboutTile k="Version" v={__APP_VERSION__} mono />
       </div>
     </div>
   );

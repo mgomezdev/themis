@@ -61,4 +61,13 @@ describe('SettingsScreen', () => {
 
     await waitFor(() => expect(putBodies).toContainEqual({ operator_name: null }));
   });
+
+  it('About page renders the injected app version and no Released/Channel tiles', async () => {
+    const user = userEvent.setup();
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /about/i }));
+    await waitFor(() => expect(screen.getByText('0.1.0')).toBeTruthy());
+    expect(screen.queryByText('Released')).toBeNull();
+    expect(screen.queryByText('Channel')).toBeNull();
+  });
 });
