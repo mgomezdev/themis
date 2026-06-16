@@ -108,6 +108,10 @@ async def _migrate(conn) -> None:
     if "missing" not in uf_cols:
         await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN missing BOOLEAN NOT NULL DEFAULT 0"))
 
+    qc_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(queue_config)"))).fetchall()}
+    if qc_cols and "operator_name" not in qc_cols:
+        await conn.execute(text("ALTER TABLE queue_config ADD COLUMN operator_name VARCHAR(120)"))
+
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     async with SessionLocal() as session:

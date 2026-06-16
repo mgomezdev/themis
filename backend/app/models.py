@@ -119,6 +119,7 @@ class QueueConfig(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
+    operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
 
 
 class SpoolmanConfig(Base):
