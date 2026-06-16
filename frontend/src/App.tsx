@@ -3,8 +3,9 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
-import { useQueue } from './api/queue';
+import { useQueue, useQueueConfig } from './api/queue';
 import { useOrders } from './api/orders';
+import { useFleetData } from './api/fleet';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -18,6 +19,8 @@ import { SettingsScreen }  from './screens/SettingsScreen';
 
 function AppShell() {
   const { jobs } = useQueue();
+  const { config: queueConfig } = useQueueConfig();
+  const [printers] = useFleetData();
   const queueCounts = useMemo(() => ({
     active:  jobs.filter(j => ['printing','paused','slicing','uploading'].includes(j.status)).length,
     pending: jobs.filter(j => j.status === 'queued').length,
@@ -58,7 +61,8 @@ function AppShell() {
 
   return (
     <div className="app" data-nav="expanded">
-      <Sidebar queueCounts={queueCounts} ordersOpen={ordersOpen} />
+      <Sidebar queueCounts={queueCounts} ordersOpen={ordersOpen}
+               operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length} />
       <div className="main">
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">

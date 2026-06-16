@@ -6,6 +6,12 @@ interface QueueCounts { active: number; pending: number; blocked: number; }
 interface SidebarProps {
   queueCounts: QueueCounts;
   ordersOpen: number;
+  operatorName: string | null;
+  printerCount: number;
+}
+
+function initials(name: string): string {
+  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() ?? '').join('');
 }
 
 function QueueBadges({ counts }: { counts: QueueCounts }) {
@@ -34,7 +40,7 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   );
 }
 
-export function Sidebar({ queueCounts, ordersOpen }: SidebarProps) {
+export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount }: SidebarProps) {
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
@@ -74,13 +80,15 @@ export function Sidebar({ queueCounts, ordersOpen }: SidebarProps) {
       </div>
 
       <div className="footer">
-        <div className="user-chip">
-          <div className="avatar">LR</div>
-          <div className="user-meta">
-            <div className="name">Lev Romero</div>
-            <div className="sub">Workshop · 3 printers</div>
+        {operatorName && (
+          <div className="user-chip">
+            <div className="avatar">{initials(operatorName)}</div>
+            <div className="user-meta">
+              <div className="name">{operatorName}</div>
+            </div>
           </div>
-        </div>
+        )}
+        <div className="muted small">{printerCount} {printerCount === 1 ? 'printer' : 'printers'}</div>
       </div>
     </aside>
   );
