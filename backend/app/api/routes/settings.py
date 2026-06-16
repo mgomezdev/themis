@@ -13,10 +13,12 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 
 class QueueConfigOut(BaseModel):
     check_interval_minutes: int
+    operator_name: str | None
 
 
 class QueueConfigIn(BaseModel):
-    check_interval_minutes: int
+    check_interval_minutes: int | None = None
+    operator_name: str | None = None
 
 
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
@@ -39,7 +41,10 @@ async def update_queue_config(
     session: AsyncSession = Depends(get_session),
 ):
     row = await _get_or_create_queue(session)
-    row.check_interval_minutes = max(1, body.check_interval_minutes)
+    if body.check_interval_minutes is not None:
+        row.check_interval_minutes = max(1, body.check_interval_minutes)
+    if body.operator_name is not None:
+        row.operator_name = body.operator_name or None
     await session.commit()
     await session.refresh(row)
     return row
