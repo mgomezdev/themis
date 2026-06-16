@@ -36,7 +36,7 @@ describe('SettingsScreen', () => {
     await waitFor(() => expect(screen.getByText('Queue check interval')).toBeTruthy());
   });
 
-  it('Print defaults Display name field loads, saves on blur, and clears to null when blanked', async () => {
+  it('Print defaults Display name field loads, saves on blur, and clears when blanked', async () => {
     const user = userEvent.setup();
     const putBodies: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
@@ -59,7 +59,7 @@ describe('SettingsScreen', () => {
     await user.clear(input);
     input.blur();
 
-    await waitFor(() => expect(putBodies).toContainEqual({ operator_name: null }));
+    await waitFor(() => expect(putBodies).toContainEqual({ operator_name: '' }));
   });
 
   it('About page renders the injected app version and no Released/Channel tiles', async () => {

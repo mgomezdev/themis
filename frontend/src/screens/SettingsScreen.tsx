@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools, useSpoolmanConfig } from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
@@ -404,12 +404,13 @@ function PrintDefaultsPage() {
   // Operator display name — shown in the Sidebar footer. Blank hides it entirely.
   const [operatorName, setOperatorName] = useState<string>('');
   const [savingName, setSavingName] = useState(false);
+  const nameTouchedRef = useRef(false);
   useEffect(() => {
-    getQueueConfig().then(c => setOperatorName(c.operator_name ?? '')).catch(console.error);
+    getQueueConfig().then(c => { if (!nameTouchedRef.current) setOperatorName(c.operator_name ?? ''); }).catch(console.error);
   }, []);
   async function commitOperatorName(name: string) {
     setSavingName(true);
-    try { await saveQueueConfig({ operator_name: name.trim() || null }); }
+    try { await saveQueueConfig({ operator_name: name.trim() }); }
     finally { setSavingName(false); }
   }
 
@@ -448,7 +449,7 @@ function PrintDefaultsPage() {
 
       <FieldRow label="Display name" hint="Shown in the sidebar. Leave blank to hide it.">
         <input className="input" value={operatorName}
-               onChange={e => setOperatorName(e.target.value)}
+               onChange={e => { nameTouchedRef.current = true; setOperatorName(e.target.value); }}
                onBlur={e => commitOperatorName(e.target.value)}
                placeholder="e.g. Workshop Lead" style={{ width: '100%' }} />
         {savingName && <span className="muted small">saving…</span>}
