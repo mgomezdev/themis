@@ -96,7 +96,7 @@ describe('SlotSpoolPicker', () => {
         filaments={filaments} filamentProfiles={filamentProfiles} onChange={onChange} />
     );
     await userEvent.setup().click(screen.getByLabelText('Clear spool selection'));
-    expect(onChange).toHaveBeenCalledWith({ spoolman_spool_id: null });
+    expect(onChange).toHaveBeenCalledWith({ spoolman_spool_id: null, filament_profile: null });
   });
 
   it('shows warning badge and Custom fields in degraded mode (spool not in list)', () => {

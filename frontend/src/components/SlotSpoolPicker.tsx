@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { LoadedFilament } from '../api/printers';
 import type { ApiSpool, ApiFilament } from '../api/spoolman';
-import { parseOrcaProfiles } from '../api/spoolman';
+import { parseOrcaProfiles, spoolDisplayName } from '../api/spoolman';
 
 export interface SlotSpoolPickerProps {
   slot: LoadedFilament;
@@ -72,13 +72,14 @@ export function SlotSpoolPicker({
       type: spool.filament.material,
       color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '',
       filament_profile: profiles?.length === 1 ? profiles[0] : null,
+      name: spoolDisplayName(spool),
     });
     setQuery('');
     setOpen(false);
   }
 
   function clearSpool() {
-    onChange({ spoolman_spool_id: null });
+    onChange({ spoolman_spool_id: null, filament_profile: null });
   }
 
   return (
