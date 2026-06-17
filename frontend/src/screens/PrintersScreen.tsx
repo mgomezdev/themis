@@ -17,13 +17,12 @@ import {
 } from '../api/printers';
 import { MachinePicker } from '../components/MachinePicker';
 import { getPrinterProfiles } from '../api/queue';
-import { useSpoolmanConfig, useSpools, spoolDisplayName } from '../api/spoolman';
+import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
+import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
 // ---------------------------------------------------------------------------
-
-const MAT_TYPES = ['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'PC', 'TPU', 'Other'] as const;
 
 function SlotSwatch({ color, name, type }: { color: string; name: string; type: string }) {
   return (
@@ -84,8 +83,9 @@ export function EditForm({
   const [error, setError] = useState<string | null>(null);
 
   const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const spools = useSpools(spoolmanActive);
+  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+  const spools = useSpools(spoolmanEnabled);
+  const filaments = useFilaments(spoolmanEnabled);
 
   useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
   useEffect(() => {
@@ -105,18 +105,6 @@ export function EditForm({
   function updateSlot(i: number, patch: Partial<LoadedFilament>) {
     setSlots(s => s.map((x, idx) => idx === i ? { ...x, ...patch } : x));
   }
-  function pickSpool(i: number, spoolId: string) {
-    if (!spoolId) { updateSlot(i, { spoolman_spool_id: null }); return; }
-    const sp = spools.find(x => String(x.id) === spoolId);
-    if (!sp) { updateSlot(i, { spoolman_spool_id: spoolId }); return; }
-    updateSlot(i, {
-      spoolman_spool_id: String(sp.id),
-      name: spoolDisplayName(sp),
-      type: sp.filament.material,
-      color: sp.filament.color_hex ? `#${sp.filament.color_hex}` : (slots[i]?.color ?? '#888888'),
-    });
-  }
-
   async function handleSave() {
     setSaving(true);
     setError(null);
@@ -167,21 +155,8 @@ export function EditForm({
           <div className="col gap-3">
             {slots.map((s, i) => (
               <div key={i} className="card" style={{ padding: 10, background: 'var(--bg-1)' }}>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                   <span className="tiny muted" style={{ width: 44, flexShrink: 0 }}>Slot {i + 1}</span>
-                  <input
-                    type="color"
-                    value={s.color}
-                    onChange={e => updateSlot(i, { color: e.target.value })}
-                    style={{ width: 32, height: 32, padding: 2, border: '1px solid var(--border-1)', borderRadius: 6, cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0 }}
-                  />
-                  <select
-                    className="input"
-                    style={{ width: 90, flexShrink: 0 }}
-                    value={s.type}
-                    onChange={e => updateSlot(i, { type: e.target.value })}>
-                    {MAT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
                   <input
                     className="input"
                     style={{ flex: '1 1 140px' }}
@@ -193,42 +168,14 @@ export function EditForm({
                     {Icons.x}
                   </button>
                 </div>
-
-                <div className="row gap-2" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-                  <div className="col gap-1" style={{ flex: '1 1 200px' }}>
-                    <label className="tiny muted" htmlFor={`fp-${i}`}>Filament profile</label>
-                    <select
-                      id={`fp-${i}`}
-                      aria-label={`Filament profile for slot ${i + 1}`}
-                      className="input"
-                      value={s.filament_profile ?? ''}
-                      onChange={e => updateSlot(i, { filament_profile: e.target.value || null })}>
-                      <option value="">— none (slicer default) —</option>
-                      {filamentProfiles.map(fp => <option key={fp} value={fp}>{fp}</option>)}
-                    </select>
-                  </div>
-                  {spoolmanActive && (
-                    <div className="col gap-1" style={{ flex: '1 1 200px' }}>
-                      <label className="tiny muted" htmlFor={`sp-${i}`}>Spoolman spool (optional)</label>
-                      <select
-                        id={`sp-${i}`}
-                        aria-label={`Spoolman spool for slot ${i + 1}`}
-                        className="input"
-                        value={s.spoolman_spool_id ?? ''}
-                        onChange={e => pickSpool(i, e.target.value)}>
-                        <option value="">— not mapped —</option>
-                        {spools.map(sp => (
-                          <option key={sp.id} value={String(sp.id)}>{spoolDisplayName(sp)}</option>
-                        ))}
-                      </select>
-                    </div>
-                  )}
-                </div>
-                {!s.filament_profile && (
-                  <div className="tiny" style={{ color: 'var(--warn)', marginTop: 6 }}>
-                    No filament profile — jobs slice with OrcaSlicer's default.
-                  </div>
-                )}
+                <SlotSpoolPicker
+                  slot={s}
+                  printerPreset={preset || null}
+                  spools={spools}
+                  filaments={filaments}
+                  filamentProfiles={filamentProfiles}
+                  onChange={patch => updateSlot(i, patch)}
+                />
               </div>
             ))}
             <button className="btn ghost sm" onClick={addSlot} style={{ alignSelf: 'flex-start' }}>
