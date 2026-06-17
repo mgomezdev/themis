@@ -157,7 +157,7 @@ export function SlotSpoolPicker({
         </div>
       )}
 
-      {((!showCombobox && isCustom) || isDegraded) && (
+      {(isCustom || isDegraded) && (
         <>
           <input
             className="input"

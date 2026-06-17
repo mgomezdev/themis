@@ -59,7 +59,7 @@ describe('SlotSpoolPicker', () => {
     await user.click(screen.getByPlaceholderText('Search spools…'));
     await user.type(screen.getByPlaceholderText('Search spools…'), 'ELEGOO');
     expect(screen.getByText('#2 ELEGOO Sky Blue PLA PLA')).toBeTruthy();
-    expect(screen.queryByText(/Bambu/)).toBeNull();
+    expect(screen.queryByText('#5 Bambu Basic Black PETG PETG')).toBeNull();
   });
 
   it('calls onChange with spool fields when a spool is selected', async () => {
@@ -117,6 +117,18 @@ describe('SlotSpoolPicker', () => {
     );
     expect(screen.getByRole('option', { name: 'ELEGOO PLA @BBL X1C' })).toBeTruthy();
     expect(screen.queryByRole('option', { name: 'Generic PLA' })).toBeNull();
+  });
+
+  it('shows Custom fields and combobox when spools are available but no spool selected', () => {
+    render(
+      <SlotSpoolPicker slot={baseSlot} printerPreset={null} spools={spools}
+        filaments={filaments} filamentProfiles={filamentProfiles} onChange={vi.fn()} />
+    );
+    // Combobox present (Spoolman enabled)
+    expect(screen.getByPlaceholderText('Search spools…')).toBeTruthy();
+    // Custom fields also present (no spool selected yet)
+    expect(screen.getByPlaceholderText('Type (e.g. PLA)')).toBeTruthy();
+    expect(screen.getByPlaceholderText('Color (#hex)')).toBeTruthy();
   });
 
   it('falls back to full filamentProfiles when no orca_profiles match', () => {
