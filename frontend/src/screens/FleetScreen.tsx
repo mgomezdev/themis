@@ -6,11 +6,11 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
-import { useSpoolmanConfig, useSpools, useFilaments, parseOrcaProfiles, spoolDisplayName } from '../api/spoolman';
+import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
 import { getPrinterProfiles } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
-import { FilamentProfileSelect } from '../components/FilamentProfileSelect';
+import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 
 type Layout = 'cards' | 'rows';
 
@@ -251,7 +251,6 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 }
 
 // ── Filament picker ──────────────────────────────────────────────────────────
-const FILAMENT_TYPES = ['PLA', 'PETG', 'ABS', 'ASA', 'PA-CF', 'PC', 'TPU', 'Other'] as const;
 
 // Multi-slot filament editor. A printer can have N manually-defined slots
 // (e.g. the Snapmaker U1 has 4 tools); each maps to a tool index Tn and carries
@@ -294,39 +293,6 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   const updateSlot = (i: number, patch: Partial<LoadedFilament>) =>
     setSlots(s => s.map((x, idx) => (idx === i ? { ...x, ...patch } : x)));
 
-  function getMappedProfiles(slotSpoolmanSpoolId: string | null | undefined): string[] | null {
-    if (!slotSpoolmanSpoolId || !machinePreset) return null;
-    const spool = spools.find(s => String(s.id) === slotSpoolmanSpoolId);
-    if (!spool) return null;
-    const filament = filaments.find(f => f.id === spool.filament.id);
-    if (!filament) return null;
-    const orcaProfiles = parseOrcaProfiles(filament);
-    const list = orcaProfiles[machinePreset];
-    return list && list.length > 0 ? list : null;
-  }
-
-  function pickSpool(i: number, spoolId: string) {
-    if (!spoolId) { updateSlot(i, { spoolman_spool_id: null, filament_profile: null }); return; }
-    const sp = spools.find(s => String(s.id) === spoolId);
-    if (!sp) return;
-
-    const filament = filaments.find(f => f.id === sp.filament.id);
-    const mapped = filament && machinePreset
-      ? (() => {
-          const list = parseOrcaProfiles(filament)[machinePreset];
-          return list && list.length > 0 ? list : null;
-        })()
-      : null;
-
-    updateSlot(i, {
-      spoolman_spool_id: String(sp.id),
-      name: spoolDisplayName(sp),
-      type: sp.filament.material,
-      color: sp.filament.color_hex ? `#${sp.filament.color_hex}` : (slots[i]?.color ?? '#888888'),
-      filament_profile: mapped && mapped.length === 1 ? mapped[0] : (slots[i]?.filament_profile ?? null),
-    });
-  }
-
   async function save() {
     setSaving(true);
     setError(null);
@@ -349,19 +315,6 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
               <span className="tiny muted mono" style={{ width: 28, flexShrink: 0 }}>T{i}</span>
               <input
-                type="color"
-                value={s.color}
-                onChange={e => updateSlot(i, { color: e.target.value })}
-                style={{ width: 32, height: 32, padding: 2, border: '1px solid var(--border-1)', borderRadius: 6, cursor: 'pointer', background: 'var(--bg-2)', flexShrink: 0 }}
-              />
-              <select
-                className="input"
-                style={{ width: 90, flexShrink: 0 }}
-                value={(FILAMENT_TYPES as readonly string[]).includes(s.type) ? s.type : 'Other'}
-                onChange={e => updateSlot(i, { type: e.target.value })}>
-                {FILAMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <input
                 className="input"
                 style={{ flex: '1 1 130px' }}
                 placeholder="Filament name"
@@ -372,45 +325,14 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
                 {Icons.x}
               </button>
             </div>
-            <div className="row gap-2" style={{ marginTop: 8, flexWrap: 'wrap' }}>
-              {(() => {
-                const mapped = getMappedProfiles(s.spoolman_spool_id);
-                return (
-                  <div className="col gap-1" style={{ flex: '1 1 180px' }}>
-                    <label className="tiny muted">Filament profile</label>
-                    <FilamentProfileSelect
-                      profiles={mapped ?? filamentProfiles}
-                      value={s.filament_profile ?? null}
-                      onChange={v => updateSlot(i, { filament_profile: v })}
-                      placeholder="— none (slicer default) —"
-                    />
-                    {mapped !== null && (
-                      <div className="tiny muted" style={{ marginTop: 2 }}>From Spoolman mapping</div>
-                    )}
-                  </div>
-                );
-              })()}
-              {spoolmanActive && (
-                <div className="col gap-1" style={{ flex: '1 1 180px' }}>
-                  <label className="tiny muted" htmlFor={`sp-${i}`}>Spoolman spool (optional)</label>
-                  <select
-                    id={`sp-${i}`}
-                    className="input"
-                    value={s.spoolman_spool_id ?? ''}
-                    onChange={e => pickSpool(i, e.target.value)}>
-                    <option value="">— not mapped —</option>
-                    {spools.map(sp => (
-                      <option key={sp.id} value={String(sp.id)}>{spoolDisplayName(sp)}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-            {!s.filament_profile && (
-              <div className="tiny" style={{ color: 'var(--warn)', marginTop: 6 }}>
-                No filament profile — jobs slice with OrcaSlicer's default.
-              </div>
-            )}
+            <SlotSpoolPicker
+              slot={s}
+              printerPreset={machinePreset}
+              spools={spools}
+              filaments={filaments}
+              filamentProfiles={filamentProfiles}
+              onChange={patch => updateSlot(i, patch)}
+            />
           </div>
         ))}
         <button className="btn ghost sm" onClick={addSlot} style={{ alignSelf: 'flex-start' }}>
