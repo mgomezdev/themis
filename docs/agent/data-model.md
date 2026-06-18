@@ -6,21 +6,23 @@ on existing tables, via `PRAGMA table_info` guard + `ALTER TABLE … ADD COLUMN`
 `<data_dir>/themis.db`. To add a column to an existing table you MUST also add a `_migrate` guard or
 existing DBs won't get it. JSON columns store Python lists/dicts.
 
-## Tables (8)
+## Tables (10)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id
-uploaded_files      ← jobs.uploaded_file_id
+uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id
+tags                ← file_tags.tag_id
+file_tags           (junction: file_id + tag_id, both CASCADE DELETE)
 orders              ← jobs.order_id (nullable; one order per job)
 jobs                ← job_printer_configs.job_id, gcode_files.job_id
 job_printer_configs
 gcode_files
-queue_config        (singleton-ish: check_interval_minutes)
+queue_config        (singleton-ish: check_interval_minutes, operator_name)
 spoolman_config     (enabled, url, api_key)
 ```
 
 ### printers
-`id, name, printer_type` (factory key: `bambu`|`elegoo_centauri`), `connection_config: JSON`,
+`id, name, printer_type` (factory key: `bambu`|`elegoo_centauri`|`snapmaker_extended`), `connection_config: JSON`,
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`.
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
@@ -37,7 +39,16 @@ spoolman_config     (enabled, url, api_key)
 
 ### uploaded_files
 `id, original_filename, stored_path, plates: JSON, uploaded_at`.
+Library index fields (filesystem is source of truth; these cache it):
+`relative_path, folder, size_bytes, content_hash, mtime: float, missing: bool`.
 - `plates`: `[{plate_number, estimated_time(min), filament_g, thumbnail_path}]` (parsed at upload).
+- `folder` defaults to `"/"`. `missing` is set by `library_scanner` when the file can't be found.
+
+### tags
+`id, name (unique), color: str ("#RRGGBB" default "#64748b"), category: str, created_at`.
+
+### file_tags
+`file_id FK → uploaded_files (CASCADE), tag_id FK → tags (CASCADE)`. Composite PK.
 
 ### orders
 `id, order_type` (`customer`|`internal`), `customer, title, due_date?, notes?`, `on_hold: bool`,
@@ -48,7 +59,8 @@ spoolman_config     (enabled, url, api_key)
 
 ### jobs
 `id, uploaded_file_id FK, plate_number, order_id FK?, assigned_printer_id FK?, queue_position: float?`
-(float → reorder without renumber), `status, block_reason: text?, created_at, updated_at`.
+(float → reorder without renumber), `status, block_reason: text?, overrides: JSON?, created_at, updated_at`.
+- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated via `override_inspector`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
 
 ### job_printer_configs  (one row per (job, eligible printer))
@@ -73,7 +85,7 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
 `id, job_id FK, printer_id FK, path`.
 
 ### queue_config / spoolman_config
-`queue_config{check_interval_minutes:int=5}`. `spoolman_config{enabled, url?, api_key?}`.
+`queue_config{check_interval_minutes:int=5, operator_name:str?}`. `spoolman_config{enabled, url?, api_key?}`.
 
 ## Frontend ↔ backend shape contracts
 

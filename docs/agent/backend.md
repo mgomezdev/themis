@@ -17,8 +17,9 @@ Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the pub
 | `printers.py` | `/api/v1/printers` | `GET /types` (vendor descriptors for add-form), `POST ""`/`GET`/`PATCH`/`DELETE /{id}`, `POST /test-connection`, `GET /{id}/profiles` (compatible orca process+filament presets), `GET /orca-machine-catalog`, `POST /rescan-profiles`, `POST /{id}/plate-cleared` (ready-for-work), control: `pause`/`resume`/`stop`(→reconciles job)/`light`/`jog-z`/`fan`/`bed-temp`/`reconnect`, camera: `GET /{id}/camera`(MJPEG), `GET /{id}/snapshot` |
 | `queue.py` | `/api/v1/queue` | `GET ""` (active jobs ordered), `PATCH /reorder` |
 | `fleet.py` | `/api/v1/fleet` | `GET ""` — per-printer merge of DB row (`enabled,queue_on,awaiting_plate_clear,loaded_filaments`) + live `printer_manager.get_normalized_state` |
-| `settings.py` | `/api/v1/settings` | `GET/PUT /queue` (check interval), `GET/PUT /spoolman`, `POST /spoolman/test` |
-| `spoolman.py` | `/api/v1/spoolman` | `GET /filaments`, `GET /spools` (proxy to Spoolman) |
+| `settings.py` | `/api/v1/settings` | `GET/PUT /queue` (check interval, operator name), `GET/PUT /spoolman`, `POST /spoolman/test` |
+| `spoolman.py` | `/api/v1/spoolman` | `GET /filaments`, `GET /spools` (proxy to Spoolman), `PATCH /filaments/{id}` (update `orca_profiles` extra field) |
+| `tags.py` | `/api/v1/tags` | `GET ""`, `POST ""`, `PATCH /{id}`, `DELETE /{id}`, `POST /files/{file_id}/assign`, `POST /files/{file_id}/unassign` |
 
 Pattern for a route: define Pydantic `*Create`/`*Patch` models, a `_to_dict(row)` serializer, a
 `_get_or_404`, use `session: AsyncSession = Depends(get_session)`. `HTTPException(404, "msg")` uses
@@ -42,7 +43,8 @@ Pattern for a route: define Pydantic `*Create`/`*Patch` models, a `_to_dict(row)
 | `snapmaker/paint_remap.py` | OrcaSlicer `TriangleSelector` `paint_color` codec (AGPL-sensitive; isolated in the Snapmaker plugin). Public API: `decode_nodes(hex)`, `encode_nodes(node)`, `remap_paint_color(hex, mapping)`. Codec: nibbles right-to-left; bits LSB-first per nibble; 2-bit `split_sides`; leaf `code==3` = 4-bit nibble for states ≥ 3; state s ≥ 3 → filament `s−2` (1-based). `remap_paint_color` swaps every filament leaf per `{filament(1-based): tool_index(0-based)}` mapping; byte-exact round-trip. |
 | `snapmaker/remap.py` | `remap_3mf(prepared_3mf, *, tool_index, filament_map)` — rewrites a prepared 3MF in-place (atomic temp-file swap). `tool_index` path: sets all object `extruder` metadata to `tool_index+1`. `filament_map` path: (1) rewrites `paint_color` attrs in all `3D/*.model` via `remap_paint_color`; (2) patches object `extruder` metadata via `_patch_model_settings_filament_map`. Both `None`/empty → no-op. Called exclusively via `SnapmakerExtendedClient.remap_sliceable_3mf`. |
 | `camera_proxy.py` | `grab_jpeg_frame`, `stream_mjpeg`, `stream_rtsp_ffmpeg` (RTSP→MJPEG via ffmpeg). |
-| `spoolman_service.py` | Spoolman HTTP client (filaments/spools). |
+| `spoolman_service.py` | Spoolman HTTP client: `fetch_filaments`, `fetch_spools`, `test_connection`, `patch_filament(url, api_key, filament_id, orca_profiles)` — writes OrcaSlicer profile mappings into the Spoolman filament's `extra.orca_profiles` field (double-JSON-encoded to satisfy Spoolman text-field constraints). |
+| `library_scanner.py` | Scans the uploads directory; updates `uploaded_files` rows (`relative_path`, `folder`, `size_bytes`, `content_hash`, `mtime`, `missing`). Filesystem is source of truth; DB caches the index. |
 
 ## Key flows (where to change behavior)
 

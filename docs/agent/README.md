@@ -20,8 +20,8 @@ architecture from source. Terse by design — every line is a fact or a pointer.
 | `recipes.md` | Step-by-step cookbooks (add vendor, route, screen, table, queue behavior) | implementing a known shape |
 | `conventions.md` | Non-obvious invariants, dev-env gotchas, testing patterns | always skim before editing/running |
 
-Human-facing (diagrams, narrative — not the agent source of truth): `docs/architecture/index.html`,
-`README.md`, `CLAUDE.md`, `docs/printer-interface.md`, `docs/elegoo-centauri-client.md`.
+Human-facing (narrative — not the agent source of truth): `README.md`, `CLAUDE.md`,
+`docs/printer-interface.md`, `docs/elegoo-centauri-client.md`.
 
 ## System in one screen
 
