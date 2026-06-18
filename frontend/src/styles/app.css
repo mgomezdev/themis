@@ -36,8 +36,8 @@
   --info-bg:     rgba(56,189,248,0.12);
 
   /* Type */
-  --font-sans: 'Geist', 'Inter Tight', -apple-system, system-ui, sans-serif;
-  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
   /* Density-dependent (overridden by [data-density]) */
   --pad-1: 6px;
@@ -107,7 +107,7 @@ body {
   line-height: 1.45;
   letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: 'ss01', 'cv11';
+  font-feature-settings: 'kern' 1;
 }
 button { font-family: inherit; color: inherit; }
 input, textarea, select { font-family: inherit; color: inherit; }
@@ -115,7 +115,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 ::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 10px; border: 2px solid var(--bg-1); }
 ::-webkit-scrollbar-track { background: transparent; }
 
-.mono { font-family: var(--font-mono); font-feature-settings: 'zero', 'ss01'; }
+.mono { font-family: var(--font-mono); font-feature-settings: 'zero'; }
 .num  { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* ---------- layout ---------- */
