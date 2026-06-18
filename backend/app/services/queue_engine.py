@@ -161,8 +161,12 @@ class QueueEngine:
         self._event.set()
 
     async def start(self) -> None:
+        # slicing and uploading are non-resumable transient states — reset them to
+        # queued immediately so they re-enter the queue on this boot.
         async with self._factory() as session:
-            result = await session.execute(select(Job).where(Job.status == "slicing"))
+            result = await session.execute(
+                select(Job).where(Job.status.in_(["slicing", "uploading"]))
+            )
             orphans = result.scalars().all()
             for job in orphans:
                 job.status = "queued"
@@ -208,6 +212,7 @@ class QueueEngine:
         return max(1, minutes) * 60.0
 
     async def _process_queue(self) -> None:
+        await self._reconcile_printing_jobs()
         ready_ids = sorted([
             pid for pid in self._mgr.get_all_printer_ids()
             if self._mgr.is_printer_ready(pid)
@@ -215,6 +220,85 @@ class QueueEngine:
         for printer_id in ready_ids:
             async with self._factory() as session:
                 await self._try_claim_for_printer(session, printer_id)
+
+    async def _reconcile_printing_jobs(self) -> None:
+        """Reconcile jobs stuck in 'printing' against live printer state.
+
+        Runs every queue cycle to catch missed _on_print_complete callbacks —
+        not just on restart but also after MQTT reconnects or network blips.
+
+        Decision matrix (printer must be connected + idle to act):
+        - Printer not connected or not idle → skip (still in progress, paused, or offline)
+        - Printer idle + normalized state FAILED → physical cancel on printer → job 'failed'
+        - Printer idle + any other state → print completed → job 'complete'
+
+        Bambu note: physical cancel goes to IDLE (no distinct cancelled state in the
+        firmware), so it's indistinguishable from a successful finish here. The
+        awaiting_plate_clear gate still holds the printer until the user clears the plate.
+        """
+        async with self._factory() as session:
+            result = await session.execute(select(Job).where(Job.status == "printing"))
+            jobs_to_check = [
+                (job.id, job.assigned_printer_id)
+                for job in result.scalars().all()
+            ]
+
+        for job_id, printer_id in jobs_to_check:
+            if printer_id is None:
+                continue
+            client = self._mgr._clients.get(printer_id)
+            if client is None or not client.connected or not client.is_idle:
+                continue  # still printing, paused, or offline — leave it alone
+
+            # Printer is connected and idle: the print has ended one way or another.
+            # Use the normalized state to distinguish a clean idle from a cancel/failure.
+            ended_in_failure = False
+            try:
+                normalized = self._mgr.get_normalized_state(printer_id)
+                ended_in_failure = normalized.get("state") == "FAILED"
+            except Exception:
+                logger.exception("Reconcile: could not get state for printer %s", printer_id)
+                continue
+
+            if ended_in_failure:
+                # Elegoo/Snapmaker physical cancel: normalized state is FAILED.
+                # Mark the job failed so the user can adjust settings before re-queueing.
+                async with self._factory() as session:
+                    job = await session.get(Job, job_id)
+                    if job is None or job.status != "printing":
+                        continue  # already resolved by the normal callback
+                    job.status = "failed"
+                    job.block_reason = "print cancelled or ended with failure on the printer"
+                    job.assigned_printer_id = None
+                    job.updated_at = _now()
+                    gcode_result = await session.execute(
+                        select(GcodeFile).where(
+                            GcodeFile.job_id == job_id,
+                            GcodeFile.printer_id == printer_id,
+                        )
+                    )
+                    gcode = gcode_result.scalar_one_or_none()
+                    if gcode:
+                        try:
+                            os.remove(gcode.path)
+                        except OSError:
+                            pass
+                        await session.delete(gcode)
+                    await session.commit()
+                logger.warning(
+                    "Reconcile: job %s → failed (printer %s idle with FAILED state)",
+                    job_id, printer_id,
+                )
+                await self._broadcast_job(job_id)
+            else:
+                # Normal completion (or Bambu cancel, which is indistinguishable from
+                # a successful finish at the firmware level). Delegate to the same
+                # handle_print_complete path used by the normal callback so gcode cleanup
+                # and broadcasting are consistent.
+                logger.info(
+                    "Reconcile: job %s → complete (printer %s idle)", job_id, printer_id,
+                )
+                await self.handle_print_complete(printer_id)
 
     async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int) -> None:
         printer = await session.get(Printer, printer_id)
