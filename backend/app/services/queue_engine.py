@@ -91,8 +91,10 @@ def _resolve_filament_map(filament_map: list, loaded: list) -> list:
             resolved.append(entry)
         else:
             ft = entry.get("filament_type")
+            if not ft:
+                raise ValueError("Catalog filament entry is missing filament_type — cannot resolve slot")
             fc = entry.get("filament_color")
-            slot_idx = _find_slot_for_filament(ft or "", fc, loaded or [])
+            slot_idx = _find_slot_for_filament(ft, fc, loaded or [])
             if slot_idx is None:
                 raise ValueError(
                     f"Filament {ft!r} not loaded on printer — cannot slice"
@@ -335,6 +337,7 @@ class QueueEngine:
                             c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm))
 
         loop = asyncio.get_running_loop()
+        multi_presets: list = []
         if cfg_filament_map:
             ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
             multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
