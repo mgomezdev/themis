@@ -28,8 +28,8 @@ const JOB = {
       filament_color: null,
       tool_index: null,
       filament_map: [
-        { model_filament: 1, tool_index: 0 },
-        { model_filament: 2, tool_index: 1 },
+        { model_filament: 1, tool_index: 0, filament_id: null, filament_type: null, filament_color: null },
+        { model_filament: 2, tool_index: 1, filament_id: null, filament_type: null, filament_color: null },
       ],
       slice_failed: false,
       slice_error: null,
@@ -46,12 +46,12 @@ test('Edit Job pre-fills filament_map and round-trips it on save', async ({ page
   await expect(page.getByTestId('map-tool-2')).toBeVisible();
 
   // Verify pre-fill: model filament 1 -> tool 0, model filament 2 -> tool 1
-  await expect(page.getByTestId('map-tool-1')).toHaveValue('0');
-  await expect(page.getByTestId('map-tool-2')).toHaveValue('1');
+  await expect(page.getByTestId('map-tool-1')).toHaveValue('t:0');
+  await expect(page.getByTestId('map-tool-2')).toHaveValue('t:1');
 
   // Change model filament 2 -> tool 2
-  await page.getByTestId('map-tool-2').selectOption('2');
-  await expect(page.getByTestId('map-tool-2')).toHaveValue('2');
+  await page.getByTestId('map-tool-2').selectOption('t:2');
+  await expect(page.getByTestId('map-tool-2')).toHaveValue('t:2');
 
   // Click Save & re-queue
   await page.getByRole('button', { name: /Save & re-queue/i }).click();
@@ -64,7 +64,7 @@ test('Edit Job pre-fills filament_map and round-trips it on save', async ({ page
 
   const fm = saved!.body.printer_configs[0].filament_map;
   // model filament 1 stays at tool 0
-  expect(fm).toContainEqual({ model_filament: 1, tool_index: 0 });
+  expect(fm).toContainEqual(expect.objectContaining({ model_filament: 1, tool_index: 0 }));
   // model filament 2 was changed to tool 2
-  expect(fm).toContainEqual({ model_filament: 2, tool_index: 2 });
+  expect(fm).toContainEqual(expect.objectContaining({ model_filament: 2, tool_index: 2 }));
 });

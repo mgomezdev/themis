@@ -27,6 +27,35 @@ const BADGE: Record<string, string> = {
 };
 const FILAMENT_TYPES = ['PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC'];
 
+type FilamentMapEntry = {
+  model_filament: number;
+  tool_index: number | null;
+  filament_id: number | null;
+  filament_type: string | null;
+  filament_color: string | null;
+};
+
+function encodeAssignment(entry: FilamentMapEntry): string {
+  if (entry.tool_index !== null) return `t:${entry.tool_index}`;
+  if (entry.filament_id !== null) return `f:${entry.filament_id}`;
+  return 't:0';
+}
+
+function findLoadedSlotForEntry(
+  entry: { filament_type: string | null; filament_color: string | null },
+  slots: { type?: string; color?: string }[],
+): number | null {
+  if (!entry.filament_type) return null;
+  const reqType = entry.filament_type.toLowerCase();
+  const reqColor = (entry.filament_color ?? '').replace('#', '').toLowerCase();
+  const idx = slots.findIndex(s => {
+    if ((s.type ?? '').toLowerCase() !== reqType) return false;
+    if (!reqColor) return true;
+    return (s.color ?? '').replace('#', '').toLowerCase() === reqColor;
+  });
+  return idx >= 0 ? idx : null;
+}
+
 function usePrinterProfiles(printerId: number | null): { printProfiles: string[]; filamentProfiles: string[] } {
   const [data, setData] = useState<{ printProfiles: string[]; filamentProfiles: string[] }>({
     printProfiles: [], filamentProfiles: [],
@@ -160,23 +189,26 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
             <label className="label">Filament mapping</label>
             <div className="col gap-2" style={{ marginTop: 4 }}>
               {modelFilaments.map(f => {
-                // Build current map from config or use identity (f.index - 1, clamped)
-                const currentMap: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] =
-                  config.filamentMap ??
-                  modelFilaments.map(mf => ({
+                const currentMap: FilamentMapEntry[] =
+                  (config.filamentMap as FilamentMapEntry[] | null) ??
+                  modelFilaments!.map(mf => ({
                     model_filament: mf.index,
                     tool_index: Math.min(mf.index - 1, slots.length - 1),
                     filament_id: null,
                     filament_type: null,
                     filament_color: null,
                   }));
-                const entry = currentMap.find(e => e.model_filament === f.index);
-                const currentToolIndex = entry?.tool_index ?? Math.min(f.index - 1, slots.length - 1);
+                const entry: FilamentMapEntry = currentMap.find(e => e.model_filament === f.index) ?? {
+                  model_filament: f.index,
+                  tool_index: Math.min(f.index - 1, slots.length - 1),
+                  filament_id: null,
+                  filament_type: null,
+                  filament_color: null,
+                };
 
-                function handleMapChange(chosenTool: number) {
-                  // Start from current map (or identity) and replace/insert this filament's entry
-                  const base: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] =
-                    config.filamentMap ??
+                function handleAssignmentChange(val: string) {
+                  const base: FilamentMapEntry[] =
+                    (config.filamentMap as FilamentMapEntry[] | null) ??
                     modelFilaments!.map(mf => ({
                       model_filament: mf.index,
                       tool_index: Math.min(mf.index - 1, slots.length - 1),
@@ -185,32 +217,81 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                       filament_color: null,
                     }));
                   const newMap = base.filter(e => e.model_filament !== f.index);
-                  newMap.push({ model_filament: f.index, tool_index: chosenTool, filament_id: null, filament_type: null, filament_color: null });
-                  // Sort by model_filament for stable ordering
+                  if (val.startsWith('t:')) {
+                    newMap.push({ model_filament: f.index, tool_index: Number(val.slice(2)), filament_id: null, filament_type: null, filament_color: null });
+                  } else {
+                    const fid = Number(val.slice(2));
+                    const fil = filaments.find(fil => fil.id === fid)!;
+                    newMap.push({
+                      model_filament: f.index,
+                      tool_index: null,
+                      filament_id: fid,
+                      filament_type: fil.material,
+                      filament_color: fil.color_hex ? `#${fil.color_hex}` : null,
+                    });
+                  }
                   newMap.sort((a, b) => a.model_filament - b.model_filament);
                   onChange({ filamentMap: newMap });
                 }
 
+                const matchedSlot = entry.filament_id !== null
+                  ? findLoadedSlotForEntry(entry, slots)
+                  : null;
+
                 return (
-                  <div key={f.index} className="row gap-2" style={{ alignItems: 'center' }}>
-                    <div style={{
-                      width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-                      background: f.color || '#888', border: '1px solid var(--border-2)',
-                    }} />
-                    <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
-                      Filament {f.index}{f.type ? ` · ${f.type}` : ''}
-                    </span>
-                    <select
-                      data-testid={`map-tool-${f.index}`}
-                      className="select"
-                      style={{ flex: '0 0 auto', minWidth: 110 }}
-                      value={currentToolIndex}
-                      onChange={e => handleMapChange(Number(e.target.value))}
-                    >
-                      {slots.map((s, i) => (
-                        <option key={i} value={i}>T{i} · {s.type || '—'}</option>
-                      ))}
-                    </select>
+                  <div key={f.index}>
+                    <div className="row gap-2" style={{ alignItems: 'center' }}>
+                      <div style={{
+                        width: 14, height: 14, borderRadius: 3, flexShrink: 0,
+                        background: f.color || '#888', border: '1px solid var(--border-2)',
+                      }} />
+                      <span className="tiny" style={{ flex: 1, minWidth: 0, color: 'var(--text-2)' }}>
+                        Filament {f.index}{f.type ? ` · ${f.type}` : ''}
+                      </span>
+                      <select
+                        data-testid={`map-tool-${f.index}`}
+                        className="select"
+                        style={{ flex: '0 0 auto', minWidth: 160 }}
+                        value={encodeAssignment(entry)}
+                        onChange={e => handleAssignmentChange(e.target.value)}
+                      >
+                        <optgroup label="Slots">
+                          {slots.map((s, i) => (
+                            <option key={i} value={`t:${i}`}>T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}</option>
+                          ))}
+                        </optgroup>
+                        {spoolmanActive && filaments.length > 0 && (
+                          <optgroup label="Catalog">
+                            {filaments.map(fil => (
+                              <option key={fil.id} value={`f:${fil.id}`}>{filamentDisplayName(fil)} · {fil.material}</option>
+                            ))}
+                          </optgroup>
+                        )}
+                      </select>
+                    </div>
+                    {entry.filament_id !== null && (
+                      <div style={{ marginLeft: 22, marginTop: 2 }}>
+                        {matchedSlot !== null ? (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
+                            padding: '2px 6px', borderRadius: 4,
+                            background: 'rgba(34,197,94,0.10)', border: '1px solid rgba(34,197,94,0.30)',
+                            color: 'var(--ok)',
+                          }}>
+                            ✓ T{matchedSlot} loaded now
+                          </span>
+                        ) : (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10,
+                            padding: '2px 6px', borderRadius: 4,
+                            background: 'rgba(251,191,36,0.10)', border: '1px solid rgba(251,191,36,0.30)',
+                            color: 'var(--warn)',
+                          }}>
+                            ⚠ {entry.filament_type || '?'} not loaded — will block at slice
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}

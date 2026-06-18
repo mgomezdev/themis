@@ -1,6 +1,7 @@
 import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerPrinterConfig, defaultPerPrinterCfg } from './PerPrinterConfig';
+import * as spoolman from '../api/spoolman';
 
 // Mock spoolman hooks so they don't fire real HTTP requests
 vi.mock('../api/spoolman', () => ({
@@ -8,6 +9,7 @@ vi.mock('../api/spoolman', () => ({
   useFilaments: vi.fn().mockReturnValue([]),
   filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
     f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
+  parseOrcaProfiles: vi.fn(() => ({})),
 }));
 
 // Mock getPrinterProfiles so it doesn't fire real HTTP requests
@@ -93,8 +95,8 @@ describe('PerPrinterConfig', () => {
   it('multi-material: changing map-tool-2 calls onChange with filamentMap containing {model_filament:2, tool_index:chosen}', async () => {
     const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
     const sel2 = await screen.findByTestId('map-tool-2');
-    // MULTI has 3 slots (T0, T1, T2); choose T2 (value=2)
-    fireEvent.change(sel2, { target: { value: '2' } });
+    // MULTI has 3 slots (T0, T1, T2); choose T2 (value=t:2)
+    fireEvent.change(sel2, { target: { value: 't:2' } });
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         filamentMap: expect.arrayContaining([
@@ -116,5 +118,102 @@ describe('PerPrinterConfig', () => {
     renderCfg(MULTI);
     const toolSel = await screen.findByTestId('tool-select');
     expect(toolSel).not.toBeNull();
+  });
+});
+
+const MOCK_FILAMENTS = [
+  { id: 7,  name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
+  { id: 19, name: 'White',    vendor: { id: 3, name: 'Sunlu'  }, material: 'PETG', color_hex: 'FFFFFF' },
+];
+
+function mockSpoolman(enabled: boolean) {
+  vi.mocked(spoolman.useSpoolmanConfig).mockReturnValue(
+    enabled
+      ? { config: { enabled: true, url: 'http://artemis:7912', api_key: null }, refetch: vi.fn() }
+      : { config: null, refetch: vi.fn() },
+  );
+  vi.mocked(spoolman.useFilaments).mockReturnValue(enabled ? MOCK_FILAMENTS as never : []);
+}
+
+describe('PerPrinterConfig — multi-material unified dropdown', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('slot-only: renders optgroup "Slots" but no "Catalog" when spoolman off', async () => {
+    mockSpoolman(false);
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel1 = await screen.findByTestId('map-tool-1');
+    const html = sel1.innerHTML;
+    expect(html).toContain('Slots');
+    expect(html).not.toContain('Catalog');
+  });
+
+  it('renders "Catalog" optgroup when spoolman is on', async () => {
+    mockSpoolman(true);
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel1 = await screen.findByTestId('map-tool-1');
+    expect(sel1.innerHTML).toContain('Catalog');
+  });
+
+  it('catalog optgroup contains filament options', async () => {
+    mockSpoolman(true);
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel1 = await screen.findByTestId('map-tool-1');
+    const options = Array.from(sel1.querySelectorAll('option')).map(o => o.value);
+    expect(options).toContain('f:7');
+    expect(options).toContain('f:19');
+  });
+
+  it('selecting a catalog filament calls onChange with filament_id, filament_type, filament_color', async () => {
+    mockSpoolman(true);
+    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel1 = await screen.findByTestId('map-tool-1');
+    fireEvent.change(sel1, { target: { value: 'f:7' } });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filamentMap: expect.arrayContaining([
+          expect.objectContaining({
+            model_filament: 1,
+            tool_index: null,
+            filament_id: 7,
+            filament_type: 'PLA',
+            filament_color: '#5B9BD5',
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('selecting a slot calls onChange with tool_index set and filament fields null', async () => {
+    mockSpoolman(true);
+    const onChange = renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    const sel2 = await screen.findByTestId('map-tool-2');
+    fireEvent.change(sel2, { target: { value: 't:1' } });
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filamentMap: expect.arrayContaining([
+          expect.objectContaining({
+            model_filament: 2,
+            tool_index: 1,
+            filament_id: null,
+            filament_type: null,
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('amber badge shown when filament_type has no matching loaded slot', async () => {
+    mockSpoolman(true);
+    const cfgNoMatch = {
+      ...defaultPerPrinterCfg(),
+      filamentMap: [
+        { model_filament: 1, tool_index: null, filament_id: 5, filament_type: 'ABS', filament_color: null },
+        { model_filament: 2, tool_index: 0, filament_id: null, filament_type: null, filament_color: null },
+        { model_filament: 3, tool_index: 2, filament_id: null, filament_type: null, filament_color: null },
+      ],
+    };
+    renderCfg(MULTI, cfgNoMatch as any, MODEL_FILAMENTS_3);
+    const badge = await screen.findByText(/will block at slice/i);
+    expect(badge).toBeTruthy();
   });
 });
