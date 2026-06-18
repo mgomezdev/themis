@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { PrintersScreen } from './PrintersScreen';
+import { PrintersScreen, EditForm } from './PrintersScreen';
+import type { ApiPrinter, PrinterType } from '../api/printers';
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <MemoryRouter>{children}</MemoryRouter>
@@ -154,5 +155,108 @@ describe('PrintersScreen', () => {
     }));
     render(<PrintersScreen />, { wrapper });
     await waitFor(() => expect(document.querySelector('[title="Generic PLA (PLA)"]')).toBeTruthy());
+  });
+});
+
+// ── Integration: EditForm + SlotSpoolPicker spool selection ───────────────────
+
+const INTEGRATION_PRINTER: ApiPrinter = {
+  id: 7,
+  name: 'Prism',
+  printer_type: 'bambu',
+  connection_config: { ip_address: '192.168.2.50', access_code: 'xyz', serial_number: 'SN007' },
+  awaiting_plate_clear: false,
+  orca_printer_profiles: [],
+  current_orca_printer_profile: null,
+  enabled: true,
+  queue_on: true,
+  connected: true,
+  loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
+};
+
+const INTEGRATION_TYPES: PrinterType[] = [
+  {
+    printer_type: 'bambu',
+    display_name: 'Bambu Lab',
+    connection_fields: [
+      { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
+    ],
+  },
+];
+
+const INTEGRATION_SPOOL = {
+  id: 7,
+  remaining_weight: 800,
+  used_weight: 0,
+  filament: { id: 30, vendor: { name: 'Bambu' }, name: 'Basic White PLA', material: 'PLA', color_hex: 'FFFFFF' },
+};
+
+describe('PrintersScreen EditForm + SlotSpoolPicker integration', () => {
+  let patchCalls: Array<[string, RequestInit]>;
+
+  beforeEach(() => {
+    patchCalls = [];
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      if (init?.method === 'PATCH') {
+        patchCalls.push([url, init as RequestInit]);
+        return Promise.resolve({ ok: true, json: () => Promise.resolve(INTEGRATION_PRINTER) });
+      }
+      if (url === '/api/v1/settings/spoolman') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', api_key: null }) });
+      }
+      if (url === '/api/v1/spoolman/spools') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([INTEGRATION_SPOOL]) });
+      }
+      if (url === '/api/v1/spoolman/filaments') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      if (url.includes('orca-machine-catalog')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      if (url.match(/\/api\/v1\/printers\/\d+\/profiles/)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ print_profiles: [], filament_profiles: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('saves correct spool fields when a spool is selected in EditForm', async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn();
+    const onCancel = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <EditForm
+          printer={INTEGRATION_PRINTER}
+          types={INTEGRATION_TYPES}
+          onSave={onSave}
+          onCancel={onCancel}
+        />
+      </MemoryRouter>
+    );
+
+    // Wait for the spool combobox to appear (after useSpools fetches)
+    const searchInput = await screen.findByPlaceholderText('Search spools…');
+
+    // Focus to open dropdown, then pick the spool via mouseDown
+    fireEvent.focus(searchInput);
+    const spoolOption = await screen.findByText(/#7 Bambu Basic White PLA PLA/);
+    fireEvent.mouseDown(spoolOption);
+
+    // Save
+    await user.click(screen.getByRole('button', { name: /save/i }));
+
+    // Verify PATCH was called with the correct spool fields
+    expect(patchCalls.length).toBeGreaterThan(0);
+    const body = JSON.parse(patchCalls[0][1].body as string);
+    const slot = body.loaded_filaments[0];
+    expect(slot.spoolman_spool_id).toBe('7');
+    expect(slot.type).toBe('PLA');
+    expect(slot.color).toBe('#FFFFFF');
   });
 });
