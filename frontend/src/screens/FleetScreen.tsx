@@ -881,8 +881,22 @@ export function FleetScreen() {
   }, []);
 
   const toggle = (id: string) => setExpandedId(expandedId === id ? null : id);
-  const printingCount = printers.filter(p => p.status === 'printing').length;
-  const idleCount = printers.filter(p => p.status === 'idle').length;
+  const statusCounts = {
+    printing: printers.filter(p => p.status === 'printing').length,
+    claiming: printers.filter(p => p.status === 'claiming').length,
+    idle:     printers.filter(p => p.status === 'idle').length,
+    paused:   printers.filter(p => p.status === 'paused').length,
+    error:    printers.filter(p => p.status === 'error').length,
+    offline:  printers.filter(p => p.status === 'offline').length,
+  };
+  const fleetSummary = [
+    statusCounts.error    && `${statusCounts.error} error`,
+    statusCounts.paused   && `${statusCounts.paused} paused`,
+    statusCounts.printing && `${statusCounts.printing} printing`,
+    statusCounts.claiming && `${statusCounts.claiming} claiming`,
+    statusCounts.idle     && `${statusCounts.idle} idle`,
+    statusCounts.offline  && `${statusCounts.offline} offline`,
+  ].filter(Boolean).join(' · ');
 
   if (adding) {
     return (
@@ -902,9 +916,9 @@ export function FleetScreen() {
           <div className="tag-key" style={{ marginBottom: 2 }}>Workshop</div>
           <div className="row gap-3" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em' }}>
-              {printers.length} printers online
+              {printers.length} printers
             </div>
-            <div className="muted small">{printingCount} printing · {idleCount} idle</div>
+            <div className="muted small">{fleetSummary}</div>
           </div>
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
