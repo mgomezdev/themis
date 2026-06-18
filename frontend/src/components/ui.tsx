@@ -10,7 +10,8 @@ export function StatusPill({ status, label }: { status: StatusKey; label?: strin
     queued:      ['idle',   'Queued'],
     waiting:     ['idle',   'Waiting'],
     claiming:    ['accent', 'Claiming'],
-    slicing:     ['accent', 'Slicing'],
+    slicing:     ['accent', 'Slicing…'],
+    uploading:   ['accent', 'Uploading'],
     paused:      ['warn',   'Paused'],
     error:       ['err',    'Error'],
     offline:     ['idle',   'Offline'],
@@ -20,6 +21,8 @@ export function StatusPill({ status, label }: { status: StatusKey; label?: strin
     hold:        ['warn',   'On hold'],
     in_progress: ['info',   'In progress'],
     partial:     ['warn',   'Partial'],
+    blocked:     ['warn',   'Blocked'],
+    failed:      ['err',    'Failed'],
   };
   const [cls, txt] = map[status] ?? ['idle', status];
   return <span className={`pill ${cls}`}><span className="dot" />{label ?? txt}</span>;

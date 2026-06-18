@@ -223,7 +223,7 @@ function JobCardRich({
                 }
               />
             ) : (
-              <Kv k="Slicing" v={job.sliced ? 'ready' : 'on claim'} />
+              <Kv k="Slicing" v={job.sliced ? 'ready' : <span title="Will slice when a printer claims this job">on claim</span>} />
             )}
           </div>
 
