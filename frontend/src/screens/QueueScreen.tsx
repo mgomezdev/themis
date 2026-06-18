@@ -147,8 +147,8 @@ function JobCardRich({
         padding: 0,
         cursor: 'pointer',
         overflow: 'hidden',
-        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.3)' : isBlocked ? 'rgba(251,191,36,0.4)' : undefined,
-        boxShadow: selected ? '0 0 0 1px var(--accent)' : undefined,
+        borderColor: selected ? 'var(--accent)' : isFailed ? 'rgba(239,68,68,0.55)' : isBlocked ? 'rgba(251,191,36,0.6)' : undefined,
+        boxShadow: selected ? '0 0 0 1px var(--accent)' : isFailed ? '0 0 0 1px rgba(239,68,68,0.15)' : isBlocked ? '0 0 0 1px rgba(251,191,36,0.12)' : undefined,
       }}
     >
       <div className="row gap-4" style={{ padding: 14 }}>
@@ -240,8 +240,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(251,191,36,0.2)',
-            background: 'rgba(251,191,36,0.04)',
+            borderTop: '1px solid rgba(251,191,36,0.3)',
+            background: 'rgba(251,191,36,0.09)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
@@ -270,8 +270,8 @@ function JobCardRich({
         <div
           style={{
             padding: '10px 14px',
-            borderTop: '1px solid rgba(239,68,68,0.18)',
-            background: 'rgba(239,68,68,0.04)',
+            borderTop: '1px solid rgba(239,68,68,0.3)',
+            background: 'rgba(239,68,68,0.09)',
             display: 'flex',
             flexDirection: 'column',
             gap: 4,
