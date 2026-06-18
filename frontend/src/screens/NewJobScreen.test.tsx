@@ -17,6 +17,7 @@ vi.mock('../api/spoolman', () => ({
   useFilaments:      vi.fn(),
   filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
     f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
+  parseOrcaProfiles: vi.fn(() => ({})),
 }));
 
 import * as spoolmanApi from '../api/spoolman';
