@@ -70,8 +70,8 @@ export function SlotSpoolPicker({
     onChange({
       spoolman_spool_id: String(spool.id),
       type: spool.filament.material,
-      color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : '',
-      filament_profile: profiles?.length === 1 ? profiles[0] : null,
+      color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : (slot.color || ''),
+      filament_profile: profiles?.length === 1 ? profiles[0] : (slot.filament_profile ?? null),
       name: spoolDisplayName(spool),
     });
     setQuery('');
@@ -80,6 +80,8 @@ export function SlotSpoolPicker({
 
   function clearSpool() {
     onChange({ spoolman_spool_id: null, filament_profile: null });
+    setQuery('');
+    setOpen(false);
   }
 
   return (
@@ -103,7 +105,7 @@ export function SlotSpoolPicker({
             }}>
               <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(selectedSpool), flexShrink: 0 }} />
               <span style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>
-                {spoolRowLabel(selectedSpool)} — {selectedSpool.remaining_weight}g remaining
+                {spoolRowLabel(selectedSpool)} — {selectedSpool.remaining_weight != null ? `${selectedSpool.remaining_weight}g remaining` : '— remaining'}
               </span>
               <button
                 onClick={clearSpool}

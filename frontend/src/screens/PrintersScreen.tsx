@@ -89,6 +89,7 @@ export function EditForm({
 
   useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
   useEffect(() => {
+    setFilamentProfiles([]);
     let alive = true;
     getPrinterProfiles(printer.id)
       .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
