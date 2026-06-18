@@ -81,6 +81,26 @@ def _mapped_tools_loaded(filament_map: list, loaded: list) -> bool:
     )
 
 
+def _resolve_filament_map(filament_map: list, loaded: list) -> list:
+    """Resolve any catalog-assigned entries (filament_type set, tool_index None)
+    to their matching loaded slot index. Returns a new list with all entries
+    having tool_index set. Raises ValueError if any catalog entry has no match."""
+    resolved = []
+    for entry in filament_map:
+        if entry.get("tool_index") is not None:
+            resolved.append(entry)
+        else:
+            ft = entry.get("filament_type")
+            fc = entry.get("filament_color")
+            slot_idx = _find_slot_for_filament(ft or "", fc, loaded or [])
+            if slot_idx is None:
+                raise ValueError(
+                    f"Filament {ft!r} not loaded on printer — cannot slice"
+                )
+            resolved.append({**entry, "tool_index": slot_idx})
+    return resolved
+
+
 def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
     """Return a reason string if the config can't be satisfied by the printer's
     loaded filaments, else None."""
@@ -292,6 +312,14 @@ class QueueEngine:
         file_base = f"{safe}_p{plate_number}_j{job_id}"
         client = self._mgr.get_client(printer_id)
         export_args = client.orca_export_args(file_base) if client else []
+
+        # Resolve any catalog filament entries to slot indices before slicing.
+        if cfg_filament_map:
+            try:
+                cfg_filament_map = _resolve_filament_map(cfg_filament_map, loaded)
+            except ValueError as exc:
+                await self._handle_slice_failure(job_id, printer_id, str(exc))
+                return
 
         prepare_hook = None
         if client is not None and (cfg_tool_index is not None or cfg_filament_map):

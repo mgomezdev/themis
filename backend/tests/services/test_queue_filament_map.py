@@ -110,3 +110,39 @@ def test_filament_mismatch_slot_entry_with_filament_type_not_double_checked():
     ])
     # TPU is not loaded in LOADED_MIXED, but slot 0 is valid — should NOT return mismatch
     assert _filament_mismatch(cfg, LOADED_MIXED) is None
+
+
+from app.services.queue_engine import _resolve_filament_map
+
+
+def test_resolve_slot_entries_unchanged():
+    fm = [{"model_filament": 1, "tool_index": 0, "filament_id": None, "filament_type": None, "filament_color": None}]
+    result = _resolve_filament_map(fm, LOADED_MIXED)
+    assert result[0]["tool_index"] == 0
+
+def test_resolve_catalog_entry_found():
+    fm = [{"model_filament": 1, "tool_index": None, "filament_id": 7, "filament_type": "PLA", "filament_color": None}]
+    result = _resolve_filament_map(fm, LOADED_MIXED)
+    assert result[0]["tool_index"] == 0
+
+def test_resolve_catalog_entry_with_color():
+    fm = [{"model_filament": 1, "tool_index": None, "filament_id": 19, "filament_type": "PETG", "filament_color": "#FFFFFF"}]
+    result = _resolve_filament_map(fm, LOADED_MIXED)
+    assert result[0]["tool_index"] == 1
+
+def test_resolve_catalog_entry_not_loaded_raises():
+    fm = [{"model_filament": 1, "tool_index": None, "filament_id": 5, "filament_type": "ABS", "filament_color": None}]
+    try:
+        _resolve_filament_map(fm, LOADED_MIXED)
+        assert False, "should have raised"
+    except ValueError as exc:
+        assert "ABS" in str(exc)
+
+def test_resolve_mixed_map():
+    fm = [
+        {"model_filament": 1, "tool_index": 0, "filament_id": None, "filament_type": None, "filament_color": None},
+        {"model_filament": 2, "tool_index": None, "filament_id": 19, "filament_type": "PETG", "filament_color": "#FFFFFF"},
+    ]
+    result = _resolve_filament_map(fm, LOADED_MIXED)
+    assert result[0]["tool_index"] == 0
+    assert result[1]["tool_index"] == 1
