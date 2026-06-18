@@ -35,20 +35,18 @@ def _headers(api_key: Optional[str]) -> dict:
 async def patch_filament(
     url: str, api_key: Optional[str], filament_id: int, orca_profiles: dict
 ) -> dict:
-    """Merge orca_profiles into filament's extra field and PATCH Spoolman."""
     headers = _headers(api_key)
     base = url.rstrip("/")
     async with httpx.AsyncClient(timeout=10) as client:
-        get_resp = await client.get(f"{base}/api/v1/filament/{filament_id}", headers=headers)
-        get_resp.raise_for_status()
-        existing_extra: dict = get_resp.json().get("extra") or {}
-
-        merged_extra = {**existing_extra, "orca_profiles": _json.dumps(orca_profiles)}
-
         patch_resp = await client.patch(
             f"{base}/api/v1/filament/{filament_id}",
-            json={"extra": merged_extra},
+            json={"extra": {"orca_profiles": _json.dumps(_json.dumps(orca_profiles))}},
             headers=headers,
         )
-        patch_resp.raise_for_status()
+        if not patch_resp.is_success:
+            raise httpx.HTTPStatusError(
+                f"{patch_resp.status_code}: {patch_resp.text}",
+                request=httpx.Request("PATCH", f"{base}/api/v1/filament/{filament_id}"),
+                response=patch_resp,
+            )
         return patch_resp.json()

@@ -19,7 +19,10 @@ export function parseOrcaProfiles(f: ApiFilament): Record<string, string[]> {
   try {
     const raw = f.extra?.orca_profiles;
     if (!raw) return {};
-    const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    // Spoolman text fields require the value to be a JSON-encoded string whose
+    // content is itself valid JSON (double-encoded). Parse twice to reach the dict.
+    let parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    if (typeof parsed === 'string') parsed = JSON.parse(parsed);
     if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {};
     const result: Record<string, string[]> = {};
     for (const [k, v] of Object.entries(parsed)) {
