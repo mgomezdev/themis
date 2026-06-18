@@ -11,7 +11,7 @@ export interface PerPrinterCfg {
   filamentType: string | null;
   filamentColor: string | null;
   toolIndex: number | null;
-  filamentMap: { model_filament: number; tool_index: number }[] | null;
+  filamentMap: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
 }
 
 export function defaultPerPrinterCfg(): PerPrinterCfg {
@@ -161,25 +161,31 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
             <div className="col gap-2" style={{ marginTop: 4 }}>
               {modelFilaments.map(f => {
                 // Build current map from config or use identity (f.index - 1, clamped)
-                const currentMap: { model_filament: number; tool_index: number }[] =
+                const currentMap: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] =
                   config.filamentMap ??
                   modelFilaments.map(mf => ({
                     model_filament: mf.index,
                     tool_index: Math.min(mf.index - 1, slots.length - 1),
+                    filament_id: null,
+                    filament_type: null,
+                    filament_color: null,
                   }));
                 const entry = currentMap.find(e => e.model_filament === f.index);
-                const currentToolIndex = entry != null ? entry.tool_index : Math.min(f.index - 1, slots.length - 1);
+                const currentToolIndex = entry?.tool_index ?? Math.min(f.index - 1, slots.length - 1);
 
                 function handleMapChange(chosenTool: number) {
                   // Start from current map (or identity) and replace/insert this filament's entry
-                  const base: { model_filament: number; tool_index: number }[] =
+                  const base: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] =
                     config.filamentMap ??
                     modelFilaments!.map(mf => ({
                       model_filament: mf.index,
                       tool_index: Math.min(mf.index - 1, slots.length - 1),
+                      filament_id: null,
+                      filament_type: null,
+                      filament_color: null,
                     }));
                   const newMap = base.filter(e => e.model_filament !== f.index);
-                  newMap.push({ model_filament: f.index, tool_index: chosenTool });
+                  newMap.push({ model_filament: f.index, tool_index: chosenTool, filament_id: null, filament_type: null, filament_color: null });
                   // Sort by model_filament for stable ordering
                   newMap.sort((a, b) => a.model_filament - b.model_filament);
                   onChange({ filamentMap: newMap });

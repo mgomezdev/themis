@@ -98,7 +98,7 @@ describe('PerPrinterConfig', () => {
     expect(onChange).toHaveBeenCalledWith(
       expect.objectContaining({
         filamentMap: expect.arrayContaining([
-          { model_filament: 2, tool_index: 2 },
+          expect.objectContaining({ model_filament: 2, tool_index: 2, filament_id: null }),
         ]),
       }),
     );

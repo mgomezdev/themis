@@ -33,7 +33,7 @@ export interface PrinterConfigInput {
   filament_type?: string | null;
   filament_color?: string | null;
   tool_index?: number | null;
-  filament_map?: { model_filament: number; tool_index: number }[] | null;
+  filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
 }
 
 export interface ApiJob {
@@ -67,7 +67,7 @@ export interface ApiJobPrinterConfig {
   filament_type: string | null;
   filament_color: string | null;
   tool_index: number | null;
-  filament_map?: { model_filament: number; tool_index: number }[] | null;
+  filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
   slice_failed: boolean;
   slice_error: string | null;
 }
