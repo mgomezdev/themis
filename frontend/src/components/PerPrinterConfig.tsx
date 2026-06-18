@@ -38,7 +38,7 @@ type FilamentMapEntry = {
 function encodeAssignment(entry: FilamentMapEntry): string {
   if (entry.tool_index !== null) return `t:${entry.tool_index}`;
   if (entry.filament_id !== null) return `f:${entry.filament_id}`;
-  return 't:0';
+  return 't:0'; // null/null legacy entry: neither slot nor catalog assigned — default to T0 display (harmless — handleAssignmentChange writes the proper shape on any change)
 }
 
 function findLoadedSlotForEntry(
@@ -221,7 +221,8 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                     newMap.push({ model_filament: f.index, tool_index: Number(val.slice(2)), filament_id: null, filament_type: null, filament_color: null });
                   } else {
                     const fid = Number(val.slice(2));
-                    const fil = filaments.find(fil => fil.id === fid)!;
+                    const fil = filaments.find(fil => fil.id === fid);
+                    if (!fil) return;
                     newMap.push({
                       model_filament: f.index,
                       tool_index: null,
@@ -269,7 +270,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                         )}
                       </select>
                     </div>
-                    {entry.filament_id !== null && (
+                    {entry.filament_id !== null && entry.filament_type !== null && (
                       <div style={{ marginLeft: 22, marginTop: 2 }}>
                         {matchedSlot !== null ? (
                           <span style={{
