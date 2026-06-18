@@ -20,3 +20,7 @@ frontend/dist/
 
 # Superpowers
 .superpowers/
+
+# Claude Code
+.claude/settings.local.json
+test-results/
