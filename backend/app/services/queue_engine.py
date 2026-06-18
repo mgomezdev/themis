@@ -55,10 +55,30 @@ def _slot_for_config(config, loaded: list) -> dict | None:
     return _matching_loaded_filament(config, loaded)
 
 
+def _find_slot_for_filament(
+    filament_type: str, filament_color: str | None, loaded: list
+) -> int | None:
+    """Return the index of the first loaded slot matching type (+color if given), or None."""
+    req_type = filament_type.strip().lower()
+    req_color = _norm_color(filament_color)
+    for i, lf in enumerate(loaded or []):
+        if (lf.get("type") or "").strip().lower() != req_type:
+            continue
+        if req_color and _norm_color(lf.get("color")) != req_color:
+            continue
+        return i
+    return None
+
+
 def _mapped_tools_loaded(filament_map: list, loaded: list) -> bool:
-    """True if every mapped tool_index slot is loaded."""
+    """True if every slot-assigned entry's tool_index is within the loaded slots list.
+    Catalog entries (tool_index is None) are skipped."""
     loaded = loaded or []
-    return all(0 <= e["tool_index"] < len(loaded) for e in (filament_map or []))
+    return all(
+        0 <= e["tool_index"] < len(loaded)
+        for e in (filament_map or [])
+        if e.get("tool_index") is not None
+    )
 
 
 def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
@@ -66,7 +86,15 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
     loaded filaments, else None."""
     fmap = getattr(config, "filament_map", None)
     if fmap:
-        return None if _mapped_tools_loaded(fmap, loaded) else "a mapped tool has no loaded filament"
+        if not _mapped_tools_loaded(fmap, loaded):
+            return "a mapped tool has no loaded filament"
+        for entry in fmap:
+            ft = entry.get("filament_type")
+            if ft is None:
+                continue
+            if _find_slot_for_filament(ft, entry.get("filament_color"), loaded or []) is None:
+                return f"required filament {ft!r} not loaded"
+        return None
     if getattr(config, "tool_index", None) is not None:
         if _slot_for_config(config, loaded) is None:
             return f"tool T{config.tool_index} has no loaded filament"
