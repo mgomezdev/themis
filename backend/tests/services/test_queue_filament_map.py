@@ -101,3 +101,12 @@ def test_filament_mismatch_all_slot_entries_unchanged():
     assert _filament_mismatch(
         _cfg(filament_map=[{"model_filament": 1, "tool_index": 0}]), LOADED_MIXED
     ) is None
+
+def test_filament_mismatch_slot_entry_with_filament_type_not_double_checked():
+    # An entry with tool_index set should not be re-checked via type matching,
+    # even if it carries filament_type. T0 is PLA which is loaded, so this should pass.
+    cfg = _cfg(filament_map=[
+        {"model_filament": 1, "tool_index": 0, "filament_type": "TPU", "filament_color": None},
+    ])
+    # TPU is not loaded in LOADED_MIXED, but slot 0 is valid — should NOT return mismatch
+    assert _filament_mismatch(cfg, LOADED_MIXED) is None

@@ -89,6 +89,8 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
         if not _mapped_tools_loaded(fmap, loaded):
             return "a mapped tool has no loaded filament"
         for entry in fmap:
+            if entry.get("tool_index") is not None:
+                continue  # slot assignment — already validated by _mapped_tools_loaded
             ft = entry.get("filament_type")
             if ft is None:
                 continue
