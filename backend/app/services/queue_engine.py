@@ -98,6 +98,14 @@ def _resolve_filament_map(filament_map: list, loaded: list) -> list:
                     f"Filament {ft!r} not loaded on printer — cannot slice"
                 )
             resolved.append({**entry, "tool_index": slot_idx})
+    seen_slots: set[int] = set()
+    for entry in resolved:
+        ti = entry["tool_index"]
+        if ti in seen_slots:
+            raise ValueError(
+                f"Two model filaments resolved to the same printer slot {ti}"
+            )
+        seen_slots.add(ti)
     return resolved
 
 
@@ -318,7 +326,7 @@ class QueueEngine:
             try:
                 cfg_filament_map = _resolve_filament_map(cfg_filament_map, loaded)
             except ValueError as exc:
-                await self._handle_slice_failure(job_id, printer_id, str(exc))
+                await self._handle_slice_failure(job_id, printer_id, f"printer {printer_id}: {exc}")
                 return
 
         prepare_hook = None

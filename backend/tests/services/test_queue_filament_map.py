@@ -1,3 +1,4 @@
+import pytest
 from types import SimpleNamespace
 from app.services.queue_engine import _filament_mismatch, _mapped_tools_loaded, _find_slot_for_filament
 
@@ -132,11 +133,8 @@ def test_resolve_catalog_entry_with_color():
 
 def test_resolve_catalog_entry_not_loaded_raises():
     fm = [{"model_filament": 1, "tool_index": None, "filament_id": 5, "filament_type": "ABS", "filament_color": None}]
-    try:
+    with pytest.raises(ValueError, match="ABS"):
         _resolve_filament_map(fm, LOADED_MIXED)
-        assert False, "should have raised"
-    except ValueError as exc:
-        assert "ABS" in str(exc)
 
 def test_resolve_mixed_map():
     fm = [
@@ -146,3 +144,12 @@ def test_resolve_mixed_map():
     result = _resolve_filament_map(fm, LOADED_MIXED)
     assert result[0]["tool_index"] == 0
     assert result[1]["tool_index"] == 1
+
+def test_resolve_duplicate_slot_raises():
+    # Two catalog entries that both resolve to slot 0 (both PLA, no color) should raise
+    fm = [
+        {"model_filament": 1, "tool_index": None, "filament_type": "PLA", "filament_color": None},
+        {"model_filament": 2, "tool_index": None, "filament_type": "PLA", "filament_color": None},
+    ]
+    with pytest.raises(ValueError, match="same printer slot"):
+        _resolve_filament_map(fm, LOADED_MIXED)
