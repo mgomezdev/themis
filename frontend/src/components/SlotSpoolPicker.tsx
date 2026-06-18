@@ -176,6 +176,7 @@ export function SlotSpoolPicker({
           />
           <select
             className="select"
+            aria-label={`Filament profile for slot ${slot.slot + 1}`}
             value={slot.filament_profile ?? ''}
             onChange={e => onChange({ filament_profile: e.target.value || null })}
           >
@@ -201,6 +202,7 @@ export function SlotSpoolPicker({
           </div>
           <select
             className="select"
+            aria-label={`Filament profile for slot ${slot.slot + 1}`}
             value={slot.filament_profile ?? ''}
             onChange={e => onChange({ filament_profile: e.target.value || null })}
           >
