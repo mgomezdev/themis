@@ -122,7 +122,7 @@ test.describe('New Job — filament/tool', () => {
     await expect(page.getByTestId('filament-mode')).toHaveValue('defer');
 
     // Switching to "require" should reveal filament-type-input
-    await page.getByTestId('filament-mode').selectOption('require');
+    await page.getByTestId('filament-mode').selectOption('type-only');
     await expect(page.getByTestId('filament-type-input')).toBeVisible({ timeout: 3000 });
 
     // filament-mode is accessible via mocks too (no-op but ensures mocks is used)
