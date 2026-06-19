@@ -14,10 +14,10 @@
   --border-2:    oklch(28% 0.022 250);
   --border-3:    oklch(38% 0.028 250);
 
-  --text-1:      oklch(96% 0.006 80);   /* near-white primary */
-  --text-2:      oklch(60% 0 0);        /* #7f7f7f — neutral mid-grey */
-  --text-3:      oklch(46% 0 0);        /* more muted */
-  --text-4:      oklch(33% 0 0);        /* dim */
+  --text-1:      oklch(96% 0.006 80);   /* near-white */
+  --text-2:      oklch(96% 0.006 80);
+  --text-3:      oklch(96% 0.006 80);
+  --text-4:      oklch(96% 0.006 80);
 
   --accent:      oklch(87% 0.185 95);   /* CP2077 chrome yellow */
   --accent-hi:   oklch(91% 0.168 95);
