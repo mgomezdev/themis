@@ -16,8 +16,8 @@
 
   --text-1:      oklch(96% 0.006 80);   /* near-white */
   --text-2:      oklch(96% 0.006 80);
-  --text-3:      oklch(96% 0.006 80);
-  --text-4:      oklch(96% 0.006 80);
+  --text-3:      oklch(96% 0.006 80 / 0.72);  /* muted — readable, recedes */
+  --text-4:      oklch(96% 0.006 80 / 0.42);  /* chrome labels — section headers, col labels */
 
   --accent:      oklch(87% 0.185 95);   /* CP2077 chrome yellow */
   --accent-hi:   oklch(91% 0.168 95);
@@ -32,9 +32,9 @@
   --err-bg:      oklch(62% 0.225 20 / 0.12);
   --idle:        oklch(48% 0.022 250);  /* cool metal grey */
   --idle-bg:     oklch(48% 0.022 250 / 0.12);
-  --info:        oklch(76% 0.155 195);  /* holo cyan */
-  --info-bg:     oklch(76% 0.155 195 / 0.12);
-  --link:        #00f0ff;              /* Night City link blue — cyberpunk.net footer */
+  --link:        #00f0ff;              /* Night City electric cyan — cyberpunk.net footer */
+  --info:        #00f0ff;             /* unified with --link */
+  --info-bg:     oklch(88% 0.20 196 / 0.12);
 
   /* Type */
   --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -385,7 +385,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .pill.warn  .dot { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
 .pill.err   { background: var(--err-bg);  color: var(--err);  border-color: oklch(62% 0.225 20 / 0.35); }
 .pill.err   .dot { background: var(--err);  box-shadow: 0 0 6px var(--err); }
-.pill.info  { background: var(--info-bg); color: var(--info); border-color: oklch(76% 0.155 195 / 0.30); }
+.pill.info  { background: var(--info-bg); color: var(--info); border-color: oklch(88% 0.20 196 / 0.30); }
 .pill.info  .dot { background: var(--info); box-shadow: 0 0 6px var(--info); }
 .pill.idle  { background: var(--idle-bg); color: var(--text-2); }
 .pill.idle  .dot { background: var(--idle); }

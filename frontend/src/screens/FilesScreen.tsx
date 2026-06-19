@@ -914,7 +914,7 @@ export function FilesScreen() {
                          ? 'var(--accent)'
                          : 'oklch(87% 0.185 95 / 0.22)',
                        boxShadow: selectedIds.has(f.id)
-                         ? '0 0 0 1px var(--accent), 0 0 12px oklch(87% 0.185 95 / 0.15)'
+                         ? 'inset 0 0 0 1px var(--accent)'
                          : 'none',
                      }}
                      onClick={() => setSelected(f)}>
