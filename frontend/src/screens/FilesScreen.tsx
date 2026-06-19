@@ -75,10 +75,11 @@ function FolderTreeNode({ node, depth, openSet, toggle, current, setCurrent }: F
         style={{
           width: '100%',
           padding: `6px 8px 6px ${8 + depth * 14}px`,
-          background: isActive ? 'var(--bg-3)' : 'transparent',
+          background: isActive ? 'oklch(87% 0.185 95 / 0.10)' : 'transparent',
           border: 'none',
-          borderRadius: 6,
-          color: isActive ? 'var(--text-1)' : 'var(--text-2)',
+          borderRadius: 0,
+          color: isActive ? 'var(--accent)' : 'var(--text-2)',
+          boxShadow: isActive ? 'inset 0 0 0 1px oklch(87% 0.185 95 / 0.25)' : 'none',
           cursor: 'pointer',
           textAlign: 'left',
           fontSize: 13,
@@ -245,9 +246,9 @@ function FilterCard({
                         style={{
                           padding: '4px 10px',
                           background: 'var(--accent)',
-                          color: '#04101f',
+                          color: 'oklch(9% 0.010 55)',
                           border: 'none',
-                          borderRadius: 999,
+                          borderRadius: 0,
                           fontSize: 12,
                           fontWeight: 600,
                           cursor: 'pointer',
@@ -300,9 +301,9 @@ function FilterCard({
                                 alignItems: 'center',
                                 gap: 6,
                                 padding: '4px 10px',
-                                borderRadius: 999,
-                                border: `1px solid ${on ? 'rgba(59,130,246,0.4)' : 'var(--border-1)'}`,
-                                background: on ? 'rgba(59,130,246,0.12)' : 'var(--bg-1)',
+                                borderRadius: 0,
+                                border: `1px solid ${on ? 'oklch(87% 0.185 95 / 0.40)' : 'var(--border-1)'}`,
+                                background: on ? 'oklch(87% 0.185 95 / 0.10)' : 'var(--bg-1)',
                                 color: on ? 'var(--accent-hi)' : 'var(--text-2)',
                                 fontSize: 12,
                                 fontWeight: 500,
@@ -310,11 +311,11 @@ function FilterCard({
                                 whiteSpace: 'nowrap',
                               }}>
                         <span style={{
-                          width: 12, height: 12, borderRadius: 3,
+                          width: 12, height: 12, borderRadius: 0,
                           display: 'inline-grid', placeItems: 'center',
                           background: on ? 'var(--accent)' : 'transparent',
                           border: `1.5px solid ${on ? 'var(--accent)' : 'var(--border-2)'}`,
-                          color: '#04101f', flexShrink: 0,
+                          color: 'oklch(9% 0.010 55)', flexShrink: 0,
                         }}>
                           {on && (
                             <svg width="8" height="8" viewBox="0 0 24 24" fill="none"
@@ -368,8 +369,8 @@ function FileThumb({ file, large }: { file: LibraryFile; large?: boolean }) {
       background: file.thumbnail_url
         ? 'var(--bg-1)'
         : `linear-gradient(135deg, ${color}, ${shade(color, -25)})`,
-      borderRadius: 6,
-      border: '1px solid var(--border-1)',
+      borderRadius: 0,
+      border: '1px solid var(--border-2)',
       position: 'relative',
       overflow: 'hidden',
     }}>
@@ -380,7 +381,7 @@ function FileThumb({ file, large }: { file: LibraryFile; large?: boolean }) {
         <div style={{
           position: 'absolute', inset: '20%',
           border: '1px dashed rgba(255,255,255,0.18)',
-          borderRadius: 4,
+          borderRadius: 0,
         }} />
       )}
       <div style={{
@@ -388,7 +389,7 @@ function FileThumb({ file, large }: { file: LibraryFile; large?: boolean }) {
         fontFamily: 'var(--font-mono)', fontSize: large ? 11 : 10,
         color: 'rgba(255,255,255,0.7)',
         background: 'rgba(0,0,0,0.45)',
-        padding: '1px 5px', borderRadius: 3,
+        padding: '1px 5px', borderRadius: 0,
       }}>{file.plate_count}p</div>
     </div>
   );
@@ -436,7 +437,7 @@ function FileDetailPanel({
         {file.original_filename}
       </div>
       {file.missing && (
-        <div className="tiny" style={{ color: 'var(--danger, #ef4444)', marginTop: 4 }}>
+        <div className="tiny" style={{ color: 'var(--err)', marginTop: 4 }}>
           Missing on disk
         </div>
       )}
@@ -458,7 +459,7 @@ function FileDetailPanel({
                     className="row gap-2"
                     title="Remove tag"
                     style={{
-                      padding: '3px 9px', borderRadius: 999, border: 'none',
+                      padding: '3px 9px', borderRadius: 0, border: '1px solid var(--border-1)',
                       background: 'var(--bg-3)', color: 'var(--text-2)',
                       fontSize: 11.5, fontWeight: 500, cursor: 'pointer',
                       alignItems: 'center', display: 'inline-flex',
@@ -495,7 +496,7 @@ function FileDetailPanel({
           <button className="btn ghost sm" style={{ flex: 1 }} onClick={() => onMove(file)}>Move</button>
         </div>
         <button className="btn ghost sm" onClick={() => onDelete(file)}
-                style={{ color: 'var(--danger, #ef4444)' }}>
+                style={{ color: 'var(--err)' }}>
           <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.trash}</span>
           Delete
         </button>
@@ -909,8 +910,12 @@ export function FilesScreen() {
               {sorted.map(f => (
                 <div key={f.id} className="card" style={{
                        padding: 10, cursor: 'pointer', position: 'relative',
-                       outline: selectedIds.has(f.id) ? '2px solid var(--accent)' : 'none',
-                       outlineOffset: -1,
+                       borderColor: selectedIds.has(f.id)
+                         ? 'var(--accent)'
+                         : 'oklch(87% 0.185 95 / 0.22)',
+                       boxShadow: selectedIds.has(f.id)
+                         ? '0 0 0 1px var(--accent), 0 0 12px oklch(87% 0.185 95 / 0.15)'
+                         : 'none',
                      }}
                      onClick={() => setSelected(f)}>
                   <label
@@ -919,7 +924,7 @@ export function FilesScreen() {
                     style={{
                       position: 'absolute', top: 8, left: 8, zIndex: 2,
                       display: 'inline-flex', alignItems: 'center', cursor: 'pointer',
-                      background: 'rgba(0,0,0,0.45)', borderRadius: 5, padding: '3px 4px',
+                      background: 'rgba(0,0,0,0.45)', borderRadius: 0, padding: '3px 4px',
                     }}>
                     <input
                       type="checkbox"
@@ -946,8 +951,9 @@ export function FilesScreen() {
                     {f.tags.slice(0, 3).map(t => (
                       <span key={t.id} className="elig" style={{
                         fontSize: 9.5, padding: '1px 5px',
-                        background: activeTags.includes(t.name) ? 'rgba(59,130,246,0.12)' : 'var(--bg-1)',
+                        background: activeTags.includes(t.name) ? 'var(--accent-glow)' : 'var(--bg-1)',
                         color: activeTags.includes(t.name) ? 'var(--accent-hi)' : 'var(--text-3)',
+                        borderColor: activeTags.includes(t.name) ? 'oklch(87% 0.185 95 / 0.30)' : undefined,
                       }}>{t.name}</span>
                     ))}
                     {f.tags.length > 3 && (
