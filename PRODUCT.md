@@ -14,7 +14,7 @@ Themis is a print farm management dashboard for fleets of FDM 3D printers. It ma
 
 ## Brand Personality
 
-Calm productivity. Crisp and intentional, slightly warm. Capable without being intimidating. The operator should feel the farm is under control, not under surveillance. Closest references: Linear, Raycast — tools that feel considered, not assembled.
+Electric precision. Pulled from Night City's corporate intranet — chrome yellow on asphalt dark, holo cyan for data, red-orange for danger. The interface is direct and charged, not decorative. CP2077 game UI and Edgerunners (anime) are the visual references; the tabletop game is not. The functional sensibility remains: no ceremony, no glitch decoration, no scanlines for flavor — just the palette and the confidence.
 
 ## Anti-references
 

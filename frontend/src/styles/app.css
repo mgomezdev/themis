@@ -4,36 +4,36 @@
    ============================================================ */
 
 :root {
-  /* Navy palette */
-  --bg-0:        #060c1a;   /* deepest, page bg behind everything */
-  --bg-1:        #0a1424;   /* canvas */
-  --bg-2:        #0e1a31;   /* panel */
-  --bg-3:        #142442;   /* elevated */
-  --bg-4:        #1a2e54;   /* hover / selected */
-  --border-1:    #1c2a48;
-  --border-2:    #243861;
-  --border-3:    #32508a;
+  /* Night City palette — asphalt base, chrome yellow + holo cyan */
+  --bg-0:        oklch(6% 0.012 55);    /* deepest, night asphalt */
+  --bg-1:        oklch(8.5% 0.016 55);  /* canvas */
+  --bg-2:        oklch(11% 0.020 55);   /* panel */
+  --bg-3:        oklch(14% 0.025 55);   /* elevated */
+  --bg-4:        oklch(18% 0.030 55);   /* hover / selected */
+  --border-1:    oklch(20% 0.030 60);
+  --border-2:    oklch(26% 0.040 62);
+  --border-3:    oklch(35% 0.055 65);
 
-  --text-1:      #e6edfa;   /* primary */
-  --text-2:      #a8bbd8;   /* secondary */
-  --text-3:      #6b81a4;   /* tertiary */
-  --text-4:      #475472;   /* quaternary / dim */
+  --text-1:      oklch(93% 0.018 85);   /* warm primary */
+  --text-2:      oklch(70% 0.022 80);   /* secondary */
+  --text-3:      oklch(50% 0.018 75);   /* tertiary */
+  --text-4:      oklch(35% 0.012 70);   /* dim */
 
-  --accent:      #f59e0b;
-  --accent-hi:   #fbbf24;
-  --accent-lo:   #78350f;
-  --accent-glow: rgba(245,158,11,0.20);
+  --accent:      oklch(87% 0.185 95);   /* CP2077 chrome yellow */
+  --accent-hi:   oklch(91% 0.168 95);
+  --accent-lo:   oklch(28% 0.055 80);
+  --accent-glow: oklch(87% 0.185 95 / 0.22);
 
-  --ok:          #22c55e;
-  --ok-bg:       rgba(34,197,94,0.12);
-  --warn:        #f59e0b;
-  --warn-bg:     rgba(245,158,11,0.12);
-  --err:         #ef4444;
-  --err-bg:      rgba(239,68,68,0.12);
-  --idle:        #64748b;
-  --idle-bg:     rgba(100,116,139,0.12);
-  --info:        #38bdf8;
-  --info-bg:     rgba(56,189,248,0.12);
+  --ok:          oklch(71% 0.155 155);  /* scan teal-green */
+  --ok-bg:       oklch(71% 0.155 155 / 0.12);
+  --warn:        oklch(87% 0.185 95);   /* chrome yellow */
+  --warn-bg:     oklch(87% 0.185 95 / 0.12);
+  --err:         oklch(62% 0.225 20);   /* night city red-orange */
+  --err-bg:      oklch(62% 0.225 20 / 0.12);
+  --idle:        oklch(48% 0.022 250);  /* cool metal grey */
+  --idle-bg:     oklch(48% 0.022 250 / 0.12);
+  --info:        oklch(76% 0.155 195);  /* holo cyan */
+  --info-bg:     oklch(76% 0.155 195 / 0.12);
 
   /* Type */
   --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -57,8 +57,8 @@
   --r-3: 12px;
   --r-4: 16px;
   --r-5: 24px;
-  --shadow-1: 0 1px 0 rgba(255,255,255,0.03) inset, 0 1px 2px rgba(0,0,0,0.4);
-  --shadow-2: 0 20px 40px -20px rgba(0,0,0,0.6), 0 1px 0 rgba(255,255,255,0.04) inset;
+  --shadow-1: 0 1px 0 oklch(87% 0.185 95 / 0.04) inset, 0 1px 2px oklch(0% 0 0 / 0.5);
+  --shadow-2: 0 20px 40px -20px oklch(0% 0 0 / 0.7), 0 1px 0 oklch(87% 0.185 95 / 0.06) inset;
 
   /* Sidebar */
   --sb-collapsed: 64px;
@@ -88,12 +88,12 @@
   --gap-stack: 18px;
 }
 
-/* Accent variants */
-[data-accent="azure"]   { --accent: #3b82f6; --accent-hi: #60a5fa; --accent-lo: #1e3a8a; --accent-glow: rgba(59,130,246,0.18); }
-[data-accent="cyan"]    { --accent: #06b6d4; --accent-hi: #22d3ee; --accent-lo: #155e75; --accent-glow: rgba(6,182,212,0.20); }
-[data-accent="indigo"]  { --accent: #6366f1; --accent-hi: #818cf8; --accent-lo: #3730a3; --accent-glow: rgba(99,102,241,0.20); }
-[data-accent="amber"]   { --accent: #f59e0b; --accent-hi: #fbbf24; --accent-lo: #78350f; --accent-glow: rgba(245,158,11,0.20); }
-[data-accent="mint"]    { --accent: #10b981; --accent-hi: #34d399; --accent-lo: #065f46; --accent-glow: rgba(16,185,129,0.20); }
+/* Accent variants — Night City color roles */
+[data-accent="azure"]   { --accent: oklch(76% 0.155 195); --accent-hi: oklch(83% 0.140 195); --accent-lo: oklch(20% 0.060 210); --accent-glow: oklch(76% 0.155 195 / 0.20); }
+[data-accent="cyan"]    { --accent: oklch(80% 0.165 192); --accent-hi: oklch(86% 0.150 192); --accent-lo: oklch(20% 0.055 210); --accent-glow: oklch(80% 0.165 192 / 0.20); }
+[data-accent="indigo"]  { --accent: oklch(62% 0.215 20);  --accent-hi: oklch(70% 0.200 18);  --accent-lo: oklch(25% 0.075 15);  --accent-glow: oklch(62% 0.215 20 / 0.22); }
+[data-accent="amber"]   { --accent: oklch(87% 0.185 95);  --accent-hi: oklch(91% 0.168 95);  --accent-lo: oklch(28% 0.055 80);  --accent-glow: oklch(87% 0.185 95 / 0.22); }
+[data-accent="mint"]    { --accent: oklch(72% 0.155 155); --accent-hi: oklch(78% 0.145 155); --accent-lo: oklch(22% 0.055 155); --accent-glow: oklch(72% 0.155 155 / 0.20); }
 
 /* ---------- reset / base ---------- */
 * { box-sizing: border-box; }
@@ -125,8 +125,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 100vh;
   width: 100vw;
   background:
-    radial-gradient(1200px 600px at 18% -10%, rgba(245,158,11,0.06), transparent 60%),
-    radial-gradient(900px 500px at 110% 110%, rgba(245,158,11,0.03), transparent 60%),
+    radial-gradient(1200px 600px at 18% -10%, oklch(87% 0.185 95 / 0.05), transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, oklch(76% 0.155 195 / 0.03), transparent 60%),
     var(--bg-0);
 }
 .app[data-nav="collapsed"] { --sb-w: var(--sb-collapsed); }
@@ -267,7 +267,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .user-chip:hover { background: var(--bg-3); }
 .avatar {
   width: 28px; height: 28px; border-radius: 50%;
-  background: linear-gradient(135deg, #4a5b80, #1d2a44);
+  background: linear-gradient(135deg, oklch(28% 0.040 70), oklch(14% 0.020 60));
   flex-shrink: 0;
   font-size: 11px; font-weight: 600;
   color: var(--text-1);
@@ -286,7 +286,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   height: 56px;
   padding: 0 24px;
   border-bottom: 1px solid var(--border-1);
-  background: rgba(10,20,36,0.75);
+  background: oklch(8.5% 0.016 55 / 0.75);
   backdrop-filter: blur(12px);
 }
 .topbar h1 {
@@ -346,7 +346,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
 .btn.primary {
   background: linear-gradient(180deg, var(--accent-hi), var(--accent));
   border-color: var(--accent);
-  color: #04101f;
+  color: oklch(9% 0.010 55);
   font-weight: 600;
   box-shadow: 0 6px 16px -6px var(--accent), inset 0 1px 0 rgba(255,255,255,0.3);
 }
@@ -481,7 +481,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   width: 100%;
   aspect-ratio: 16/9;
   background:
-    radial-gradient(circle at 50% 50%, #16244a 0%, #0a1422 70%),
+    radial-gradient(circle at 50% 50%, oklch(18% 0.020 55) 0%, oklch(10% 0.012 55) 70%),
     var(--bg-1);
   border-radius: 8px;
   overflow: hidden;
@@ -526,7 +526,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   position: absolute; inset: 0;
   background:
     linear-gradient(180deg, transparent 60%, rgba(0,0,0,0.6) 100%),
-    radial-gradient(ellipse at 50% 78%, rgba(245,158,11,0.28) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 78%, oklch(87% 0.185 95 / 0.30) 0%, transparent 50%),
     radial-gradient(circle at 50% 40%, rgba(255,255,255,0.05), transparent 50%);
 }
 .feed-scene::before {
@@ -595,7 +595,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   100% { background-position: 200% 0; }
 }
 .shimmer-bar {
-  background: linear-gradient(90deg, transparent 0%, rgba(245,158,11,0.5) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, oklch(87% 0.185 95 / 0.50) 50%, transparent 100%);
   background-size: 200% 100%;
   animation: shimmer 2.4s linear infinite;
 }
@@ -619,7 +619,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   border: 1px solid var(--border-1);
   white-space: nowrap;
 }
-.elig.on { background: var(--accent-glow); color: var(--accent-hi); border-color: rgba(245,158,11,0.25); }
+.elig.on { background: var(--accent-glow); color: var(--accent-hi); border-color: oklch(87% 0.185 95 / 0.25); }
 .elig.off { color: var(--text-4); }
 
 /* ---------- content surface ---------- */
