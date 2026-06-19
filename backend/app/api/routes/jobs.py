@@ -474,6 +474,8 @@ async def verify_slice(
     else:
         filament_presets = [filament_profile] if filament_profile else []
 
+    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
+    plate_config.update(job.overrides or {})
     req = SliceRequest(
         job_id=job_id,
         source_3mf=uploaded_file.stored_path,
@@ -484,7 +486,7 @@ async def verify_slice(
         filament_colours=[config.filament_color] if config.filament_color else [],
         export_args=export_args,
         prepare_hook=prepare_hook,
-        extra_config=job.overrides or {},
+        extra_config=plate_config,
     )
 
     loop = asyncio.get_running_loop()

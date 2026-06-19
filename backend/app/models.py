@@ -17,6 +17,7 @@ class Printer(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
+    build_plate_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
 
 class UploadedFile(Base):

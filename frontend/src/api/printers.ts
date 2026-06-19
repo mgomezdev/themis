@@ -48,6 +48,7 @@ export interface ApiPrinter {
   queue_on: boolean;
   connected: boolean;
   loaded_filaments: LoadedFilament[];
+  build_plate_type: string | null;
 }
 
 export interface CreatePrinterBody {
@@ -67,6 +68,7 @@ export interface UpdatePrinterBody {
   enabled?: boolean;
   queue_on?: boolean;
   loaded_filaments?: LoadedFilament[];
+  build_plate_type?: string | null;
 }
 
 export interface MachinePreset {

@@ -34,6 +34,7 @@ class PrinterCreate(BaseModel):
     orca_printer_profiles: list[str] = []
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
+    build_plate_type: str | None = None
 
 
 class PrinterUpdate(BaseModel):
@@ -44,6 +45,7 @@ class PrinterUpdate(BaseModel):
     enabled: bool | None = None
     queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
+    build_plate_type: str | None = None
 
 
 class ActivePresetUpdate(BaseModel):
@@ -80,6 +82,7 @@ def _to_dict(p: Printer) -> dict:
         "enabled": p.enabled,
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
+        "build_plate_type": p.build_plate_type,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -123,6 +126,7 @@ async def create_printer(
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=body.loaded_filaments,
+        build_plate_type=body.build_plate_type,
     )
     session.add(printer)
     await session.commit()
@@ -279,6 +283,8 @@ async def update_printer(
         printer.queue_on = body.queue_on
     if body.loaded_filaments is not None:
         printer.loaded_filaments = body.loaded_filaments
+    if "build_plate_type" in body.model_fields_set:
+        printer.build_plate_type = body.build_plate_type
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

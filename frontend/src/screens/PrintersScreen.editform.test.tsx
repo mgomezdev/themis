@@ -11,6 +11,7 @@ const PRINTER: ApiPrinter = {
   awaiting_plate_clear: false, orca_printer_profiles: [], current_orca_printer_profile: 'Bambu Lab P1S 0.4 nozzle',
   enabled: true, queue_on: true, connected: true,
   loaded_filaments: [{ slot: 0, filament_id: 'GFL99', name: 'PLA', type: 'PLA', color: '#fff' }],
+  build_plate_type: null,
 };
 
 beforeEach(() => {

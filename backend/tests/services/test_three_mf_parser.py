@@ -69,11 +69,21 @@ def test_missing_slice_info_returns_defaults(tmp_path):
     assert plates[0].filament_g == 0.0
 
 
+_RELS_TEMPLATE = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    '<Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"'
+    ' Target="{target}" Id="rel0"/>'
+    "</Relationships>"
+)
+
+
 def test_no_plate_metadata_falls_back_to_single_plate(tmp_path):
-    # Non-Bambu 3MFs (e.g. PrusaSlicer) have no slice_info or plate PNGs;
-    # parser should return a single plate with zeroed time/weight.
+    # Non-Bambu 3MFs (e.g. PrusaSlicer) have no slice_info or plate PNGs.
+    # Parser discovers the model via _rels/.rels and returns one plate.
     path = tmp_path / "prusa.3mf"
     with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("_rels/.rels", _RELS_TEMPLATE.format(target="/3D/3dmodel.model"))
         zf.writestr("3D/3dmodel.model", "<model/>")
     plates = parse_three_mf(str(path))
     assert len(plates) == 1
@@ -82,8 +92,41 @@ def test_no_plate_metadata_falls_back_to_single_plate(tmp_path):
     assert plates[0].filament_g == 0.0
 
 
+def test_non_standard_model_filename_falls_back_to_single_plate(tmp_path):
+    # 3MF with a non-standard model path (e.g. 3D/model.model) is still
+    # discovered via _rels/.rels per the spec and treated as a single plate.
+    path = tmp_path / "alt_name.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("_rels/.rels", _RELS_TEMPLATE.format(target="/3D/model.model"))
+        zf.writestr("3D/model.model", "<model/>")
+    plates = parse_three_mf(str(path))
+    assert len(plates) == 1
+    assert plates[0].plate_number == 1
+
+
+def test_model_settings_config_plate_discovery(tmp_path):
+    # Pre-slice 3MFs (e.g. gridfinity-customizer) carry plate assignments
+    # only in Metadata/model_settings.config XML — no thumbnails or slice_info.
+    model_settings = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>"
+        '<plate><id value="1"/><objects_id><id value="2"/></objects_id></plate>'
+        '<plate><id value="2"/><objects_id><id value="3"/></objects_id></plate>'
+        '<plate><id value="3"/><objects_id><id value="4"/></objects_id></plate>'
+        "</config>"
+    )
+    path = tmp_path / "gridfinity.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("_rels/.rels", _RELS_TEMPLATE.format(target="/3D/model.model"))
+        zf.writestr("3D/model.model", "<model/>")
+        zf.writestr("Metadata/model_settings.config", model_settings)
+    plates = parse_three_mf(str(path))
+    assert len(plates) == 3
+    assert [p.plate_number for p in plates] == [1, 2, 3]
+
+
 def test_no_3d_model_returns_empty(tmp_path):
-    # A ZIP that isn't a real 3MF at all should return nothing.
+    # A ZIP with no _rels/.rels and no recognised plate metadata returns nothing.
     path = tmp_path / "empty.3mf"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("junk.txt", "hello")

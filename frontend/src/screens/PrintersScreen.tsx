@@ -77,6 +77,7 @@ export function EditForm({
   );
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
   const [preset, setPreset] = useState<string>(printer.current_orca_printer_profile ?? '');
+  const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -116,6 +117,7 @@ export function EditForm({
         current_orca_printer_profile: preset || null,
         orca_printer_profiles: preset ? [preset] : [],
         loaded_filaments: slots,
+        build_plate_type: buildPlate || null,
       });
       onSave();
     } catch (e) {
@@ -149,6 +151,23 @@ export function EditForm({
         <div>
           <div className="label" style={{ marginBottom: 8 }}>Printer profile (make / model)</div>
           <MachinePicker catalog={catalog} value={preset} onChange={setPreset} />
+        </div>
+
+        <div>
+          <label className="label">Build plate</label>
+          <select
+            className="input"
+            value={buildPlate}
+            onChange={e => setBuildPlate(e.target.value)}
+          >
+            <option value="">— not set —</option>
+            <option value="Cool Plate">Cool Plate</option>
+            <option value="Engineering Plate">Engineering Plate</option>
+            <option value="High Temp Plate">High Temp Plate</option>
+            <option value="Textured PEI Plate">Textured PEI Plate</option>
+            <option value="Textured Cool Plate">Textured Cool Plate</option>
+            <option value="Supertack Plate">Supertack Plate</option>
+          </select>
         </div>
 
         <div>

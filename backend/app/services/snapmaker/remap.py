@@ -17,11 +17,31 @@ Two routing modes (mutually exclusive):
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET  # safe parsing of untrusted XML
+from xml.etree.ElementTree import SubElement, tostring  # serialization only — no parsing risk
 import zipfile
 from pathlib import Path
 
 from .paint_remap import remap_paint_color
+
+_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_START_PART_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+
+
+def _find_model_part(entries: dict[str, bytes]) -> str | None:
+    """Return the model part path from the StartPart relationship in _rels/.rels."""
+    rels_data = entries.get("_rels/.rels")
+    if not rels_data:
+        return None
+    try:
+        root = ET.fromstring(rels_data)
+        for rel in root.findall(f"{{{_RELS_NS}}}Relationship"):
+            if rel.get("Type") == _START_PART_TYPE:
+                return rel.get("Target", "").lstrip("/")
+    except Exception:
+        pass
+    return None
+
 
 # Matches any file under the 3D/ directory with a .model extension.
 _3D_MODEL_RE = re.compile(r"3D/.*\.model$", re.IGNORECASE)
@@ -52,10 +72,10 @@ def _patch_model_settings_extruder(model_settings: bytes, extruder_1based: int) 
         for md in list(obj.findall("metadata")):
             if md.get("key") == "extruder":
                 obj.remove(md)
-        md = ET.SubElement(obj, "metadata")
+        md = SubElement(obj, "metadata")
         md.set("key", "extruder")
         md.set("value", str(extruder_1based))
-    body = ET.tostring(root, encoding="unicode")
+    body = tostring(root, encoding="unicode")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
 
 
@@ -79,10 +99,10 @@ def _patch_model_settings_filament_map(model_settings: bytes, mapping: dict) -> 
                     old_e = 1
                 new_e = mapping.get(old_e, old_e - 1) + 1
                 obj.remove(md)
-                new_md = ET.SubElement(obj, "metadata")
+                new_md = SubElement(obj, "metadata")
                 new_md.set("key", "extruder")
                 new_md.set("value", str(new_e))
-    body = ET.tostring(root, encoding="unicode")
+    body = tostring(root, encoding="unicode")
     return ('<?xml version="1.0" encoding="UTF-8"?>\n' + body).encode("utf-8")
 
 
@@ -122,7 +142,8 @@ def remap_3mf(
     with zipfile.ZipFile(prepared_3mf) as zin:
         entries = {n: zin.read(n) for n in zin.namelist()}
 
-    model_xml = entries.get("3D/3dmodel.model", b"")
+    model_part = _find_model_part(entries)
+    model_xml = entries.get(model_part, b"") if model_part else b""
     src_ms = entries.get("Metadata/model_settings.config", b"")
     mapping = {e["model_filament"]: e["tool_index"] for e in (filament_map or [])}
 

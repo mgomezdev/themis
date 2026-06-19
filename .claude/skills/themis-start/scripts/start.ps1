@@ -32,7 +32,7 @@ if (netstat -ano | Select-String ':8001.*LISTENING') {
 }
 
 # --- Step 3: Start frontend ---
-Write-Host "Starting frontend (vite :5173)..." -ForegroundColor Cyan
+Write-Host "Starting frontend on :5173..." -ForegroundColor Cyan
 $frontendCmd = "Set-Location '$Root\frontend'; npm run dev"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $frontendCmd
 

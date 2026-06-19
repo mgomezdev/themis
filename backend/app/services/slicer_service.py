@@ -1,6 +1,6 @@
 from __future__ import annotations
 import zipfile
-import xml.etree.ElementTree as ET
+import defusedxml.ElementTree as ET
 
 import logging
 import subprocess

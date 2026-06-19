@@ -389,6 +389,7 @@ class QueueEngine:
             stored_path = uploaded_file.stored_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
+            build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
 
         if config is None or uploaded_file is None:
@@ -425,6 +426,8 @@ class QueueEngine:
         if cfg_filament_map:
             ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
             multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
+        plate_config = {"curr_bed_type": build_plate_type} if build_plate_type else {}
+        plate_config.update(job_overrides)  # job-level overrides win over printer default
         req = SliceRequest(
             job_id=job_id,
             source_3mf=stored_path,
@@ -435,7 +438,7 @@ class QueueEngine:
             filament_colours=[filament_color] if filament_color else [],
             export_args=export_args,
             prepare_hook=prepare_hook,
-            extra_config=job_overrides,
+            extra_config=plate_config,
         )
         try:
             gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)

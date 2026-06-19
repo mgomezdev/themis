@@ -1,10 +1,52 @@
 from __future__ import annotations
 import json
 import re
+import defusedxml.ElementTree as ET
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+_RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_START_PART_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+
+
+def _find_model_part(names: set[str], zf: zipfile.ZipFile) -> str | None:
+    """Return the model part path from the StartPart relationship in _rels/.rels.
+
+    Per the 3MF spec §2.1.1, consumers MUST discover the primary 3D payload
+    via this relationship rather than assuming a fixed filename.
+    Returns the path without a leading slash, or None if not found.
+    """
+    if "_rels/.rels" not in names:
+        return None
+    try:
+        root = ET.fromstring(zf.read("_rels/.rels"))
+        for rel in root.findall(f"{{{_RELS_NS}}}Relationship"):
+            if rel.get("Type") == _START_PART_TYPE:
+                return rel.get("Target", "").lstrip("/")
+    except Exception:
+        pass
+    return None
+
+
+def _plates_from_model_settings(names: set[str], zf: zipfile.ZipFile) -> set[int]:
+    """Discover plate numbers from Metadata/model_settings.config (OrcaSlicer XML format).
+
+    Handles pre-slice 3MFs (e.g. gridfinity-customizer) that record plate
+    assignments in XML rather than via thumbnails or slice_info.
+    """
+    if "Metadata/model_settings.config" not in names:
+        return set()
+    try:
+        root = ET.fromstring(zf.read("Metadata/model_settings.config"))
+        return {
+            int(p.find("id").get("value"))
+            for p in root.findall("plate")
+            if p.find("id") is not None
+        }
+    except Exception:
+        return set()
 
 from .override_inspector import CURATED_KEYS
 
@@ -114,8 +156,13 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
         if not plate_numbers:
             plate_numbers = set(meta.keys())
 
-        # Non-Bambu 3MFs (e.g. PrusaSlicer) have no plate metadata — treat as single plate
-        if not plate_numbers and "3D/3dmodel.model" in names:
+        # Pre-slice 3MFs (e.g. gridfinity-customizer) may only have model_settings.config
+        if not plate_numbers:
+            plate_numbers = _plates_from_model_settings(names, zf)
+
+        # Last resort: any 3MF with a declared StartPart model is a single-plate file
+        # (e.g. PrusaSlicer exports). Per spec §2.1.1, discover via _rels/.rels.
+        if not plate_numbers and _find_model_part(names, zf) is not None:
             plate_numbers = {1}
 
         if not plate_numbers:
