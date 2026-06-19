@@ -34,6 +34,7 @@
   --idle-bg:     oklch(48% 0.022 250 / 0.12);
   --info:        oklch(76% 0.155 195);  /* holo cyan */
   --info-bg:     oklch(76% 0.155 195 / 0.12);
+  --link:        #00f0ff;              /* Night City link blue — cyberpunk.net footer */
 
   /* Type */
   --font-sans: 'IBM Plex Sans', -apple-system, system-ui, sans-serif;
@@ -201,7 +202,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   gap: 12px;
   padding: 8px 10px;
   border-radius: 0;
-  color: var(--text-2);
+  color: var(--link);
   cursor: pointer;
   font-size: 13.5px;
   font-weight: 450;
@@ -213,7 +214,7 @@ input, textarea, select { font-family: inherit; color: inherit; }
   text-align: left;
   transition: background 120ms ease, color 120ms ease;
 }
-.nav-item:hover { background: var(--bg-3); color: var(--text-1); }
+.nav-item:hover { background: var(--bg-3); color: #fff; }
 .nav-item.active {
   background: oklch(87% 0.185 95 / 0.10);
   color: var(--accent);
