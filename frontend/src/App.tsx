@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
@@ -28,6 +28,7 @@ function AppShell() {
   }), [jobs]);
   const { orders } = useOrders();
   const ordersOpen = useMemo(() => orders.filter(o => o.status !== 'complete').length, [orders]);
+  const [navCollapsed, setNavCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -60,9 +61,10 @@ function AppShell() {
   const cfg = screenConfig[path] ?? screenConfig['/queue'];
 
   return (
-    <div className="app" data-nav="expanded">
+    <div className="app" data-nav={navCollapsed ? 'collapsed' : 'expanded'}>
       <Sidebar queueCounts={queueCounts} ordersOpen={ordersOpen}
-               operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length} />
+               operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length}
+               collapsed={navCollapsed} onToggle={() => setNavCollapsed(c => !c)} />
       <div className="main">
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">

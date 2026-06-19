@@ -8,6 +8,8 @@ interface SidebarProps {
   ordersOpen: number;
   operatorName: string | null;
   printerCount: number;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
 function initials(name: string): string {
@@ -40,7 +42,7 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   );
 }
 
-export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount }: SidebarProps) {
+export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount, collapsed = false, onToggle = () => {} }: SidebarProps) {
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
@@ -53,6 +55,22 @@ export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount }:
       <div className="brand">
         <div className="brand-mark" />
         <div className="brand-name">themis<span className="dim">.farm</span></div>
+      </div>
+
+      <div className="sidebar-user">
+        {operatorName ? (
+          <div className="user-chip">
+            <div className="avatar">{initials(operatorName)}</div>
+            <div className="user-meta">
+              <div className="name">{operatorName}</div>
+              <div className="sub">{printerCount} {printerCount === 1 ? 'printer' : 'printers'}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="muted small" style={{ padding: '6px 8px' }}>
+            {printerCount} {printerCount === 1 ? 'printer' : 'printers'}
+          </div>
+        )}
       </div>
 
       <div className="nav-section">
@@ -79,16 +97,11 @@ export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount }:
         </NavLink>
       </div>
 
-      <div className="footer">
-        {operatorName && (
-          <div className="user-chip">
-            <div className="avatar">{initials(operatorName)}</div>
-            <div className="user-meta">
-              <div className="name">{operatorName}</div>
-            </div>
-          </div>
-        )}
-        <div className="muted small">{printerCount} {printerCount === 1 ? 'printer' : 'printers'}</div>
+      <div className="sidebar-toggle">
+        <button className="btn ghost icon sm" onClick={onToggle}
+                title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
+          {collapsed ? Icons.chevR : Icons.chevL}
+        </button>
       </div>
     </aside>
   );
