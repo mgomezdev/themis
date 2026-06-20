@@ -158,6 +158,7 @@ export interface LibraryFile {
   missing: boolean;
   tags: { id: number; name: string; color: string; category: string }[];
   thumbnail_url: string | null;
+  plate_thumbnails: { plate_number: number; thumbnail_url: string }[];
 }
 
 export interface FolderNode {

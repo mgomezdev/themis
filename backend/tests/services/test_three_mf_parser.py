@@ -104,9 +104,8 @@ def test_non_standard_model_filename_falls_back_to_single_plate(tmp_path):
     assert plates[0].plate_number == 1
 
 
-def test_model_settings_config_plate_discovery(tmp_path):
-    # Pre-slice 3MFs (e.g. gridfinity-customizer) carry plate assignments
-    # only in Metadata/model_settings.config XML — no thumbnails or slice_info.
+def test_model_settings_config_plate_discovery_simplified(tmp_path):
+    # Simplified format: <id value="N"/> directly under <plate> (bundle_3mf.py style).
     model_settings = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
         "<config>"
@@ -115,7 +114,38 @@ def test_model_settings_config_plate_discovery(tmp_path):
         '<plate><id value="3"/><objects_id><id value="4"/></objects_id></plate>'
         "</config>"
     )
-    path = tmp_path / "gridfinity.3mf"
+    path = tmp_path / "gridfinity_simple.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("_rels/.rels", _RELS_TEMPLATE.format(target="/3D/model.model"))
+        zf.writestr("3D/model.model", "<model/>")
+        zf.writestr("Metadata/model_settings.config", model_settings)
+    plates = parse_three_mf(str(path))
+    assert len(plates) == 3
+    assert [p.plate_number for p in plates] == [1, 2, 3]
+
+
+def test_model_settings_config_plate_discovery_orcaslicer_native(tmp_path):
+    # OrcaSlicer native format: plate ID in <metadata key="plater_id" value="N"/>.
+    model_settings = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        "<config>"
+        '<plate>'
+        '  <metadata key="plater_id" value="1"/>'
+        '  <metadata key="plater_name" value="Plate 1"/>'
+        '  <model_instance><metadata key="object_id" value="9"/></model_instance>'
+        '</plate>'
+        '<plate>'
+        '  <metadata key="plater_id" value="2"/>'
+        '  <metadata key="plater_name" value="Plate 2"/>'
+        '  <model_instance><metadata key="object_id" value="10"/></model_instance>'
+        '</plate>'
+        '<plate>'
+        '  <metadata key="plater_id" value="3"/>'
+        '  <metadata key="plater_name" value="Plate 3"/>'
+        '</plate>'
+        "</config>"
+    )
+    path = tmp_path / "gridfinity_orca.3mf"
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("_rels/.rels", _RELS_TEMPLATE.format(target="/3D/model.model"))
         zf.writestr("3D/model.model", "<model/>")

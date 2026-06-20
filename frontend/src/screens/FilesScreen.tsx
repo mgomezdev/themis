@@ -416,6 +416,11 @@ function FileDetailPanel({
 }: FileDetailPanelProps) {
   const fileTagIds = new Set(file.tags.map(t => t.id));
   const available = tags.filter(t => !fileTagIds.has(t.id));
+  const thumbs = file.plate_thumbnails ?? [];
+  const [activePlate, setActivePlate] = useState<number>(
+    thumbs.length > 0 ? thumbs[0].plate_number : 1
+  );
+  const activeThumb = thumbs.find(t => t.plate_number === activePlate);
 
   return (
     <div style={{
@@ -429,9 +434,58 @@ function FileDetailPanel({
         <button className="btn ghost icon sm" title="Close" onClick={onClose}>{Icons.x}</button>
       </div>
 
-      <div style={{ width: '100%', maxWidth: 240, alignSelf: 'center', marginBottom: 14 }}>
-        <FileThumb file={file} large />
-      </div>
+      {thumbs.length > 1 ? (
+        <div style={{ marginBottom: 14 }}>
+          {/* Large view of the selected plate */}
+          <div style={{
+            width: '100%', aspectRatio: '1/1', background: 'var(--bg-1)',
+            border: '1px solid var(--border-2)', marginBottom: 8, position: 'relative',
+          }}>
+            {activeThumb && (
+              <img src={activeThumb.thumbnail_url} alt={`Plate ${activePlate}`}
+                   style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+            )}
+            <div style={{
+              position: 'absolute', bottom: 6, left: 8,
+              fontFamily: 'var(--font-mono)', fontSize: 11,
+              color: 'rgba(255,255,255,0.8)', background: 'rgba(0,0,0,0.5)',
+              padding: '1px 6px',
+            }}>
+              Plate {activePlate} / {file.plate_count}
+            </div>
+          </div>
+          {/* Thumbnail strip */}
+          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', paddingBottom: 4 }}>
+            {thumbs.map(t => (
+              <button
+                key={t.plate_number}
+                onClick={() => setActivePlate(t.plate_number)}
+                title={`Plate ${t.plate_number}`}
+                style={{
+                  flexShrink: 0, width: 64, padding: 0, border: 'none', cursor: 'pointer',
+                  outline: t.plate_number === activePlate
+                    ? '2px solid var(--accent)' : '1px solid var(--border-2)',
+                  background: 'var(--bg-1)',
+                }}
+              >
+                <img src={t.thumbnail_url} alt={`Plate ${t.plate_number}`}
+                     style={{ width: '100%', aspectRatio: '1/1', objectFit: 'contain', display: 'block' }} />
+                <div style={{
+                  fontFamily: 'var(--font-mono)', fontSize: 9, textAlign: 'center',
+                  color: t.plate_number === activePlate ? 'var(--accent)' : 'var(--text-3)',
+                  padding: '2px 0',
+                }}>
+                  P{t.plate_number}
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ width: '100%', maxWidth: 240, alignSelf: 'center', marginBottom: 14 }}>
+          <FileThumb file={file} large />
+        </div>
+      )}
 
       <div style={{ fontSize: 16, fontWeight: 600, wordBreak: 'break-word' }}>
         {file.original_filename}

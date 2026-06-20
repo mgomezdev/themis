@@ -35,16 +35,28 @@ def _plates_from_model_settings(names: set[str], zf: zipfile.ZipFile) -> set[int
 
     Handles pre-slice 3MFs (e.g. gridfinity-customizer) that record plate
     assignments in XML rather than via thumbnails or slice_info.
+
+    Two plate-ID encodings exist in the wild:
+      - OrcaSlicer native: <metadata key="plater_id" value="N"/>
+      - Simplified (bundle_3mf.py style): <id value="N"/>
     """
     if "Metadata/model_settings.config" not in names:
         return set()
     try:
         root = ET.fromstring(zf.read("Metadata/model_settings.config"))
-        return {
-            int(p.find("id").get("value"))
-            for p in root.findall("plate")
-            if p.find("id") is not None
-        }
+        ids: set[int] = set()
+        for p in root.findall("plate"):
+            # OrcaSlicer native format
+            for md in p.findall("metadata"):
+                if md.get("key") == "plater_id":
+                    ids.add(int(md.get("value")))
+                    break
+            else:
+                # Simplified format: <id value="N"/>
+                id_el = p.find("id")
+                if id_el is not None:
+                    ids.add(int(id_el.get("value")))
+        return ids
     except Exception:
         return set()
 

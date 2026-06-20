@@ -6,7 +6,7 @@ import { FilesScreen } from './FilesScreen';
 const FILES = [
   { id: 1, original_filename: 'arm.3mf', relative_path: 'Customers/Vela/arm.3mf',
     folder: '/Customers/Vela', size_bytes: 4200000, plate_count: 1, uploaded_at: '2026-06-01',
-    missing: false, tags: [{ id: 1, name: 'PLA', color: '#fff', category: 'Material' }], thumbnail_url: null },
+    missing: false, tags: [{ id: 1, name: 'PLA', color: '#fff', category: 'Material' }], thumbnail_url: null, plate_thumbnails: [] },
 ];
 const TAGS = [{ id: 1, name: 'PLA', color: '#fff', category: 'Material', usage_count: 1 }];
 
@@ -38,9 +38,9 @@ describe('FilesScreen', () => {
   it('selects multiple files and bulk-deletes them', async () => {
     const TWO = [
       { id: 1, original_filename: 'a.3mf', relative_path: 'a.3mf', folder: '/', size_bytes: 100,
-        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null },
+        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
       { id: 2, original_filename: 'b.3mf', relative_path: 'b.3mf', folder: '/', size_bytes: 200,
-        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null },
+        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
       if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });
@@ -73,7 +73,7 @@ describe('FilesScreen', () => {
   it('opens the folder picker (with real dirs + New folder) for a bulk move', async () => {
     const ONE = [
       { id: 1, original_filename: 'a.3mf', relative_path: 'a.3mf', folder: '/', size_bytes: 100,
-        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null },
+        plate_count: 1, uploaded_at: 't', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
     ];
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.startsWith('/api/v1/tags')) return new Response('[]', { status: 200 });

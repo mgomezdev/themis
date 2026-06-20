@@ -2,7 +2,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -14,6 +14,7 @@ from ...models import UploadedFile, Tag, FileTag, Job
 from ...services.library_scanner import (
     LibraryScanner, folder_of, sha256_file, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
+from ...services.thumbnail_regen import regen_file_thumbnails
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
@@ -55,6 +56,7 @@ def _to_dict(f: UploadedFile, tags: list[dict]) -> dict:
         "missing": f.missing,
         "tags": tags,
         "thumbnail_url": _thumb_url(f),
+        "plate_thumbnails": _plate_thumbnail_urls(f),
     }
 
 
@@ -64,6 +66,18 @@ def _thumb_url(f: UploadedFile) -> str | None:
         if tp:
             return f"/api/v1/files/{f.id}/thumbnails/{Path(tp).name}"
     return None
+
+
+def _plate_thumbnail_urls(f: UploadedFile) -> list[dict]:
+    out = []
+    for p in (f.plates or []):
+        tp = p.get("thumbnail_path")
+        if tp:
+            out.append({
+                "plate_number": p["plate_number"],
+                "thumbnail_url": f"/api/v1/files/{f.id}/thumbnails/{Path(tp).name}",
+            })
+    return out
 
 
 # ---------- list / tree ----------
@@ -152,6 +166,7 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
 @router.post("/upload", status_code=201)
 async def upload_file(
     file: UploadFile,
+    background_tasks: BackgroundTasks,
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
@@ -180,6 +195,8 @@ async def upload_file(
     record.plates = scanner._parse_plates(dest, record.id)
     await session.commit()
     await session.refresh(record)
+    if dest.suffix.lower() == ".3mf":
+        background_tasks.add_task(regen_file_thumbnails, record.id)
     return _to_dict(record, [])
 
 
