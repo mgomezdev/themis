@@ -42,7 +42,9 @@ async def regen_file_thumbnails(file_id: int) -> None:
             return
 
         stored_path = f.stored_path
-        plate_numbers = [p["plate_number"] for p in plates]
+        plate_numbers = [p["plate_number"] for p in plates if not p.get("thumbnail_path")]
+        if not plate_numbers:
+            return
         thumb_dir = get_filecache_dir() / str(file_id) / "thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
 
