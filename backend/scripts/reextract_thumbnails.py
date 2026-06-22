@@ -46,13 +46,11 @@ async def main() -> None:
                 skipped += 1
                 continue
 
-            # Merge: preserve estimated_time/filament_g from existing DB data if
-            # parse_three_mf doesn't have slice_info (pre-slice files).
             existing = {p["plate_number"]: p for p in (f.plates or [])}
             new_plates = []
             for p in plates_raw:
                 old = existing.get(p.plate_number, {})
-                new_plates.append({
+                new_plates.append({**old,
                     "plate_number": p.plate_number,
                     "thumbnail_path": p.thumbnail_path or old.get("thumbnail_path"),
                     "estimated_time": p.estimated_time or old.get("estimated_time", 0),
