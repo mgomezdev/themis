@@ -37,12 +37,6 @@ _PROJECT = "metadata/project_settings.config"
 _MODEL = "metadata/model_settings.config"
 
 
-def _scalar(v) -> str:
-    if isinstance(v, list):
-        return ", ".join(str(x) for x in v)
-    return str(v)
-
-
 def _read_embedded(source_3mf: Path) -> tuple[dict | None, str | None]:
     project = model = None
     try:
@@ -72,12 +66,13 @@ def inspect_overrides(source_3mf: str | Path, generated_config: dict, printer_sl
     source_3mf = Path(source_3mf)
     embedded, model_xml = _read_embedded(source_3mf)
 
+    _s = lambda v: ", ".join(str(x) for x in v) if isinstance(v, list) else str(v)
     setting_changes: list[dict] = []
     if embedded:
         for key in CURATED_KEYS:
             if key not in embedded or key not in generated_config:
                 continue
-            was, now = _scalar(embedded[key]), _scalar(generated_config[key])
+            was, now = _s(embedded[key]), _s(generated_config[key])
             if was != now:
                 setting_changes.append({"key": key, "from": was, "to": now})
 

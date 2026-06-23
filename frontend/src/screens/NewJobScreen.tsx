@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { fmtTime } from '../data/helpers';
+import { fmtTime, fmtBytes } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
@@ -43,12 +43,6 @@ interface FileInfo {
 // ============================================================
 // Misc helpers
 // ============================================================
-
-function formatBytes(b: number): string {
-  if (b < 1024) return `${b} B`;
-  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
-  return `${(b / 1024 / 1024).toFixed(1)} MB`;
-}
 
 const BADGE: Record<string, string> = {
   elegoo_centauri: 'ECC',
@@ -235,7 +229,7 @@ function FileCard({ file, plateCount, selectedCount, onClear }: {
           {plateCount === 1
             ? 'Single plate'
             : `${plateCount} plates · ${selectedCount} selected → ${selectedCount} job${selectedCount === 1 ? '' : 's'}`}
-          {file.size ? ` · ${formatBytes(file.size)}` : ''}
+          {file.size ? ` · ${fmtBytes(file.size)}` : ''}
         </div>
       </div>
       <button className="btn ghost sm" onClick={onClear}>{Icons.x} Replace</button>

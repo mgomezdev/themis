@@ -4,27 +4,28 @@ import { PRINTERS } from '../data/mock';
 import type { StatusKey } from '../data/types';
 import { fmtClock } from '../data/helpers';
 
+const STATUS_MAP: Record<string, [string, string]> = {
+  printing:    ['info',   'Printing'],
+  queued:      ['idle',   'Queued'],
+  waiting:     ['idle',   'Waiting'],
+  claiming:    ['accent', 'Claiming'],
+  slicing:     ['accent', 'Slicing…'],
+  uploading:   ['accent', 'Uploading'],
+  paused:      ['warn',   'Paused'],
+  error:       ['err',    'Error'],
+  offline:     ['idle',   'Offline'],
+  idle:        ['ok',     'Idle'],
+  ready:       ['ok',     'Ready'],
+  complete:    ['ok',     'Complete'],
+  hold:        ['warn',   'On hold'],
+  in_progress: ['info',   'In progress'],
+  partial:     ['warn',   'Partial'],
+  blocked:     ['warn',   'Blocked'],
+  failed:      ['err',    'Failed'],
+};
+
 export function StatusPill({ status, label }: { status: StatusKey; label?: string }) {
-  const map: Record<string, [string, string]> = {
-    printing:    ['info',   'Printing'],
-    queued:      ['idle',   'Queued'],
-    waiting:     ['idle',   'Waiting'],
-    claiming:    ['accent', 'Claiming'],
-    slicing:     ['accent', 'Slicing…'],
-    uploading:   ['accent', 'Uploading'],
-    paused:      ['warn',   'Paused'],
-    error:       ['err',    'Error'],
-    offline:     ['idle',   'Offline'],
-    idle:        ['ok',     'Idle'],
-    ready:       ['ok',     'Ready'],
-    complete:    ['ok',     'Complete'],
-    hold:        ['warn',   'On hold'],
-    in_progress: ['info',   'In progress'],
-    partial:     ['warn',   'Partial'],
-    blocked:     ['warn',   'Blocked'],
-    failed:      ['err',    'Failed'],
-  };
-  const [cls, txt] = map[status] ?? ['idle', status];
+  const [cls, txt] = STATUS_MAP[status] ?? ['idle', status];
   return <span className={`pill ${cls}`}><span className="dot" />{label ?? txt}</span>;
 }
 

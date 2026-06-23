@@ -60,24 +60,25 @@ def _to_dict(f: UploadedFile, tags: list[dict]) -> dict:
     }
 
 
-def _thumb_url(f: UploadedFile) -> str | None:
-    for p in (f.plates or []):
-        tp = p.get("thumbnail_path")
-        if tp:
-            return f"/api/v1/files/{f.id}/thumbnails/{Path(tp).name}"
-    return None
-
-
 def _plate_thumbnail_urls(f: UploadedFile) -> list[dict]:
-    out = []
-    for p in (f.plates or []):
-        tp = p.get("thumbnail_path")
-        if tp:
-            out.append({
-                "plate_number": p["plate_number"],
-                "thumbnail_url": f"/api/v1/files/{f.id}/thumbnails/{Path(tp).name}",
-            })
-    return out
+    return [
+        {"plate_number": p["plate_number"],
+         "thumbnail_url": f"/api/v1/files/{f.id}/thumbnails/{Path(p['thumbnail_path']).name}"}
+        for p in (f.plates or []) if p.get("thumbnail_path")
+    ]
+
+
+def _thumb_url(f: UploadedFile) -> str | None:
+    urls = _plate_thumbnail_urls(f)
+    return urls[0]["thumbnail_url"] if urls else None
+
+
+def _tree_insert(root: dict, folder: str) -> None:
+    node, path = root, ""
+    for part in (p for p in folder.split("/") if p):
+        path += "/" + part
+        node = node["children"].setdefault(part, {"name": part, "path": path, "count": 0, "children": {}})
+        node["count"] += 1
 
 
 # ---------- list / tree ----------
@@ -115,13 +116,7 @@ async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
     root: dict = {"name": "All files", "path": "", "count": 0, "children": {}}
     for r in rows:
         root["count"] += 1
-        node = root
-        path = ""
-        for part in [p for p in r.folder.split("/") if p]:
-            path += "/" + part
-            node = node["children"].setdefault(
-                part, {"name": part, "path": path, "count": 0, "children": {}})
-            node["count"] += 1
+        _tree_insert(root, r.folder)
     return root
 
 
@@ -151,13 +146,7 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
     rows = (await session.execute(select(UploadedFile))).scalars().all()
     for r in rows:
         root["count"] += 1
-        node = root
-        path = ""
-        for part in [p for p in r.folder.split("/") if p]:
-            path += "/" + part
-            node = node["children"].setdefault(
-                part, {"name": part, "path": path, "count": 0, "children": {}})
-            node["count"] += 1
+        _tree_insert(root, r.folder)
     return root
 
 

@@ -30,89 +30,72 @@ async def init_db() -> None:
         await _migrate(conn)
 
 
+_ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
+    ("printers", [
+        ("loaded_filaments", "JSON DEFAULT '[]'"),
+        ("queue_on",         "BOOLEAN NOT NULL DEFAULT 1"),
+        ("build_plate_type", "VARCHAR(100)"),
+    ]),
+    ("job_printer_configs", [
+        ("filament_id",    "INTEGER"),
+        ("filament_type",  "VARCHAR(100)"),
+        ("filament_color", "VARCHAR(20)"),
+        ("tool_index",     "INTEGER"),
+        ("filament_map",   "JSON"),
+    ]),
+    ("jobs", [
+        ("block_reason", "TEXT"),
+        ("order_id",     "INTEGER"),
+        ("overrides",    "JSON"),
+    ]),
+    ("uploaded_files", [
+        ("relative_path", "VARCHAR(1024) DEFAULT ''"),
+        ("folder",        "VARCHAR(1024) DEFAULT '/'"),
+        ("size_bytes",    "INTEGER DEFAULT 0"),
+        ("content_hash",  "VARCHAR(64) DEFAULT ''"),
+        ("mtime",         "FLOAT DEFAULT 0"),
+        ("missing",       "BOOLEAN NOT NULL DEFAULT 0"),
+    ]),
+    ("queue_config", [
+        ("operator_name", "VARCHAR(120)"),
+    ]),
+]
+
+
 async def _migrate(conn) -> None:
-    # Add columns introduced after initial schema without a migration tool.
-    # Each block guards on PRAGMA table_info; if the table doesn't exist the
-    # PRAGMA returns no rows so the col-set is empty — skip the whole block.
-    cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
-    if cols:
-        if "loaded_filaments" not in cols:
-            await conn.execute(text("ALTER TABLE printers ADD COLUMN loaded_filaments JSON DEFAULT '[]'"))
-        if "queue_on" not in cols:
-            await conn.execute(text("ALTER TABLE printers ADD COLUMN queue_on BOOLEAN NOT NULL DEFAULT 1"))
-        if "build_plate_type" not in cols:
-            await conn.execute(text("ALTER TABLE printers ADD COLUMN build_plate_type VARCHAR(100)"))
+    for table, columns in _ALTERS:
+        cols = {row[1] for row in (await conn.execute(text(f"PRAGMA table_info({table})"))).fetchall()}
+        if not cols:
+            continue
+        for col, typedef in columns:
+            if col not in cols:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
 
+    # filament_profile changed NOT NULL → nullable; SQLite can't ALTER COLUMN so recreate.
     jpc_info = (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()
-    jpc_cols = {row[1] for row in jpc_info}
-    if jpc_cols:
-        if "filament_id" not in jpc_cols:
-            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_id INTEGER"))
-        if "filament_type" not in jpc_cols:
-            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_type VARCHAR(100)"))
-        if "filament_color" not in jpc_cols:
-            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_color VARCHAR(20)"))
-        if "tool_index" not in jpc_cols:
-            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN tool_index INTEGER"))
-        if "filament_map" not in jpc_cols:
-            await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN filament_map JSON"))
-
-        # filament_profile changed from NOT NULL to nullable; SQLite can't ALTER COLUMN so recreate.
-        jpc_notnull = {row[1]: row[3] for row in jpc_info}
-        if jpc_notnull.get("filament_profile", 0) == 1:
-            await conn.execute(text("""
-                CREATE TABLE job_printer_configs_new (
-                    id INTEGER NOT NULL,
-                    job_id INTEGER NOT NULL,
-                    printer_id INTEGER NOT NULL,
-                    print_profile VARCHAR(512) NOT NULL,
-                    filament_profile VARCHAR(512),
-                    slice_failed BOOLEAN NOT NULL DEFAULT 0,
-                    slice_error TEXT,
-                    filament_type VARCHAR(100),
-                    filament_color VARCHAR(20),
-                    filament_id INTEGER,
-                    tool_index INTEGER,
-                    filament_map JSON,
-                    PRIMARY KEY (id),
-                    FOREIGN KEY(job_id) REFERENCES jobs (id),
-                    FOREIGN KEY(printer_id) REFERENCES printers (id)
-                )
-            """))
-            await conn.execute(text(
-                "INSERT INTO job_printer_configs_new SELECT * FROM job_printer_configs"
-            ))
-            await conn.execute(text("DROP TABLE job_printer_configs"))
-            await conn.execute(text(
-                "ALTER TABLE job_printer_configs_new RENAME TO job_printer_configs"
-            ))
-
-    job_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
-    if job_cols:
-        if "block_reason" not in job_cols:
-            await conn.execute(text("ALTER TABLE jobs ADD COLUMN block_reason TEXT"))
-        if "order_id" not in job_cols:
-            await conn.execute(text("ALTER TABLE jobs ADD COLUMN order_id INTEGER"))
-        if "overrides" not in job_cols:
-            await conn.execute(text("ALTER TABLE jobs ADD COLUMN overrides JSON"))
-
-    uf_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(uploaded_files)"))).fetchall()}
-    if "relative_path" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN relative_path VARCHAR(1024) DEFAULT ''"))
-    if "folder" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN folder VARCHAR(1024) DEFAULT '/'"))
-    if "size_bytes" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN size_bytes INTEGER DEFAULT 0"))
-    if "content_hash" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN content_hash VARCHAR(64) DEFAULT ''"))
-    if "mtime" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN mtime FLOAT DEFAULT 0"))
-    if "missing" not in uf_cols:
-        await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN missing BOOLEAN NOT NULL DEFAULT 0"))
-
-    qc_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(queue_config)"))).fetchall()}
-    if qc_cols and "operator_name" not in qc_cols:
-        await conn.execute(text("ALTER TABLE queue_config ADD COLUMN operator_name VARCHAR(120)"))
+    if {row[1]: row[3] for row in jpc_info}.get("filament_profile", 0) == 1:
+        await conn.execute(text("""
+            CREATE TABLE job_printer_configs_new (
+                id INTEGER NOT NULL,
+                job_id INTEGER NOT NULL,
+                printer_id INTEGER NOT NULL,
+                print_profile VARCHAR(512) NOT NULL,
+                filament_profile VARCHAR(512),
+                slice_failed BOOLEAN NOT NULL DEFAULT 0,
+                slice_error TEXT,
+                filament_type VARCHAR(100),
+                filament_color VARCHAR(20),
+                filament_id INTEGER,
+                tool_index INTEGER,
+                filament_map JSON,
+                PRIMARY KEY (id),
+                FOREIGN KEY(job_id) REFERENCES jobs (id),
+                FOREIGN KEY(printer_id) REFERENCES printers (id)
+            )
+        """))
+        await conn.execute(text("INSERT INTO job_printer_configs_new SELECT * FROM job_printer_configs"))
+        await conn.execute(text("DROP TABLE job_printer_configs"))
+        await conn.execute(text("ALTER TABLE job_printer_configs_new RENAME TO job_printer_configs"))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

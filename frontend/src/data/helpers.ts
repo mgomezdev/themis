@@ -1,3 +1,9 @@
+export function fmtBytes(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function fmtTime(mins: number | null | undefined): string {
   if (mins == null) return '—';
   if (mins < 1) return '<1m';

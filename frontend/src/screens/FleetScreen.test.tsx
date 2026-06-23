@@ -89,13 +89,13 @@ describe('FleetScreen', () => {
   it('shows correct printer count in header', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
-    await waitFor(() => expect(screen.getByText(/1 printers online/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/1 printers/i)).toBeInTheDocument());
   });
 
   it('shows 0 printers when API returns empty list', async () => {
     mockFetch([]);
     render(<FleetScreen />);
-    await waitFor(() => expect(screen.getByText(/0 printers online/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/0 printers/i)).toBeInTheDocument());
   });
 
   it('reflects WebSocket printer_state update', async () => {

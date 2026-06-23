@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { shade } from '../data/helpers';
+import { shade, fmtBytes } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { Empty } from '../components/ui';
 import type { LibraryFile, FolderNode } from '../data/types';
@@ -15,8 +15,6 @@ import type { Tag } from '../api/tags';
 // helpers
 // -------------------------------------------------------------------------
 
-const fmtSize = (bytes: number) => `${(bytes / 1e6).toFixed(1)} MB`;
-
 // fallback gradient color for files without a thumbnail, derived from the id
 const FALLBACK_COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#14b8a6', '#ec4899'];
 const fallbackColor = (id: number) => FALLBACK_COLORS[id % FALLBACK_COLORS.length];
@@ -25,13 +23,6 @@ const fallbackColor = (id: number) => FALLBACK_COLORS[id % FALLBACK_COLORS.lengt
 const EMPTY_TREE: FolderNode = { name: 'All files', path: '', count: 0, children: {} };
 
 const JOB_UPLOADS = 'Job Uploads';
-
-// Sort folder names alphabetically, but always pin "Job Uploads" to the top.
-function jobUploadsFirst(a: string, b: string): number {
-  if (a === JOB_UPLOADS) return -1;
-  if (b === JOB_UPLOADS) return 1;
-  return a.localeCompare(b);
-}
 
 // -------------------------------------------------------------------------
 // FolderIcon
@@ -110,7 +101,7 @@ function FolderTreeNode({ node, depth, openSet, toggle, current, setCurrent }: F
       </button>
       {hasChildren && isOpen && (
         <div>
-          {childKeys.sort(jobUploadsFirst).map(k => (
+          {childKeys.sort((a, b) => a === JOB_UPLOADS ? -1 : b === JOB_UPLOADS ? 1 : a.localeCompare(b)).map(k => (
             <FolderTreeNode key={k} node={node.children[k]} depth={depth + 1}
                             openSet={openSet} toggle={toggle}
                             current={current} setCurrent={setCurrent} />
@@ -500,7 +491,7 @@ function FileDetailPanel({
         <div className="row between"><span className="tiny muted">Folder</span>
           <span className="tiny">{file.folder || '/'}</span></div>
         <div className="row between"><span className="tiny muted">Size</span>
-          <span className="tiny">{fmtSize(file.size_bytes)}</span></div>
+          <span className="tiny">{fmtBytes(file.size_bytes)}</span></div>
         <div className="row between"><span className="tiny muted">Plates</span>
           <span className="tiny">{file.plate_count}</span></div>
       </div>
@@ -996,7 +987,7 @@ export function FilesScreen() {
                     {f.original_filename}
                   </div>
                   <div className="row between" style={{ marginTop: 3 }}>
-                    <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{fmtSize(f.size_bytes)}</span>
+                    <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{fmtBytes(f.size_bytes)}</span>
                     <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
                       {f.plate_count} {f.plate_count === 1 ? 'plate' : 'plates'}
                     </span>

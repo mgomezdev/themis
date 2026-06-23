@@ -16,19 +16,13 @@ ACTIVE_JOB_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "
 
 
 def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    with open(path, "rb") as fh:
+        return hashlib.file_digest(fh, "sha256").hexdigest()
 
 
 def folder_of(relative_path: str) -> str:
-    # "Customers/Vela/arm.stl" -> "/Customers/Vela"; root file -> "/".
-    parent = str(Path(relative_path).parent).replace("\\", "/")
-    if parent in (".", "", "/"):
-        return "/"
-    return "/" + parent.lstrip("/")
+    parent = Path(relative_path).parent.as_posix()
+    return "/" if parent == "." else "/" + parent
 
 
 class LibraryScanner:
