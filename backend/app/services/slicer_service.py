@@ -23,6 +23,14 @@ class SliceError(Exception):
     pass
 
 
+def _export_3mf_name(export_args: list[str]) -> str | None:
+    """Return the --export-3mf filename from export_args, or None for raw gcode."""
+    try:
+        return export_args[export_args.index(_EXPORT_3MF) + 1]
+    except (ValueError, IndexError):
+        return None
+
+
 @dataclass
 class SliceRequest:
     """What a single (job, printer) slice needs.
@@ -115,33 +123,39 @@ class SlicerService:
         return config
 
     def _run(self, input_3mf: Path, req: SliceRequest, out_dir: Path) -> str:
-        """Run OrcaSlicer with the universal base + the printer's export args, then
-        return the artifact the printer wants (the --export-3mf file if requested,
-        otherwise the raw gcode Orca wrote to --outputdir)."""
-        # Clear prior outputs so result detection picks up this run's files.
+        """Prepare the output directory, delegate to _execute_slice, inject thumbnail."""
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):
             stale.unlink(missing_ok=True)
 
-        cmd = [self._orca, "--slice", str(req.plate_number), "--outputdir", str(out_dir),
-               "--arrange", "1",
-               *req.export_args, str(input_3mf)]
+        artifact = self._execute_slice(input_3mf, req.plate_number, req.export_args, out_dir)
+
+        if _export_3mf_name(req.export_args) is None and req.source_3mf.lower().endswith(".3mf"):
+            self._inject_thumbnail(artifact, req.source_3mf, req.plate_number)
+
+        return artifact
+
+    def _execute_slice(self, input_3mf: Path, plate_number: int, export_args: list[str], out_dir: Path) -> str:
+        """OrcaSlicer execution seam — replace this method body to switch backends.
+
+        Invokes OrcaSlicer CLI and returns the path to the output artifact (raw gcode
+        or .gcode.3mf archive). Raises SliceError on timeout or missing output.
+        """
+        cmd = [self._orca, "--slice", str(plate_number), "--outputdir", str(out_dir),
+               "--arrange", "1", *export_args, str(input_3mf)]
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=_SLICE_TIMEOUT)
         except subprocess.TimeoutExpired as e:
             raise SliceError(f"OrcaSlicer timed out after {_SLICE_TIMEOUT}s") from e
 
-        # The printer asked for the 3MF archive.
-        if _EXPORT_3MF in req.export_args:
-            target = out_dir / req.export_args[req.export_args.index(_EXPORT_3MF) + 1]
+        name = _export_3mf_name(export_args)
+        if name:
+            target = out_dir / name
             if target.exists():
                 return str(target)
         else:
             gcodes = sorted(out_dir.glob("*.gcode"))
             if gcodes:
-                gcode_path = str(gcodes[0])
-                if req.source_3mf.lower().endswith(".3mf"):
-                    self._inject_thumbnail(gcode_path, req.source_3mf, req.plate_number)
-                return gcode_path
+                return str(gcodes[0])
 
         detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
         raise SliceError(detail[-500:] or "OrcaSlicer produced no output")
