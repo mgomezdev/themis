@@ -350,3 +350,94 @@ async def test_check_interval_reads_config(db):
         session.add(QueueConfig(id=1, check_interval_minutes=15))
         await session.commit()
     assert await qe._check_interval_seconds() == 15 * 60
+
+
+def _make_mock_printer_manager_with_offline(ready_ids: list[int], offline_ids: list[int]) -> PrinterManager:
+    """Mock where some printers are tracked but not ready (offline)."""
+    all_ids = ready_ids + offline_ids
+    mgr = MagicMock(spec=PrinterManager)
+    mgr.get_all_printer_ids.return_value = all_ids
+    mgr.is_printer_ready.side_effect = lambda pid: pid in ready_ids
+    mock_client = MagicMock()
+    mock_client.file_upload_supported = False
+    mock_client.start_print.return_value = True
+    mock_client.orca_export_args.return_value = []
+    mgr.get_client.return_value = mock_client
+    return mgr
+
+
+@pytest.mark.asyncio
+async def test_offline_printer_slices_job_to_sliced_status(db, tmp_path):
+    """An offline (tracked but not ready) printer should still slice jobs; the job
+    parks at 'sliced' instead of going to 'printing'."""
+    mgr = _make_mock_printer_manager_with_offline(ready_ids=[], offline_ids=[1])
+    mock_slicer = MagicMock()
+    gcode_path = str(tmp_path / "output.gcode")
+    Path(gcode_path).write_text("G28\n")
+    mock_slicer.slice.return_value = gcode_path
+
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+
+    await qe._process_queue()
+    await asyncio.sleep(0.15)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "sliced"
+
+
+@pytest.mark.asyncio
+async def test_sliced_job_resumes_when_printer_comes_online(db, tmp_path):
+    """A 'sliced' job (gcode on disk) is picked up and sent to upload+print when
+    the printer becomes ready on the next queue cycle."""
+    mgr = _make_mock_printer_manager_with_offline(ready_ids=[], offline_ids=[1])
+    mock_slicer = MagicMock()
+    gcode_path = str(tmp_path / "output.gcode")
+    Path(gcode_path).write_text("G28\n")
+    mock_slicer.slice.return_value = gcode_path
+
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+
+    # First cycle: offline → job reaches "sliced"
+    await qe._process_queue()
+    await asyncio.sleep(0.15)
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "sliced"
+
+    # Printer comes online
+    mgr.get_all_printer_ids.return_value = [1]
+    mgr.is_printer_ready.side_effect = lambda pid: pid == 1
+
+    # Second cycle: ready → resume upload+print
+    await qe._process_queue()
+    await asyncio.sleep(0.15)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
+    """The offline slice loop skips if a 'sliced' gcode artifact already exists
+    for the same printer, preventing duplicate slice work."""
+    mgr = _make_mock_printer_manager_with_offline(ready_ids=[], offline_ids=[1])
+    mock_slicer = MagicMock()
+    gcode_path = str(tmp_path / "output.gcode")
+    Path(gcode_path).write_text("G28\n")
+    mock_slicer.slice.return_value = gcode_path
+
+    qe = QueueEngine(db, mgr, mock_slicer)
+    job_id = await _seed_job(db, printer_id=1)
+
+    # First cycle slices the job
+    await qe._process_queue()
+    await asyncio.sleep(0.15)
+    assert mock_slicer.slice.call_count == 1
+
+    # Second cycle with printer still offline: must NOT slice again
+    await qe._process_queue()
+    await asyncio.sleep(0.05)
+    assert mock_slicer.slice.call_count == 1  # no additional calls

@@ -1,4 +1,4 @@
-# Start Themis dev servers: uvicorn :8001 + vite :5173
+﻿# Start Themis dev servers: uvicorn :8001 + vite :5173
 # Both bind to 0.0.0.0 for Tailscale/LAN access via http://dionysus:5173
 
 $Root = (Resolve-Path "$PSScriptRoot\..\..\..\..").Path
@@ -28,7 +28,7 @@ Start-Sleep -Seconds 2
 if (netstat -ano | Select-String ':8001.*LISTENING') {
     Write-Host "  backend: listening on :8001" -ForegroundColor Green
 } else {
-    Write-Host "  backend: not yet listening — may still be starting" -ForegroundColor Yellow
+    Write-Host "  backend: not yet listening - may still be starting" -ForegroundColor Yellow
 }
 
 # --- Step 3: Start frontend ---
@@ -52,7 +52,7 @@ Write-Host ""
 if ($ready) {
     Write-Host "  frontend: ready at :5173" -ForegroundColor Green
 } else {
-    Write-Host "  frontend: did not respond within 20 s — check the Vite window" -ForegroundColor Yellow
+    Write-Host "  frontend: did not respond within 20 s - check the Vite window" -ForegroundColor Yellow
 }
 
 Write-Host ""

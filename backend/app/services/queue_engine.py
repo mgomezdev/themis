@@ -177,6 +177,26 @@ class QueueEngine:
                     if self._broadcast_cb:
                         await self._broadcast_cb("job_updated", {"job_id": job.id})
 
+        # "sliced" jobs park gcode on disk between queue cycles; re-queue only if
+        # the file has been deleted (e.g. data volume wiped between restarts).
+        async with self._factory() as session:
+            sliced_result = await session.execute(
+                select(Job, GcodeFile)
+                .join(GcodeFile, and_(GcodeFile.job_id == Job.id))
+                .where(Job.status == "sliced")
+            )
+            stale = [(j, g) for j, g in sliced_result.all() if not os.path.exists(g.path)]
+            for job, gcode in stale:
+                await session.delete(gcode)
+                job.status = "queued"
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+            if stale:
+                await session.commit()
+                for job, _ in stale:
+                    if self._broadcast_cb:
+                        await self._broadcast_cb("job_updated", {"job_id": job.id})
+
         self._task = asyncio.create_task(self._loop(), name="queue_engine")
 
     async def stop(self) -> None:
@@ -213,13 +233,18 @@ class QueueEngine:
 
     async def _process_queue(self) -> None:
         await self._reconcile_printing_jobs()
-        ready_ids = sorted([
-            pid for pid in self._mgr.get_all_printer_ids()
-            if self._mgr.is_printer_ready(pid)
-        ])
-        for printer_id in ready_ids:
+        all_ids = sorted(self._mgr.get_all_printer_ids())
+        ready_set = {pid for pid in all_ids if self._mgr.is_printer_ready(pid)}
+        # Ready printers: resume pre-sliced gcode if available, else claim and slice.
+        for printer_id in sorted(ready_set):
             async with self._factory() as session:
-                await self._try_claim_for_printer(session, printer_id)
+                if not await self._try_resume_sliced_job(session, printer_id):
+                    await self._try_claim_for_printer(session, printer_id)
+        # Offline printers: run the slice step now so gcode is ready when they come online.
+        for printer_id in sorted(pid for pid in all_ids if pid not in ready_set):
+            async with self._factory() as session:
+                if not await self._has_pending_sliced_job(session, printer_id):
+                    await self._try_claim_for_printer(session, printer_id, slice_only=True)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.
@@ -300,7 +325,7 @@ class QueueEngine:
                 )
                 await self.handle_print_complete(printer_id)
 
-    async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int) -> None:
+    async def _try_claim_for_printer(self, session: AsyncSession, printer_id: int, slice_only: bool = False) -> None:
         printer = await session.get(Printer, printer_id)
         if printer is None or not printer.queue_on:
             return
@@ -342,7 +367,7 @@ class QueueEngine:
         await session.commit()
 
         asyncio.create_task(
-            self._run_slice_and_print(job_id, printer_id, plate_number),
+            self._run_slice_and_print(job_id, printer_id, plate_number, slice_only=slice_only),
             name=f"slice-{job_id}-{printer_id}",
         )
         await self._broadcast_job(job_id)
@@ -358,7 +383,7 @@ class QueueEngine:
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
 
-    async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int) -> None:
+    async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int, slice_only: bool = False) -> None:
         # Load job details for slicing
         async with self._factory() as session:
             uploaded_file = None
@@ -450,21 +475,142 @@ class QueueEngine:
             await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
             return
 
-        # Store gcode record and transition to uploading
+        # Store gcode record; park as "sliced" if the printer isn't ready to receive.
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job is None or job.status == "cancelled":
                 return
             gcode_rec = GcodeFile(job_id=job_id, printer_id=printer_id, path=gcode_path)
             session.add(gcode_rec)
+            if slice_only or not self._mgr.is_printer_ready(printer_id):
+                job.status = "sliced"
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+                await session.commit()
+                await self._broadcast_job(job_id)
+                self.wake()
+                return
             job.status = "uploading"
             job.updated_at = _now()
             await session.commit()
-            plate_number = job.plate_number
+
+        await self._broadcast_job(job_id)
+        await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
+
+    async def _handle_slice_failure(self, job_id: int, printer_id: int, error: str) -> None:
+        # A slicing issue blocks the job (per queue policy). This printer's config
+        # is marked failed so it won't retry; another compatible printer can still
+        # rescue it on a later check (its config isn't failed, so it re-evaluates).
+        async with self._factory() as session:
+            result = await session.execute(
+                select(JobPrinterConfig).where(
+                    JobPrinterConfig.job_id == job_id,
+                    JobPrinterConfig.printer_id == printer_id,
+                )
+            )
+            config = result.scalar_one_or_none()
+            if config:
+                config.slice_failed = True
+                config.slice_error = error
+
+            job = await session.get(Job, job_id)
+            if job:
+                job.status = "blocked"
+                job.block_reason = f"slicing failed: {error}"
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+            await session.commit()
 
         await self._broadcast_job(job_id)
 
-        # Upload and start print
+    async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job:
+                job.status = "failed"
+                job.block_reason = reason
+                job.assigned_printer_id = None
+                job.updated_at = _now()
+            # Clean up gcode file from disk and DB
+            gcode_result = await session.execute(
+                select(GcodeFile).where(
+                    GcodeFile.job_id == job_id,
+                    GcodeFile.printer_id == printer_id,
+                )
+            )
+            gcode = gcode_result.scalar_one_or_none()
+            if gcode:
+                try:
+                    os.remove(gcode.path)
+                except OSError:
+                    pass
+                await session.delete(gcode)
+            await session.commit()
+        await self._broadcast_job(job_id)
+
+    async def _has_pending_sliced_job(self, session: AsyncSession, printer_id: int) -> bool:
+        stmt = (
+            select(Job.id)
+            .join(GcodeFile, and_(GcodeFile.job_id == Job.id, GcodeFile.printer_id == printer_id))
+            .where(Job.status == "sliced")
+            .limit(1)
+        )
+        return (await session.execute(stmt)).first() is not None
+
+    async def _try_resume_sliced_job(self, session: AsyncSession, printer_id: int) -> bool:
+        """Pick up a pre-sliced job (gcode exists) and proceed to upload+print."""
+        stmt = (
+            select(Job, GcodeFile)
+            .join(GcodeFile, and_(GcodeFile.job_id == Job.id, GcodeFile.printer_id == printer_id))
+            .where(Job.status == "sliced")
+            .order_by(Job.queue_position.asc())
+            .limit(1)
+        )
+        row = (await session.execute(stmt)).first()
+        if row is None:
+            return False
+
+        job, gcode = row
+        if not os.path.exists(gcode.path):
+            logger.warning("Sliced gcode missing for job %s (printer %s); re-queuing", job.id, printer_id)
+            await session.delete(gcode)
+            job.status = "queued"
+            job.assigned_printer_id = None
+            job.updated_at = _now()
+            await session.commit()
+            await self._broadcast_job(job.id)
+            return False
+
+        config_result = await session.execute(
+            select(JobPrinterConfig).where(
+                JobPrinterConfig.job_id == job.id,
+                JobPrinterConfig.printer_id == printer_id,
+            )
+        )
+        config = config_result.scalar_one_or_none()
+        printer = await session.get(Printer, printer_id)
+        loaded = (printer.loaded_filaments if printer else None) or []
+        slot = _slot_for_config(config, loaded) if config else None
+        ams_tray_id = (slot or {}).get("ams_tray_id")
+        gcode_path = gcode.path
+        plate_number = job.plate_number
+
+        job.status = "uploading"
+        job.assigned_printer_id = printer_id
+        job.updated_at = _now()
+        await session.commit()
+        asyncio.create_task(
+            self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
+            name=f"upload-{job.id}-{printer_id}",
+        )
+        await self._broadcast_job(job.id)
+        return True
+
+    async def _do_upload_and_print(
+        self, job_id: int, printer_id: int, gcode_path: str, plate_number: int, ams_tray_id
+    ) -> None:
+        """Upload an already-sliced gcode file to the printer and start the print."""
+        loop = asyncio.get_running_loop()
         client = self._mgr.get_client(printer_id)
         gcode_filename = os.path.basename(gcode_path)
 
@@ -526,57 +672,6 @@ class QueueEngine:
                 printer.awaiting_plate_clear = True
             await session.commit()
 
-        await self._broadcast_job(job_id)
-
-    async def _handle_slice_failure(self, job_id: int, printer_id: int, error: str) -> None:
-        # A slicing issue blocks the job (per queue policy). This printer's config
-        # is marked failed so it won't retry; another compatible printer can still
-        # rescue it on a later check (its config isn't failed, so it re-evaluates).
-        async with self._factory() as session:
-            result = await session.execute(
-                select(JobPrinterConfig).where(
-                    JobPrinterConfig.job_id == job_id,
-                    JobPrinterConfig.printer_id == printer_id,
-                )
-            )
-            config = result.scalar_one_or_none()
-            if config:
-                config.slice_failed = True
-                config.slice_error = error
-
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = "blocked"
-                job.block_reason = f"slicing failed: {error}"
-                job.assigned_printer_id = None
-                job.updated_at = _now()
-            await session.commit()
-
-        await self._broadcast_job(job_id)
-
-    async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
-        async with self._factory() as session:
-            job = await session.get(Job, job_id)
-            if job:
-                job.status = "failed"
-                job.block_reason = reason
-                job.assigned_printer_id = None
-                job.updated_at = _now()
-            # Clean up gcode file from disk and DB
-            gcode_result = await session.execute(
-                select(GcodeFile).where(
-                    GcodeFile.job_id == job_id,
-                    GcodeFile.printer_id == printer_id,
-                )
-            )
-            gcode = gcode_result.scalar_one_or_none()
-            if gcode:
-                try:
-                    os.remove(gcode.path)
-                except OSError:
-                    pass
-                await session.delete(gcode)
-            await session.commit()
         await self._broadcast_job(job_id)
 
     async def handle_print_complete(self, printer_id: int) -> None:

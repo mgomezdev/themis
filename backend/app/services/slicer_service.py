@@ -1,21 +1,14 @@
 from __future__ import annotations
-import zipfile
-import defusedxml.ElementTree as ET
-
 import logging
-import subprocess
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from ..config import get_data_dir, get_orca_executable
-from .mesh_3mf_builder import build_sliceable_3mf, stl_to_3mf
-from .preset_resolver import PresetNotFoundError, PresetResolver
-from .project_config_builder import build_project_config
+from ..config import get_data_dir
 
 logger = logging.getLogger(__name__)
 
-_SLICE_TIMEOUT = 600
 _EXPORT_3MF = "--export-3mf"
 
 
@@ -36,11 +29,11 @@ class SliceRequest:
     """What a single (job, printer) slice needs.
 
     ``machine_preset`` is the printer's ``current_orca_printer_profile``;
-    ``process_preset``/``filament_presets`` are OrcaSlicer preset names.
-    ``export_args`` are the printer-specific OrcaSlicer output args (from
-    ``AbstractPrinterClient.orca_export_args``): ``[]`` yields raw gcode (the
-    default), ``["--export-3mf", "<name>.gcode.3mf"]`` yields the archive. Orca
-    always writes gcode to ``--outputdir``; ``--export-3mf`` adds the archive.
+    ``process_preset``/``filament_presets`` are OrcaSlicer preset names resolved
+    by the Orca sidecar catalog. ``export_args`` are the printer-specific output
+    args: ``[]`` yields raw gcode, ``["--export-3mf", "<name>.gcode.3mf"]`` yields
+    the archive. ``extra_config`` carries runtime overrides (bed type, job-level
+    setting overrides) merged by the sidecar after profile resolution.
     """
     job_id: int
     source_3mf: str
@@ -55,114 +48,134 @@ class SliceRequest:
 
 
 class SlicerService:
-    def __init__(self, orca_executable: str | None = None, data_dir: str | None = None) -> None:
-        self._orca = orca_executable or get_orca_executable()
+    _CATALOG_TTL = 300.0  # seconds before re-fetching the sidecar profile catalog
+
+    def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
-        self._resolver = PresetResolver()
+        self._catalog_cache: dict | None = None
+        self._catalog_ts: float = 0.0
 
     # ── public API ────────────────────────────────────────────────────────────
     def slice(self, req: SliceRequest) -> str:
-        """Resolve presets → embed them in a sliceable 3MF → slice → return the
-        printer-correct artifact path (raw gcode or .gcode.3mf, per req.export_args).
-        Falls back to a geometry-only re-slice (GUI "import geometry only") on failure.
+        """Resolve profile names to sidecar UUIDs and delegate the full slice to
+        the Orca sidecar (POST /api/slice/start). The sidecar owns all profile
+        resolution, 3MF assembly, and gcode generation. Raises SliceError if the
+        sidecar is unreachable, unconfigured, or any profile is not in its catalog.
         """
-        config = self._build_config(req)
+        from ..config import get_orca_sidecar_url
+        sidecar_url = get_orca_sidecar_url()
+        if not sidecar_url:
+            raise SliceError("ORCA_SIDECAR_URL is not configured — Orca sidecar is required for slicing")
+
+        if req.prepare_hook is not None:
+            raise SliceError(
+                "Multi-extruder remapping via prepare_hook is not supported in sidecar-only mode"
+            )
+
         out_dir = self._data_dir / "gcode" / str(req.job_id)
         out_dir.mkdir(parents=True, exist_ok=True)
-        prepared = out_dir / "prepared.3mf"
 
-        # Bare STL: wrap the mesh into a fresh 3MF with our config (no model_settings
-        # to preserve, so the recovery tier doesn't apply).
-        if Path(req.source_3mf).suffix.lower() == ".stl":
-            stl_to_3mf(req.source_3mf, config, prepared)
-            if req.prepare_hook:
-                req.prepare_hook(prepared)
-            return self._run(prepared, req, out_dir)
-
-        # Primary: preserve model_settings (per-object overrides / paint).
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=False)
-        if req.prepare_hook:
-            req.prepare_hook(prepared)
-        try:
-            return self._run(prepared, req, out_dir)
-        except SliceError as primary_err:
-            logger.warning("Slice failed for job %s; retrying geometry-only: %s", req.job_id, primary_err)
-
-        # Recovery: drop the file's own settings/overrides, apply ours fresh.
-        build_sliceable_3mf(req.source_3mf, config, prepared, geometry_only=True)
-        if req.prepare_hook:
-            req.prepare_hook(prepared)
-        return self._run(prepared, req, out_dir)
+        uuids = self._resolve_uuids(req, sidecar_url)
+        if uuids is None:
+            raise SliceError(
+                f"Profile not found in Orca sidecar catalog — "
+                f"machine={req.machine_preset!r} process={req.process_preset!r} "
+                f"filaments={req.filament_presets!r}"
+            )
+        machine_uuid, process_uuid, filament_uuids = uuids
+        return self._execute_slice_by_ids(
+            req, machine_uuid, process_uuid, filament_uuids, out_dir, sidecar_url
+        )
 
     # ── internals ─────────────────────────────────────────────────────────────
-    def _build_config(self, req: SliceRequest) -> dict:
-        try:
-            machine = self._resolver.resolve(req.machine_preset, "machine")
-            process = self._resolver.resolve(req.process_preset, "process")
-            filaments = [self._resolver.resolve(name, "filament") for name in req.filament_presets]
-        except PresetNotFoundError as e:
-            raise SliceError(f"preset resolution failed: {e}") from e
+    def _resolve_uuids(
+        self,
+        req: SliceRequest,
+        sidecar_url: str,
+    ) -> "tuple[str, str, list[str]] | None":
+        """Look up profile UUIDs from the sidecar catalog by name.
 
-        # Resolve the plate count from the source 3MF if possible
-        plate_count = 1
-        source_path = Path(req.source_3mf)
-        if source_path.suffix.lower() == ".3mf":
+        Returns (machine_uuid, process_uuid, [filament_uuid, ...]) or None if
+        any name is absent — caller raises SliceError.
+        """
+        import time as _time
+        now = _time.monotonic()
+        if self._catalog_cache is None or (now - self._catalog_ts) > self._CATALOG_TTL:
             try:
-                with zipfile.ZipFile(source_path) as z:
-                    if "Metadata/model_settings.config" in z.namelist():
-                        root = ET.fromstring(z.read("Metadata/model_settings.config"))
-                        plates = root.findall(".//plate")
-                        if plates:
-                            plate_count = len(plates)
-            except Exception as e:
-                logger.warning("Failed to parse plate count from %s: %s", req.source_3mf, e)
+                from .orca_sidecar_client import OrcaSidecarClient
+                self._catalog_cache = OrcaSidecarClient(sidecar_url).get_catalog()
+                self._catalog_ts = now
+            except Exception as exc:
+                logger.warning("Could not fetch sidecar catalog: %s", exc)
+                raise SliceError(f"Orca sidecar unreachable — cannot resolve profiles: {exc}") from exc
 
-        config = build_project_config(machine, process, filaments, req.filament_colours or None, plate_count=plate_count)
-        if req.extra_config:
-            config.update(req.extra_config)
-        return config
+        catalog = self._catalog_cache
+        machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
+        process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
+        filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
 
-    def _run(self, input_3mf: Path, req: SliceRequest, out_dir: Path) -> str:
-        """Prepare the output directory, delegate to _execute_slice, inject thumbnail."""
+        machine_uuid = machine_map.get(req.machine_preset)
+        process_uuid = process_map.get(req.process_preset)
+        if not machine_uuid or not process_uuid:
+            logger.warning(
+                "Sidecar UUID miss — machine=%r found=%s, process=%r found=%s",
+                req.machine_preset, bool(machine_uuid),
+                req.process_preset, bool(process_uuid),
+            )
+            return None
+
+        filament_uuids = []
+        for name in req.filament_presets:
+            fid = filament_map.get(name)
+            if not fid:
+                logger.warning("Sidecar UUID miss — filament=%r not in catalog", name)
+                return None
+            filament_uuids.append(fid)
+
+        if not filament_uuids:
+            return None
+
+        return machine_uuid, process_uuid, filament_uuids
+
+    def _execute_slice_by_ids(
+        self,
+        req: SliceRequest,
+        machine_uuid: str,
+        process_uuid: str,
+        filament_uuids: list[str],
+        out_dir: Path,
+        sidecar_url: str,
+    ) -> str:
+        """Delegate the full slice to the sidecar using stable profile UUIDs.
+
+        The sidecar resolves inheritance, builds the 3MF with extra_config merged
+        on top, slices, and streams the artifact back. No local file access.
+        """
+        from .orca_sidecar_client import OrcaSidecarClient, SidecarError
+        client = OrcaSidecarClient(sidecar_url)
+        export_3mf = _export_3mf_name(req.export_args) is not None
+        source = Path(req.source_3mf)
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):
             stale.unlink(missing_ok=True)
-
-        artifact = self._execute_slice(input_3mf, req.plate_number, req.export_args, out_dir)
-
-        if _export_3mf_name(req.export_args) is None and req.source_3mf.lower().endswith(".3mf"):
-            self._inject_thumbnail(artifact, req.source_3mf, req.plate_number)
-
-        return artifact
-
-    def _execute_slice(self, input_3mf: Path, plate_number: int, export_args: list[str], out_dir: Path) -> str:
-        """OrcaSlicer execution seam — replace this method body to switch backends.
-
-        Invokes OrcaSlicer CLI and returns the path to the output artifact (raw gcode
-        or .gcode.3mf archive). Raises SliceError on timeout or missing output.
-        """
-        cmd = [self._orca, "--slice", str(plate_number), "--outputdir", str(out_dir),
-               "--arrange", "1", *export_args, str(input_3mf)]
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=_SLICE_TIMEOUT)
-        except subprocess.TimeoutExpired as e:
-            raise SliceError(f"OrcaSlicer timed out after {_SLICE_TIMEOUT}s") from e
+            job_id = client.slice_start(
+                source, machine_uuid, process_uuid, filament_uuids,
+                req.plate_number, export_3mf=export_3mf,
+                extra_config=req.extra_config or None,
+            )
+            status = client.poll_status(job_id)
+            dest = out_dir / status["sliced_file"]
+            result = str(client.download(job_id, dest))
+        except SidecarError as e:
+            raise SliceError(str(e)) from e
 
-        name = _export_3mf_name(export_args)
-        if name:
-            target = out_dir / name
-            if target.exists():
-                return str(target)
-        else:
-            gcodes = sorted(out_dir.glob("*.gcode"))
-            if gcodes:
-                return str(gcodes[0])
-
-        detail = (result.stderr or result.stdout or f"exit {result.returncode}").strip()
-        raise SliceError(detail[-500:] or "OrcaSlicer produced no output")
+        if not export_3mf and source.suffix.lower() == ".3mf":
+            self._inject_thumbnail(result, req.source_3mf, req.plate_number)
+        return result
 
     def _inject_thumbnail(self, gcode_path: str, source_3mf: str, plate_number: int) -> None:
-        """Extract the plate's thumbnail from the source 3MF and embed it into the generated G-code
-        as base64 comments so Elegoo/Snapmaker screens can display a preview (headless Orca drops it)."""
+        """Extract the plate thumbnail from the source 3MF and prepend it to the
+        gcode as base64 comments so Elegoo/Snapmaker screens can display a preview."""
         import base64
         try:
             with zipfile.ZipFile(source_3mf, "r") as z:
@@ -175,7 +188,6 @@ class SlicerService:
                         thumb_path = "Metadata/preview.png"
                     else:
                         return
-
                 thumb_data = z.read(thumb_path)
 
             if thumb_data[:8] != b"\x89PNG\r\n\x1a\n":
@@ -186,21 +198,17 @@ class SlicerService:
             encoded = base64.b64encode(thumb_data).decode("ascii")
             chunks = [encoded[i:i+78] for i in range(0, len(encoded), 78)]
 
-            # Klipper/Marlin standard thumbnail header
             buf = [f"; thumbnail begin {width}x{height} {len(thumb_data)}"]
             for chunk in chunks:
                 buf.append(f"; {chunk}")
             buf.append("; thumbnail end")
             buf.append("\n")
 
-            # Prepend to the gcode file
             with open(gcode_path, "rb") as f:
                 content = f.read()
-
             with open(gcode_path, "wb") as f:
                 f.write("\n".join(buf).encode("utf-8"))
                 f.write(content)
 
         except Exception as e:
             logger.warning("Failed to inject thumbnail into %s: %s", gcode_path, e)
-

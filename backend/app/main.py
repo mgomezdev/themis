@@ -41,6 +41,32 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 async def lifespan(app: FastAPI):
     await init_db()
 
+    # Seed placeholder Elegoo Centauri Carbon for test slicing (idempotent).
+    from sqlalchemy import select as _select
+    from .models import Printer as _Printer
+    async with SessionLocal() as _sess:
+        _existing = (await _sess.execute(
+            _select(_Printer).where(_Printer.name == "Elegoo Centauri Carbon (placeholder)")
+        )).scalar_one_or_none()
+        if _existing is None:
+            _sess.add(_Printer(
+                name="Elegoo Centauri Carbon (placeholder)",
+                printer_type="elegoo_centauri",
+                connection_config={"ip_address": "192.0.2.1"},
+                current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
+                orca_printer_profiles=["Elegoo Centauri Carbon 0.4 nozzle"],
+                loaded_filaments=[{
+                    "slot": 0,
+                    "type": "PLA",
+                    "color": "white",
+                    "filament_profile": "Elegoo PLA @ECC",
+                }],
+                enabled=True,
+                queue_on=True,
+            ))
+            await _sess.commit()
+            logging.getLogger("app").info("Seeded placeholder Elegoo Centauri Carbon printer")
+
     # File library: migrate legacy uploads, then index the library dir.
     from . import config as _config
     from .services.library_scanner import LibraryScanner, migrate_legacy_uploads
@@ -70,6 +96,19 @@ async def lifespan(app: FastAPI):
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
+
+    # Warn early if the sidecar is configured but unreachable
+    from .config import get_orca_sidecar_url as _get_sidecar_url
+    _sidecar_url = _get_sidecar_url()
+    if _sidecar_url:
+        try:
+            from .services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+            await asyncio.to_thread(OrcaSidecarClient(_sidecar_url).health)
+            logging.getLogger("app").info("Orca sidecar healthy at %s", _sidecar_url)
+        except Exception as e:
+            logging.getLogger("app").warning(
+                "Orca sidecar at %s is not reachable: %s", _sidecar_url, e
+            )
 
     yield
 

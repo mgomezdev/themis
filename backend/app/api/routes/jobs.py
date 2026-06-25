@@ -12,12 +12,10 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Order, Printer, UploadedFile
+from ...models import GcodeFile, Job, JobPrinterConfig, Order, Printer, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
-from ...services.preset_resolver import PresetNotFoundError, PresetResolver
 from ...services.printer_manager import printer_manager
-from ...services.project_config_builder import build_project_config
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
 
@@ -39,7 +37,7 @@ _PRINTER_ACTIVE_STATUSES = {"printing", "paused", "uploading"}
 
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 
-_CANCELLABLE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "failed"}
+_CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", "printing", "paused", "failed"}
 
 
 class PrinterConfigInput(BaseModel):
@@ -194,23 +192,52 @@ async def check_overrides(
     if not printer.current_orca_printer_profile:
         return {**empty, "has_embedded_settings": True}
 
-    resolver = PresetResolver()
-    try:
-        machine = resolver.resolve(printer.current_orca_printer_profile, "machine")
-        process = resolver.resolve(body.print_profile, "process")
-    except PresetNotFoundError as e:
-        # Can't compare without the chosen presets; don't block job creation.
-        return {**empty, "has_embedded_settings": True, "error": str(e)}
-    # Filament content doesn't affect the curated (process) diff; best-effort.
-    try:
-        filaments = [resolver.resolve(body.filament_profile, "filament")] if body.filament_profile else []
-    except PresetNotFoundError:
-        filaments = []
-    if not filaments:
-        filaments = [{"name": body.filament_profile or "filament", "filament_type": ["PLA"]}]
+    # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
+    # project config. If the sidecar is unavailable or any required UUID is missing,
+    # skip the diff rather than blocking job creation.
+    from ...config import get_orca_sidecar_url
+    from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
 
-    config = build_project_config(machine, process, filaments,
-                                  [body.filament_color] if body.filament_color else None)
+    sidecar_url = get_orca_sidecar_url()
+    if not sidecar_url:
+        return {**empty, "has_embedded_settings": True, "error": "Override check requires Orca sidecar"}
+
+    loop = asyncio.get_running_loop()
+    client = OrcaSidecarClient(sidecar_url, timeout=30)
+
+    try:
+        catalog = await loop.run_in_executor(None, client.get_catalog)
+    except SidecarError as e:
+        return {**empty, "has_embedded_settings": True, "error": f"Sidecar unavailable: {e}"}
+
+    machine_name = printer.current_orca_printer_profile
+    machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
+    process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
+    filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
+
+    machine_uuid = machine_map.get(machine_name)
+    process_uuid = process_map.get(body.print_profile)
+    if not machine_uuid or not process_uuid:
+        return {**empty, "has_embedded_settings": True,
+                "error": f"Profile not found in sidecar: machine={machine_name!r} process={body.print_profile!r}"}
+
+    # Filament content doesn't affect the curated (process) diff. If the named
+    # filament isn't in the catalog, pick the first compatible one as a stand-in.
+    filament_uuid = filament_map.get(body.filament_profile or "")
+    if not filament_uuid:
+        compat = [f["uuid"] for f in catalog.get("filament", [])
+                  if machine_name in (f.get("compatible_printers") or [])]
+        filament_uuid = compat[0] if compat else next(iter(filament_map.values()), None)
+    if not filament_uuid:
+        return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
+
+    try:
+        config = await loop.run_in_executor(
+            None, client.get_merged_config, machine_uuid, process_uuid, [filament_uuid]
+        )
+    except SidecarError as e:
+        return {**empty, "has_embedded_settings": True, "error": str(e)}
+
     slots = len(printer.loaded_filaments or []) or 1
     return inspect_overrides(uploaded_file.stored_path, config, slots)
 
@@ -307,6 +334,18 @@ async def cancel_job(
         job.assigned_printer_id
         if job.status in _PRINTER_ACTIVE_STATUSES else None
     )
+    # "sliced" jobs have a parked gcode file on disk; clean it up.
+    if job.status == "sliced":
+        gcode_row = (await session.execute(
+            select(GcodeFile).where(GcodeFile.job_id == job_id)
+        )).scalar_one_or_none()
+        if gcode_row is not None:
+            try:
+                os.remove(gcode_row.path)
+            except OSError:
+                pass
+            await session.delete(gcode_row)
+
     job.status = "cancelled"
     job.assigned_printer_id = None
     job.queue_position = None
