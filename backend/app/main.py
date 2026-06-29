@@ -22,7 +22,9 @@ from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.orca import router as orca_router
 from .api.routes.printers import router as printers_router
+from .api.routes.projects import router as projects_router
 from .api.routes.queue import router as queue_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
@@ -125,6 +127,8 @@ app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(orca_router)
+app.include_router(projects_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(spoolman_router)

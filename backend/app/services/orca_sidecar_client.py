@@ -200,6 +200,38 @@ class OrcaSidecarClient:
             raise SidecarError(f"profiles/merged-config returned {r.status_code}: {r.text[:300]}")
         return r.json()
 
+    def arrange(
+        self,
+        threemf_path: Path,
+        arrange: bool = True,
+        orient: bool = True,
+        timeout: float = 130.0,
+    ) -> bytes:
+        """POST /api/arrange → arranged multi-plate 3MF bytes.
+
+        Sends a pre-built 3MF (with model_settings.config extruder assignments) to
+        the sidecar for plate arrangement and returns the rearranged 3MF bytes.
+        Raises SidecarError on failure or timeout.
+        """
+        try:
+            with open(threemf_path, "rb") as fh:
+                r = self._client.post(
+                    "/api/arrange",
+                    files={"file": (threemf_path.name, fh, "application/octet-stream")},
+                    data={
+                        "arrange": "1" if arrange else "0",
+                        "orient": "1" if orient else "0",
+                    },
+                    timeout=timeout,
+                )
+        except httpx.HTTPError as e:
+            raise SidecarError(f"arrange request failed: {e}") from e
+        if r.status_code == 408:
+            raise SidecarError("arrange timed out on sidecar")
+        if r.status_code != 200:
+            raise SidecarError(f"arrange returned {r.status_code}: {r.text[:300]}")
+        return r.content
+
     def pack_stls(
         self,
         stl_paths: list[Path],

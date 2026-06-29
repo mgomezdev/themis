@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Boolean, Float, ForeignKey, JSON, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -130,3 +130,34 @@ class SpoolmanConfig(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     api_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+
+
+class Project(Base):
+    __tablename__ = "projects"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    machine_uuid: Mapped[str] = mapped_column(String(36))
+    process_uuid: Mapped[str] = mapped_column(String(36))
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_file_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+
+
+class ProjectItem(Base):
+    __tablename__ = "project_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE")
+    )
+    file_id: Mapped[int] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="RESTRICT")
+    )
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    filament_profile_uuid: Mapped[str] = mapped_column(String(36))
+    color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
