@@ -5,11 +5,13 @@ services:
       - ../orca/config:/config
       - ../orca/data:/data
       - "${APPDATA}/OrcaSlicer/system:/profiles/system:ro"
+      - "${APPDATA}/OrcaSlicer/user:/profiles/user:ro"
     shm_size: "1gb"
     environment:
       - TZ=Etc/UTC
       - PYTHONUNBUFFERED=1
       - SYSTEM_PROFILES_DIR=/profiles/system
+      - USER_CONFIG_DIR=/profiles/user
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
       interval: 10s
