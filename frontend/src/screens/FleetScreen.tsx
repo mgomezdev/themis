@@ -5,7 +5,7 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
@@ -435,10 +435,12 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
 }) {
   const isPrinting = p.status === 'printing';
   const isPaused = p.status === 'paused';
+  const isOffline = p.status === 'offline';
   const [nickname, setNickname] = useState(p.nickname);
   const [editingName, setEditingName] = useState(false);
   const [editingPrinter, setEditingPrinter] = useState(false);
   const [pickingFilament, setPickingFilament] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => { setNickname(p.nickname); }, [p.nickname]);
 
@@ -485,6 +487,20 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           </div>
           <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
             <StatusPill status={p.status} />
+            {isOffline && (
+              <button
+                className="btn sm"
+                disabled={reconnecting}
+                title="Attempt to reconnect this printer"
+                onClick={async () => {
+                  setReconnecting(true);
+                  try { await reconnectPrinter(p.id); refetchFleet(); }
+                  catch { /* connection attempt launched — fleet will update via WS */ }
+                  finally { setReconnecting(false); }
+                }}>
+                {reconnecting ? 'Connecting…' : <>{Icons.refresh} Reconnect</>}
+              </button>
+            )}
             {p.awaitingPlateClear && (
               <ReadyForWorkButton printerId={p.id} refetchFleet={refetchFleet} />
             )}
