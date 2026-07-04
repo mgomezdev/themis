@@ -19,34 +19,14 @@ from ...services.printer_client_factory import REGISTRY, get_printer_types_for_u
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
-# ---------------------------------------------------------------------------
-# Sidecar-backed profile catalog (machine/process/filament names from Orca).
-# Cached to avoid a round-trip on every dropdown keystroke; invalidated by
-# POST /rescan-profiles or after a 5-minute TTL.
-# ---------------------------------------------------------------------------
-_catalog_cache: dict | None = None
-_catalog_ts: float = 0.0
-_CATALOG_TTL = 300.0
-
-
-def _fetch_sidecar_catalog() -> dict | None:
-    """Fetch the full catalog from the Orca sidecar (sync, safe for thread pool)."""
-    from ...config import get_orca_sidecar_url
-    url = get_orca_sidecar_url()
-    if not url:
-        return None
-    global _catalog_cache, _catalog_ts
-    now = _time.monotonic()
-    if _catalog_cache is not None and (now - _catalog_ts) < _CATALOG_TTL:
-        return _catalog_cache
-    from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+async def _fetch_sidecar_catalog() -> dict | None:
+    """Return the Themis-side catalog cache (never calls Orca directly)."""
+    from .orca import get_cached_catalog
     try:
-        _catalog_cache = OrcaSidecarClient(url, timeout=30).get_catalog()
-        _catalog_ts = now
-        return _catalog_cache
-    except SidecarError as e:
+        return await get_cached_catalog()
+    except Exception as e:
         import logging
-        logging.getLogger(__name__).warning("Could not fetch sidecar catalog: %s", e)
+        logging.getLogger(__name__).warning("Could not get catalog: %s", e)
         return None
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
@@ -167,7 +147,7 @@ async def create_printer(
 @router.get("/orca-presets")
 async def list_orca_printer_presets() -> list[str]:
     loop = asyncio.get_running_loop()
-    cat = await loop.run_in_executor(None, _fetch_sidecar_catalog)
+    cat = await _fetch_sidecar_catalog()
     if cat is None:
         return []
     return sorted({m["name"] for m in cat.get("machine", []) if m.get("name")})
@@ -178,7 +158,7 @@ async def orca_machine_catalog() -> list[dict]:
     """Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,
     source, uuid}]. Sourced exclusively from the Orca sidecar."""
     loop = asyncio.get_running_loop()
-    cat = await loop.run_in_executor(None, _fetch_sidecar_catalog)
+    cat = await _fetch_sidecar_catalog()
     if cat is None:
         return []
     return sorted(
@@ -200,12 +180,10 @@ async def orca_machine_catalog() -> list[dict]:
 
 @router.post("/rescan-profiles")
 async def rescan_profiles() -> dict:
-    """Invalidate the sidecar catalog cache so the next request fetches fresh data."""
-    global _catalog_cache, _catalog_ts
-    _catalog_cache = None
-    _catalog_ts = 0.0
-    loop = asyncio.get_running_loop()
-    cat = await loop.run_in_executor(None, _fetch_sidecar_catalog)
+    """Trigger a catalog refresh from Orca and report the machine preset count."""
+    from .orca import refresh_catalog as _orca_refresh
+    await _orca_refresh()
+    cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"machine_presets": 0}
     count = sum(1 for m in cat.get("machine", []) if m.get("model") and m.get("nozzle"))
@@ -282,7 +260,7 @@ async def get_profiles(
     machine_name = printer.current_orca_printer_profile
 
     loop = asyncio.get_running_loop()
-    cat = await loop.run_in_executor(None, _fetch_sidecar_catalog)
+    cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
 

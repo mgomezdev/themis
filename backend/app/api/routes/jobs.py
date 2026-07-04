@@ -202,13 +202,11 @@ async def check_overrides(
     if not sidecar_url:
         return {**empty, "has_embedded_settings": True, "error": "Override check requires Orca sidecar"}
 
-    loop = asyncio.get_running_loop()
-    client = OrcaSidecarClient(sidecar_url, timeout=30)
-
+    from ..routes.orca import get_cached_catalog
     try:
-        catalog = await loop.run_in_executor(None, client.get_catalog)
-    except SidecarError as e:
-        return {**empty, "has_embedded_settings": True, "error": f"Sidecar unavailable: {e}"}
+        catalog = await get_cached_catalog()
+    except Exception as e:
+        return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
     machine_name = printer.current_orca_printer_profile
     machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}

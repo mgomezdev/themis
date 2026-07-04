@@ -20,7 +20,11 @@ if ($still) {
 
 # --- Step 2: Start backend ---
 Write-Host "Starting backend (uvicorn :8001)..." -ForegroundColor Cyan
-$backendCmd = "Set-Location '$Root\backend'; .venv\Scripts\Activate.ps1; uvicorn app.main:app --reload --port 8001 --host 0.0.0.0"
+if (-not (docker ps --filter name=themis-orca-1 --filter name=omnibus-orca-1 -q 2>$null)) {
+    Write-Host "  NOTE: Orca container not detected. Start it with:" -ForegroundColor Yellow
+    Write-Host "    docker compose -f docker-compose.yml -f docker-compose.dev.yml up orca" -ForegroundColor Yellow
+}
+$backendCmd = "Set-Location '$Root\backend'; .venv\Scripts\Activate.ps1; `$env:ORCA_SIDECAR_URL='http://localhost:5000'; uvicorn app.main:app --reload --port 8001 --host 0.0.0.0"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
 Start-Sleep -Seconds 2

@@ -26,12 +26,6 @@ from ...services.thumbnail_regen import regen_file_thumbnails
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
-# ---------------------------------------------------------------------------
-# Catalog cache (5-minute TTL, separate from SlicerService cache)
-# ---------------------------------------------------------------------------
-_catalog_cache: dict | None = None
-_catalog_ts: float = 0.0
-_CATALOG_TTL = 300.0
 
 
 def _now_iso() -> str:
@@ -43,16 +37,9 @@ def _slugify(name: str) -> str:
     return re.sub(r"[\s_-]+", "-", slug).strip("-")[:80]
 
 
-async def _get_catalog(sidecar_url: str) -> dict:
-    global _catalog_cache, _catalog_ts
-    if _catalog_cache is None or (time.monotonic() - _catalog_ts) > _CATALOG_TTL:
-        client = OrcaSidecarClient(sidecar_url)
-        try:
-            _catalog_cache = await asyncio.to_thread(client.get_catalog)
-            _catalog_ts = time.monotonic()
-        except SidecarError as exc:
-            raise HTTPException(502, f"Orca sidecar unreachable: {exc}") from exc
-    return _catalog_cache
+async def _get_catalog(_sidecar_url: str | None = None) -> dict:
+    from .orca import get_cached_catalog
+    return await get_cached_catalog()
 
 
 def _resolve_filament_name(catalog: dict, uuid: str) -> str | None:
@@ -462,7 +449,7 @@ async def assemble_project(
         client = OrcaSidecarClient(sidecar_url)
         try:
             arranged_bytes = await asyncio.to_thread(
-                client.arrange, combined_path, True, True, 130.0
+                client.arrange, combined_path, False, False, 130.0
             )
         except SidecarError as exc:
             if "timed out" in str(exc).lower():

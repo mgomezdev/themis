@@ -99,7 +99,8 @@ async def lifespan(app: FastAPI):
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
 
-    # Warn early if the sidecar is configured but unreachable
+    # Warn early if the sidecar is configured but unreachable; then warm the
+    # catalog cache in the background so the first user request is fast.
     from .config import get_orca_sidecar_url as _get_sidecar_url
     _sidecar_url = _get_sidecar_url()
     if _sidecar_url:
@@ -111,6 +112,9 @@ async def lifespan(app: FastAPI):
             logging.getLogger("app").warning(
                 "Orca sidecar at %s is not reachable: %s", _sidecar_url, e
             )
+        # Kick off catalog warm-up in the background — don't block startup.
+        from .api.routes.orca import warm_catalog_cache as _warm_catalog
+        asyncio.create_task(_warm_catalog())
 
     yield
 

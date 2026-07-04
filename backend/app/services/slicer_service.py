@@ -48,12 +48,8 @@ class SliceRequest:
 
 
 class SlicerService:
-    _CATALOG_TTL = 300.0  # seconds before re-fetching the sidecar profile catalog
-
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
-        self._catalog_cache: dict | None = None
-        self._catalog_ts: float = 0.0
 
     # ── public API ────────────────────────────────────────────────────────────
     def slice(self, req: SliceRequest) -> str:
@@ -98,18 +94,18 @@ class SlicerService:
         Returns (machine_uuid, process_uuid, [filament_uuid, ...]) or None if
         any name is absent — caller raises SliceError.
         """
-        import time as _time
-        now = _time.monotonic()
-        if self._catalog_cache is None or (now - self._catalog_ts) > self._CATALOG_TTL:
+        # Prefer the Themis-side catalog cache (populated at boot) over a fresh
+        # sidecar call. Falls back to a direct fetch only if not yet warmed.
+        from ..api.routes import orca as _orca_module
+        catalog = _orca_module._catalog_dict
+        if catalog is None:
             try:
                 from .orca_sidecar_client import OrcaSidecarClient
-                self._catalog_cache = OrcaSidecarClient(sidecar_url).get_catalog()
-                self._catalog_ts = now
+                catalog = OrcaSidecarClient(sidecar_url).get_catalog()
+                _orca_module._catalog_dict = catalog
             except Exception as exc:
                 logger.warning("Could not fetch sidecar catalog: %s", exc)
                 raise SliceError(f"Orca sidecar unreachable — cannot resolve profiles: {exc}") from exc
-
-        catalog = self._catalog_cache
         machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
         process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
         filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}

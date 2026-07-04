@@ -1,11 +1,36 @@
 services:
+  orca:
+    build: ../orca
+    volumes:
+      - ../orca/config:/config
+      - ../orca/data:/data
+      - "${APPDATA}/OrcaSlicer/system:/profiles/system:ro"
+    shm_size: "1gb"
+    environment:
+      - TZ=Etc/UTC
+      - PYTHONUNBUFFERED=1
+      - SYSTEM_PROFILES_DIR=/profiles/system
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
   themis:
     build: .
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      - "${HOST_PORT:-8001}:8000"
     volumes:
-      - themis-data:/data
       - "${APPDATA}/OrcaSlicer:/root/.config/OrcaSlicer:ro"
+      - themis-data:/data
+    environment:
+      - ORCA_SIDECAR_URL=http://orca:5000
+      - THEMIS_LIBRARY_DIR=/data/library
+    depends_on:
+      orca:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

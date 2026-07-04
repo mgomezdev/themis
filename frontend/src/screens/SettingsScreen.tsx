@@ -4,6 +4,7 @@ import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpool
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
+import { getOrcaCatalogStatus, refreshOrcaCatalog, rescanOrcaCatalog, type OrcaCatalogStatus } from '../api/orca';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 
@@ -386,8 +387,7 @@ function TagsPage() {
 // =========================================================================
 
 function PrintDefaultsPage() {
-  // Queue check interval — wired to the backend (how often the engine scans
-  // printer availability and claims the next compatible queued job).
+  // Queue check interval
   const [checkInterval, setCheckInterval] = useState<number>(5);
   const [savingInterval, setSavingInterval] = useState(false);
   useEffect(() => {
@@ -401,7 +401,7 @@ function PrintDefaultsPage() {
     finally { setSavingInterval(false); }
   }
 
-  // Operator display name — shown in the Sidebar footer. Blank hides it entirely.
+  // Operator display name
   const [operatorName, setOperatorName] = useState<string>('');
   const [savingName, setSavingName] = useState(false);
   const nameTouchedRef = useRef(false);
@@ -414,7 +414,7 @@ function PrintDefaultsPage() {
     finally { setSavingName(false); }
   }
 
-  // Rescan OrcaSlicer presets (pick up models/profiles added since startup).
+  // Printer preset rescan (old legacy rescan endpoint)
   const [rescanning, setRescanning] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
   async function doRescan() {
@@ -429,6 +429,52 @@ function PrintDefaultsPage() {
       setRescanning(false);
     }
   }
+
+  // Orca profile library cache controls
+  const [catalogStatus, setCatalogStatus] = useState<OrcaCatalogStatus | null>(null);
+  const [catalogOp, setCatalogOp] = useState<'idle' | 'refreshing' | 'rescanning'>('idle');
+  const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    getOrcaCatalogStatus().then(setCatalogStatus).catch(console.error);
+  }, []);
+
+  async function doRefreshCatalog() {
+    setCatalogOp('refreshing');
+    setCatalogMsg(null);
+    try {
+      const r = await refreshOrcaCatalog();
+      setCatalogMsg(`Catalog refreshed — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+      const s = await getOrcaCatalogStatus();
+      setCatalogStatus(s);
+    } catch (e) {
+      setCatalogMsg(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCatalogOp('idle');
+    }
+  }
+
+  async function doRescanCatalog() {
+    setCatalogOp('rescanning');
+    setCatalogMsg(null);
+    try {
+      const r = await rescanOrcaCatalog();
+      setCatalogMsg(`Rescan complete — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+      const s = await getOrcaCatalogStatus();
+      setCatalogStatus(s);
+    } catch (e) {
+      setCatalogMsg(`Rescan failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCatalogOp('idle');
+    }
+  }
+
+  const orcaCount = catalogStatus?.orca?.profile_count;
+  const catalogSummary = orcaCount
+    ? `${orcaCount.machine} machines · ${orcaCount.process} processes · ${orcaCount.filament} filaments`
+    : catalogStatus?.cached
+    ? `${(catalogStatus.cached_bytes / 1024).toFixed(0)} KB cached`
+    : 'Not cached';
 
   return (
     <div className="card" style={{ padding: 28 }}>
@@ -462,6 +508,33 @@ function PrintDefaultsPage() {
             {Icons.refresh} {rescanning ? 'Rescanning…' : 'Rescan profiles'}
           </button>
           {rescanMsg && <span className="muted small">{rescanMsg}</span>}
+        </div>
+      </FieldRow>
+
+      <FieldRow
+        label="Profile library"
+        hint="Themis caches the full machine/process/filament catalog from Orca. Refresh fetches the latest copy from Orca. Rescan & rebuild tells Orca to re-read all profiles from disk first (needed after installing new OrcaSlicer profiles).">
+        <div className="col gap-2">
+          <div className="muted small" style={{ marginBottom: 2 }}>
+            {catalogStatus?.orca?.catalog_building
+              ? 'Orca is building catalog…'
+              : catalogStatus?.cached
+              ? catalogSummary
+              : 'Not yet cached'}
+          </div>
+          <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+            <button className="btn sm" disabled={catalogOp !== 'idle'} onClick={doRefreshCatalog}>
+              {Icons.refresh} {catalogOp === 'refreshing' ? 'Refreshing…' : 'Refresh catalog'}
+            </button>
+            <button className="btn sm" disabled={catalogOp !== 'idle'} onClick={doRescanCatalog}>
+              {Icons.refresh} {catalogOp === 'rescanning' ? 'Rescanning… (up to 60 s)' : 'Rescan & rebuild'}
+            </button>
+          </div>
+          {catalogMsg && (
+            <span className="small" style={{ color: catalogMsg.includes('failed') ? 'var(--err)' : 'var(--ok)' }}>
+              {catalogMsg}
+            </span>
+          )}
         </div>
       </FieldRow>
 
