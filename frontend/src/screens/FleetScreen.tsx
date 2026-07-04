@@ -715,7 +715,7 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
-function PrinterTile({ printer: p, onClick, refetchFleet }: { printer: Printer; onClick: () => void; refetchFleet: () => void }) {
+function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease', ...cardCueStyle(p) }}>
@@ -730,7 +730,13 @@ function PrinterTile({ printer: p, onClick, refetchFleet }: { printer: Printer; 
         </div>
       </div>
       <div style={{ padding: '0 14px' }}>
-        <VideoTile live={isPrinting} />
+        <VideoTile
+          live={p.status !== 'offline'}
+          status={p.status}
+          printerId={p.id}
+          intervalMs={snapshotIntervalMs}
+          noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
+        />
       </div>
       <div className="row between" style={{ padding: '12px 14px 10px' }}>
         <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
@@ -926,7 +932,7 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
               ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} />
-              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} />}
+              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />}
           </div>
         );
       })}
