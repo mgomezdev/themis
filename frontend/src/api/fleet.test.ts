@@ -10,6 +10,7 @@ const BASE: FleetPrinter = {
   queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
+  no_snapshots_while_idle: false,
   loaded_filaments: [],
   state: 'IDLE',
   progress: 0,
