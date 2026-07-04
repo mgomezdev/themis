@@ -14,7 +14,7 @@ import shutil
 
 from ...database import get_session
 from ...models import Printer
-from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_ffmpeg
+from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
@@ -540,7 +540,7 @@ async def snapshot_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Return a single JPEG frame — for browsers that don't support MJPEG streaming."""
+    """Return a single JPEG frame from any camera source (MJPEG or RTSP)."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
     if client is None or not client.connected:
@@ -551,14 +551,13 @@ async def snapshot_camera(
 
     await _activate_camera(client)
 
-    url = client.camera_mjpeg_url
-    if not url:
-        raise HTTPException(404, "No camera URL configured")
-
     try:
-        jpeg = await grab_jpeg_frame(url)
+        jpeg = await grab_snapshot_from_client(client)
     except Exception as exc:
         raise HTTPException(503, f"Camera unavailable: {exc}")
+
+    if jpeg is None:
+        raise HTTPException(404, "No camera source available")
 
     return Response(
         content=jpeg,
