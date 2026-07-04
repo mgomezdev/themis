@@ -5,7 +5,7 @@ import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import type { Printer, Job } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
@@ -91,6 +91,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -111,6 +113,20 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
       .finally(() => setLoading(false));
     fetchMachineCatalog().then(setCatalog).catch(console.error);
   }, [p.id]);
+
+  const runTestConnection = async () => {
+    if (!printerType) return;
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await testConnection({ printer_type: p.model, connection_config: draftConn });
+      setTestResult(result);
+    } catch (e) {
+      setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Test failed' });
+    } finally {
+      setTesting(false);
+    }
+  };
 
   const save = async () => {
     setSaving(true);
@@ -194,19 +210,39 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             {loading ? (
               <div className="tiny muted">Loading connection settings…</div>
             ) : printerType ? (
-              printerType.connection_fields.map(field => (
-                <div key={field.name} className="col gap-1">
-                  <label className="label">{field.label}{field.required ? ' *' : ''}</label>
-                  <input
-                    className="input mono"
-                    type={field.field_type === 'password' ? 'password' : 'text'}
-                    value={draftConn[field.name] ?? ''}
-                    onChange={e => setDraftConn(prev => ({ ...prev, [field.name]: e.target.value }))}
-                    placeholder={field.placeholder || String(field.default ?? '')}
-                  />
-                  {field.help_text && <div className="tiny muted">{field.help_text}</div>}
+              <>
+                {printerType.connection_fields.map(field => (
+                  <div key={field.name} className="col gap-1">
+                    <label className="label">{field.label}{field.required ? ' *' : ''}</label>
+                    <input
+                      className="input mono"
+                      type={field.field_type === 'password' ? 'password' : 'text'}
+                      value={draftConn[field.name] ?? ''}
+                      onChange={e => {
+                        setDraftConn(prev => ({ ...prev, [field.name]: e.target.value }));
+                        setTestResult(null);
+                      }}
+                      placeholder={field.placeholder || String(field.default ?? '')}
+                    />
+                    {field.help_text && <div className="tiny muted">{field.help_text}</div>}
+                  </div>
+                ))}
+                <div className="row gap-3" style={{ alignItems: 'center', paddingTop: 4 }}>
+                  <button
+                    className="btn sm"
+                    disabled={testing || saving}
+                    onClick={runTestConnection}
+                    style={{ width: 'fit-content' }}
+                  >
+                    {testing ? 'Testing…' : <>{Icons.link} Test connection</>}
+                  </button>
+                  {testResult && (
+                    <span className="small" style={{ color: testResult.ok ? 'var(--ok)' : 'var(--err)' }}>
+                      {testResult.ok ? 'Connected' : (testResult.error ?? 'Could not connect')}
+                    </span>
+                  )}
                 </div>
-              ))
+              </>
             ) : (
               <div className="tiny muted">Unknown printer type — connection fields unavailable.</div>
             )}
