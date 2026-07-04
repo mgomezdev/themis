@@ -10,6 +10,7 @@ export interface FleetPrinter {
   queue_on: boolean;
   connected: boolean;
   awaiting_plate_clear: boolean;
+  no_snapshots_while_idle: boolean;
   loaded_filaments: LoadedFilament[];
   state: string;
   progress: number;
@@ -84,6 +85,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     bedTempTarget: p.temperatures?.bed_target ?? 0,
     queueOn: p.queue_on ?? true,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,
+    noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
   };
 }
 

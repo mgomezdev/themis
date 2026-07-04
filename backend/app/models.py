@@ -18,6 +18,7 @@ class Printer(Base):
     queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
     build_plate_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class UploadedFile(Base):
@@ -121,6 +122,7 @@ class QueueConfig(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
+    snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
 
 
 class SpoolmanConfig(Base):

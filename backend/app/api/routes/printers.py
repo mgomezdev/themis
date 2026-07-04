@@ -40,6 +40,7 @@ class PrinterCreate(BaseModel):
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
+    no_snapshots_while_idle: bool = False
 
 
 class PrinterUpdate(BaseModel):
@@ -51,6 +52,7 @@ class PrinterUpdate(BaseModel):
     queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
     build_plate_type: str | None = None
+    no_snapshots_while_idle: bool | None = None
 
 
 class ActivePresetUpdate(BaseModel):
@@ -88,6 +90,7 @@ def _to_dict(p: Printer) -> dict:
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
         "build_plate_type": p.build_plate_type,
+        "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -132,6 +135,7 @@ async def create_printer(
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=body.loaded_filaments,
         build_plate_type=body.build_plate_type,
+        no_snapshots_while_idle=body.no_snapshots_while_idle,
     )
     session.add(printer)
     await session.commit()
@@ -308,6 +312,8 @@ async def update_printer(
         printer.loaded_filaments = body.loaded_filaments
     if "build_plate_type" in body.model_fields_set:
         printer.build_plate_type = body.build_plate_type
+    if body.no_snapshots_while_idle is not None:
+        printer.no_snapshots_while_idle = body.no_snapshots_while_idle
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

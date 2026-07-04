@@ -23,17 +23,19 @@ _BACKUP_VERSION = 1
 class QueueConfigOut(BaseModel):
     check_interval_minutes: int
     operator_name: str | None
+    snapshot_interval_seconds: int
 
 
 class QueueConfigIn(BaseModel):
     check_interval_minutes: int | None = None
     operator_name: str | None = None
+    snapshot_interval_seconds: int | None = None
 
 
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5)
+        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2)
         session.add(row)
         await session.flush()
     return row
@@ -54,6 +56,8 @@ async def update_queue_config(
         row.check_interval_minutes = max(1, body.check_interval_minutes)
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
+    if body.snapshot_interval_seconds is not None:
+        row.snapshot_interval_seconds = max(1, body.snapshot_interval_seconds)
     await session.commit()
     await session.refresh(row)
     return row

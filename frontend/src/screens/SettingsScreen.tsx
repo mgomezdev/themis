@@ -402,6 +402,20 @@ function PrintDefaultsPage() {
     finally { setSavingInterval(false); }
   }
 
+  // Snapshot interval
+  const [snapshotInterval, setSnapshotInterval] = useState<number>(2);
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => setSnapshotInterval(c.snapshot_interval_seconds ?? 2)).catch(console.error);
+  }, []);
+  async function commitSnapshotInterval(seconds: number) {
+    const v = Math.max(1, Math.round(seconds) || 1);
+    setSnapshotInterval(v);
+    setSavingSnapshot(true);
+    try { await saveQueueConfig({ snapshot_interval_seconds: v }); }
+    finally { setSavingSnapshot(false); }
+  }
+
   // Operator display name
   const [operatorName, setOperatorName] = useState<string>('');
   const [savingName, setSavingName] = useState(false);
@@ -491,6 +505,18 @@ function PrintDefaultsPage() {
                  onBlur={e => commitInterval(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">min{savingInterval ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Camera snapshot interval"
+                hint="How often printer tiles refresh their camera snapshot. Applies to all printers unless 'No snapshots while idle' is set on a specific printer.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <input className="input" type="number" min={1} step={1}
+                 value={snapshotInterval}
+                 onChange={e => setSnapshotInterval(Number(e.target.value))}
+                 onBlur={e => commitSnapshotInterval(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">sec{savingSnapshot ? ' · saving…' : ''}</span>
         </div>
       </FieldRow>
 
