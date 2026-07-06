@@ -48,6 +48,7 @@ export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount, c
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
     { to: '/orders',    label: 'Orders',      icon: Icons.orders,   count: ordersOpen },
     { to: '/files',     label: 'Files',       icon: Icons.files },
+    { to: '/projects',  label: 'Projects',    icon: Icons.layers },
   ];
 
   return (

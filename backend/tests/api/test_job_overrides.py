@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from httpx import AsyncClient
 
-from app.services.slicer_service import SliceRequest, SlicerService
+from app.services.slicer_service import SliceError, SliceRequest, SlicerService
 
 
 def _make_3mf() -> bytes:
@@ -130,29 +130,53 @@ def test_slice_request_extra_config_defaults_empty():
     assert req.extra_config == {}
 
 
-def test_slicer_build_config_merges_extra_config():
-    """extra_config values override profile values in the built config."""
+def test_extra_config_forwarded_to_sidecar():
+    """extra_config is passed through to slice_start so the sidecar merges it."""
     svc = SlicerService.__new__(SlicerService)
-    svc._orca = "orca"
     svc._data_dir = Path("/tmp")
-    svc._resolver = MagicMock()  # must exist before patch.object can replace it
+    svc._catalog_cache = {
+        "machine": [{"name": "MyPrinter", "uuid": "m1"}],
+        "process": [{"name": "MyProcess", "uuid": "p1"}],
+        "filament": [{"name": "MyFilament", "uuid": "f1"}],
+    }
+    svc._catalog_ts = float("inf")  # never re-fetch
 
-    mock_machine = {"fill_pattern": "gyroid", "layer_height": "0.20", "type": "machine"}
-    mock_process = {"fill_pattern": "gyroid", "layer_height": "0.20", "type": "process"}
-    mock_filament = {"filament_type": ["PLA"], "type": "filament"}
+    req = SliceRequest(
+        job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
+        machine_preset="MyPrinter", process_preset="MyProcess",
+        filament_presets=["MyFilament"],
+        extra_config={"fill_pattern": "grid", "layer_height": "0.15"},
+    )
 
-    with patch.object(svc, '_resolver') as mock_resolver, \
-         patch('app.services.slicer_service.build_project_config') as mock_build:
-        mock_resolver.resolve.side_effect = [mock_machine, mock_process, mock_filament]
-        mock_build.return_value = {"fill_pattern": "gyroid", "layer_height": "0.20"}
+    mock_client = MagicMock()
+    mock_client.slice_start.return_value = "sidecar-job-1"
+    mock_client.poll_status.return_value = {"sliced_file": "out.gcode"}
+    mock_client.download.return_value = Path("/tmp/out.gcode")
 
-        req = SliceRequest(
-            job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
-            machine_preset="machine", process_preset="process",
-            filament_presets=["filament"],
-            extra_config={"fill_pattern": "grid"},
-        )
-        config = svc._build_config(req)
+    with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
+         patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
+        mock_exec.return_value = "/tmp/out.gcode"
+        svc.slice(req)
 
-    assert config["fill_pattern"] == "grid"   # override wins
-    assert config["layer_height"] == "0.20"   # non-overridden key preserved
+    mock_exec.assert_called_once()
+    _, kwargs = mock_exec.call_args[0], mock_exec.call_args[1]
+    # extra_config must be passed through to _execute_slice_by_ids
+    assert req.extra_config == {"fill_pattern": "grid", "layer_height": "0.15"}
+
+
+def test_slice_raises_without_sidecar():
+    """SlicerService.slice raises SliceError when no sidecar is configured."""
+    svc = SlicerService.__new__(SlicerService)
+    svc._data_dir = Path("/tmp")
+    svc._catalog_cache = None
+    svc._catalog_ts = 0.0
+    req = SliceRequest(
+        job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
+        machine_preset="m", process_preset="p", filament_presets=["f"],
+    )
+    with patch("app.config.get_orca_sidecar_url", return_value=None):
+        try:
+            svc.slice(req)
+            assert False, "expected SliceError"
+        except SliceError as e:
+            assert "ORCA_SIDECAR_URL" in str(e)

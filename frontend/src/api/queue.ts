@@ -167,7 +167,7 @@ export async function checkOverrides(body: {
   });
 }
 
-export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; }
+export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number; }
 
 export async function getQueueConfig(): Promise<QueueConfig> {
   return request('/api/v1/settings/queue');

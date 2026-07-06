@@ -4,6 +4,8 @@ import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpool
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
+import { getOrcaCatalogStatus, refreshOrcaCatalog, rescanOrcaCatalog, type OrcaCatalogStatus } from '../api/orca';
+import { downloadFleetBackup, importFleetBackup, type FleetImportReport } from '../api/settings';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 
@@ -386,8 +388,7 @@ function TagsPage() {
 // =========================================================================
 
 function PrintDefaultsPage() {
-  // Queue check interval — wired to the backend (how often the engine scans
-  // printer availability and claims the next compatible queued job).
+  // Queue check interval
   const [checkInterval, setCheckInterval] = useState<number>(5);
   const [savingInterval, setSavingInterval] = useState(false);
   useEffect(() => {
@@ -401,7 +402,21 @@ function PrintDefaultsPage() {
     finally { setSavingInterval(false); }
   }
 
-  // Operator display name — shown in the Sidebar footer. Blank hides it entirely.
+  // Snapshot interval
+  const [snapshotInterval, setSnapshotInterval] = useState<number>(2);
+  const [savingSnapshot, setSavingSnapshot] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => setSnapshotInterval(c.snapshot_interval_seconds ?? 2)).catch(console.error);
+  }, []);
+  async function commitSnapshotInterval(seconds: number) {
+    const v = Math.max(1, Math.round(seconds) || 1);
+    setSnapshotInterval(v);
+    setSavingSnapshot(true);
+    try { await saveQueueConfig({ snapshot_interval_seconds: v }); }
+    finally { setSavingSnapshot(false); }
+  }
+
+  // Operator display name
   const [operatorName, setOperatorName] = useState<string>('');
   const [savingName, setSavingName] = useState(false);
   const nameTouchedRef = useRef(false);
@@ -414,7 +429,7 @@ function PrintDefaultsPage() {
     finally { setSavingName(false); }
   }
 
-  // Rescan OrcaSlicer presets (pick up models/profiles added since startup).
+  // Printer preset rescan (old legacy rescan endpoint)
   const [rescanning, setRescanning] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
   async function doRescan() {
@@ -429,6 +444,52 @@ function PrintDefaultsPage() {
       setRescanning(false);
     }
   }
+
+  // Orca profile library cache controls
+  const [catalogStatus, setCatalogStatus] = useState<OrcaCatalogStatus | null>(null);
+  const [catalogOp, setCatalogOp] = useState<'idle' | 'refreshing' | 'rescanning'>('idle');
+  const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    getOrcaCatalogStatus().then(setCatalogStatus).catch(console.error);
+  }, []);
+
+  async function doRefreshCatalog() {
+    setCatalogOp('refreshing');
+    setCatalogMsg(null);
+    try {
+      const r = await refreshOrcaCatalog();
+      setCatalogMsg(`Catalog refreshed — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+      const s = await getOrcaCatalogStatus();
+      setCatalogStatus(s);
+    } catch (e) {
+      setCatalogMsg(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCatalogOp('idle');
+    }
+  }
+
+  async function doRescanCatalog() {
+    setCatalogOp('rescanning');
+    setCatalogMsg(null);
+    try {
+      const r = await rescanOrcaCatalog();
+      setCatalogMsg(`Rescan complete — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+      const s = await getOrcaCatalogStatus();
+      setCatalogStatus(s);
+    } catch (e) {
+      setCatalogMsg(`Rescan failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setCatalogOp('idle');
+    }
+  }
+
+  const orcaCount = catalogStatus?.orca?.profile_count;
+  const catalogSummary = orcaCount
+    ? `${orcaCount.machine} machines · ${orcaCount.process} processes · ${orcaCount.filament} filaments`
+    : catalogStatus?.cached
+    ? `${(catalogStatus.cached_bytes / 1024).toFixed(0)} KB cached`
+    : 'Not cached';
 
   return (
     <div className="card" style={{ padding: 28 }}>
@@ -447,6 +508,18 @@ function PrintDefaultsPage() {
         </div>
       </FieldRow>
 
+      <FieldRow label="Camera snapshot interval"
+                hint="How often printer tiles refresh their camera snapshot. Applies to all printers unless 'No snapshots while idle' is set on a specific printer.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <input className="input" type="number" min={1} step={1}
+                 value={snapshotInterval}
+                 onChange={e => setSnapshotInterval(Number(e.target.value))}
+                 onBlur={e => commitSnapshotInterval(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">sec{savingSnapshot ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
       <FieldRow label="Display name" hint="Shown in the sidebar. Leave blank to hide it.">
         <input className="input" value={operatorName}
                onChange={e => { nameTouchedRef.current = true; setOperatorName(e.target.value); }}
@@ -462,6 +535,33 @@ function PrintDefaultsPage() {
             {Icons.refresh} {rescanning ? 'Rescanning…' : 'Rescan profiles'}
           </button>
           {rescanMsg && <span className="muted small">{rescanMsg}</span>}
+        </div>
+      </FieldRow>
+
+      <FieldRow
+        label="Profile library"
+        hint="Themis caches the full machine/process/filament catalog from Orca. Refresh fetches the latest copy from Orca. Rescan & rebuild tells Orca to re-read all profiles from disk first (needed after installing new OrcaSlicer profiles).">
+        <div className="col gap-2">
+          <div className="muted small" style={{ marginBottom: 2 }}>
+            {catalogStatus?.orca?.catalog_building
+              ? 'Orca is building catalog…'
+              : catalogStatus?.cached
+              ? catalogSummary
+              : 'Not yet cached'}
+          </div>
+          <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+            <button className="btn sm" disabled={catalogOp !== 'idle'} onClick={doRefreshCatalog}>
+              {Icons.refresh} {catalogOp === 'refreshing' ? 'Refreshing…' : 'Refresh catalog'}
+            </button>
+            <button className="btn sm" disabled={catalogOp !== 'idle'} onClick={doRescanCatalog}>
+              {Icons.refresh} {catalogOp === 'rescanning' ? 'Rescanning… (up to 60 s)' : 'Rescan & rebuild'}
+            </button>
+          </div>
+          {catalogMsg && (
+            <span className="small" style={{ color: catalogMsg.includes('failed') ? 'var(--err)' : 'var(--ok)' }}>
+              {catalogMsg}
+            </span>
+          )}
         </div>
       </FieldRow>
 
@@ -783,10 +883,150 @@ function AboutPage() {
 }
 
 // =========================================================================
+// Fleet backup / restore page
+// =========================================================================
+
+function FleetBackupPage() {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadErr, setDownloadErr] = useState<string | null>(null);
+
+  const [importing, setImporting] = useState(false);
+  const [importReport, setImportReport] = useState<FleetImportReport | null>(null);
+  const [importErr, setImportErr] = useState<string | null>(null);
+  const fileRef = React.useRef<HTMLInputElement>(null);
+
+  async function handleDownload() {
+    setDownloading(true);
+    setDownloadErr(null);
+    try {
+      await downloadFleetBackup();
+    } catch (e) {
+      setDownloadErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportReport(null);
+    setImportErr(null);
+    try {
+      const report = await importFleetBackup(file);
+      setImportReport(report);
+    } catch (err) {
+      setImportErr(err instanceof Error ? err.message : String(err));
+    } finally {
+      setImporting(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  return (
+    <div className="col gap-3">
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader
+          title="Fleet backup & restore"
+          sub="Export all printer configs (IPs, tokens, Orca profiles, filament slots) to a file. Import on any Themis install to recreate the same fleet."
+        />
+
+        {/* Export */}
+        <div style={{ marginBottom: 8, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
+          Export
+        </div>
+        <FieldRow
+          label="Download backup"
+          hint="Saves a JSON file with every printer's connection config, Orca profiles, and filament slot setup. Tokens and IPs are included — keep the file secure."
+        >
+          <div className="col gap-2">
+            <button className="btn primary sm" disabled={downloading} onClick={handleDownload} style={{ width: 'fit-content' }}>
+              {React.cloneElement(SettingsIcons.backup, { size: 14 } as React.SVGProps<SVGSVGElement>)}
+              {downloading ? 'Exporting…' : 'Download backup'}
+            </button>
+            {downloadErr && (
+              <span className="small" style={{ color: 'var(--err)' }}>{downloadErr}</span>
+            )}
+          </div>
+        </FieldRow>
+
+        {/* Import */}
+        <div style={{ marginTop: 24, marginBottom: 8, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
+          Restore
+        </div>
+        <FieldRow
+          label="Import backup"
+          hint="Printers in the file are added to this install. Existing printers are not removed. Orca profile names are matched against the current catalog — mismatches are reported but don't block the import."
+        >
+          <div className="col gap-2">
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <button
+                className="btn sm"
+                disabled={importing}
+                onClick={() => fileRef.current?.click()}
+                style={{ width: 'fit-content' }}
+              >
+                {importing ? 'Importing…' : <>{Icons.upload} Choose file & import</>}
+              </button>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".json,application/json"
+                style={{ display: 'none' }}
+                onChange={handleFileChange}
+              />
+            </div>
+            {importErr && (
+              <span className="small" style={{ color: 'var(--err)' }}>{importErr}</span>
+            )}
+          </div>
+        </FieldRow>
+
+        {/* Post-import report */}
+        {importReport && (
+          <div style={{
+            marginTop: 20,
+            padding: '16px 20px',
+            background: 'var(--bg-1)',
+            border: `1px solid ${importReport.skipped > 0 || importReport.warnings.length > 0 ? 'var(--warn)' : 'var(--ok)'}`,
+            borderRadius: 10,
+          }}>
+            <div className="row gap-3" style={{ marginBottom: importReport.warnings.length > 0 ? 12 : 0 }}>
+              <div style={{ flex: 1 }}>
+                <span className="small" style={{ fontWeight: 600, color: 'var(--text-1)' }}>
+                  Import complete
+                </span>
+                <span className="small muted" style={{ marginLeft: 10 }}>
+                  {importReport.imported} printer{importReport.imported !== 1 ? 's' : ''} added
+                  {importReport.skipped > 0 ? `, ${importReport.skipped} skipped` : ''}
+                </span>
+              </div>
+            </div>
+            {importReport.warnings.length > 0 && (
+              <div className="col" style={{ gap: 4 }}>
+                <div className="tiny" style={{ color: 'var(--warn)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 4 }}>
+                  Profile warnings ({importReport.warnings.length})
+                </div>
+                {importReport.warnings.map((w, i) => (
+                  <div key={i} className="tiny muted" style={{ padding: '4px 8px', background: 'var(--bg-2)', borderRadius: 6, lineHeight: 1.5 }}>
+                    {w}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'about';
+type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'fleet-backup' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -800,7 +1040,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'fleet-backup', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -828,6 +1068,12 @@ export function SettingsScreen() {
       items: [
         { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
         ...(spoolmanEnabled ? [{ id: 'spoolman-mappings' as PageId, label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' }] : []),
+      ],
+    },
+    {
+      label: 'Data',
+      items: [
+        { id: 'fleet-backup',  label: 'Fleet backup',   icon: SettingsIcons.backup,  sub: 'Export & import printer configs' },
       ],
     },
     {
@@ -872,6 +1118,7 @@ export function SettingsScreen() {
         {activePage === 'print'         && <PrintDefaultsPage />}
         {activePage === 'spoolman'          && <SpoolmanPage />}
         {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
+        {activePage === 'fleet-backup'      && <FleetBackupPage />}
         {activePage === 'about'             && <AboutPage />}
       </div>
     </div>

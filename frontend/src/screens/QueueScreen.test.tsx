@@ -179,6 +179,7 @@ describe('QueueScreen', () => {
       bedTempTarget: 55,
       queueOn: true,
       awaitingPlateClear: false,
+      noSnapshotsWhileIdle: false,
     };
     vi.mocked(fleetApi.useFleetData).mockReturnValue([[mockPrinter], vi.fn()]);
 

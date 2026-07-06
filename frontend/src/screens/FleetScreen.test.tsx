@@ -23,6 +23,7 @@ const PRINTER_1: FleetPrinter = {
   queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
+  no_snapshots_while_idle: false,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Bambu PA-CF', type: 'PA-CF', color: '#0c0c0c' }],
   state: 'RUNNING',
   progress: 28,
@@ -45,6 +46,7 @@ const PRINTER_CONTROLS: FleetPrinter = {
   queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
+  no_snapshots_while_idle: false,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'PA-CF', type: 'PA-CF', color: '#0c0c0c' }],
   state: 'RUNNING',
   progress: 28,
@@ -173,6 +175,7 @@ const SPOOL_INTEGRATION: FleetPrinter = {
   queue_on: true,
   connected: true,
   awaiting_plate_clear: false,
+  no_snapshots_while_idle: false,
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', spoolman_spool_id: null }],
   state: 'IDLE',
   progress: 0,
@@ -196,7 +199,7 @@ const MOCK_SPOOL = {
 
 const MOCK_API_PRINTER = {
   id: 2, name: 'Atlas', printer_type: 'elegoo_centauri', enabled: true,
-  queue_on: false, awaiting_plate_clear: false, connected: true,
+  queue_on: false, awaiting_plate_clear: false, no_snapshots_while_idle: false, connected: true,
   current_orca_printer_profile: null,
   orca_printer_profiles: [],
   connection_config: { host: '10.0.0.1' },

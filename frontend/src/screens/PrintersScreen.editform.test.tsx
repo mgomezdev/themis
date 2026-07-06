@@ -12,6 +12,7 @@ const PRINTER: ApiPrinter = {
   enabled: true, queue_on: true, connected: true,
   loaded_filaments: [{ slot: 0, filament_id: 'GFL99', name: 'PLA', type: 'PLA', color: '#fff' }],
   build_plate_type: null,
+  no_snapshots_while_idle: false,
 };
 
 beforeEach(() => {

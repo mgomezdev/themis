@@ -32,6 +32,7 @@ export const PRINTERS: Printer[] = [
     bedTempTarget: 60,
     queueOn: true,
     awaitingPlateClear: false,
+    noSnapshotsWhileIdle: false,
   },
   {
     id: 'ecc-01',
@@ -59,6 +60,7 @@ export const PRINTERS: Printer[] = [
     bedTempTarget: 95,
     queueOn: true,
     awaitingPlateClear: false,
+    noSnapshotsWhileIdle: false,
   },
   {
     id: 'snp-01',
@@ -87,6 +89,7 @@ export const PRINTERS: Printer[] = [
     bedTempTarget: 23,
     queueOn: true,
     awaitingPlateClear: false,
+    noSnapshotsWhileIdle: false,
   },
 ];
 

@@ -65,11 +65,9 @@ async def regen_file_thumbnails(file_id: int) -> None:
 
 
 def _regen_sync(stored_path: str, plate_numbers: list[int], thumb_dir: str) -> dict[int, str]:
-    """Sync worker (runs in ThreadPoolExecutor): slice each plate, extract thumbnail.
+    """Sync worker (runs in ThreadPoolExecutor): render each plate, return saved paths.
 
     Returns {plate_number: path_to_saved_png} for every plate successfully rendered.
-    When OrcaSlicer renumbers plates in the output (single-plate export starts at 1),
-    we check both plate_N.png and plate_1.png in the output archive.
     """
     try:
         orca = get_orca_executable()
@@ -78,47 +76,59 @@ def _regen_sync(stored_path: str, plate_numbers: list[int], thumb_dir: str) -> d
         return {}
 
     result: dict[int, str] = {}
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for num in plate_numbers:
-            out_3mf = Path(tmpdir) / f"thumb_p{num}.gcode.3mf"
-            cmd = [
-                orca,
-                "--slice", str(num),
-                "--outputdir", tmpdir,
-                "--arrange", "0",       # preserve existing plate layout
-                "--export-3mf", str(out_3mf),
-                stored_path,
-            ]
-            try:
-                subprocess.run(cmd, capture_output=True, timeout=_TIMEOUT, check=False)
-            except subprocess.TimeoutExpired:
-                logger.warning("Thumbnail regen timed out for %s plate %d", stored_path, num)
-                continue
-            except Exception as exc:
-                logger.warning("Thumbnail regen error for plate %d: %s", num, exc)
-                continue
-
-            if not out_3mf.exists():
-                logger.debug("OrcaSlicer produced no output for %s plate %d", stored_path, num)
-                continue
-
-            try:
-                with zipfile.ZipFile(out_3mf) as zf:
-                    names = set(zf.namelist())
-                    # OrcaSlicer may keep the original plate number or renumber to 1.
-                    candidate = next(
-                        (k for k in (f"Metadata/plate_{num}.png", "Metadata/plate_1.png")
-                         if k in names),
-                        None,
-                    )
-                    if candidate is None:
-                        logger.debug("No plate thumbnail in output for plate %d", num)
-                        continue
-                    dest = Path(thumb_dir) / f"plate_{num}.png"
-                    dest.write_bytes(zf.read(candidate))
-                    result[num] = str(dest)
-            except Exception as exc:
-                logger.warning("Failed to extract thumbnail for plate %d: %s", num, exc)
-
+    for num in plate_numbers:
+        path = _render_plate_thumbnail(orca, stored_path, num, Path(thumb_dir))
+        if path:
+            result[num] = path
     return result
+
+
+def _render_plate_thumbnail(orca: str, stored_path: str, num: int, thumb_dir: Path) -> str | None:
+    """OrcaSlicer thumbnail execution seam — replace this function body to switch backends.
+
+    Renders plate *num* of *stored_path* without rearranging geometry (--arrange 0),
+    extracts the PNG from the output 3MF, saves it to *thumb_dir/plate_{num}.png*,
+    and returns the saved path. Returns None on any failure.
+
+    OrcaSlicer may renumber plates in single-plate export (always outputs plate_1.png
+    regardless of requested plate), so we probe both plate_{num}.png and plate_1.png.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        out_3mf = Path(tmpdir) / f"thumb_p{num}.gcode.3mf"
+        cmd = [
+            orca,
+            "--slice", str(num),
+            "--outputdir", tmpdir,
+            "--arrange", "0",
+            "--export-3mf", str(out_3mf),
+            stored_path,
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=_TIMEOUT, check=False)
+        except subprocess.TimeoutExpired:
+            logger.warning("Thumbnail regen timed out for %s plate %d", stored_path, num)
+            return None
+        except Exception as exc:
+            logger.warning("Thumbnail regen error for plate %d: %s", num, exc)
+            return None
+
+        if not out_3mf.exists():
+            logger.debug("OrcaSlicer produced no output for %s plate %d", stored_path, num)
+            return None
+
+        try:
+            with zipfile.ZipFile(out_3mf) as zf:
+                names = set(zf.namelist())
+                candidate = next(
+                    (k for k in (f"Metadata/plate_{num}.png", "Metadata/plate_1.png") if k in names),
+                    None,
+                )
+                if candidate is None:
+                    logger.debug("No plate thumbnail in output for plate %d", num)
+                    return None
+                dest = thumb_dir / f"plate_{num}.png"
+                dest.write_bytes(zf.read(candidate))
+                return str(dest)
+        except Exception as exc:
+            logger.warning("Failed to extract thumbnail for plate %d: %s", num, exc)
+            return None

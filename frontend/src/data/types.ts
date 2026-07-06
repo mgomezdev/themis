@@ -32,6 +32,7 @@ export interface Printer {
   bedTempTarget: number;
   queueOn: boolean;
   awaitingPlateClear: boolean;
+  noSnapshotsWhileIdle: boolean;
 }
 
 export interface OrderPart {

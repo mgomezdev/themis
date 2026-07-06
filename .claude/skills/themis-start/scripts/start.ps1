@@ -1,4 +1,4 @@
-# Start Themis dev servers: uvicorn :8001 + vite :5173
+﻿# Start Themis dev servers: uvicorn :8001 + vite :5173
 # Both bind to 0.0.0.0 for Tailscale/LAN access via http://dionysus:5173
 
 $Root = (Resolve-Path "$PSScriptRoot\..\..\..\..").Path
@@ -20,7 +20,11 @@ if ($still) {
 
 # --- Step 2: Start backend ---
 Write-Host "Starting backend (uvicorn :8001)..." -ForegroundColor Cyan
-$backendCmd = "Set-Location '$Root\backend'; .venv\Scripts\Activate.ps1; uvicorn app.main:app --reload --port 8001 --host 0.0.0.0"
+if (-not (docker ps --filter name=themis-orca-1 --filter name=omnibus-orca-1 -q 2>$null)) {
+    Write-Host "  NOTE: Orca container not detected. Start it with:" -ForegroundColor Yellow
+    Write-Host "    docker compose -f docker-compose.yml -f docker-compose.dev.yml up orca" -ForegroundColor Yellow
+}
+$backendCmd = "Set-Location '$Root\backend'; .venv\Scripts\Activate.ps1; `$env:ORCA_SIDECAR_URL='http://localhost:5000'; uvicorn app.main:app --reload --port 8001 --host 0.0.0.0"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
 Start-Sleep -Seconds 2
@@ -28,7 +32,7 @@ Start-Sleep -Seconds 2
 if (netstat -ano | Select-String ':8001.*LISTENING') {
     Write-Host "  backend: listening on :8001" -ForegroundColor Green
 } else {
-    Write-Host "  backend: not yet listening — may still be starting" -ForegroundColor Yellow
+    Write-Host "  backend: not yet listening - may still be starting" -ForegroundColor Yellow
 }
 
 # --- Step 3: Start frontend ---
@@ -52,7 +56,7 @@ Write-Host ""
 if ($ready) {
     Write-Host "  frontend: ready at :5173" -ForegroundColor Green
 } else {
-    Write-Host "  frontend: did not respond within 20 s — check the Vite window" -ForegroundColor Yellow
+    Write-Host "  frontend: did not respond within 20 s - check the Vite window" -ForegroundColor Yellow
 }
 
 Write-Host ""

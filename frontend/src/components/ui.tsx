@@ -51,54 +51,52 @@ export function MaterialChip({ material, color }: { material: string; color: str
   );
 }
 
+const SNAPSHOT_INTERVAL_MS = 2000;
+
 export function VideoTile({
   live = true,
   status,
   time,
   printerId,
+  intervalMs,
+  noSnapshotsWhileIdle,
 }: {
   live?: boolean;
   status?: StatusKey;
   time?: number;
   printerId?: string;
+  intervalMs?: number;
+  noSnapshotsWhileIdle?: boolean;
 }) {
   const [imgError, setImgError] = React.useState(false);
-  const [useSnapshot, setUseSnapshot] = React.useState(false);
   const [snapTick, setSnapTick] = React.useState(0);
+
+  const paused = noSnapshotsWhileIdle && status !== 'printing';
+  const interval = intervalMs ?? SNAPSHOT_INTERVAL_MS;
 
   React.useEffect(() => {
     setImgError(false);
-    setUseSnapshot(false);
     setSnapTick(0);
   }, [printerId]);
 
   React.useEffect(() => {
-    if (!useSnapshot || !live || !printerId) return;
-    const id = setInterval(() => setSnapTick(t => t + 1), 1000);
+    if (!live || !printerId || paused) return;
+    const id = setInterval(() => setSnapTick(t => t + 1), interval);
     return () => clearInterval(id);
-  }, [useSnapshot, live, printerId]);
+  }, [live, printerId, paused, interval]);
 
   const showCamera = live && printerId && !imgError;
 
   return (
     <div className={`video ${live ? 'live' : ''}`}>
       {showCamera ? (
-        useSnapshot ? (
-          <img
-            key={snapTick}
-            src={`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            onError={() => setImgError(true)}
-            alt=""
-          />
-        ) : (
-          <img
-            src={`/api/v1/printers/${printerId}/camera`}
-            style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-            onError={() => setUseSnapshot(true)}
-            alt=""
-          />
-        )
+        <img
+          key={snapTick}
+          src={`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+          onError={() => setImgError(true)}
+          alt=""
+        />
       ) : (
         <>
           <div className="feed-scene" />

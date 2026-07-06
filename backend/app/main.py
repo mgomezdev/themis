@@ -22,7 +22,9 @@ from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.orca import router as orca_router
 from .api.routes.printers import router as printers_router
+from .api.routes.projects import router as projects_router
 from .api.routes.queue import router as queue_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
@@ -40,6 +42,32 @@ STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Seed placeholder Elegoo Centauri Carbon for test slicing (idempotent).
+    from sqlalchemy import select as _select
+    from .models import Printer as _Printer
+    async with SessionLocal() as _sess:
+        _existing = (await _sess.execute(
+            _select(_Printer).where(_Printer.name == "Elegoo Centauri Carbon (placeholder)")
+        )).scalar_one_or_none()
+        if _existing is None:
+            _sess.add(_Printer(
+                name="Elegoo Centauri Carbon (placeholder)",
+                printer_type="elegoo_centauri",
+                connection_config={"ip_address": "192.0.2.1"},
+                current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
+                orca_printer_profiles=["Elegoo Centauri Carbon 0.4 nozzle"],
+                loaded_filaments=[{
+                    "slot": 0,
+                    "type": "PLA",
+                    "color": "white",
+                    "filament_profile": "Elegoo PLA @ECC",
+                }],
+                enabled=True,
+                queue_on=True,
+            ))
+            await _sess.commit()
+            logging.getLogger("app").info("Seeded placeholder Elegoo Centauri Carbon printer")
 
     # File library: migrate legacy uploads, then index the library dir.
     from . import config as _config
@@ -71,6 +99,23 @@ async def lifespan(app: FastAPI):
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
 
+    # Warn early if the sidecar is configured but unreachable; then warm the
+    # catalog cache in the background so the first user request is fast.
+    from .config import get_orca_sidecar_url as _get_sidecar_url
+    _sidecar_url = _get_sidecar_url()
+    if _sidecar_url:
+        try:
+            from .services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+            await asyncio.to_thread(OrcaSidecarClient(_sidecar_url).health)
+            logging.getLogger("app").info("Orca sidecar healthy at %s", _sidecar_url)
+        except Exception as e:
+            logging.getLogger("app").warning(
+                "Orca sidecar at %s is not reachable: %s", _sidecar_url, e
+            )
+        # Kick off catalog warm-up in the background — don't block startup.
+        from .api.routes.orca import warm_catalog_cache as _warm_catalog
+        asyncio.create_task(_warm_catalog())
+
     yield
 
     await queue_engine.stop()
@@ -86,6 +131,8 @@ app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(orca_router)
+app.include_router(projects_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(spoolman_router)

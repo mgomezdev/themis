@@ -14,8 +14,10 @@ import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
 import { JobDetailScreen } from './screens/JobDetailScreen';
 import { EditJobScreen }    from './screens/EditJobScreen';
-import { FilesScreen }     from './screens/FilesScreen';
-import { SettingsScreen }  from './screens/SettingsScreen';
+import { FilesScreen }          from './screens/FilesScreen';
+import { SettingsScreen }       from './screens/SettingsScreen';
+import { ProjectsScreen }       from './screens/ProjectsScreen';
+import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 
 function AppShell() {
   const { jobs } = useQueue();
@@ -47,6 +49,10 @@ function AppShell() {
     '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
+    '/projects':   { title: 'Projects',          crumbs: ['Workshop'],
+                     actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
+    '/projects/new': { title: 'New project',     crumbs: ['Workshop', 'Projects'] },
+    '/projects/edit': { title: 'Edit project',   crumbs: ['Workshop', 'Projects'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -57,6 +63,8 @@ function AppShell() {
     ? '/jobs/edit'
     : segments[0] === 'jobs' && segments.length >= 2
     ? '/jobs/detail'
+    : segments[0] === 'projects' && segments.length >= 2
+    ? (segments[1] === 'new' ? '/projects/new' : '/projects/edit')
     : '/' + segments.slice(0, 2).join('/');
   const cfg = screenConfig[path] ?? screenConfig['/queue'];
 
@@ -78,9 +86,12 @@ function AppShell() {
             <Route path="/orders/:id/edit" element={<NewOrderScreen />} />
             <Route path="/jobs/:id"        element={<JobDetailScreen />} />
             <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
-            <Route path="/files"        element={<FilesScreen />} />
-            <Route path="/settings/*"   element={<SettingsScreen />} />
-            <Route path="*"             element={<Navigate to="/queue" replace />} />
+            <Route path="/files"           element={<FilesScreen />} />
+            <Route path="/projects"       element={<ProjectsScreen />} />
+            <Route path="/projects/new"   element={<ProjectBuilderScreen />} />
+            <Route path="/projects/:id"   element={<ProjectBuilderScreen />} />
+            <Route path="/settings/*"     element={<SettingsScreen />} />
+            <Route path="*"               element={<Navigate to="/queue" replace />} />
           </Routes>
         </div>
       </div>

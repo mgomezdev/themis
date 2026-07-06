@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -329,6 +330,80 @@ async def remove_file_tag(file_id: int, tag_id: int,
         await session.delete(link)
         await session.commit()
     return {"file_id": file_id, "tag_id": tag_id}
+
+
+# ---------- pack STLs ----------
+
+class PackRequest(BaseModel):
+    file_ids: list[int]
+    bed_x: float
+    bed_y: float
+
+
+@router.post("/pack", status_code=201)
+async def pack_files(
+    body: PackRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Call the Orca sidecar to arrange N STLs onto beds and store the result as a library file."""
+    from ... import config as _cfg
+    from ...config import get_orca_sidecar_url
+    from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+
+    sidecar_url = get_orca_sidecar_url()
+    if not sidecar_url:
+        raise HTTPException(400, "Orca sidecar not configured (ORCA_SIDECAR_URL is not set)")
+    if not body.file_ids:
+        raise HTTPException(422, "file_ids must not be empty")
+    if body.bed_x <= 0 or body.bed_y <= 0:
+        raise HTTPException(422, "bed_x and bed_y must be positive")
+
+    stl_paths: list[Path] = []
+    for fid in body.file_ids:
+        row = await session.get(UploadedFile, fid)
+        if row is None:
+            raise HTTPException(404, f"File {fid} not found")
+        if not (row.original_filename or "").lower().endswith(".stl"):
+            raise HTTPException(400, f"File {fid} ({row.original_filename}) is not an STL")
+        stl_paths.append(Path(row.stored_path))
+
+    client = OrcaSidecarClient(sidecar_url)
+    try:
+        packed_bytes = await asyncio.to_thread(
+            client.pack_stls, stl_paths, body.bed_x, body.bed_y
+        )
+    except SidecarError as e:
+        raise HTTPException(422, f"Pack failed: {e}")
+
+    library = _cfg.get_library_dir()
+    folder_abs = library / "Job Uploads"
+    folder_abs.mkdir(parents=True, exist_ok=True)
+    dest = LibraryScanner.unique_path(folder_abs, "packed.3mf")
+    dest.write_bytes(packed_bytes)
+
+    rel = dest.relative_to(library).as_posix()
+    stat = dest.stat()
+    scanner = LibraryScanner(session, library, _cfg.get_filecache_dir())
+    record = UploadedFile(
+        original_filename=dest.name,
+        stored_path=str(dest),
+        relative_path=rel,
+        folder=folder_of(rel),
+        size_bytes=stat.st_size,
+        content_hash=sha256_file(dest),
+        mtime=stat.st_mtime,
+        plates=[],
+        missing=False,
+        uploaded_at=datetime.now(timezone.utc).isoformat(),
+    )
+    session.add(record)
+    await session.flush()
+    record.plates = scanner._parse_plates(dest, record.id)
+    await session.commit()
+    await session.refresh(record)
+    background_tasks.add_task(regen_file_thumbnails, record.id)
+    return _to_dict(record, [])
 
 
 # ---------- rescan ----------

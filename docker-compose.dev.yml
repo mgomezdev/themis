@@ -1,0 +1,11 @@
+# Dev overlay — publishes orca's port to the host so the locally-running
+# Themis backend can reach it at http://localhost:5000.
+#
+# Start orca for dev:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up orca
+#
+# Then run Themis locally via /themis-start (sets ORCA_SIDECAR_URL automatically).
+services:
+  orca:
+    ports:
+      - "5000:5000"

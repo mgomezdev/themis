@@ -32,9 +32,10 @@ async def init_db() -> None:
 
 _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
     ("printers", [
-        ("loaded_filaments", "JSON DEFAULT '[]'"),
-        ("queue_on",         "BOOLEAN NOT NULL DEFAULT 1"),
-        ("build_plate_type", "VARCHAR(100)"),
+        ("loaded_filaments",         "JSON DEFAULT '[]'"),
+        ("queue_on",                 "BOOLEAN NOT NULL DEFAULT 1"),
+        ("build_plate_type",         "VARCHAR(100)"),
+        ("no_snapshots_while_idle",  "BOOLEAN NOT NULL DEFAULT 0"),
     ]),
     ("job_printer_configs", [
         ("filament_id",    "INTEGER"),
@@ -57,7 +58,8 @@ _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
         ("missing",       "BOOLEAN NOT NULL DEFAULT 0"),
     ]),
     ("queue_config", [
-        ("operator_name", "VARCHAR(120)"),
+        ("operator_name",             "VARCHAR(120)"),
+        ("snapshot_interval_seconds", "INTEGER DEFAULT 2"),
     ]),
 ]
 

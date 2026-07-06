@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time as _time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
@@ -13,16 +14,20 @@ import shutil
 
 from ...database import get_session
 from ...models import Printer
-from ...services.camera_proxy import grab_jpeg_frame, stream_mjpeg, stream_rtsp_ffmpeg
+from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
-from ...config import get_orca_config_dir
-from ...services.profile_index import ProfileIndex
-from ...services.profile_service import ProfileService
 from ...services.queue_engine import queue_engine
 
-# Shared, cached compatibility index (rebuilds when the user's presets change).
-_profile_index = ProfileIndex()
+async def _fetch_sidecar_catalog() -> dict | None:
+    """Return the Themis-side catalog cache (never calls Orca directly)."""
+    from .orca import get_cached_catalog
+    try:
+        return await get_cached_catalog()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning("Could not get catalog: %s", e)
+        return None
 
 router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
@@ -35,6 +40,7 @@ class PrinterCreate(BaseModel):
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
+    no_snapshots_while_idle: bool = False
 
 
 class PrinterUpdate(BaseModel):
@@ -46,6 +52,7 @@ class PrinterUpdate(BaseModel):
     queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
     build_plate_type: str | None = None
+    no_snapshots_while_idle: bool | None = None
 
 
 class ActivePresetUpdate(BaseModel):
@@ -83,6 +90,7 @@ def _to_dict(p: Printer) -> dict:
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
         "build_plate_type": p.build_plate_type,
+        "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -127,6 +135,7 @@ async def create_printer(
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=body.loaded_filaments,
         build_plate_type=body.build_plate_type,
+        no_snapshots_while_idle=body.no_snapshots_while_idle,
     )
     session.add(printer)
     await session.commit()
@@ -141,24 +150,48 @@ async def create_printer(
 
 @router.get("/orca-presets")
 async def list_orca_printer_presets() -> list[str]:
-    svc = ProfileService()
-    return svc.get_printer_preset_names()
+    loop = asyncio.get_running_loop()
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        return []
+    return sorted({m["name"] for m in cat.get("machine", []) if m.get("name")})
 
 
 @router.get("/orca-machine-catalog")
 async def orca_machine_catalog() -> list[dict]:
-    """Real selectable OrcaSlicer machine presets [{name, vendor, printer_model,
-    nozzle, source}] for the printer-settings make/model/nozzle picker."""
-    return _profile_index.machine_catalog()
+    """Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,
+    source, uuid}]. Sourced exclusively from the Orca sidecar."""
+    loop = asyncio.get_running_loop()
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        return []
+    return sorted(
+        [
+            {
+                "name": m["name"],
+                "vendor": m.get("manufacturer") or "",
+                "printer_model": m.get("model") or "",
+                "nozzle": m.get("nozzle") or "",
+                "source": "system",
+                "uuid": m.get("uuid") or "",
+            }
+            for m in cat.get("machine", [])
+            if m.get("name") and m.get("model") and m.get("nozzle")
+        ],
+        key=lambda m: (m["vendor"], m["printer_model"], m["nozzle"], m["name"]),
+    )
 
 
 @router.post("/rescan-profiles")
 async def rescan_profiles() -> dict:
-    """Drop the cached profile index and rebuild it from disk — use after adding
-    or editing OrcaSlicer presets/printers so new options appear."""
-    _profile_index.refresh()
-    catalog = _profile_index.machine_catalog()  # forces the rebuild
-    return {"machine_presets": len(catalog)}
+    """Trigger a catalog refresh from Orca and report the machine preset count."""
+    from .orca import refresh_catalog as _orca_refresh
+    await _orca_refresh()
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        return {"machine_presets": 0}
+    count = sum(1 for m in cat.get("machine", []) if m.get("model") and m.get("nozzle"))
+    return {"machine_presets": count}
 
 
 class TestConnectionRequest(BaseModel):
@@ -220,22 +253,6 @@ async def test_connection(body: TestConnectionRequest) -> dict:
                 pass
 
 
-_SAMPLE_PROFILES = {
-    "print_profiles": [
-        "0.20mm Standard @ECC",
-        "0.16mm Fine @ECC",
-        "0.28mm Draft @ECC",
-    ],
-    "filament_profiles": [
-        "Elegoo PLA Basic @ECC",
-        "Elegoo PLA+ @ECC",
-        "Elegoo PETG @ECC",
-        "Elegoo ABS @ECC",
-        "Generic PLA @ECC",
-    ],
-}
-
-
 @router.get("/{printer_id}/profiles")
 async def get_profiles(
     printer_id: int,
@@ -244,12 +261,22 @@ async def get_profiles(
     printer = await _get_or_404(printer_id, session)
     if not printer.current_orca_printer_profile:
         return {"print_profiles": [], "filament_profiles": []}
-    # Inheritance-resolved compatibility via the precomputed index.
-    result = _profile_index.compatible_profiles(printer.current_orca_printer_profile)
-    if not result["print_profiles"] and not result["filament_profiles"]:
-        if not get_orca_config_dir().exists():
-            return _SAMPLE_PROFILES
-    return result
+    machine_name = printer.current_orca_printer_profile
+
+    loop = asyncio.get_running_loop()
+    cat = await _fetch_sidecar_catalog()
+    if cat is None:
+        return {"print_profiles": [], "filament_profiles": []}
+
+    processes = sorted(
+        p["name"] for p in cat.get("process", [])
+        if machine_name in (p.get("compatible_printers") or [])
+    )
+    filaments = sorted(
+        f["name"] for f in cat.get("filament", [])
+        if machine_name in (f.get("compatible_printers") or [])
+    )
+    return {"print_profiles": processes, "filament_profiles": filaments}
 
 
 @router.get("/{printer_id}")
@@ -285,6 +312,8 @@ async def update_printer(
         printer.loaded_filaments = body.loaded_filaments
     if "build_plate_type" in body.model_fields_set:
         printer.build_plate_type = body.build_plate_type
+    if body.no_snapshots_while_idle is not None:
+        printer.no_snapshots_while_idle = body.no_snapshots_while_idle
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)
@@ -517,7 +546,7 @@ async def snapshot_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Return a single JPEG frame — for browsers that don't support MJPEG streaming."""
+    """Return a single JPEG frame from any camera source (MJPEG or RTSP)."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
     if client is None or not client.connected:
@@ -528,14 +557,13 @@ async def snapshot_camera(
 
     await _activate_camera(client)
 
-    url = client.camera_mjpeg_url
-    if not url:
-        raise HTTPException(404, "No camera URL configured")
-
     try:
-        jpeg = await grab_jpeg_frame(url)
+        jpeg = await grab_snapshot_from_client(client)
     except Exception as exc:
         raise HTTPException(503, f"Camera unavailable: {exc}")
+
+    if jpeg is None:
+        raise HTTPException(404, "No camera source available")
 
     return Response(
         content=jpeg,
