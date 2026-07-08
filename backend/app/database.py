@@ -61,6 +61,11 @@ _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
         ("operator_name",             "VARCHAR(120)"),
         ("snapshot_interval_seconds", "INTEGER DEFAULT 2"),
     ]),
+    ("projects", [
+        ("source_app",       "VARCHAR(50)"),
+        ("source_user",      "VARCHAR(255)"),
+        ("source_layout_id", "INTEGER"),
+    ]),
 ]
 
 
@@ -98,6 +103,34 @@ async def _migrate(conn) -> None:
         await conn.execute(text("INSERT INTO job_printer_configs_new SELECT * FROM job_printer_configs"))
         await conn.execute(text("DROP TABLE job_printer_configs"))
         await conn.execute(text("ALTER TABLE job_printer_configs_new RENAME TO job_printer_configs"))
+
+    # machine_uuid/process_uuid changed to nullable; SQLite can't ALTER COLUMN so recreate.
+    proj_info = (await conn.execute(text("PRAGMA table_info(projects)"))).fetchall()
+    proj_cols = {row[1]: row[3] for row in proj_info}  # col_name → notnull flag
+    if proj_cols.get("machine_uuid", 0) == 1 or proj_cols.get("process_uuid", 0) == 1:
+        await conn.execute(text("""
+            CREATE TABLE projects_new (
+                id INTEGER NOT NULL PRIMARY KEY,
+                name VARCHAR(255) NOT NULL,
+                machine_uuid VARCHAR(36),
+                process_uuid VARCHAR(36),
+                notes TEXT,
+                result_file_id INTEGER REFERENCES uploaded_files (id) ON DELETE SET NULL,
+                source_app VARCHAR(50),
+                source_user VARCHAR(255),
+                source_layout_id INTEGER,
+                created_at VARCHAR(32) NOT NULL,
+                updated_at VARCHAR(32) NOT NULL
+            )
+        """))
+        await conn.execute(text(
+            "INSERT INTO projects_new "
+            "(id, name, machine_uuid, process_uuid, notes, result_file_id, created_at, updated_at) "
+            "SELECT id, name, machine_uuid, process_uuid, notes, result_file_id, created_at, updated_at "
+            "FROM projects"
+        ))
+        await conn.execute(text("DROP TABLE projects"))
+        await conn.execute(text("ALTER TABLE projects_new RENAME TO projects"))
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
