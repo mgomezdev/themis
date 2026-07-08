@@ -46,9 +46,12 @@ def _resolve_filament_name(catalog: dict, uuid: str) -> str | None:
 
 class ProjectCreate(BaseModel):
     name: str
-    machine_uuid: str
-    process_uuid: str
+    machine_uuid: Optional[str] = None
+    process_uuid: Optional[str] = None
     notes: Optional[str] = None
+    source_app: Optional[str] = None
+    source_user: Optional[str] = None
+    source_layout_id: Optional[int] = None
 
 
 class ProjectPatch(BaseModel):
@@ -144,6 +147,9 @@ async def _project_dict(
         "process_uuid": project.process_uuid,
         "notes": project.notes,
         "result_file_id": project.result_file_id,
+        "source_app": project.source_app,
+        "source_user": project.source_user,
+        "source_layout_id": project.source_layout_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
@@ -183,6 +189,9 @@ async def create_project(
         process_uuid=body.process_uuid,
         notes=body.notes,
         result_file_id=None,
+        source_app=body.source_app,
+        source_user=body.source_user,
+        source_layout_id=body.source_layout_id,
         created_at=now,
         updated_at=now,
     )

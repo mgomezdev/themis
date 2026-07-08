@@ -139,12 +139,15 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
-    machine_uuid: Mapped[str] = mapped_column(String(36))
-    process_uuid: Mapped[str] = mapped_column(String(36))
+    machine_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    process_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     result_file_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True
     )
+    source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
 
