@@ -100,3 +100,54 @@ async def test_thumbnail_served(client, tmp_path):
         response = await client.get(f"/api/v1/files/{file_id}/thumbnails/plate_1.png")
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("image/")
+
+
+import hashlib
+
+
+def _make_stl_bytes(seed: bytes = b"stl") -> bytes:
+    """Minimal binary STL — 84 bytes (header + triangle count = 0)."""
+    return seed.ljust(80, b" ") + b"\x00\x00\x00\x00"
+
+
+async def test_upload_dedup_same_folder_returns_existing(client, tmp_path):
+    """Uploading the same bytes to the same folder twice returns the existing record."""
+    lib, cache = _patch_dirs(tmp_path)
+    stl = _make_stl_bytes()
+    with lib, cache:
+        r1 = await client.post(
+            "/api/v1/files/upload",
+            data={"folder": "/Gridfinity/layout-a"},
+            files={"file": ("bin_2x3.stl", stl, "application/octet-stream")},
+        )
+        r2 = await client.post(
+            "/api/v1/files/upload",
+            data={"folder": "/Gridfinity/layout-a"},
+            files={"file": ("bin_2x3.stl", stl, "application/octet-stream")},
+        )
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+    assert r1.json()["id"] == r2.json()["id"]
+    # Only one file written to disk
+    stl_files = list((tmp_path / "library" / "Gridfinity" / "layout-a").glob("*.stl"))
+    assert len(stl_files) == 1
+
+
+async def test_upload_dedup_different_folder_creates_separate_record(client, tmp_path):
+    """Same bytes in a different folder get a new record — no cross-folder dedup."""
+    lib, cache = _patch_dirs(tmp_path)
+    stl = _make_stl_bytes()
+    with lib, cache:
+        r1 = await client.post(
+            "/api/v1/files/upload",
+            data={"folder": "/Gridfinity/layout-a"},
+            files={"file": ("bin_2x3.stl", stl, "application/octet-stream")},
+        )
+        r2 = await client.post(
+            "/api/v1/files/upload",
+            data={"folder": "/Gridfinity/layout-b"},
+            files={"file": ("bin_2x3.stl", stl, "application/octet-stream")},
+        )
+    assert r1.status_code == 201
+    assert r2.status_code == 201
+    assert r1.json()["id"] != r2.json()["id"]

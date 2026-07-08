@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
+import hashlib
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
@@ -164,11 +165,28 @@ async def upload_file(
     if ext not in MODEL_EXTS:
         raise HTTPException(422, "Only .3mf and .stl files are accepted")
 
+    raw = await file.read()
+    incoming_hash = hashlib.sha256(raw).hexdigest()
+
     library = config.get_library_dir()
     folder_abs = _safe_subpath(library, folder)
     folder_abs.mkdir(parents=True, exist_ok=True)
+    rel_dir = folder_abs.relative_to(library).as_posix()
+    # folder_of() prepends "/" and uses the parent — mirror that for the root case too
+    target_folder = "/" if rel_dir == "." else "/" + rel_dir
+
+    # Dedup: return existing record if same content is already in this folder.
+    existing = (await session.execute(
+        select(UploadedFile)
+        .where(UploadedFile.content_hash == incoming_hash)
+        .where(UploadedFile.folder == target_folder)
+        .limit(1)
+    )).scalar_one_or_none()
+    if existing:
+        return _to_dict(existing, [])
+
     dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
-    dest.write_bytes(await file.read())
+    dest.write_bytes(raw)
 
     rel = dest.relative_to(library).as_posix()
     stat = dest.stat()
