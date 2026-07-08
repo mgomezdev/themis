@@ -14,8 +14,6 @@ def test_prepare_hook_raises_slice_error(tmp_path):
     """prepare_hook is not supported in sidecar-only mode — must raise SliceError."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
-    svc._catalog_cache = None
-    svc._catalog_ts = 0.0
 
     with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
         with pytest.raises(SliceError, match="prepare_hook"):
@@ -26,12 +24,13 @@ def test_no_hook_with_sidecar_succeeds(tmp_path):
     """A request without a prepare_hook routes to sidecar successfully."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
-    svc._catalog_cache = {
+
+    import app.api.routes.orca as _orca
+    _orca._catalog_dict = {
         "machine": [{"name": "M", "uuid": "m1"}],
         "process": [{"name": "P", "uuid": "p1"}],
         "filament": [{"name": "F", "uuid": "f1"}],
     }
-    svc._catalog_ts = float("inf")
 
     with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
          patch.object(SlicerService, "_execute_slice_by_ids", return_value="out.gcode"):

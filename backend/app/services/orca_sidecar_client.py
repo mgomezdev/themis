@@ -257,3 +257,39 @@ class OrcaSidecarClient:
         if r.status_code != 200:
             raise SidecarError(f"pack returned {r.status_code}: {r.text[:300]}")
         return r.content
+
+    def pack_stls_by_uuid(
+        self,
+        stl_paths: list[Path],
+        machine_uuid: str,
+        process_uuid: str,
+        filament_uuids: list[str],
+    ) -> bytes:
+        """POST /api/pack (UUID mode) → multi-plate 3MF bytes with embedded settings.
+
+        The sidecar resolves bed dimensions and profile settings from the given
+        UUIDs, so no bed_x/bed_y is needed.
+        """
+        import json as _json
+        file_handles = [(p, open(p, "rb")) for p in stl_paths]
+        try:
+            files = [
+                ("files", (p.name, fh, "application/octet-stream"))
+                for p, fh in file_handles
+            ]
+            data = {
+                "machine_uuid": machine_uuid,
+                "process_uuid": process_uuid,
+                "filament_uuids": _json.dumps(filament_uuids),
+            }
+            try:
+                r = self._client.post("/api/pack", files=files, data=data)
+            except httpx.HTTPError as e:
+                raise SidecarError(f"pack request failed: {e}") from e
+        finally:
+            for _, fh in file_handles:
+                fh.close()
+
+        if r.status_code != 200:
+            raise SidecarError(f"pack returned {r.status_code}: {r.text[:300]}")
+        return r.content

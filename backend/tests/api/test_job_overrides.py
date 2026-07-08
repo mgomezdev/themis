@@ -134,12 +134,13 @@ def test_extra_config_forwarded_to_sidecar():
     """extra_config is passed through to slice_start so the sidecar merges it."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = Path("/tmp")
-    svc._catalog_cache = {
+
+    import app.api.routes.orca as _orca
+    _orca._catalog_dict = {
         "machine": [{"name": "MyPrinter", "uuid": "m1"}],
         "process": [{"name": "MyProcess", "uuid": "p1"}],
         "filament": [{"name": "MyFilament", "uuid": "f1"}],
     }
-    svc._catalog_ts = float("inf")  # never re-fetch
 
     req = SliceRequest(
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
@@ -168,8 +169,6 @@ def test_slice_raises_without_sidecar():
     """SlicerService.slice raises SliceError when no sidecar is configured."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = Path("/tmp")
-    svc._catalog_cache = None
-    svc._catalog_ts = 0.0
     req = SliceRequest(
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="m", process_preset="p", filament_presets=["f"],

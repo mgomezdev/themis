@@ -9,7 +9,7 @@ import type { LibraryFile, FolderNode } from '../data/types';
 import {
   getProject, createProject, patchProject,
   addProjectItem, updateProjectItem,
-  assembleProject,
+  generateProject,
 } from '../api/projects';
 
 // ---------------------------------------------------------------------------
@@ -188,18 +188,18 @@ function ResultPanel({
 // Error banner
 // ---------------------------------------------------------------------------
 
-const ASSEMBLE_ERRORS: Record<number, string> = {
-  422: 'Add at least one part before arranging.',
+const GENERATE_ERRORS: Record<number, string> = {
+  422: 'Add at least one part before generating.',
   502: 'Orca sidecar is offline. Check the container.',
-  504: 'Arrangement timed out. Try fewer parts or reduce quantities.',
+  504: 'Generation timed out. Try fewer parts or reduce quantities.',
 };
 
-function parseAssembleError(msg: string): string {
+function parseGenerateError(msg: string): string {
   const code = parseInt(msg);
-  if (!isNaN(code) && ASSEMBLE_ERRORS[code]) return ASSEMBLE_ERRORS[code];
-  if (msg.includes('machine')) return 'Machine profile not found — update project settings.';
+  if (!isNaN(code) && GENERATE_ERRORS[code]) return GENERATE_ERRORS[code];
+  if (msg.includes('filament')) return 'Every part needs a filament profile before generating.';
   if (msg.includes('STL') || msg.includes('stl')) return 'One or more STL files are missing. Remove and re-add them.';
-  return `Arrangement failed: ${msg}`;
+  return `Generation failed: ${msg}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +219,9 @@ export function ProjectBuilderScreen() {
   const [processUuid, setProcessUuid] = useState('');
   const [items, setItems] = useState<LocalItem[]>([]);
   const [saving, setSaving] = useState(false);
-  const [assembling, setAssembling] = useState(false);
-  const [assembleError, setAssembleError] = useState('');
-  const [assembleResult, setAssembleResult] = useState<{
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState('');
+  const [legacyResult, setLegacyResult] = useState<{
     resultFileId: number; plateCount: number;
   } | null>(null);
 
@@ -263,8 +263,8 @@ export function ProjectBuilderScreen() {
         sort_order: it.sort_order,
       })));
       if (p.result_file_id) {
-        // We'll reload the assemble result display from the project
-        setAssembleResult({ resultFileId: p.result_file_id, plateCount: 0 });
+        // Legacy single-result display (projects arranged before the generate flow)
+        setLegacyResult({ resultFileId: p.result_file_id, plateCount: 0 });
       }
     }).catch(console.error);
   }, [projectId]);
@@ -363,26 +363,25 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  async function handleSaveAndAssemble() {
+  async function handleGenerate() {
     if (!name.trim() || items.length === 0) return;
     setSaving(true);
-    setAssembleError('');
-    setAssembleResult(null);
+    setGenerateError('');
     try {
       const pid = await saveProject();
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
-      setAssembling(true);
-      const out = await assembleProject(pid);
-      setAssembleResult({ resultFileId: out.result_file_id, plateCount: out.plate_count });
+      setGenerating(true);
+      await generateProject(pid);
+      navigate('/queue');
     } catch (e) {
-      setAssembleError(parseAssembleError(e instanceof Error ? e.message : String(e)));
+      setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
     } finally {
       setSaving(false);
-      setAssembling(false);
+      setGenerating(false);
     }
   }
 
-  const canSave = name.trim().length > 0 && !saving && !assembling;
+  const canSave = name.trim().length > 0 && !saving && !generating;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, height: '100%' }}>
@@ -567,29 +566,29 @@ export function ProjectBuilderScreen() {
           )}
         </div>
 
-        {/* Assemble result */}
-        {assembleResult && (
+        {/* Legacy arranged result (projects generated before the generate flow) */}
+        {legacyResult && (
           <ResultPanel
-            resultFileId={assembleResult.resultFileId}
-            plateCount={assembleResult.plateCount}
-            onQueue={() => navigate('/queue/new', { state: { libraryFileId: assembleResult!.resultFileId } })}
+            resultFileId={legacyResult.resultFileId}
+            plateCount={legacyResult.plateCount}
+            onQueue={() => navigate('/queue/new', { state: { libraryFileId: legacyResult!.resultFileId } })}
             onViewFiles={() => navigate('/files')}
           />
         )}
 
         {/* Error banner */}
-        {assembleError && (
+        {generateError && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,
             background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)',
             borderRadius: 6, padding: '10px 14px',
           }}>
             <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
-            <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{assembleError}</span>
+            <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
             <button
               className="btn sm"
-              onClick={handleSaveAndAssemble}
-              disabled={assembling || saving}
+              onClick={handleGenerate}
+              disabled={generating || saving}
             >
               Retry
             </button>
@@ -598,18 +597,18 @@ export function ProjectBuilderScreen() {
 
         {/* Footer actions */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 'auto', paddingTop: 4 }}>
-          <button className="btn sm" onClick={() => navigate('/projects')} disabled={saving || assembling}>
+          <button className="btn sm" onClick={() => navigate('/projects')} disabled={saving || generating}>
             Cancel
           </button>
           <button className="btn sm" onClick={handleSave} disabled={!canSave}>
-            {saving && !assembling ? 'Saving…' : 'Save'}
+            {saving && !generating ? 'Saving…' : 'Save'}
           </button>
           <button
             className="btn primary sm"
-            onClick={handleSaveAndAssemble}
+            onClick={handleGenerate}
             disabled={!canSave || items.length === 0}
           >
-            {assembling ? 'Arranging…' : 'Save & Arrange'}
+            {generating ? 'Generating…' : 'Generate'}
           </button>
         </div>
       </div>
