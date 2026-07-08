@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Empty } from '../components/ui';
-import { useProjects, deleteProject, assembleProject, type Project } from '../api/projects';
+import { useProjects, deleteProject, generateProject, type Project } from '../api/projects';
 
 function summarise(p: Project) {
   const parts = p.items.length;
@@ -15,25 +15,25 @@ function ProjectCard({
   project,
   onEdit,
   onDelete,
-  onAssemble,
+  onGenerate,
 }: {
   project: Project;
   onEdit: () => void;
   onDelete: () => void;
-  onAssemble: () => void;
+  onGenerate: () => void;
 }) {
-  const [assembling, setAssembling] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
 
-  async function handleAssemble() {
-    setAssembling(true);
+  async function handleGenerate() {
+    setGenerating(true);
     setError('');
     try {
-      await onAssemble();
+      await onGenerate();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setAssembling(false);
+      setGenerating(false);
     }
   }
 
@@ -65,11 +65,11 @@ function ProjectCard({
         <button className="btn sm" onClick={onEdit} style={{ flex: 1 }}>Edit</button>
         <button
           className="btn primary sm"
-          onClick={handleAssemble}
-          disabled={assembling || project.items.length === 0}
+          onClick={handleGenerate}
+          disabled={generating || project.items.length === 0}
           style={{ flex: 1 }}
         >
-          {assembling ? 'Arranging…' : 'Arrange'}
+          {generating ? 'Generating…' : 'Generate'}
         </button>
         <button className="btn ghost icon sm" onClick={onDelete} title="Delete project">
           {Icons.trash}
@@ -89,10 +89,10 @@ export function ProjectsScreen() {
     refetch();
   }
 
-  async function handleAssemble(id: number) {
-    await assembleProject(id);
+  async function handleGenerate(id: number) {
+    await generateProject(id);
     refetch();
-    navigate(`/projects/${id}`);
+    navigate('/queue');
   }
 
   return (
@@ -114,7 +114,7 @@ export function ProjectsScreen() {
               project={p}
               onEdit={() => navigate(`/projects/${p.id}`)}
               onDelete={() => handleDelete(p.id)}
-              onAssemble={() => handleAssemble(p.id)}
+              onGenerate={() => handleGenerate(p.id)}
             />
           ))}
         </div>

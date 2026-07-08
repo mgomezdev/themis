@@ -1,18 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
-import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_library_dir, get_orca_sidecar_url
@@ -20,7 +17,6 @@ from ...database import get_session
 from ...models import Job, Project, ProjectItem, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
 from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
-from ...services.project_pack_builder import FilamentSlot, ProjectPackBuilder
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
@@ -35,11 +31,6 @@ def _now_iso() -> str:
 def _slugify(name: str) -> str:
     slug = re.sub(r"[^\w\s-]", "", name.lower())
     return re.sub(r"[\s_-]+", "-", slug).strip("-")[:80]
-
-
-async def _get_catalog(_sidecar_url: str | None = None) -> dict:
-    from .orca import get_cached_catalog
-    return await get_cached_catalog()
 
 
 def _resolve_filament_name(catalog: dict, uuid: str) -> str | None:
@@ -207,10 +198,10 @@ async def get_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
-    sidecar_url = get_orca_sidecar_url()
     catalog = None
-    if sidecar_url and _catalog_cache:
-        catalog = _catalog_cache
+    if get_orca_sidecar_url():
+        from .orca import _catalog_dict
+        catalog = _catalog_dict
     return await _project_dict(proj, session, catalog)
 
 
@@ -351,11 +342,31 @@ async def reorder_items(
 
 
 # ---------------------------------------------------------------------------
-# Assemble (arrange) — builds combined 3MF, sends to Orca, saves to library
+# Generate — packs STLs one 3MF per filament group via Orca, saves to library,
+# and queues one job per plate. The only entry point for pack/assemble.
 # ---------------------------------------------------------------------------
 
-@router.post("/{project_id}/assemble")
-async def assemble_project(
+async def _max_queue_position(session: AsyncSession) -> float:
+    result = await session.execute(select(func.max(Job.queue_position)))
+    return result.scalar_one_or_none() or 0.0
+
+
+def _parse_plate_nums(path: Path) -> list[int]:
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as zf:
+            names = zf.namelist()
+        return sorted(set(
+            int(n.split("plate_")[1].split(".")[0])
+            for n in names
+            if "Metadata/plate_" in n and ".png" in n
+        ))
+    except Exception:
+        return []
+
+
+@router.post("/{project_id}/generate")
+async def generate_project(
     project_id: int,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
@@ -364,7 +375,7 @@ async def assemble_project(
 
     sidecar_url = get_orca_sidecar_url()
     if not sidecar_url:
-        raise HTTPException(422, "ORCA_SIDECAR_URL is not configured — Orca sidecar required for assembly")
+        raise HTTPException(422, "ORCA_SIDECAR_URL is not configured — Orca sidecar required for generation")
 
     # Load items ordered by sort_order, id
     item_rows = (
@@ -376,88 +387,32 @@ async def assemble_project(
     ).scalars().all()
 
     if not item_rows:
-        raise HTTPException(422, "Project has no items — add STL files before assembling")
+        raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Fetch catalog for bed dimensions + filament display names
-    catalog = await _get_catalog(sidecar_url)
-
-    # Resolve bed dimensions from machine profile
-    machine_entry = next(
-        (m for m in catalog.get("machine", []) if m.get("uuid") == proj.machine_uuid),
-        None,
-    )
-    if machine_entry is None:
-        raise HTTPException(
-            422,
-            f"Machine UUID {proj.machine_uuid!r} not found in Orca catalog — update project settings",
-        )
-    bed_x = float(machine_entry.get("bed_size_x") or 256)
-    bed_y = float(machine_entry.get("bed_size_y") or 256)
-
-    # Slot assignment: (filament_profile_uuid, color_hex) → slot_index (1-based)
-    slot_map: dict[tuple[str, str], int] = {}
-    filament_slots: list[FilamentSlot] = []
+    # Group items by (filament_profile_uuid, color_hex), preserving item order
+    groups: dict[tuple[str, str], list[ProjectItem]] = {}
     for item in item_rows:
-        key = (item.filament_profile_uuid, item.color_hex)
-        if key not in slot_map:
-            slot_index = len(slot_map) + 1
-            slot_map[key] = slot_index
-            display_name = _resolve_filament_name(catalog, item.filament_profile_uuid) or "Unknown"
-            fil_entry = next(
-                (f for f in catalog.get("filament", []) if f.get("uuid") == item.filament_profile_uuid),
-                {},
-            )
-            filament_slots.append(FilamentSlot(
-                uuid=item.filament_profile_uuid,
-                display_name=display_name,
-                filament_type=fil_entry.get("filament_type", "PLA"),
-                color_hex=item.color_hex,
-            ))
+        if not item.filament_profile_uuid:
+            raise HTTPException(422, f"Item {item.id} has no filament profile assigned")
+        groups.setdefault((item.filament_profile_uuid, item.color_hex), []).append(item)
 
-    # Resolve STL paths and validate
-    builder_items = []
-    for item in item_rows:
-        f = await session.get(UploadedFile, item.file_id)
-        if f is None:
-            raise HTTPException(422, f"File {item.file_id} not found in library")
-        if not f.original_filename.lower().endswith(".stl"):
-            raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-        stl_path = Path(f.stored_path)
-        if not stl_path.exists():
-            raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-        slot_index = slot_map[(item.filament_profile_uuid, item.color_hex)]
-        builder_items.append({
-            "file_path": stl_path,
-            "quantity": item.quantity,
-            "slot_index": slot_index,
-        })
+    # Resolve STL paths per group (repeated per quantity) and validate
+    group_paths: dict[tuple[str, str], list[Path]] = {}
+    for key, group_items in groups.items():
+        paths: list[Path] = []
+        for item in group_items:
+            f = await session.get(UploadedFile, item.file_id)
+            if f is None:
+                raise HTTPException(422, f"File {item.file_id} not found in library")
+            if not f.original_filename.lower().endswith(".stl"):
+                raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
+            stl_path = Path(f.stored_path)
+            if not stl_path.exists():
+                raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
+            paths.extend([stl_path] * item.quantity)
+        group_paths[key] = paths
 
-    # Build combined 3MF + call Orca arrange
-    library_dir = get_library_dir()
-    projects_dir = library_dir / "Projects"
-    projects_dir.mkdir(parents=True, exist_ok=True)
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        combined_path = Path(tmpdir) / "combined.3mf"
-        ProjectPackBuilder().build(
-            items=builder_items,
-            bed_x=bed_x,
-            bed_y=bed_y,
-            filament_slots=filament_slots,
-            out_path=combined_path,
-        )
-        client = OrcaSidecarClient(sidecar_url)
-        try:
-            arranged_bytes = await asyncio.to_thread(
-                client.arrange, combined_path, False, False, 130.0
-            )
-        except SidecarError as exc:
-            if "timed out" in str(exc).lower():
-                raise HTTPException(504, "Assembly timed out — try fewer parts or reduce quantities")
-            raise HTTPException(502, f"Orca sidecar error during assembly: {exc}") from exc
-
-    # Determine output path; overwrite previous result unless an active job holds it
-    out_filename = f"project-{_slugify(proj.name)}.3mf"
+    # Clean up the legacy single-result file unless an active job holds it
     if proj.result_file_id is not None:
         active = (
             await session.execute(
@@ -470,63 +425,96 @@ async def assemble_project(
             )
         ).first()
         if active is None:
-            # Safe to replace: delete old record and its file
             old_file = await session.get(UploadedFile, proj.result_file_id)
             if old_file and Path(old_file.stored_path).exists():
                 Path(old_file.stored_path).unlink(missing_ok=True)
             if old_file:
                 await session.delete(old_file)
-            proj.result_file_id = None
-            await session.commit()
+        # No single result file in the new flow
+        proj.result_file_id = None
+        await session.commit()
 
-    out_path = LibraryScanner.unique_path(projects_dir, out_filename)
-    out_path.write_bytes(arranged_bytes)
+    library_dir = get_library_dir()
+    projects_dir = library_dir / "Projects"
+    projects_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parse plates from the arranged 3MF
-    try:
-        import zipfile
-        with zipfile.ZipFile(out_path) as zf:
-            names = zf.namelist()
-        plate_nums = sorted(set(
-            int(n.split("plate_")[1].split(".")[0])
-            for n in names
-            if "Metadata/plate_" in n and ".png" in n
-        ))
-    except Exception:
-        plate_nums = []
+    client = OrcaSidecarClient(sidecar_url)
+    jobs_out: list[dict] = []
+    files_out: list[dict] = []
 
-    now = _now_iso()
-    rel = out_path.relative_to(library_dir).as_posix()
-    new_file = UploadedFile(
-        original_filename=out_filename,
-        stored_path=str(out_path),
-        plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
-        uploaded_at=now,
-        relative_path=rel,
-        folder="/Projects",
-        size_bytes=out_path.stat().st_size,
-        content_hash="",
-        mtime=out_path.stat().st_mtime,
-        missing=False,
-    )
-    session.add(new_file)
-    await session.commit()
-    await session.refresh(new_file)
+    for (fil_uuid, color_hex), stl_paths in group_paths.items():
+        try:
+            packed_bytes = await asyncio.to_thread(
+                client.pack_stls_by_uuid,
+                stl_paths,
+                proj.machine_uuid,
+                proj.process_uuid,
+                [fil_uuid],
+            )
+        except SidecarError as exc:
+            if "timed out" in str(exc).lower():
+                raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
+            raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
 
-    proj.result_file_id = new_file.id
-    proj.updated_at = now
-    await session.commit()
+        label = color_hex.lstrip("#") if color_hex else fil_uuid[:8]
+        out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
+        out_path = LibraryScanner.unique_path(projects_dir, out_filename)
+        out_path.write_bytes(packed_bytes)
 
-    background_tasks.add_task(regen_file_thumbnails, new_file.id)
+        plate_nums = _parse_plate_nums(out_path)
 
-    return {
-        "project_id": proj.id,
-        "result_file_id": new_file.id,
-        "plate_count": len(plate_nums),
-        "file": {
+        now = _now_iso()
+        rel = out_path.relative_to(library_dir).as_posix()
+        new_file = UploadedFile(
+            original_filename=out_path.name,
+            stored_path=str(out_path),
+            plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
+            uploaded_at=now,
+            relative_path=rel,
+            folder="/Projects",
+            size_bytes=out_path.stat().st_size,
+            content_hash="",
+            mtime=out_path.stat().st_mtime,
+            missing=False,
+        )
+        session.add(new_file)
+        await session.commit()
+        await session.refresh(new_file)
+
+        background_tasks.add_task(regen_file_thumbnails, new_file.id)
+
+        files_out.append({
             "id": new_file.id,
             "original_filename": new_file.original_filename,
             "folder": new_file.folder,
             "plate_count": len(plate_nums),
-        },
-    }
+        })
+
+        # One queued job per plate
+        next_pos = await _max_queue_position(session) + 1.0
+        new_jobs: list[Job] = []
+        for plate_num in (plate_nums or [1]):
+            job = Job(
+                uploaded_file_id=new_file.id,
+                plate_number=plate_num,
+                queue_position=next_pos,
+                status="queued",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(job)
+            new_jobs.append(job)
+            next_pos += 1.0
+        await session.commit()
+        jobs_out.extend({
+            "id": j.id,
+            "uploaded_file_id": j.uploaded_file_id,
+            "plate_number": j.plate_number,
+            "queue_position": j.queue_position,
+            "status": j.status,
+        } for j in new_jobs)
+
+    proj.updated_at = _now_iso()
+    await session.commit()
+
+    return {"project_id": proj.id, "jobs": jobs_out, "files": files_out}

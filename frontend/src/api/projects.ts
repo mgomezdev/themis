@@ -38,16 +38,21 @@ export interface Project {
   items: ProjectItem[];
 }
 
-export interface AssembleOut {
+export interface GenerateOut {
   project_id: number;
-  result_file_id: number;
-  plate_count: number;
-  file: {
+  jobs: {
+    id: number;
+    uploaded_file_id: number;
+    plate_number: number;
+    queue_position: number;
+    status: string;
+  }[];
+  files: {
     id: number;
     original_filename: string;
     folder: string;
     plate_count: number;
-  };
+  }[];
 }
 
 export interface ProjectCreate {
@@ -85,8 +90,8 @@ export const deleteProjectItem = (projectId: number, itemId: number) =>
 export const reorderProjectItems = (
   projectId: number, items: { id: number; sort_order: number }[],
 ) => request<ProjectItem[]>(`/api/v1/projects/${projectId}/items/reorder`, json('PUT', items));
-export const assembleProject = (projectId: number) =>
-  request<AssembleOut>(`/api/v1/projects/${projectId}/assemble`, { method: 'POST' });
+export const generateProject = (projectId: number) =>
+  request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, { method: 'POST' });
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
