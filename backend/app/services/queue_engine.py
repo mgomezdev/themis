@@ -689,6 +689,7 @@ class QueueEngine:
                 return
             job_id = job.id
             job.status = "complete"
+            job.completed_at = _now()
             job.updated_at = _now()
 
             # Delete gcode file from disk and DB
@@ -721,6 +722,7 @@ class QueueEngine:
                         "status": job.status,
                         "assigned_printer_id": job.assigned_printer_id,
                         "queue_position": job.queue_position,
+                        "project_id": job.project_id,
                     })
                 # Full queue broadcast (active jobs only)
                 result = await session.execute(

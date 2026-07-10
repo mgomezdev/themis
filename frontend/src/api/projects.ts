@@ -36,6 +36,8 @@ export interface Project {
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
+  jobs_total: number;
+  jobs_complete: number;
 }
 
 export interface GenerateOut {

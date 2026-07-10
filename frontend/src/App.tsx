@@ -18,6 +18,7 @@ import { FilesScreen }          from './screens/FilesScreen';
 import { SettingsScreen }       from './screens/SettingsScreen';
 import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
+import { HistoryScreen }        from './screens/HistoryScreen';
 
 function AppShell() {
   const { jobs } = useQueue();
@@ -53,6 +54,7 @@ function AppShell() {
                      actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
     '/projects/new': { title: 'New project',     crumbs: ['Workshop', 'Projects'] },
     '/projects/edit': { title: 'Edit project',   crumbs: ['Workshop', 'Projects'] },
+    '/history':    { title: 'History',           crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -90,6 +92,7 @@ function AppShell() {
             <Route path="/projects"       element={<ProjectsScreen />} />
             <Route path="/projects/new"   element={<ProjectBuilderScreen />} />
             <Route path="/projects/:id"   element={<ProjectBuilderScreen />} />
+            <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />
             <Route path="*"               element={<Navigate to="/queue" replace />} />
           </Routes>

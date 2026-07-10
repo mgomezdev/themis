@@ -84,10 +84,12 @@ class Job(Base):
     assigned_printer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("printers.id"), nullable=True)
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued")
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
+    completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -163,6 +165,7 @@ class ProjectItem(Base):
         ForeignKey("uploaded_files.id", ondelete="RESTRICT")
     )
     quantity: Mapped[int] = mapped_column(Integer, default=1)
+    quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
     filament_profile_uuid: Mapped[str] = mapped_column(String(36))
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)

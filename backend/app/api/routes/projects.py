@@ -12,11 +12,11 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import get_library_dir, get_orca_sidecar_url
+from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import Job, Project, ProjectItem, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
-from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
@@ -140,6 +140,12 @@ async def _project_dict(
     catalog: dict | None = None,
 ) -> dict:
     items = await _load_items(session, project.id, catalog)
+    jobs_total = (await session.execute(
+        select(func.count()).where(Job.project_id == project.id)
+    )).scalar() or 0
+    jobs_complete = (await session.execute(
+        select(func.count()).where(Job.project_id == project.id, Job.status == "complete")
+    )).scalar() or 0
     return {
         "id": project.id,
         "name": project.name,
@@ -153,6 +159,8 @@ async def _project_dict(
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
+        "jobs_total": jobs_total,
+        "jobs_complete": jobs_complete,
     }
 
 
@@ -208,8 +216,8 @@ async def get_project(
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
     catalog = None
-    if get_orca_sidecar_url():
-        from .orca import _catalog_dict
+    if get_laminus_sidecar_url():
+        from .laminus import _catalog_dict
         catalog = _catalog_dict
     return await _project_dict(proj, session, catalog)
 
@@ -382,9 +390,9 @@ async def generate_project(
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
 
-    sidecar_url = get_orca_sidecar_url()
+    sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
-        raise HTTPException(422, "ORCA_SIDECAR_URL is not configured — Orca sidecar required for generation")
+        raise HTTPException(422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
 
     # Load items ordered by sort_order, id
     item_rows = (
@@ -447,7 +455,7 @@ async def generate_project(
     projects_dir = library_dir / "Projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
 
-    client = OrcaSidecarClient(sidecar_url)
+    client = LaminusSidecarClient(sidecar_url)
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
@@ -506,6 +514,7 @@ async def generate_project(
             job = Job(
                 uploaded_file_id=new_file.id,
                 plate_number=plate_num,
+                project_id=proj.id,
                 queue_position=next_pos,
                 status="queued",
                 created_at=now,

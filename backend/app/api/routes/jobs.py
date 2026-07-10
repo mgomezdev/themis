@@ -5,14 +5,15 @@ import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Order, Printer, UploadedFile
+from ...models import GcodeFile, Job, JobPrinterConfig, Order, Printer, Project, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
@@ -73,12 +74,14 @@ def _to_dict(j: Job) -> dict:
         "uploaded_file_id": j.uploaded_file_id,
         "plate_number": j.plate_number,
         "order_id": j.order_id,
+        "project_id": j.project_id,
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
         "overrides": j.overrides,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
+        "completed_at": j.completed_at,
     }
 
 
@@ -245,6 +248,36 @@ async def check_overrides(
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     result = await session.execute(select(Job).order_by(Job.queue_position))
     return [_to_dict(j) for j in result.scalars().all()]
+
+
+@router.get("/history")
+async def list_history(
+    status: str = "complete,cancelled,failed",
+    project_id: Optional[int] = None,
+    limit: int = 100,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    statuses = [s.strip() for s in status.split(",") if s.strip()]
+    q = select(Job).where(Job.status.in_(statuses))
+    if project_id is not None:
+        q = q.where(Job.project_id == project_id)
+    q = q.order_by(Job.updated_at.desc()).limit(limit)
+    jobs = (await session.execute(q)).scalars().all()
+
+    out = []
+    for j in jobs:
+        d = _to_dict(j)
+        # Enrich with file name
+        f = await session.get(UploadedFile, j.uploaded_file_id)
+        d["file_name"] = f.original_filename if f else None
+        # Enrich with assigned printer name
+        p = await session.get(Printer, j.assigned_printer_id) if j.assigned_printer_id else None
+        d["printer_name"] = p.name if p else None
+        # Enrich with project name
+        proj = await session.get(Project, j.project_id) if j.project_id else None
+        d["project_name"] = proj.name if proj else None
+        out.append(d)
+    return out
 
 
 @router.get("/{job_id}")
