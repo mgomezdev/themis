@@ -146,7 +146,7 @@ export interface FileEntry {
 export type StatusKey =
   | 'printing' | 'queued' | 'waiting' | 'claiming' | 'slicing' | 'uploading'
   | 'paused' | 'error' | 'offline' | 'idle' | 'ready' | 'complete'
-  | 'hold' | 'in_progress' | 'partial' | 'blocked' | 'failed';
+  | 'hold' | 'in_progress' | 'partial' | 'blocked' | 'failed' | 'cancelled';
 
 export interface LibraryFile {
   id: number;

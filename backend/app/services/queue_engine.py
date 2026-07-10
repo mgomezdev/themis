@@ -293,6 +293,7 @@ class QueueEngine:
                     if job is None or job.status != "printing":
                         continue  # already resolved by the normal callback
                     job.status = "failed"
+                    job.completed_at = _now()
                     job.block_reason = "print cancelled or ended with failure on the printer"
                     job.assigned_printer_id = None
                     job.updated_at = _now()
@@ -528,6 +529,7 @@ class QueueEngine:
             job = await session.get(Job, job_id)
             if job:
                 job.status = "failed"
+                job.completed_at = _now()
                 job.block_reason = reason
                 job.assigned_printer_id = None
                 job.updated_at = _now()

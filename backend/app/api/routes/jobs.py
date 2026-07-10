@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -379,6 +379,7 @@ async def cancel_job(
             await session.delete(gcode_row)
 
     job.status = "cancelled"
+    job.completed_at = datetime.now(timezone.utc).isoformat()
     job.assigned_printer_id = None
     job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
