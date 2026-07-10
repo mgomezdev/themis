@@ -15,8 +15,8 @@ class SidecarError(Exception):
     pass
 
 
-class OrcaSidecarClient:
-    """Synchronous httpx client for the Orca sidecar API.
+class LaminusSidecarClient:
+    """Synchronous httpx client for the Laminus sidecar API.
 
     Synchronous because SlicerService runs inside a ThreadPoolExecutor — callers
     must wrap with asyncio.to_thread if calling from an async context.

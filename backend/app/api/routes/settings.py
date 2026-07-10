@@ -190,7 +190,7 @@ async def fleet_import(
         raise HTTPException(400, f"Unsupported backup version: {version}")
 
     # Fetch catalog once for profile-name validation (best-effort)
-    from .orca import get_cached_catalog
+    from .laminus import get_cached_catalog
     cat: dict | None = None
     try:
         cat = await get_cached_catalog()
