@@ -114,7 +114,7 @@ export function HistoryScreen() {
                   {j.outcome === 'reviewed' ? (
                     <span style={{ color: 'var(--ok)', fontSize: 12, fontWeight: 500 }}>&#x2713; Reviewed</span>
                   ) : j.status === 'complete' && j.project_id !== null && j.project_item_quantities !== null ? (
-                    <button className="btn sm" onClick={() => setOutcomingJob(j)}>Mark</button>
+                    <button className="btn sm" disabled={outcomingJob !== null} onClick={() => setOutcomingJob(j)}>Mark</button>
                   ) : '—'}
                 </td>
               </tr>

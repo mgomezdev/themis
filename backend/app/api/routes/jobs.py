@@ -604,8 +604,13 @@ async def get_slice_failures(
     ]
 
 
+class OutcomeFailureItem(BaseModel):
+    project_item_id: int
+    quantity_failed: int
+
+
 class OutcomeBody(BaseModel):
-    failures: list[dict] = []
+    failures: list[OutcomeFailureItem] = []
 
 
 def _now() -> str:
@@ -641,7 +646,7 @@ async def mark_job_outcome(
 
     # Parse new failures
     failures_in: dict[int, int] = {
-        f["project_item_id"]: f["quantity_failed"]
+        f.project_item_id: f.quantity_failed
         for f in body.failures
     }
 
@@ -652,13 +657,14 @@ async def mark_job_outcome(
         qty_failed = max(0, min(failures_in.get(item_id, 0), qty_on_plate))
         qty_succeeded = qty_on_plate - qty_failed
 
-        jif = JobItemFailure(
-            job_id=job.id,
-            project_item_id=item_id,
-            quantity_failed=qty_failed,
-            quantity_on_plate=qty_on_plate,
-        )
-        session.add(jif)
+        if qty_on_plate > 0:
+            jif = JobItemFailure(
+                job_id=job.id,
+                project_item_id=item_id,
+                quantity_failed=qty_failed,
+                quantity_on_plate=qty_on_plate,
+            )
+            session.add(jif)
 
         pi = await session.get(ProjectItem, item_id)
         if pi is not None:
