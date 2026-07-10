@@ -406,11 +406,13 @@ async def generate_project(
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Group items by (filament_profile_uuid, color_hex), preserving item order
+    # Group items by (filament_profile_uuid, color_hex), preserving item order.
+    # Items with no profile are skipped — the caller is expected to show a
+    # "assign filament profiles" banner; those items simply produce no job.
     groups: dict[tuple[str, str], list[ProjectItem]] = {}
     for item in item_rows:
         if not item.filament_profile_uuid:
-            raise HTTPException(422, f"Item {item.id} has no filament profile assigned")
+            continue
         groups.setdefault((item.filament_profile_uuid, item.color_hex), []).append(item)
 
     # Resolve STL paths per group (repeated per quantity) and validate
