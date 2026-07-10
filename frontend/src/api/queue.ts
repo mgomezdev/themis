@@ -241,6 +241,17 @@ export async function verifySlice(
   });
 }
 
+export async function markJobOutcome(
+  jobId: number,
+  failures: { project_item_id: number; quantity_failed: number }[],
+): Promise<{ failures: { project_item_id: number; quantity_failed: number }[] }> {
+  return request(`/api/v1/jobs/${jobId}/outcome`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ failures }),
+  });
+}
+
 export async function reorderQueue(
   positions: { job_id: number; queue_position: number }[],
 ): Promise<ApiJob[]> {

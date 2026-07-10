@@ -20,6 +20,8 @@ export interface ProjectItem {
   file_id: number;
   file_name: string;
   quantity: number;
+  quantity_completed: number;
+  quantity_failed: number;
   filament_profile_uuid: string;
   filament_display_name: string | null;
   color_hex: string;

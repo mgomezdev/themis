@@ -10,6 +10,7 @@ import {
   getProject, createProject, patchProject,
   addProjectItem, updateProjectItem,
   generateProject,
+  type ProjectItem,
 } from '../api/projects';
 
 // ---------------------------------------------------------------------------
@@ -218,6 +219,7 @@ export function ProjectBuilderScreen() {
   const [machineUuid, setMachineUuid] = useState('');
   const [processUuid, setProcessUuid] = useState('');
   const [items, setItems] = useState<LocalItem[]>([]);
+  const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
@@ -262,6 +264,7 @@ export function ProjectBuilderScreen() {
         color_hex: it.color_hex,
         sort_order: it.sort_order,
       })));
+      setServerItems(new Map(p.items.map(it => [it.id, it])));
       if (p.result_file_id) {
         // Legacy single-result display (projects arranged before the generate flow)
         setLegacyResult({ resultFileId: p.result_file_id, plateCount: 0 });
@@ -516,11 +519,23 @@ export function ProjectBuilderScreen() {
                   gap: 8,
                   alignItems: 'center',
                 }}>
-                  <span style={{
-                    fontSize: 13, color: 'var(--text-1)',
-                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                  }} title={it.file_name}>
-                    {it.file_name}
+                  <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+                    <span style={{
+                      fontSize: 13, color: 'var(--text-1)',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }} title={it.file_name}>
+                      {it.file_name}
+                    </span>
+                    {it.serverId && (() => {
+                      const si = serverItems.get(it.serverId!);
+                      if (!si || (si.quantity_completed === 0 && si.quantity_failed === 0)) return null;
+                      return (
+                        <span style={{ fontSize: 11, color: si.quantity_failed > 0 ? 'var(--err)' : 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                          {si.quantity_completed}/{si.quantity_completed + si.quantity_failed} ok
+                          {si.quantity_failed > 0 && ` · ${si.quantity_failed} failed`}
+                        </span>
+                      );
+                    })()}
                   </span>
                   <input
                     type="number"

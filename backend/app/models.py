@@ -90,6 +90,8 @@ class Job(Base):
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
     completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    project_item_quantities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -166,6 +168,17 @@ class ProjectItem(Base):
     )
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
+    quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
     filament_profile_uuid: Mapped[str] = mapped_column(String(36))
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class JobItemFailure(Base):
+    __tablename__ = "job_item_failures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    project_item_id: Mapped[int] = mapped_column(ForeignKey("project_items.id", ondelete="CASCADE"))
+    quantity_failed: Mapped[int] = mapped_column(Integer)
+    quantity_on_plate: Mapped[int] = mapped_column(Integer)

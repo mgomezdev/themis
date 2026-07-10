@@ -1,5 +1,6 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
 import re
@@ -9,11 +10,11 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Order, Printer, Project, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
@@ -79,6 +80,8 @@ def _to_dict(j: Job) -> dict:
         "queue_position": j.queue_position,
         "status": j.status,
         "overrides": j.overrides,
+        "outcome": j.outcome,
+        "project_item_quantities": json.loads(j.project_item_quantities) if j.project_item_quantities else None,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
         "completed_at": j.completed_at,
@@ -599,3 +602,74 @@ async def get_slice_failures(
         }
         for c in result.scalars().all()
     ]
+
+
+class OutcomeBody(BaseModel):
+    failures: list[dict] = []
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.put("/{job_id}/outcome")
+async def mark_job_outcome(
+    job_id: int,
+    body: OutcomeBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    job = await _get_or_404(job_id, session)
+
+    if job.project_item_quantities is None:
+        raise HTTPException(400, "This job has no project items to mark")
+
+    plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
+
+    # Reverse previous increments
+    old_jifs = (await session.execute(
+        select(JobItemFailure).where(JobItemFailure.job_id == job_id)
+    )).scalars().all()
+
+    for jif in old_jifs:
+        pi = await session.get(ProjectItem, jif.project_item_id)
+        if pi is not None:
+            pi.quantity_failed = max(0, pi.quantity_failed - jif.quantity_failed)
+            pi.quantity_completed = max(0, pi.quantity_completed - (jif.quantity_on_plate - jif.quantity_failed))
+
+    # Delete existing failure records
+    await session.execute(delete(JobItemFailure).where(JobItemFailure.job_id == job_id))
+
+    # Parse new failures
+    failures_in: dict[int, int] = {
+        f["project_item_id"]: f["quantity_failed"]
+        for f in body.failures
+    }
+
+    # Apply new increments
+    new_failures: list[dict] = []
+    for k, qty_on_plate in plate_quantities.items():
+        item_id = int(k)
+        qty_failed = max(0, min(failures_in.get(item_id, 0), qty_on_plate))
+        qty_succeeded = qty_on_plate - qty_failed
+
+        jif = JobItemFailure(
+            job_id=job.id,
+            project_item_id=item_id,
+            quantity_failed=qty_failed,
+            quantity_on_plate=qty_on_plate,
+        )
+        session.add(jif)
+
+        pi = await session.get(ProjectItem, item_id)
+        if pi is not None:
+            pi.quantity_failed += qty_failed
+            pi.quantity_completed += qty_succeeded
+
+        new_failures.append({"project_item_id": item_id, "quantity_failed": qty_failed})
+
+    job.outcome = "reviewed"
+    job.updated_at = _now()
+    await session.commit()
+    await session.refresh(job)
+
+    return {**_to_dict(job), "failures": new_failures}

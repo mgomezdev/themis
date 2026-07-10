@@ -45,11 +45,13 @@ _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
         ("filament_map",   "JSON"),
     ]),
     ("jobs", [
-        ("block_reason",  "TEXT"),
-        ("order_id",      "INTEGER"),
-        ("overrides",     "JSON"),
-        ("project_id",    "INTEGER"),
-        ("completed_at",  "VARCHAR(32)"),
+        ("block_reason",             "TEXT"),
+        ("order_id",                 "INTEGER"),
+        ("overrides",                "JSON"),
+        ("project_id",               "INTEGER"),
+        ("completed_at",             "VARCHAR(32)"),
+        ("outcome",                  "VARCHAR(20)"),
+        ("project_item_quantities",  "TEXT"),
     ]),
     ("uploaded_files", [
         ("relative_path", "VARCHAR(1024) DEFAULT ''"),
@@ -70,6 +72,7 @@ _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
     ("project_items", [
         ("quantity_completed", "INTEGER DEFAULT 0"),
+        ("quantity_failed",    "INTEGER DEFAULT 0"),
     ]),
 ]
 

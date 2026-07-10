@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -106,6 +107,8 @@ def _item_dict(item: ProjectItem, file_name: str, filament_name: str | None) -> 
         "file_id": item.file_id,
         "file_name": file_name,
         "quantity": item.quantity,
+        "quantity_completed": item.quantity_completed,
+        "quantity_failed": item.quantity_failed,
         "filament_profile_uuid": item.filament_profile_uuid,
         "filament_display_name": filament_name,
         "color_hex": item.color_hex,
@@ -468,6 +471,8 @@ async def generate_project(
     files_out: list[dict] = []
 
     for (fil_uuid, color_hex), stl_paths in group_paths.items():
+        group_items = groups[(fil_uuid, color_hex)]
+
         try:
             packed_bytes = await asyncio.to_thread(
                 client.pack_stls_by_uuid,
@@ -515,10 +520,22 @@ async def generate_project(
             "plate_count": len(plate_nums),
         })
 
+        # Compute per-plate quantity distribution for each item
+        effective_plates = plate_nums or [1]
+        num_plates = len(effective_plates)
+        plate_item_qtys: list[dict[str, int]] = []
+        for i in range(num_plates):
+            plate_q: dict[str, int] = {}
+            for item in group_items:
+                base = item.quantity // num_plates
+                extra = 1 if i < (item.quantity % num_plates) else 0
+                plate_q[str(item.id)] = base + extra
+            plate_item_qtys.append(plate_q)
+
         # One queued job per plate
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
-        for plate_num in (plate_nums or [1]):
+        for plate_idx, plate_num in enumerate(effective_plates):
             job = Job(
                 uploaded_file_id=new_file.id,
                 plate_number=plate_num,
@@ -527,6 +544,7 @@ async def generate_project(
                 status="queued",
                 created_at=now,
                 updated_at=now,
+                project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
             )
             session.add(job)
             new_jobs.append(job)
