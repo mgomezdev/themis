@@ -195,14 +195,14 @@ async def check_overrides(
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
     # project config. If the sidecar is unavailable or any required UUID is missing,
     # skip the diff rather than blocking job creation.
-    from ...config import get_orca_sidecar_url
-    from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+    from ...config import get_laminus_sidecar_url
+    from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 
-    sidecar_url = get_orca_sidecar_url()
+    sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
-        return {**empty, "has_embedded_settings": True, "error": "Override check requires Orca sidecar"}
+        return {**empty, "has_embedded_settings": True, "error": "Override check requires Laminus sidecar"}
 
-    from ..routes.orca import get_cached_catalog
+    from ..routes.laminus import get_cached_catalog
     try:
         catalog = await get_cached_catalog()
     except Exception as e:
@@ -230,7 +230,8 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
 
     try:
-        config = await loop.run_in_executor(
+        client = LaminusSidecarClient(sidecar_url)
+        config = await asyncio.get_running_loop().run_in_executor(
             None, client.get_merged_config, machine_uuid, process_uuid, [filament_uuid]
         )
     except SidecarError as e:
