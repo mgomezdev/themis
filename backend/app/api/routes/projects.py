@@ -415,6 +415,12 @@ async def generate_project(
             continue
         groups.setdefault((item.filament_profile_uuid, item.color_hex), []).append(item)
 
+    if not groups:
+        raise HTTPException(
+            status_code=422,
+            detail="No items have filament profiles assigned — assign profiles in Themis before generating",
+        )
+
     # Resolve STL paths per group (repeated per quantity) and validate
     group_paths: dict[tuple[str, str], list[Path]] = {}
     for key, group_items in groups.items():
