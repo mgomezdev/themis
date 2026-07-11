@@ -50,6 +50,8 @@ export interface ApiPrinter {
   loaded_filaments: LoadedFilament[];
   build_plate_type: string | null;
   no_snapshots_while_idle: boolean;
+  bed_x_mm: number;
+  bed_y_mm: number;
 }
 
 export interface CreatePrinterBody {
@@ -71,6 +73,8 @@ export interface UpdatePrinterBody {
   loaded_filaments?: LoadedFilament[];
   build_plate_type?: string | null;
   no_snapshots_while_idle?: boolean;
+  bed_x_mm?: number;
+  bed_y_mm?: number;
 }
 
 export interface MachinePreset {

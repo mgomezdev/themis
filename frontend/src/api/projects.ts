@@ -22,30 +22,45 @@ export interface ProjectItem {
   quantity: number;
   quantity_completed: number;
   quantity_failed: number;
-  filament_profile_uuid: string;
-  filament_display_name: string | null;
-  color_hex: string;
+  filament_type: string;    // "any" | "PLA" | "PETG" | ...
+  filament_color: string;   // "any" | "#RRGGBB"
+  filament_id: number | null; // Spoolman filament ID, or null
   sort_order: number;
+}
+
+export interface ProjectLink {
+  id: number;
+  project_id: number;
+  url: string;
+  label: string | null;
+  sort_order: number;
+  created_at: string;
 }
 
 export interface Project {
   id: number;
   name: string;
-  machine_uuid: string;
-  process_uuid: string;
+  customer: string;
+  order_type: string;       // "internal" | "customer"
+  on_hold: boolean;
+  due_date: string | null;
   notes: string | null;
   result_file_id: number | null;
-  order_id: number | null;
+  source_app: string | null;
+  source_user: string | null;
+  source_layout_id: number | null;
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
+  links: ProjectLink[];
   jobs_total: number;
   jobs_complete: number;
+  filament_grams: number | null;
+  estimated_seconds: number | null;
 }
 
 export interface GenerateOut {
   project_id: number;
-  order_id: number | null;
   jobs: {
     id: number;
     uploaded_file_id: number;
@@ -59,20 +74,29 @@ export interface GenerateOut {
     folder: string;
     plate_count: number;
   }[];
+  eligible_printer_ids: number[];
+  pack_bed_x: number;
+  pack_bed_y: number;
 }
 
 export interface ProjectCreate {
   name: string;
-  machine_uuid: string;
-  process_uuid: string;
+  customer?: string;
+  order_type?: string;
+  on_hold?: boolean;
+  due_date?: string | null;
   notes?: string | null;
+  source_app?: string | null;
+  source_user?: string | null;
+  source_layout_id?: number | null;
 }
 
 export interface ProjectItemCreate {
   file_id: number;
   quantity: number;
-  filament_profile_uuid: string;
-  color_hex: string;
+  filament_type: string;
+  filament_color: string;
+  filament_id?: number | null;
   sort_order?: number;
 }
 
@@ -96,8 +120,41 @@ export const deleteProjectItem = (projectId: number, itemId: number) =>
 export const reorderProjectItems = (
   projectId: number, items: { id: number; sort_order: number }[],
 ) => request<ProjectItem[]>(`/api/v1/projects/${projectId}/items/reorder`, json('PUT', items));
-export const generateProject = (projectId: number) =>
-  request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, { method: 'POST' });
+export const generateProject = (projectId: number, eligiblePrinterIds: number[] = []) =>
+  request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', { eligible_printer_ids: eligiblePrinterIds }));
+
+export interface ProjectJob {
+  id: number;
+  plate_number: number;
+  status: string;
+  queue_position: number | null;
+  assigned_printer_id: number | null;
+  block_reason: string | null;
+  outcome: string | null;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+  file_name: string | null;
+  total_parts: number;
+}
+
+export const getProjectJobs = (projectId: number) =>
+  request<ProjectJob[]>(`/api/v1/projects/${projectId}/jobs`);
+
+export interface ProjectLinkCreate {
+  url: string;
+  label?: string | null;
+  sort_order?: number;
+}
+
+export const getProjectLinks = (projectId: number) =>
+  request<ProjectLink[]>(`/api/v1/projects/${projectId}/links`);
+export const addProjectLink = (projectId: number, body: ProjectLinkCreate) =>
+  request<ProjectLink>(`/api/v1/projects/${projectId}/links`, json('POST', body));
+export const updateProjectLink = (projectId: number, linkId: number, body: Partial<ProjectLinkCreate>) =>
+  request<ProjectLink>(`/api/v1/projects/${projectId}/links/${linkId}`, json('PUT', body));
+export const deleteProjectLink = (projectId: number, linkId: number) =>
+  request<{ deleted: number }>(`/api/v1/projects/${projectId}/links/${linkId}`, { method: 'DELETE' });
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

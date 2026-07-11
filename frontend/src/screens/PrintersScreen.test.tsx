@@ -23,6 +23,8 @@ const mockPrinters = [
     loaded_filaments: [],
     build_plate_type: null,
     no_snapshots_while_idle: false,
+    bed_x_mm: 256,
+    bed_y_mm: 256,
   },
 ];
 
@@ -176,6 +178,8 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
   build_plate_type: null,
   no_snapshots_while_idle: false,
+  bed_x_mm: 256,
+  bed_y_mm: 256,
 };
 
 const INTEGRATION_TYPES: PrinterType[] = [

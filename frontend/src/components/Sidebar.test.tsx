@@ -5,12 +5,12 @@ import { Sidebar } from './Sidebar';
 
 // Renders on /fleet so the Job Queue nav item is NOT active, giving unambiguous badge colors.
 function renderOnFleet(
-  active: number, pending: number, blocked: number, ordersOpen = 0,
+  active: number, pending: number, blocked: number,
   operatorName: string | null = null, printerCount = 0,
 ) {
   return render(
     <MemoryRouter initialEntries={['/fleet']}>
-      <Sidebar queueCounts={{ active, pending, blocked }} ordersOpen={ordersOpen}
+      <Sidebar queueCounts={{ active, pending, blocked }}
                operatorName={operatorName} printerCount={printerCount} />
     </MemoryRouter>
   );
@@ -23,7 +23,7 @@ function renderOnQueue(
 ) {
   return render(
     <MemoryRouter initialEntries={['/queue']}>
-      <Sidebar queueCounts={{ active, pending, blocked }} ordersOpen={0}
+      <Sidebar queueCounts={{ active, pending, blocked }}
                operatorName={operatorName} printerCount={printerCount} />
     </MemoryRouter>
   );
@@ -36,14 +36,9 @@ describe('Sidebar nav items', () => {
     renderOnFleet(0, 0, 0);
     expect(screen.getByText('Job queue')).toBeTruthy();
     expect(screen.getByText('Fleet')).toBeTruthy();
-    expect(screen.getByText('Orders')).toBeTruthy();
+    expect(screen.getByText('Projects')).toBeTruthy();
     expect(screen.getByText('Files')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
-  });
-
-  it('renders orders open count', () => {
-    renderOnFleet(0, 0, 0, 7);
-    expect(screen.getByText('7')).toBeTruthy();
   });
 });
 
@@ -171,34 +166,34 @@ describe('Queue badge status semantics', () => {
 
 describe('Sidebar identity + printer count', () => {
   it('hides the identity row when operatorName is null', () => {
-    const { container } = renderOnFleet(0, 0, 0, 0, null, 3);
+    const { container } = renderOnFleet(0, 0, 0, null, 3);
     expect(container.querySelector('.user-chip')).toBeNull();
   });
 
   it('still renders the printer count line when operatorName is null', () => {
-    renderOnFleet(0, 0, 0, 0, null, 3);
+    renderOnFleet(0, 0, 0, null, 3);
     expect(screen.getByText('3 printers')).toBeTruthy();
   });
 
   it('shows the identity row with single-word initials', () => {
-    renderOnFleet(0, 0, 0, 0, 'Maria', 1);
+    renderOnFleet(0, 0, 0, 'Maria', 1);
     expect(screen.getByText('Maria')).toBeTruthy();
     expect(screen.getByText('M')).toBeTruthy();
   });
 
   it('shows the identity row with two-word initials', () => {
-    renderOnFleet(0, 0, 0, 0, 'Maria Gomez', 1);
+    renderOnFleet(0, 0, 0, 'Maria Gomez', 1);
     expect(screen.getByText('Maria Gomez')).toBeTruthy();
     expect(screen.getByText('MG')).toBeTruthy();
   });
 
   it('uses singular "printer" for a count of 1', () => {
-    renderOnFleet(0, 0, 0, 0, null, 1);
+    renderOnFleet(0, 0, 0, null, 1);
     expect(screen.getByText('1 printer')).toBeTruthy();
   });
 
   it('uses plural "printers" for a count other than 1', () => {
-    renderOnFleet(0, 0, 0, 0, null, 0);
+    renderOnFleet(0, 0, 0, null, 0);
     expect(screen.getByText('0 printers')).toBeTruthy();
   });
 });

@@ -41,6 +41,8 @@ class PrinterCreate(BaseModel):
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
+    bed_x_mm: float = 256.0
+    bed_y_mm: float = 256.0
 
 
 class PrinterUpdate(BaseModel):
@@ -53,6 +55,8 @@ class PrinterUpdate(BaseModel):
     loaded_filaments: list[dict] | None = None
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool | None = None
+    bed_x_mm: float | None = None
+    bed_y_mm: float | None = None
 
 
 class ActivePresetUpdate(BaseModel):
@@ -91,6 +95,8 @@ def _to_dict(p: Printer) -> dict:
         "loaded_filaments": p.loaded_filaments or [],
         "build_plate_type": p.build_plate_type,
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
+        "bed_x_mm": p.bed_x_mm,
+        "bed_y_mm": p.bed_y_mm,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -136,6 +142,8 @@ async def create_printer(
         loaded_filaments=body.loaded_filaments,
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
+        bed_x_mm=body.bed_x_mm,
+        bed_y_mm=body.bed_y_mm,
     )
     session.add(printer)
     await session.commit()
@@ -314,6 +322,10 @@ async def update_printer(
         printer.build_plate_type = body.build_plate_type
     if body.no_snapshots_while_idle is not None:
         printer.no_snapshots_while_idle = body.no_snapshots_while_idle
+    if body.bed_x_mm is not None:
+        printer.bed_x_mm = body.bed_x_mm
+    if body.bed_y_mm is not None:
+        printer.bed_y_mm = body.bed_y_mm
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

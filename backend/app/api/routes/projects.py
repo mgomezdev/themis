@@ -15,14 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import GcodeFile, Job, Order, Project, ProjectItem, UploadedFile
+from ...models import GcodeFile, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
-
 
 
 def _now_iso() -> str:
@@ -34,21 +33,16 @@ def _slugify(name: str) -> str:
     return re.sub(r"[\s_-]+", "-", slug).strip("-")[:80]
 
 
-def _resolve_filament_name(catalog: dict, uuid: str) -> str | None:
-    for entry in catalog.get("filament", []):
-        if entry.get("uuid") == uuid:
-            return entry.get("name")
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
 
 class ProjectCreate(BaseModel):
     name: str
-    machine_uuid: Optional[str] = None
-    process_uuid: Optional[str] = None
+    customer: str = ""
+    order_type: str = "internal"   # "customer" | "internal"
+    on_hold: bool = False
+    due_date: Optional[str] = None
     notes: Optional[str] = None
     source_app: Optional[str] = None
     source_user: Optional[str] = None
@@ -57,16 +51,19 @@ class ProjectCreate(BaseModel):
 
 class ProjectPatch(BaseModel):
     name: Optional[str] = None
-    machine_uuid: Optional[str] = None
-    process_uuid: Optional[str] = None
+    customer: Optional[str] = None
+    order_type: Optional[str] = None
+    on_hold: Optional[bool] = None
+    due_date: Optional[str] = None
     notes: Optional[str] = None
 
 
 class ProjectItemCreate(BaseModel):
     file_id: int
     quantity: int = 1
-    filament_profile_uuid: str
-    color_hex: str = "#FFFFFF"
+    filament_type: str = "any"
+    filament_color: str = "any"
+    filament_id: Optional[int] = None
     sort_order: int = 0
 
     @field_validator("quantity")
@@ -79,8 +76,9 @@ class ProjectItemCreate(BaseModel):
 
 class ProjectItemUpdate(BaseModel):
     quantity: Optional[int] = None
-    filament_profile_uuid: Optional[str] = None
-    color_hex: Optional[str] = None
+    filament_type: Optional[str] = None
+    filament_color: Optional[str] = None
+    filament_id: Optional[int] = None
     sort_order: Optional[int] = None
 
     @field_validator("quantity")
@@ -96,11 +94,27 @@ class ReorderEntry(BaseModel):
     sort_order: int
 
 
+class ProjectLinkCreate(BaseModel):
+    url: str
+    label: Optional[str] = None
+    sort_order: int = 0
+
+
+class ProjectLinkUpdate(BaseModel):
+    url: Optional[str] = None
+    label: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class GenerateRequest(BaseModel):
+    eligible_printer_ids: list[int] = []
+
+
 # ---------------------------------------------------------------------------
 # Serialisation helpers
 # ---------------------------------------------------------------------------
 
-def _item_dict(item: ProjectItem, file_name: str, filament_name: str | None) -> dict:
+def _item_dict(item: ProjectItem, file_name: str) -> dict:
     return {
         "id": item.id,
         "project_id": item.project_id,
@@ -109,18 +123,36 @@ def _item_dict(item: ProjectItem, file_name: str, filament_name: str | None) -> 
         "quantity": item.quantity,
         "quantity_completed": item.quantity_completed,
         "quantity_failed": item.quantity_failed,
-        "filament_profile_uuid": item.filament_profile_uuid,
-        "filament_display_name": filament_name,
-        "color_hex": item.color_hex,
+        "filament_type": item.filament_type,
+        "filament_color": item.filament_color,
+        "filament_id": item.filament_id,
         "sort_order": item.sort_order,
     }
 
 
-async def _load_items(
-    session: AsyncSession,
-    project_id: int,
-    catalog: dict | None = None,
-) -> list[dict]:
+def _link_dict(link: ProjectLink) -> dict:
+    return {
+        "id": link.id,
+        "project_id": link.project_id,
+        "url": link.url,
+        "label": link.label,
+        "sort_order": link.sort_order,
+        "created_at": link.created_at,
+    }
+
+
+async def _load_links(session: AsyncSession, project_id: int) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(ProjectLink)
+            .where(ProjectLink.project_id == project_id)
+            .order_by(ProjectLink.sort_order, ProjectLink.id)
+        )
+    ).scalars().all()
+    return [_link_dict(lnk) for lnk in rows]
+
+
+async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
     rows = (
         await session.execute(
             select(ProjectItem)
@@ -132,17 +164,13 @@ async def _load_items(
     for item in rows:
         f = await session.get(UploadedFile, item.file_id)
         fname = f.original_filename if f else f"[file {item.file_id}]"
-        fname_disp = catalog and _resolve_filament_name(catalog, item.filament_profile_uuid)
-        result.append(_item_dict(item, fname, fname_disp))
+        result.append(_item_dict(item, fname))
     return result
 
 
-async def _project_dict(
-    project: Project,
-    session: AsyncSession,
-    catalog: dict | None = None,
-) -> dict:
-    items = await _load_items(session, project.id, catalog)
+async def _project_dict(project: Project, session: AsyncSession) -> dict:
+    items = await _load_items(session, project.id)
+    links = await _load_links(session, project.id)
     jobs_total = (await session.execute(
         select(func.count()).where(Job.project_id == project.id)
     )).scalar() or 0
@@ -157,17 +185,19 @@ async def _project_dict(
     return {
         "id": project.id,
         "name": project.name,
-        "machine_uuid": project.machine_uuid,
-        "process_uuid": project.process_uuid,
+        "customer": project.customer,
+        "order_type": project.order_type,
+        "on_hold": project.on_hold,
+        "due_date": project.due_date,
         "notes": project.notes,
         "result_file_id": project.result_file_id,
-        "order_id": project.order_id,
         "source_app": project.source_app,
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
+        "links": links,
         "jobs_total": jobs_total,
         "jobs_complete": jobs_complete,
         "filament_grams": round(total_grams, 2) if total_grams is not None else None,
@@ -204,8 +234,10 @@ async def create_project(
     now = _now_iso()
     proj = Project(
         name=body.name,
-        machine_uuid=body.machine_uuid,
-        process_uuid=body.process_uuid,
+        customer=body.customer,
+        order_type=body.order_type,
+        on_hold=body.on_hold,
+        due_date=body.due_date,
         notes=body.notes,
         result_file_id=None,
         source_app=body.source_app,
@@ -226,11 +258,7 @@ async def get_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
-    catalog = None
-    if get_laminus_sidecar_url():
-        from .laminus import _catalog_dict
-        catalog = _catalog_dict
-    return await _project_dict(proj, session, catalog)
+    return await _project_dict(proj, session)
 
 
 @router.patch("/{project_id}")
@@ -242,10 +270,14 @@ async def patch_project(
     proj = await _get_project_or_404(project_id, session)
     if body.name is not None:
         proj.name = body.name
-    if body.machine_uuid is not None:
-        proj.machine_uuid = body.machine_uuid
-    if body.process_uuid is not None:
-        proj.process_uuid = body.process_uuid
+    if body.customer is not None:
+        proj.customer = body.customer
+    if body.order_type is not None:
+        proj.order_type = body.order_type
+    if body.on_hold is not None:
+        proj.on_hold = body.on_hold
+    if body.due_date is not None:
+        proj.due_date = body.due_date
     if body.notes is not None:
         proj.notes = body.notes
     proj.updated_at = _now_iso()
@@ -263,6 +295,46 @@ async def delete_project(
     await session.delete(proj)
     await session.commit()
     return {"deleted": project_id}
+
+
+@router.get("/{project_id}/jobs")
+async def list_project_jobs(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    await _get_project_or_404(project_id, session)
+    rows = (
+        await session.execute(
+            select(Job)
+            .where(Job.project_id == project_id)
+            .order_by(Job.id)
+        )
+    ).scalars().all()
+    result = []
+    for job in rows:
+        f = await session.get(UploadedFile, job.uploaded_file_id)
+        fname = f.original_filename if f else None
+        item_quantities: dict[str, int] = {}
+        if job.project_item_quantities:
+            try:
+                item_quantities = json.loads(job.project_item_quantities)
+            except Exception:
+                pass
+        result.append({
+            "id": job.id,
+            "plate_number": job.plate_number,
+            "status": job.status,
+            "queue_position": job.queue_position,
+            "assigned_printer_id": job.assigned_printer_id,
+            "block_reason": job.block_reason,
+            "outcome": job.outcome,
+            "created_at": job.created_at,
+            "updated_at": job.updated_at,
+            "completed_at": job.completed_at,
+            "file_name": fname,
+            "total_parts": sum(item_quantities.values()),
+        })
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -292,15 +364,16 @@ async def add_item(
         project_id=project_id,
         file_id=body.file_id,
         quantity=body.quantity,
-        filament_profile_uuid=body.filament_profile_uuid,
-        color_hex=body.color_hex,
+        filament_type=body.filament_type,
+        filament_color=body.filament_color,
+        filament_id=body.filament_id,
         sort_order=body.sort_order,
     )
     session.add(item)
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(item)
-    return _item_dict(item, f.original_filename, None)
+    return _item_dict(item, f.original_filename)
 
 
 @router.put("/{project_id}/items/{item_id}")
@@ -316,17 +389,19 @@ async def update_item(
         raise HTTPException(404, f"Item {item_id} not found in project {project_id}")
     if body.quantity is not None:
         item.quantity = body.quantity
-    if body.filament_profile_uuid is not None:
-        item.filament_profile_uuid = body.filament_profile_uuid
-    if body.color_hex is not None:
-        item.color_hex = body.color_hex
+    if body.filament_type is not None:
+        item.filament_type = body.filament_type
+    if body.filament_color is not None:
+        item.filament_color = body.filament_color
+    if body.filament_id is not None:
+        item.filament_id = body.filament_id
     if body.sort_order is not None:
         item.sort_order = body.sort_order
     await session.commit()
     await session.refresh(item)
     f = await session.get(UploadedFile, item.file_id)
     fname = f.original_filename if f else f"[file {item.file_id}]"
-    return _item_dict(item, fname, None)
+    return _item_dict(item, fname)
 
 
 @router.delete("/{project_id}/items/{item_id}")
@@ -370,8 +445,78 @@ async def reorder_items(
 
 
 # ---------------------------------------------------------------------------
+# Project Link CRUD
+# ---------------------------------------------------------------------------
+
+@router.get("/{project_id}/links")
+async def list_links(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    await _get_project_or_404(project_id, session)
+    return await _load_links(session, project_id)
+
+
+@router.post("/{project_id}/links", status_code=201)
+async def add_link(
+    project_id: int,
+    body: ProjectLinkCreate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    link = ProjectLink(
+        project_id=project_id,
+        url=body.url,
+        label=body.label,
+        sort_order=body.sort_order,
+        created_at=_now_iso(),
+    )
+    session.add(link)
+    await session.commit()
+    await session.refresh(link)
+    return _link_dict(link)
+
+
+@router.put("/{project_id}/links/{link_id}")
+async def update_link(
+    project_id: int,
+    link_id: int,
+    body: ProjectLinkUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    link = await session.get(ProjectLink, link_id)
+    if link is None or link.project_id != project_id:
+        raise HTTPException(404, f"Link {link_id} not found in project {project_id}")
+    if body.url is not None:
+        link.url = body.url
+    if body.label is not None:
+        link.label = body.label
+    if body.sort_order is not None:
+        link.sort_order = body.sort_order
+    await session.commit()
+    await session.refresh(link)
+    return _link_dict(link)
+
+
+@router.delete("/{project_id}/links/{link_id}")
+async def delete_link(
+    project_id: int,
+    link_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    link = await session.get(ProjectLink, link_id)
+    if link is None or link.project_id != project_id:
+        raise HTTPException(404, f"Link {link_id} not found in project {project_id}")
+    await session.delete(link)
+    await session.commit()
+    return {"deleted": link_id}
+
+
+# ---------------------------------------------------------------------------
 # Generate — packs STLs one 3MF per filament group via Orca, saves to library,
-# and queues one job per plate. The only entry point for pack/assemble.
+# and queues one job per plate.
 # ---------------------------------------------------------------------------
 
 async def _max_queue_position(session: AsyncSession) -> float:
@@ -393,37 +538,45 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
+def _filament_label(fil_type: str, fil_color: str, fil_id: int | None) -> str:
+    """Short string for use in generated 3MF filenames."""
+    if fil_id is not None:
+        return f"f{fil_id}"
+    parts = []
+    if fil_type != "any":
+        parts.append(fil_type.lower())
+    if fil_color != "any":
+        parts.append(fil_color.lstrip("#"))
+    return "-".join(parts) if parts else "any"
+
+
 @router.post("/{project_id}/generate")
 async def generate_project(
     project_id: int,
+    body: GenerateRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
 
-    # Create a linked internal Order on first generate so jobs appear in the Orders view
-    if proj.order_id is None:
-        now_ts = _now_iso()
-        order = Order(
-            order_type="internal",
-            customer="",
-            title=proj.name,
-            on_hold=False,
-            parts=[],
-            created_at=now_ts,
-            updated_at=now_ts,
-        )
-        session.add(order)
-        await session.commit()
-        await session.refresh(order)
-        proj.order_id = order.id
-        await session.commit()
-
     sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
         raise HTTPException(422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
 
-    # Load items ordered by sort_order, id
+    # Resolve eligible printers and compute the smallest bed dimensions.
+    eligible_printers: list[Printer] = []
+    if body.eligible_printer_ids:
+        rows = (await session.execute(
+            select(Printer).where(Printer.id.in_(body.eligible_printer_ids))
+        )).scalars().all()
+        eligible_printers = list(rows)
+
+    if eligible_printers:
+        pack_bed_x = min(p.bed_x_mm for p in eligible_printers)
+        pack_bed_y = min(p.bed_y_mm for p in eligible_printers)
+    else:
+        pack_bed_x, pack_bed_y = 256.0, 256.0
+
     item_rows = (
         await session.execute(
             select(ProjectItem)
@@ -435,23 +588,14 @@ async def generate_project(
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Group items by (filament_profile_uuid, color_hex), preserving item order.
-    # Items with no profile are skipped — the caller is expected to show a
-    # "assign filament profiles" banner; those items simply produce no job.
-    groups: dict[tuple[str, str], list[ProjectItem]] = {}
+    # Group items by filament requirement (type, color, specific spoolman id)
+    groups: dict[tuple[str, str, int | None], list[ProjectItem]] = {}
     for item in item_rows:
-        if not item.filament_profile_uuid:
-            continue
-        groups.setdefault((item.filament_profile_uuid, item.color_hex), []).append(item)
+        key = (item.filament_type, item.filament_color, item.filament_id)
+        groups.setdefault(key, []).append(item)
 
-    if not groups:
-        raise HTTPException(
-            status_code=422,
-            detail="No items have filament profiles assigned — assign profiles in Themis before generating",
-        )
-
-    # Resolve STL paths per group (repeated per quantity) and validate
-    group_paths: dict[tuple[str, str], list[Path]] = {}
+    # Resolve STL paths per group
+    group_paths: dict[tuple[str, str, int | None], list[Path]] = {}
     for key, group_items in groups.items():
         paths: list[Path] = []
         for item in group_items:
@@ -466,7 +610,7 @@ async def generate_project(
             paths.extend([stl_path] * item.quantity)
         group_paths[key] = paths
 
-    # Clean up the legacy single-result file unless an active job holds it
+    # Clean up legacy single-result file unless an active job holds it
     if proj.result_file_id is not None:
         active = (
             await session.execute(
@@ -484,7 +628,6 @@ async def generate_project(
                 Path(old_file.stored_path).unlink(missing_ok=True)
             if old_file:
                 await session.delete(old_file)
-        # No single result file in the new flow
         proj.result_file_id = None
         await session.commit()
 
@@ -496,23 +639,33 @@ async def generate_project(
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
-    for (fil_uuid, color_hex), stl_paths in group_paths.items():
-        group_items = groups[(fil_uuid, color_hex)]
+    for (fil_type, fil_color, fil_id), stl_paths in group_paths.items():
+        group_items = groups[(fil_type, fil_color, fil_id)]
 
         try:
-            packed_bytes = await asyncio.to_thread(
-                client.pack_stls_by_uuid,
-                stl_paths,
-                proj.machine_uuid,
-                proj.process_uuid,
-                [fil_uuid],
-            )
+            if proj.machine_uuid and proj.process_uuid:
+                # Legacy path: project has OrcaSlicer profiles embedded
+                packed_bytes = await asyncio.to_thread(
+                    client.pack_stls_by_uuid,
+                    stl_paths,
+                    proj.machine_uuid,
+                    proj.process_uuid,
+                    [],
+                )
+            else:
+                # Geometry-only pack; slicing profiles applied at dispatch time
+                packed_bytes = await asyncio.to_thread(
+                    client.pack_stls,
+                    stl_paths,
+                    pack_bed_x,
+                    pack_bed_y,
+                )
         except SidecarError as exc:
             if "timed out" in str(exc).lower():
                 raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
             raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
 
-        label = color_hex.lstrip("#") if color_hex else fil_uuid[:8]
+        label = _filament_label(fil_type, fil_color, fil_id)
         out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
         out_path = LibraryScanner.unique_path(projects_dir, out_filename)
         out_path.write_bytes(packed_bytes)
@@ -546,7 +699,6 @@ async def generate_project(
             "plate_count": len(plate_nums),
         })
 
-        # Compute per-plate quantity distribution for each item
         effective_plates = plate_nums or [1]
         num_plates = len(effective_plates)
         plate_item_qtys: list[dict[str, int]] = []
@@ -558,7 +710,6 @@ async def generate_project(
                 plate_q[str(item.id)] = base + extra
             plate_item_qtys.append(plate_q)
 
-        # One queued job per plate
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
         for plate_idx, plate_num in enumerate(effective_plates):
@@ -576,6 +727,19 @@ async def generate_project(
             session.add(job)
             new_jobs.append(job)
             next_pos += 1.0
+        # Commit jobs so the DB assigns their autoincrement IDs.
+        await session.commit()
+        # Refresh each job so j.id is populated (mirrors new_file refresh above).
+        for j in new_jobs:
+            await session.refresh(j)
+        # Create printer configs for each eligible printer × job.
+        for j in new_jobs:
+            for p in eligible_printers:
+                session.add(JobPrinterConfig(
+                    job_id=j.id,
+                    printer_id=p.id,
+                    print_profile=p.current_orca_printer_profile or "",
+                ))
         await session.commit()
         jobs_out.extend({
             "id": j.id,
@@ -588,4 +752,11 @@ async def generate_project(
     proj.updated_at = _now_iso()
     await session.commit()
 
-    return {"project_id": proj.id, "order_id": proj.order_id, "jobs": jobs_out, "files": files_out}
+    return {
+        "project_id": proj.id,
+        "jobs": jobs_out,
+        "files": files_out,
+        "eligible_printer_ids": [p.id for p in eligible_printers],
+        "pack_bed_x": pack_bed_x,
+        "pack_bed_y": pack_bed_y,
+    }

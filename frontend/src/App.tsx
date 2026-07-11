@@ -4,7 +4,6 @@ import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
 import { useQueue, useQueueConfig } from './api/queue';
-import { useOrders } from './api/orders';
 import { useFleetData } from './api/fleet';
 
 import { QueueScreen }     from './screens/QueueScreen';
@@ -18,6 +17,7 @@ import { FilesScreen }          from './screens/FilesScreen';
 import { SettingsScreen }       from './screens/SettingsScreen';
 import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
+import { ProjectDetailScreen }  from './screens/ProjectDetailScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
 
 type SvcStatus = 'up' | 'down' | 'unconfigured';
@@ -95,8 +95,6 @@ function AppShell() {
     pending: jobs.filter(j => j.status === 'queued').length,
     blocked: jobs.filter(j => j.status === 'blocked').length,
   }), [jobs]);
-  const { orders } = useOrders();
-  const ordersOpen = useMemo(() => orders.filter(o => o.status !== 'complete').length, [orders]);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -117,10 +115,11 @@ function AppShell() {
     '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
-    '/projects':   { title: 'Projects',          crumbs: ['Workshop'],
-                     actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
-    '/projects/new': { title: 'New project',     crumbs: ['Workshop', 'Projects'] },
-    '/projects/edit': { title: 'Edit project',   crumbs: ['Workshop', 'Projects'] },
+    '/projects':        { title: 'Projects',      crumbs: ['Workshop'],
+                         actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
+    '/projects/new':    { title: 'New project',  crumbs: ['Workshop', 'Projects'] },
+    '/projects/detail': { title: 'Project',      crumbs: ['Workshop', 'Projects'] },
+    '/projects/edit':   { title: 'Edit project', crumbs: ['Workshop', 'Projects'] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
@@ -133,13 +132,15 @@ function AppShell() {
     : segments[0] === 'jobs' && segments.length >= 2
     ? '/jobs/detail'
     : segments[0] === 'projects' && segments.length >= 2
-    ? (segments[1] === 'new' ? '/projects/new' : '/projects/edit')
+    ? (segments[1] === 'new' ? '/projects/new'
+       : segments.length >= 3 && segments[2] === 'edit' ? '/projects/edit'
+       : '/projects/detail')
     : '/' + segments.slice(0, 2).join('/');
   const cfg = screenConfig[path] ?? screenConfig['/queue'];
 
   return (
     <div className="app" data-nav={navCollapsed ? 'collapsed' : 'expanded'}>
-      <Sidebar queueCounts={queueCounts} ordersOpen={ordersOpen}
+      <Sidebar queueCounts={queueCounts}
                operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length}
                collapsed={navCollapsed} onToggle={() => setNavCollapsed(c => !c)} />
       <div className="main">
@@ -157,9 +158,10 @@ function AppShell() {
             <Route path="/jobs/:id"        element={<JobDetailScreen />} />
             <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"           element={<FilesScreen />} />
-            <Route path="/projects"       element={<ProjectsScreen />} />
-            <Route path="/projects/new"   element={<ProjectBuilderScreen />} />
-            <Route path="/projects/:id"   element={<ProjectBuilderScreen />} />
+            <Route path="/projects"            element={<ProjectsScreen />} />
+            <Route path="/projects/new"        element={<ProjectBuilderScreen />} />
+            <Route path="/projects/:id"        element={<ProjectDetailScreen />} />
+            <Route path="/projects/:id/edit"   element={<ProjectBuilderScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />
             <Route path="*"               element={<Navigate to="/queue" replace />} />

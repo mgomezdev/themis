@@ -183,6 +183,10 @@ async def upload_file(
         .limit(1)
     )).scalar_one_or_none()
     if existing:
+        if not Path(existing.stored_path).exists():
+            # Orphaned record: file was deleted from disk but the DB row was not cleaned up.
+            # Restore the file from the incoming bytes so the record stays valid.
+            Path(existing.stored_path).write_bytes(raw)
         return _to_dict(existing, [])
 
     dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)

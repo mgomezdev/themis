@@ -5,7 +5,6 @@ interface QueueCounts { active: number; pending: number; blocked: number; }
 
 interface SidebarProps {
   queueCounts: QueueCounts;
-  ordersOpen: number;
   operatorName: string | null;
   printerCount: number;
   collapsed?: boolean;
@@ -42,13 +41,12 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   );
 }
 
-export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount, collapsed = false, onToggle = () => {} }: SidebarProps) {
+export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = false, onToggle = () => {} }: SidebarProps) {
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
-    { to: '/orders',    label: 'Orders',      icon: Icons.orders,   count: ordersOpen },
-    { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/projects',  label: 'Projects',    icon: Icons.layers },
+    { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/history',   label: 'History',     icon: Icons.clock },
   ];
 
@@ -82,10 +80,7 @@ export function Sidebar({ queueCounts, ordersOpen, operatorName, printerCount, c
                    className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
             {it.icon}
             <span className="label">{it.label}</span>
-            {it.to === '/queue'
-              ? <QueueBadges counts={queueCounts} />
-              : it.count != null && it.count > 0 && <span className="count num">{it.count}</span>
-            }
+            {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
           </NavLink>
         ))}
       </div>

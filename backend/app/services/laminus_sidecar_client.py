@@ -237,6 +237,7 @@ class LaminusSidecarClient:
         stl_paths: list[Path],
         bed_x: float,
         bed_y: float,
+        bed_z: float = 250.0,
     ) -> bytes:
         """POST /api/pack → multi-plate arranged 3MF bytes."""
         file_handles = [(p, open(p, "rb")) for p in stl_paths]
@@ -245,7 +246,7 @@ class LaminusSidecarClient:
                 ("files", (p.name, fh, "application/octet-stream"))
                 for p, fh in file_handles
             ]
-            data = {"bed_x": str(bed_x), "bed_y": str(bed_y)}
+            data = {"bed_x": str(bed_x), "bed_y": str(bed_y), "bed_z": str(bed_z)}
             try:
                 r = self._client.post("/api/pack", files=files, data=data)
             except httpx.HTTPError as e:

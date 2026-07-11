@@ -1,14 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
-import { FilamentProfilePicker } from '../components/FilamentProfilePicker';
-import { useOrcaCatalog } from '../api/orca';
-import type { OrcaMachine, OrcaProcess } from '../api/orca';
+import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
+import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
+import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { useFiles } from '../api/files';
+import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   getProject, createProject, patchProject,
   addProjectItem, updateProjectItem,
+  addProjectLink, updateProjectLink, deleteProjectLink,
   generateProject,
   type ProjectItem,
 } from '../api/projects';
@@ -70,9 +72,7 @@ function FolderRow({
         <span style={{ color: 'var(--text-4)', width: 12 }}>
           {childKeys.length ? (open ? Icons.chevD : Icons.chevR) : null}
         </span>
-        <span style={{ color: isActive ? 'var(--accent-hi)' : 'var(--text-3)' }}>
-          {depth === 0 ? Icons.files : Icons.files}
-        </span>
+        <span style={{ color: isActive ? 'var(--accent-hi)' : 'var(--text-3)' }}>{Icons.files}</span>
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {node.name}
         </span>
@@ -95,95 +95,21 @@ interface LocalItem {
   file_id: number;
   file_name: string;
   quantity: number;
-  filament_profile_uuid: string;
-  color_hex: string;
+  filament_type: string;
+  filament_color: string;
+  filament_id: number | null;
   sort_order: number;
+}
+
+interface LocalLink {
+  localId: string;
+  serverId?: number;
+  url: string;
+  label: string;
 }
 
 let _lid = 0;
 const newLocalId = () => String(++_lid);
-
-// ---------------------------------------------------------------------------
-// Result panel
-// ---------------------------------------------------------------------------
-
-function ResultPanel({
-  resultFileId,
-  plateCount,
-  onQueue,
-  onViewFiles,
-}: {
-  resultFileId: number;
-  plateCount: number;
-  onQueue: () => void;
-  onViewFiles: () => void;
-}) {
-  const [thumbnails, setThumbnails] = useState<{ plate_number: number; thumbnail_url: string }[]>([]);
-
-  useEffect(() => {
-    let retries = 0;
-    let timer: ReturnType<typeof setTimeout>;
-
-    function poll() {
-      fetch(`/api/v1/files/${resultFileId}`)
-        .then(r => r.json())
-        .then(d => {
-          const plates = (d.plate_thumbnails ?? []).filter((p: { thumbnail_url: string | null }) => p.thumbnail_url);
-          if (plates.length > 0) {
-            setThumbnails(plates);
-          } else if (retries < 10) {
-            retries++;
-            timer = setTimeout(poll, 3000);
-          }
-        })
-        .catch(() => {});
-    }
-    poll();
-    return () => clearTimeout(timer);
-  }, [resultFileId]);
-
-  return (
-    <div style={{
-      border: '1px solid var(--ok)',
-      borderRadius: 8,
-      padding: 16,
-      background: 'oklch(55% 0.15 142 / 0.06)',
-    }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-        {Icons.check}
-        <strong style={{ fontSize: 14 }}>
-          Arranged — {plateCount} plate{plateCount !== 1 ? 's' : ''}
-        </strong>
-      </div>
-      {thumbnails.length > 0 && (
-        <div style={{ display: 'flex', gap: 8, overflowX: 'auto', marginBottom: 12 }}>
-          {thumbnails.map(p => (
-            <div key={p.plate_number} style={{ textAlign: 'center', flexShrink: 0 }}>
-              <img
-                src={p.thumbnail_url}
-                alt={`Plate ${p.plate_number}`}
-                style={{ width: 120, height: 120, objectFit: 'contain', borderRadius: 6,
-                         background: 'var(--bg-3)' }}
-              />
-              <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 4 }}>
-                Plate {p.plate_number}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {thumbnails.length === 0 && (
-        <div style={{ fontSize: 12, color: 'var(--text-3)', marginBottom: 12 }}>
-          Generating thumbnails…
-        </div>
-      )}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn primary sm" onClick={onQueue}>Add to Queue</button>
-        <button className="btn sm" onClick={onViewFiles}>View in Files</button>
-      </div>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Error banner
@@ -198,7 +124,6 @@ const GENERATE_ERRORS: Record<number, string> = {
 function parseGenerateError(msg: string): string {
   const code = parseInt(msg);
   if (!isNaN(code) && GENERATE_ERRORS[code]) return GENERATE_ERRORS[code];
-  if (msg.includes('filament')) return 'Every part needs a filament profile before generating.';
   if (msg.includes('STL') || msg.includes('stl')) return 'One or more STL files are missing. Remove and re-add them.';
   return `Generation failed: ${msg}`;
 }
@@ -212,29 +137,50 @@ export function ProjectBuilderScreen() {
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
-  const { catalog, loading: catalogLoading } = useOrcaCatalog();
+  // Spoolman integration
+  const { config: spoolmanConfig } = useSpoolmanConfig();
+  const spoolmanEnabled = spoolmanConfig?.enabled ?? false;
+  const spoolmanFilaments = useFilaments(spoolmanEnabled);
 
-  // Form state
+  // Project header fields
   const [name, setName] = useState('');
-  const [machineUuid, setMachineUuid] = useState('');
-  const [processUuid, setProcessUuid] = useState('');
+  const [customer, setCustomer] = useState('');
+  const [orderType, setOrderType] = useState<'internal' | 'customer'>('internal');
+  const [onHold, setOnHold] = useState(false);
+  const [dueDate, setDueDate] = useState('');
+  const [notes, setNotes] = useState('');
+
+  // Part items
   const [items, setItems] = useState<LocalItem[]>([]);
   const [serverItems, setServerItems] = useState<Map<number, ProjectItem>>(new Map());
+  // Links
+  const [links, setLinks] = useState<LocalLink[]>([]);
+  const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [legacyResult, setLegacyResult] = useState<{
-    resultFileId: number; plateCount: number;
-  } | null>(null);
-  const [generateResult, setGenerateResult] = useState<{ orderId: number | null } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
+  const [showPrinterPicker, setShowPrinterPicker] = useState(false);
+  const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
 
-  // Selected machine name (for filament filtering)
-  const machineName = catalog?.machine.find(m => m.uuid === machineUuid)?.name ?? '';
+  // Dirty tracking
+  const [cleanSnap, setCleanSnap] = useState('');
+  const [saveOk, setSaveOk] = useState(false);
 
-  // Process options filtered by machine
-  const processOptions: OrcaProcess[] = (catalog?.process ?? []).filter(p =>
-    !p.compatible_printers.length || p.compatible_printers.includes(machineName),
-  );
+  function computeSnap(
+    n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
+    its: LocalItem[], lks: LocalLink[],
+  ) {
+    return JSON.stringify({
+      name: n, customer: ot === 'customer' ? c : '', orderType: ot,
+      onHold: oh, dueDate: dd, notes: no,
+      items: its.map(i => ({
+        fid: i.file_id, qty: i.quantity,
+        ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
+      })),
+      links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
+    });
+  }
 
   // File tree state
   const { files: allFiles } = useFiles({});
@@ -252,28 +198,37 @@ export function ProjectBuilderScreen() {
   useEffect(() => {
     if (!projectId) return;
     getProject(projectId).then(p => {
-      setName(p.name);
-      setMachineUuid(p.machine_uuid);
-      setProcessUuid(p.process_uuid);
-      setItems(p.items.map(it => ({
+      const n = p.name;
+      const c = p.customer ?? '';
+      const ot = (p.order_type as 'internal' | 'customer') ?? 'internal';
+      const oh = p.on_hold ?? false;
+      const dd = p.due_date ?? '';
+      const no = p.notes ?? '';
+      const its: LocalItem[] = p.items.map(it => ({
         localId: newLocalId(),
         serverId: it.id,
         file_id: it.file_id,
         file_name: it.file_name,
         quantity: it.quantity,
-        filament_profile_uuid: it.filament_profile_uuid,
-        color_hex: it.color_hex,
+        filament_type: it.filament_type,
+        filament_color: it.filament_color,
+        filament_id: it.filament_id,
         sort_order: it.sort_order,
-      })));
+      }));
+      const lks: LocalLink[] = (p.links ?? []).map(l => ({
+        localId: newLocalId(),
+        serverId: l.id,
+        url: l.url,
+        label: l.label ?? '',
+      }));
+      setName(n); setCustomer(c); setOrderType(ot); setOnHold(oh);
+      setDueDate(dd); setNotes(no); setItems(its); setLinks(lks);
+      setDeletedLinkIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      if (p.result_file_id) {
-        // Legacy single-result display (projects arranged before the generate flow)
-        setLegacyResult({ resultFileId: p.result_file_id, plateCount: 0 });
-      }
+      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks));
     }).catch(console.error);
   }, [projectId]);
 
-  // Add file to items
   function addFile(f: LibraryFile) {
     setItems(prev => [
       ...prev,
@@ -282,26 +237,12 @@ export function ProjectBuilderScreen() {
         file_id: f.id,
         file_name: f.original_filename,
         quantity: 1,
-        filament_profile_uuid: '',
-        color_hex: '#ffffff',
+        filament_type: 'any',
+        filament_color: 'any',
+        filament_id: null,
         sort_order: prev.length,
       },
     ]);
-  }
-
-  // Add variation (duplicate row)
-  function addVariation(idx: number) {
-    const src = items[idx];
-    const variation: LocalItem = {
-      localId: newLocalId(),
-      file_id: src.file_id,
-      file_name: src.file_name,
-      quantity: 1,
-      filament_profile_uuid: '',
-      color_hex: '#ffffff',
-      sort_order: items.length,
-    };
-    setItems(prev => [...prev.slice(0, idx + 1), variation, ...prev.slice(idx + 1)]);
   }
 
   function updateItem(localId: string, patch: Partial<LocalItem>) {
@@ -312,18 +253,33 @@ export function ProjectBuilderScreen() {
     setItems(prev => prev.filter(it => it.localId !== localId));
   }
 
-  // Save project (create or update)
+  function setItemFilament(localId: string, req: FilamentRequirement) {
+    updateItem(localId, {
+      filament_type: req.filament_type,
+      filament_color: req.filament_color,
+      filament_id: req.filament_id,
+    });
+  }
+
   async function saveProject(): Promise<number> {
+    const projectFields = {
+      name,
+      customer: orderType === 'customer' ? customer : '',
+      order_type: orderType,
+      on_hold: onHold,
+      due_date: dueDate || null,
+      notes: notes || null,
+    };
     if (projectId) {
-      await patchProject(projectId, { name, machine_uuid: machineUuid, process_uuid: processUuid });
-      // Sync items: delete removed server items, add new ones, update changed ones
+      await patchProject(projectId, projectFields);
       const existing = items.filter(i => i.serverId);
       const newOnes = items.filter(i => !i.serverId);
       for (const it of existing) {
         await updateProjectItem(projectId, it.serverId!, {
           quantity: it.quantity,
-          filament_profile_uuid: it.filament_profile_uuid,
-          color_hex: it.color_hex,
+          filament_type: it.filament_type,
+          filament_color: it.filament_color,
+          filament_id: it.filament_id,
           sort_order: it.sort_order,
         });
       }
@@ -332,23 +288,38 @@ export function ProjectBuilderScreen() {
         await addProjectItem(projectId, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_profile_uuid: it.filament_profile_uuid,
-          color_hex: it.color_hex,
+          filament_type: it.filament_type,
+          filament_color: it.filament_color,
+          filament_id: it.filament_id,
           sort_order: it.sort_order,
         });
       }
+      for (const id of deletedLinkIds) {
+        await deleteProjectLink(projectId, id);
+      }
+      for (const lk of links) {
+        if (lk.serverId) {
+          await updateProjectLink(projectId, lk.serverId, { url: lk.url, label: lk.label || null });
+        } else {
+          await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
+        }
+      }
       return projectId;
     } else {
-      const proj = await createProject({ name, machine_uuid: machineUuid, process_uuid: processUuid });
+      const proj = await createProject(projectFields);
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         await addProjectItem(proj.id, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_profile_uuid: it.filament_profile_uuid,
-          color_hex: it.color_hex,
+          filament_type: it.filament_type,
+          filament_color: it.filament_color,
+          filament_id: it.filament_id,
           sort_order: i,
         });
+      }
+      for (const lk of links) {
+        await addProjectLink(proj.id, { url: lk.url, label: lk.label || null });
       }
       return proj.id;
     }
@@ -359,6 +330,10 @@ export function ProjectBuilderScreen() {
     setSaving(true);
     try {
       const pid = await saveProject();
+      setDeletedLinkIds([]);
+      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links));
+      setSaveOk(true);
+      setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
     } catch (e) {
       console.error(e);
@@ -367,17 +342,18 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  async function handleGenerate() {
+  async function handleGenerate(printerIds: number[]) {
     if (!name.trim() || items.length === 0) return;
     setSaving(true);
     setGenerateError('');
     setGenerateResult(null);
+    setShowPrinterPicker(false);
     try {
       const pid = await saveProject();
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
       setGenerating(true);
-      const result = await generateProject(pid);
-      setGenerateResult({ orderId: result.order_id });
+      const result = await generateProject(pid, printerIds);
+      setGenerateResult({ jobCount: result.jobs.length });
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -386,7 +362,10 @@ export function ProjectBuilderScreen() {
     }
   }
 
+  const currentSnap = computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links);
+  const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
   const canSave = name.trim().length > 0 && !saving && !generating;
+  const showSave = isDirty && canSave;
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr', gap: 16, height: '100%' }}>
@@ -409,18 +388,11 @@ export function ProjectBuilderScreen() {
               onClick={() => addFile(f)}
               title={`Add ${f.original_filename}`}
               style={{
-                width: '100%',
-                padding: '5px 10px',
-                background: 'transparent',
-                border: 'none',
-                color: 'var(--text-2)',
-                cursor: 'pointer',
-                textAlign: 'left',
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                borderRadius: 4,
+                width: '100%', padding: '5px 10px',
+                background: 'transparent', border: 'none',
+                color: 'var(--text-2)', cursor: 'pointer',
+                textAlign: 'left', fontSize: 12,
+                display: 'flex', alignItems: 'center', gap: 6, borderRadius: 4,
               }}
             >
               <span style={{ color: 'var(--text-4)', flexShrink: 0 }}>{Icons.files}</span>
@@ -433,11 +405,19 @@ export function ProjectBuilderScreen() {
       </div>
 
       {/* Right: project form + items */}
-      <div className="card" style={{ padding: 20, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 20 }}>
-        {/* Header fields */}
+      <div className="card" style={{ padding: 20, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+
+        {/* Project metadata fields */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label" htmlFor="proj-name">Project name *</label>
+            <label className="label" htmlFor="proj-name">
+            Project name *
+            {projectId && (
+              <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-4)', marginLeft: 6 }}>
+                #{projectId}
+              </span>
+            )}
+          </label>
             <input
               id="proj-name"
               className="input"
@@ -447,43 +427,123 @@ export function ProjectBuilderScreen() {
             />
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label">Machine profile</label>
+            <label className="label">Type</label>
             <select
               className="select"
-              value={machineUuid}
-              onChange={e => { setMachineUuid(e.target.value); setProcessUuid(''); }}
+              value={orderType}
+              onChange={e => setOrderType(e.target.value as 'internal' | 'customer')}
             >
-              <option value="">— select machine —</option>
-              {(catalog?.machine ?? []).map((m: OrcaMachine) => (
-                <option key={m.uuid} value={m.uuid}>{m.name}</option>
-              ))}
+              <option value="internal">Internal</option>
+              <option value="customer">Customer</option>
             </select>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            <label className="label">Process profile</label>
-            <select
-              className="select"
-              value={processUuid}
-              onChange={e => setProcessUuid(e.target.value)}
-              disabled={!machineUuid || processOptions.length === 0}
-            >
-              <option value="">— select process —</option>
-              {processOptions.map(p => (
-                <option key={p.uuid} value={p.uuid}>{p.name}</option>
-              ))}
-            </select>
+            <label className="label">Due date</label>
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input
+                type="date"
+                className="input"
+                value={dueDate}
+                onChange={e => setDueDate(e.target.value)}
+                style={{ flex: 1 }}
+              />
+              {dueDate && (
+                <button
+                  className="btn ghost icon sm"
+                  onClick={() => setDueDate('')}
+                  title="Clear due date"
+                  style={{ flexShrink: 0 }}
+                >
+                  {Icons.x}
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Item table */}
+        {/* Customer + notes row */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
+          {orderType === 'customer' && (
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <label className="label">Customer</label>
+              <input
+                className="input"
+                placeholder="Customer name"
+                value={customer}
+                onChange={e => setCustomer(e.target.value)}
+              />
+            </div>
+          )}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="label">Notes</label>
+            <input
+              className="input"
+              placeholder="Optional notes"
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+            />
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                          fontSize: 13, color: onHold ? 'var(--warn)' : 'var(--text-2)',
+                          paddingBottom: 4, whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={onHold}
+              onChange={e => setOnHold(e.target.checked)}
+            />
+            On hold
+          </label>
+        </div>
+
+        {/* Links editor */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+              Links ({links.length})
+            </span>
+            <button
+              className="btn ghost sm"
+              onClick={() => setLinks(prev => [...prev, { localId: newLocalId(), url: '', label: '' }])}
+            >
+              + Add link
+            </button>
+          </div>
+          {links.map(lk => (
+            <div key={lk.localId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                className="input"
+                placeholder="https://..."
+                value={lk.url}
+                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, url: e.target.value } : l))}
+                style={{ flex: 2 }}
+              />
+              <input
+                className="input"
+                placeholder="Label (optional)"
+                value={lk.label}
+                onChange={e => setLinks(prev => prev.map(l => l.localId === lk.localId ? { ...l, label: e.target.value } : l))}
+                style={{ flex: 1 }}
+              />
+              <button
+                className="btn ghost icon sm"
+                onClick={() => {
+                  if (lk.serverId) setDeletedLinkIds(prev => [...prev, lk.serverId!]);
+                  setLinks(prev => prev.filter(l => l.localId !== lk.localId));
+                }}
+                title="Remove link"
+              >
+                {Icons.x}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Part items table */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
               Parts ({items.length})
             </span>
-            {catalogLoading && (
-              <span style={{ fontSize: 11, color: 'var(--text-4)' }}>Loading catalog…</span>
-            )}
           </div>
           {items.length === 0 ? (
             <div style={{
@@ -498,30 +558,24 @@ export function ProjectBuilderScreen() {
               {/* Column headers */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 80px 1fr 80px auto auto',
-                gap: 8,
-                padding: '0 4px',
-                fontSize: 11,
-                fontWeight: 500,
-                color: 'var(--text-4)',
-                textTransform: 'uppercase',
-                letterSpacing: '0.05em',
+                gridTemplateColumns: '1fr 64px 260px auto',
+                gap: 8, padding: '0 4px',
+                fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
+                textTransform: 'uppercase', letterSpacing: '0.05em',
               }}>
                 <span>File</span>
                 <span>Qty</span>
                 <span>Filament</span>
-                <span>Color</span>
-                <span />
                 <span />
               </div>
-              {items.map((it, idx) => (
+              {items.map((it) => (
                 <div key={it.localId} style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 80px 1fr 80px auto auto',
-                  gap: 8,
-                  alignItems: 'center',
+                  gridTemplateColumns: '1fr 64px 260px auto',
+                  gap: 8, alignItems: 'start',
                 }}>
-                  <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
+                  {/* File name + progress */}
+                  <span style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, paddingTop: 4 }}>
                     <span style={{
                       fontSize: 13, color: 'var(--text-1)',
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -539,37 +593,26 @@ export function ProjectBuilderScreen() {
                       );
                     })()}
                   </span>
+
+                  {/* Quantity */}
                   <input
                     type="number"
                     className="input"
-                    min={1}
-                    max={99}
+                    min={1} max={99}
                     value={it.quantity}
                     onChange={e => updateItem(it.localId, { quantity: Math.max(1, parseInt(e.target.value) || 1) })}
                     style={{ textAlign: 'center' }}
                   />
-                  <FilamentProfilePicker
-                    filaments={catalog?.filament ?? []}
-                    machineName={machineName}
-                    value={it.filament_profile_uuid}
-                    onChange={v => updateItem(it.localId, { filament_profile_uuid: v })}
+
+                  {/* Filament requirement */}
+                  <FilamentRequirementPicker
+                    value={{ filament_type: it.filament_type, filament_color: it.filament_color, filament_id: it.filament_id }}
+                    onChange={req => setItemFilament(it.localId, req)}
+                    spoolmanFilaments={spoolmanFilaments}
+                    spoolmanEnabled={spoolmanEnabled}
                   />
-                  <input
-                    type="color"
-                    value={it.color_hex}
-                    onChange={e => updateItem(it.localId, { color_hex: e.target.value })}
-                    style={{ width: '100%', height: 32, padding: 2, borderRadius: 4,
-                             border: '1px solid var(--border)', cursor: 'pointer' }}
-                    title="Filament color"
-                  />
-                  <button
-                    className="btn ghost sm"
-                    onClick={() => addVariation(idx)}
-                    title="Add variation (same file, different material)"
-                    style={{ fontSize: 11, whiteSpace: 'nowrap' }}
-                  >
-                    + Variation
-                  </button>
+
+                  {/* Remove */}
                   <button
                     className="btn ghost icon sm"
                     onClick={() => removeItem(it.localId)}
@@ -583,35 +626,47 @@ export function ProjectBuilderScreen() {
           )}
         </div>
 
-        {/* Legacy arranged result (projects generated before the generate flow) */}
-        {legacyResult && (
-          <ResultPanel
-            resultFileId={legacyResult.resultFileId}
-            plateCount={legacyResult.plateCount}
-            onQueue={() => navigate('/queue/new', { state: { libraryFileId: legacyResult!.resultFileId } })}
-            onViewFiles={() => navigate('/files')}
-          />
+        {/* Printer picker (shown when Generate… is clicked) */}
+        {showPrinterPicker && !generating && !saving && (
+          <div style={{
+            border: '1px solid var(--border)', borderRadius: 8,
+            padding: '14px 16px', background: 'var(--bg-2)',
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)',
+                          textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>
+              Eligible printers
+            </div>
+            <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
+              <button
+                className="btn primary sm"
+                onClick={() => handleGenerate(eligiblePrinterIds)}
+                disabled={!canSave || items.length === 0}
+              >
+                Generate
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Generation success */}
         {generateResult && (
           <div style={{
-            border: '1px solid var(--ok)',
-            borderRadius: 8,
-            padding: '12px 16px',
-            background: 'oklch(55% 0.15 142 / 0.06)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
+            border: '1px solid var(--ok)', borderRadius: 8,
+            padding: '12px 16px', background: 'oklch(55% 0.15 142 / 0.06)',
+            display: 'flex', alignItems: 'center', gap: 12,
           }}>
             <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
-            <span style={{ fontSize: 14, flex: 1 }}>Jobs added to queue</span>
-            {generateResult.orderId && (
-              <button className="btn sm" onClick={() => navigate(`/orders/${generateResult.orderId}`)}>
-                View Order
+            <span style={{ fontSize: 14, flex: 1 }}>
+              {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} added to queue
+            </span>
+            <button className="btn sm" onClick={() => navigate('/queue')}>Queue</button>
+            {projectId && (
+              <button className="btn sm" onClick={() => navigate(`/projects/${projectId}`)}>
+                Details
               </button>
             )}
-            <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
           </div>
         )}
 
@@ -624,33 +679,44 @@ export function ProjectBuilderScreen() {
           }}>
             <span style={{ color: 'var(--err)', flexShrink: 0 }}>{Icons.alert}</span>
             <span style={{ fontSize: 13, color: 'var(--err)', flex: 1 }}>{generateError}</span>
-            <button
-              className="btn sm"
-              onClick={handleGenerate}
-              disabled={generating || saving}
-            >
-              Retry
-            </button>
+            <button className="btn sm" onClick={() => handleGenerate(eligiblePrinterIds)} disabled={generating || saving}>Retry</button>
           </div>
         )}
 
         {/* Footer actions */}
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 'auto', paddingTop: 4 }}>
-          <button className="btn sm" onClick={() => navigate('/projects')} disabled={saving || generating}>
+          <button className="btn sm" onClick={() => navigate(projectId ? `/projects/${projectId}` : '/projects')} disabled={saving || generating}>
             Cancel
           </button>
-          <button className="btn sm" onClick={handleSave} disabled={!canSave}>
-            {saving && !generating ? 'Saving…' : 'Save'}
-          </button>
+          {showSave && (
+            <button className="btn sm" onClick={handleSave} disabled={saving}>
+              {saving && !generating ? 'Saving…' : (projectId ? 'Save changes' : 'Save')}
+            </button>
+          )}
           <button
             className="btn primary sm"
-            onClick={handleGenerate}
+            onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
             disabled={!canSave || items.length === 0}
           >
-            {generating ? 'Generating…' : 'Generate'}
+            {generating ? 'Generating…' : 'Generate…'}
           </button>
         </div>
       </div>
+
+      {/* Saved toast */}
+      {saveOk && (
+        <div style={{
+          position: 'fixed', bottom: 24, right: 24, zIndex: 1000,
+          background: 'var(--ok)', color: '#fff',
+          padding: '10px 18px', borderRadius: 8,
+          display: 'flex', alignItems: 'center', gap: 8,
+          fontSize: 14, fontWeight: 500,
+          boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+          pointerEvents: 'none',
+        }}>
+          {Icons.check} Saved
+        </div>
+      )}
     </div>
   );
 }

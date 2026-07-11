@@ -19,6 +19,8 @@ class Printer(Base):
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
     build_plate_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
+    bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
 
 
 class UploadedFile(Base):
@@ -145,6 +147,11 @@ class Project(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
+    customer: Mapped[str] = mapped_column(String(255), default="")
+    order_type: Mapped[str] = mapped_column(String(20), default="internal")  # "customer" | "internal"
+    on_hold: Mapped[bool] = mapped_column(Boolean, default=False)
+    due_date: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # machine_uuid / process_uuid kept for backward-compat (legacy generate flow); not shown in UI
     machine_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     process_uuid: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -172,7 +179,12 @@ class ProjectItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
     quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
-    filament_profile_uuid: Mapped[str] = mapped_column(String(36))
+    # Filament requirement spec — "any" means no constraint
+    filament_type: Mapped[str] = mapped_column(String(50), default="any")
+    filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    filament_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
+    filament_profile_uuid: Mapped[str] = mapped_column(String(36), default="")
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -184,6 +196,17 @@ class WebhookConfig(Base):
     url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     events: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class ProjectLink(Base):
+    __tablename__ = "project_links"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    url: Mapped[str] = mapped_column(String(2048))
+    label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
 class JobItemFailure(Base):
