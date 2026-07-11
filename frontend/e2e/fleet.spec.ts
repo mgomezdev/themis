@@ -7,7 +7,7 @@ test.describe('Fleet — loaded filament slots', () => {
     await page.goto('/fleet');
 
     // Wait for the Fleet page to finish rendering.
-    await expect(page.getByText('printers online')).toBeVisible();
+    await expect(page.getByText(/\d+\s+printers/).first()).toBeVisible();
 
     // Expand the U1 printer card. The tile is a <div onClick> where the center may be
     // obscured by the "Ready for new work" button — click the U1 nickname span in the

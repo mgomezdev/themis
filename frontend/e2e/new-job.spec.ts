@@ -25,10 +25,11 @@ async function driveToPerPrinter(page: import('@playwright/test').Page, printerN
   // Step 2: select the file
   await page.getByRole('button', { name: /multi\.3mf/i }).click();
 
-  // Step 3: wait for the printer picker to appear (plates loaded)
-  await expect(page.getByRole('button', { name: new RegExp(printerName, 'i') })).toBeVisible({ timeout: 5000 });
+  // Step 3: wait for all plate/filament API calls to complete so the printer picker is stable
+  await page.waitForLoadState('networkidle');
 
   // Step 4: click the printer card
+  await expect(page.getByRole('button', { name: new RegExp(printerName, 'i') })).toBeVisible({ timeout: 5000 });
   await page.getByRole('button', { name: new RegExp(printerName, 'i') }).first().click();
 
   // Step 5: wait for PerPrinterConfig to render
@@ -44,10 +45,14 @@ test.describe('New Job — filament/tool', () => {
   test('multi-material file: mapping rows + createJob sends filament_map', async ({ page }) => {
     const mocks = await mockApi(page);
     await page.goto('/queue/new');
+    await page.waitForLoadState('networkidle');
 
     // Navigate to library and select the multi-material file
     await page.getByRole('button', { name: /Pick from library/i }).click();
     await page.getByRole('button', { name: /multi\.3mf/i }).click();
+
+    // Wait for all plate/filament API calls to complete so the printer picker is stable
+    await page.waitForLoadState('networkidle');
 
     // Wait for printer picker to appear (plates + model-filaments loaded)
     await expect(page.getByRole('button', { name: /U1/i })).toBeVisible({ timeout: 5000 });
@@ -114,6 +119,7 @@ test.describe('New Job — filament/tool', () => {
   test('single-tool printer defaults to defer', async ({ page }) => {
     const mocks = await mockApi(page);
     await page.goto('/queue/new');
+    await page.waitForLoadState('networkidle');
 
     await driveToPerPrinter(page, 'Mono');
 

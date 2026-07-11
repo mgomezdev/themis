@@ -41,9 +41,10 @@ export async function mockApi(page: Page, over: Partial<{
   const modelFilaments = over.modelFilaments ?? MODEL_FILAMENTS;
   const mocks: Mocks = { captured: [] };
 
-  // Mock WebSocket for real-time updates (prevents hanging on ws connection)
-  await page.evaluateHandle(() => {
-    const originalWS = window.WebSocket;
+  // Mock WebSocket for real-time updates (prevents hanging on ws connection).
+  // Must use addInitScript so the mock is installed before the page scripts run
+  // after navigation — evaluateHandle only runs in the pre-navigation context.
+  await page.addInitScript(() => {
     (window as any).WebSocket = class MockWebSocket {
       onmessage: ((e: MessageEvent) => void) | null = null;
       onopen: (() => void) | null = null;
