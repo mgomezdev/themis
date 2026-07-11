@@ -7,13 +7,13 @@ import time as _time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import shutil
 
 from ...database import get_session
-from ...models import Printer
+from ...models import GcodeFile, Job, JobPrinterConfig, Printer
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services.printer_manager import printer_manager
@@ -337,6 +337,13 @@ async def delete_printer(
     session: AsyncSession = Depends(get_session),
 ) -> None:
     printer = await _get_or_404(printer_id, session)
+    await session.execute(delete(GcodeFile).where(GcodeFile.printer_id == printer_id))
+    await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.printer_id == printer_id))
+    await session.execute(
+        update(Job)
+        .where(Job.assigned_printer_id == printer_id)
+        .values(assigned_printer_id=None)
+    )
     await session.delete(printer)
     await session.commit()
 
