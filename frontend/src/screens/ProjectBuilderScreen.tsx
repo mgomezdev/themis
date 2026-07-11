@@ -226,6 +226,7 @@ export function ProjectBuilderScreen() {
   const [legacyResult, setLegacyResult] = useState<{
     resultFileId: number; plateCount: number;
   } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ orderId: number | null } | null>(null);
 
   // Selected machine name (for filament filtering)
   const machineName = catalog?.machine.find(m => m.uuid === machineUuid)?.name ?? '';
@@ -370,12 +371,13 @@ export function ProjectBuilderScreen() {
     if (!name.trim() || items.length === 0) return;
     setSaving(true);
     setGenerateError('');
+    setGenerateResult(null);
     try {
       const pid = await saveProject();
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
       setGenerating(true);
-      await generateProject(pid);
-      navigate('/queue');
+      const result = await generateProject(pid);
+      setGenerateResult({ orderId: result.order_id });
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
     } finally {
@@ -589,6 +591,28 @@ export function ProjectBuilderScreen() {
             onQueue={() => navigate('/queue/new', { state: { libraryFileId: legacyResult!.resultFileId } })}
             onViewFiles={() => navigate('/files')}
           />
+        )}
+
+        {/* Generation success */}
+        {generateResult && (
+          <div style={{
+            border: '1px solid var(--ok)',
+            borderRadius: 8,
+            padding: '12px 16px',
+            background: 'oklch(55% 0.15 142 / 0.06)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+          }}>
+            <span style={{ color: 'var(--ok)', flexShrink: 0 }}>{Icons.check}</span>
+            <span style={{ fontSize: 14, flex: 1 }}>Jobs added to queue</span>
+            {generateResult.orderId && (
+              <button className="btn sm" onClick={() => navigate(`/orders/${generateResult.orderId}`)}>
+                View Order
+              </button>
+            )}
+            <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
+          </div>
         )}
 
         {/* Error banner */}

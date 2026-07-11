@@ -55,6 +55,37 @@ function useServicesHealth() {
   return { laminusStatus };
 }
 
+const BOTTOM_NAV_ITEMS = [
+  { to: '/queue',    label: 'Queue',    icon: 'queue'    },
+  { to: '/fleet',    label: 'Fleet',    icon: 'fleet'    },
+  { to: '/projects', label: 'Projects', icon: 'layers'   },
+  { to: '/settings', label: 'Settings', icon: 'settings' },
+] as const;
+
+function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: number; blocked: number } }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const path = '/' + location.pathname.split('/').filter(Boolean)[0];
+  const total = queueCounts.active + queueCounts.pending + queueCounts.blocked;
+  return (
+    <nav className="bottom-nav">
+      {BOTTOM_NAV_ITEMS.map(item => (
+        <button
+          key={item.to}
+          className={`bottom-nav-item ${path === item.to ? 'active' : ''}`}
+          onClick={() => navigate(item.to)}
+        >
+          {Icons[item.icon]}
+          {item.to === '/queue' && total > 0 && (
+            <span className="bn-count">{total}</span>
+          )}
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
 function AppShell() {
   const { jobs } = useQueue();
   const { config: queueConfig } = useQueueConfig();
@@ -112,6 +143,7 @@ function AppShell() {
                operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length}
                collapsed={navCollapsed} onToggle={() => setNavCollapsed(c => !c)} />
       <div className="main">
+      <BottomNav queueCounts={queueCounts} />
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">
           <Routes>

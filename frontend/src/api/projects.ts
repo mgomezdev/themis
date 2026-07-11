@@ -35,6 +35,7 @@ export interface Project {
   process_uuid: string;
   notes: string | null;
   result_file_id: number | null;
+  order_id: number | null;
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
@@ -44,6 +45,7 @@ export interface Project {
 
 export interface GenerateOut {
   project_id: number;
+  order_id: number | null;
   jobs: {
     id: number;
     uploaded_file_id: number;

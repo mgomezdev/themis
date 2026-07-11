@@ -118,6 +118,8 @@ class GcodeFile(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id"))
     path: Mapped[str] = mapped_column(String(1024))
+    filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class QueueConfig(Base):
@@ -149,6 +151,7 @@ class Project(Base):
     result_file_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True
     )
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("orders.id"), nullable=True)
     source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -172,6 +175,15 @@ class ProjectItem(Base):
     filament_profile_uuid: Mapped[str] = mapped_column(String(36))
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WebhookConfig(Base):
+    __tablename__ = "webhook_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    events: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class JobItemFailure(Base):

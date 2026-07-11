@@ -70,6 +70,8 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   file: { id: 10, original_filename: 'part.3mf' },
   plate: { estimated_time: 600, filament_g: 15, thumbnail_path: null },
   assigned_printer: null,
+  filament_grams: null,
+  estimated_seconds: null,
   printer_configs: [
     {
       printer_id: 3,

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import Job, Project, ProjectItem, UploadedFile
+from ...models import GcodeFile, Job, Order, Project, ProjectItem, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.thumbnail_regen import regen_file_thumbnails
@@ -149,6 +149,11 @@ async def _project_dict(
     jobs_complete = (await session.execute(
         select(func.count()).where(Job.project_id == project.id, Job.status == "complete")
     )).scalar() or 0
+    gcode_rows = (await session.execute(
+        select(GcodeFile).join(Job, Job.id == GcodeFile.job_id).where(Job.project_id == project.id)
+    )).scalars().all()
+    total_grams = sum(g.filament_grams for g in gcode_rows if g.filament_grams is not None) or None
+    total_seconds = sum(g.estimated_seconds for g in gcode_rows if g.estimated_seconds is not None) or None
     return {
         "id": project.id,
         "name": project.name,
@@ -156,6 +161,7 @@ async def _project_dict(
         "process_uuid": project.process_uuid,
         "notes": project.notes,
         "result_file_id": project.result_file_id,
+        "order_id": project.order_id,
         "source_app": project.source_app,
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
@@ -164,6 +170,8 @@ async def _project_dict(
         "items": items,
         "jobs_total": jobs_total,
         "jobs_complete": jobs_complete,
+        "filament_grams": round(total_grams, 2) if total_grams is not None else None,
+        "estimated_seconds": total_seconds,
     }
 
 
@@ -393,6 +401,24 @@ async def generate_project(
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
 
+    # Create a linked internal Order on first generate so jobs appear in the Orders view
+    if proj.order_id is None:
+        now_ts = _now_iso()
+        order = Order(
+            order_type="internal",
+            customer="",
+            title=proj.name,
+            on_hold=False,
+            parts=[],
+            created_at=now_ts,
+            updated_at=now_ts,
+        )
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+        proj.order_id = order.id
+        await session.commit()
+
     sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
         raise HTTPException(422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
@@ -540,6 +566,7 @@ async def generate_project(
                 uploaded_file_id=new_file.id,
                 plate_number=plate_num,
                 project_id=proj.id,
+                order_id=proj.order_id,
                 queue_position=next_pos,
                 status="queued",
                 created_at=now,
@@ -561,4 +588,4 @@ async def generate_project(
     proj.updated_at = _now_iso()
     await session.commit()
 
-    return {"project_id": proj.id, "jobs": jobs_out, "files": files_out}
+    return {"project_id": proj.id, "order_id": proj.order_id, "jobs": jobs_out, "files": files_out}

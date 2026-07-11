@@ -1,9 +1,12 @@
 """Versioned migration runner for Themis (Flyway-style)."""
 from __future__ import annotations
 from sqlalchemy import text
-from . import v001_initial
+from . import v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates
 
-_MIGRATIONS = sorted([v001_initial], key=lambda m: m.version)
+_MIGRATIONS = sorted(
+    [v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates],
+    key=lambda m: m.version,
+)
 
 _CREATE_TABLE = """
     CREATE TABLE IF NOT EXISTS schema_migrations (

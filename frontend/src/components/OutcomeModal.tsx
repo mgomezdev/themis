@@ -5,7 +5,7 @@ import { markJobOutcome } from '../api/queue';
 interface Props {
   job: {
     id: number;
-    project_id: number;
+    project_id: number | null;
     project_item_quantities: Record<string, number> | null;
   };
   onClose: () => void;
@@ -19,6 +19,7 @@ export function OutcomeModal({ job, onClose, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (job.project_id == null) return;
     getProject(job.project_id)
       .then(p => {
         const relevant = p.items.filter(

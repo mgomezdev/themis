@@ -345,6 +345,11 @@ async def get_job_details(
         if p:
             assigned_printer = {"id": p.id, "name": p.name, "printer_type": p.printer_type}
 
+    gcode_result = await session.execute(
+        select(GcodeFile).where(GcodeFile.job_id == job_id).limit(1)
+    )
+    gcode_rec = gcode_result.scalar_one_or_none()
+
     return {
         **_to_dict(job),
         "block_reason": job.block_reason,
@@ -352,6 +357,8 @@ async def get_job_details(
         "plate": plate_info,
         "printer_configs": printer_configs,
         "assigned_printer": assigned_printer,
+        "filament_grams": gcode_rec.filament_grams if gcode_rec else None,
+        "estimated_seconds": gcode_rec.estimated_seconds if gcode_rec else None,
     }
 
 

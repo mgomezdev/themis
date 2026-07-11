@@ -1,5 +1,27 @@
 const BASE = '/api/v1/settings';
 
+export interface WebhookConfig {
+  url: string | null;
+  secret: string | null;
+  events: string[];
+}
+
+export async function getWebhookConfig(): Promise<WebhookConfig> {
+  const resp = await fetch(`${BASE}/webhook`);
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+  return resp.json();
+}
+
+export async function saveWebhookConfig(cfg: Partial<WebhookConfig>): Promise<WebhookConfig> {
+  const resp = await fetch(`${BASE}/webhook`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(cfg),
+  });
+  if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+  return resp.json();
+}
+
 export interface FleetImportReport {
   imported: number;
   skipped: number;

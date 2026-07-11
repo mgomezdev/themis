@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Printer, QueueConfig, SpoolmanConfig
+from ...models import Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
 from ...services.printer_client_factory import REGISTRY, create_client
 from ...services.printer_manager import printer_manager
@@ -125,6 +125,53 @@ async def test_spoolman_connection(
         return {"ok": True, "version": info.get("version", "unknown")}
     except Exception as e:
         return {"ok": False, "message": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Webhook config
+# ---------------------------------------------------------------------------
+
+class WebhookConfigOut(BaseModel):
+    url: str | None
+    secret: str | None
+    events: list[str]
+
+
+class WebhookConfigIn(BaseModel):
+    url: str | None = None
+    secret: str | None = None
+    events: list[str] | None = None
+
+
+async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
+    row = await session.get(WebhookConfig, 1)
+    if row is None:
+        row = WebhookConfig(id=1, events=[])
+        session.add(row)
+        await session.flush()
+    return row
+
+
+@router.get("/webhook", response_model=WebhookConfigOut)
+async def get_webhook_config(session: AsyncSession = Depends(get_session)):
+    return await _get_or_create_webhook(session)
+
+
+@router.put("/webhook", response_model=WebhookConfigOut)
+async def update_webhook_config(
+    body: WebhookConfigIn,
+    session: AsyncSession = Depends(get_session),
+):
+    row = await _get_or_create_webhook(session)
+    if body.url is not None:
+        row.url = body.url or None
+    if body.secret is not None:
+        row.secret = body.secret or None
+    if body.events is not None:
+        row.events = body.events
+    await session.commit()
+    await session.refresh(row)
+    return row
 
 
 # ---------------------------------------------------------------------------

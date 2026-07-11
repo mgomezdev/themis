@@ -78,6 +78,8 @@ export interface ApiJobDetails extends ApiJob {
   plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
   printer_configs: ApiJobPrinterConfig[];
   assigned_printer: { id: number; name: string; printer_type: string } | null;
+  filament_grams: number | null;
+  estimated_seconds: number | null;
 }
 
 /** Build the URL that serves a plate's embedded thumbnail via the files API. */

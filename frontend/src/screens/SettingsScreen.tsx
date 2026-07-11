@@ -5,7 +5,7 @@ import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { getOrcaCatalogStatus, refreshOrcaCatalog, rescanOrcaCatalog, type OrcaCatalogStatus } from '../api/orca';
-import { downloadFleetBackup, importFleetBackup, type FleetImportReport } from '../api/settings';
+import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 
@@ -18,6 +18,7 @@ const SettingsIcons = {
   backup:   <Icon paths={["M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6","M21 12a9 9 0 0 0-15.36-6.36L3 8","M3 4v4h4","M12 8v8","M9 13l3 3 3-3"]} />,
   info:     <Icon paths={["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z","M12 16v-4","M12 8h.01"]} />,
   spoolman: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
+  webhook:  <Icon paths={["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6","M15 3h6v6","M10 14L21 3"]} />,
 };
 
 // =========================================================================
@@ -1023,10 +1024,94 @@ function FleetBackupPage() {
 }
 
 // =========================================================================
+// Webhook page
+// =========================================================================
+
+const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+
+function WebhookPage() {
+  const [url, setUrl] = useState('');
+  const [secret, setSecret] = useState('');
+  const [events, setEvents] = useState<string[]>(ALL_WEBHOOK_EVENTS);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getWebhookConfig()
+      .then(cfg => {
+        setUrl(cfg.url ?? '');
+        setSecret(cfg.secret ?? '');
+        setEvents(cfg.events.length ? cfg.events : ALL_WEBHOOK_EVENTS);
+      })
+      .catch(console.error);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      await saveWebhookConfig({ url: url.trim() || null, secret: secret.trim() || null, events });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function toggleEvent(ev: string) {
+    setEvents(prev => prev.includes(ev) ? prev.filter(e => e !== ev) : [...prev, ev]);
+  }
+
+  return (
+    <div className="card" style={{ padding: 28 }}>
+      <PageHeader
+        title="Webhooks"
+        sub="Receive an HMAC-signed POST when a job changes state."
+      />
+      <FieldRow label="Endpoint URL" hint="POST requests are sent here for enabled events.">
+        <input
+          className="input"
+          placeholder="https://example.com/webhook"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          style={{ width: '100%' }}
+        />
+      </FieldRow>
+      <FieldRow label="Secret" hint="Optional. Included as X-Webhook-Signature: sha256=<hmac>.">
+        <input
+          className="input"
+          type="password"
+          placeholder="webhook-secret"
+          value={secret}
+          onChange={e => setSecret(e.target.value)}
+          style={{ width: '100%' }}
+        />
+      </FieldRow>
+      <FieldRow label="Events" hint="Which job state transitions fire a request.">
+        <div className="col" style={{ gap: 10 }}>
+          {ALL_WEBHOOK_EVENTS.map(ev => (
+            <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+              <Toggle checked={events.includes(ev)} onChange={() => toggleEvent(ev)} />
+              <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-1)' }}>{ev}</span>
+            </label>
+          ))}
+        </div>
+      </FieldRow>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 20 }}>
+        {saved && <span className="pill ok" style={{ alignSelf: 'center' }}>Saved</span>}
+        <button className="btn primary" disabled={saving} onClick={save}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'fleet-backup' | 'about';
+type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1040,7 +1125,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'fleet-backup', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1068,6 +1153,7 @@ export function SettingsScreen() {
       items: [
         { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
         ...(spoolmanEnabled ? [{ id: 'spoolman-mappings' as PageId, label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' }] : []),
+        { id: 'webhook' as PageId, label: 'Webhooks',          icon: SettingsIcons.webhook,  sub: 'Job state notifications' },
       ],
     },
     {
@@ -1118,6 +1204,7 @@ export function SettingsScreen() {
         {activePage === 'print'         && <PrintDefaultsPage />}
         {activePage === 'spoolman'          && <SpoolmanPage />}
         {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
+        {activePage === 'webhook'           && <WebhookPage />}
         {activePage === 'fleet-backup'      && <FleetBackupPage />}
         {activePage === 'about'             && <AboutPage />}
       </div>
