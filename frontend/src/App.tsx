@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
@@ -20,6 +20,41 @@ import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
 
+type SvcStatus = 'up' | 'down' | 'unconfigured';
+
+function ServiceBubble({ name, status }: { name: string; status: SvcStatus }) {
+  const dot = status === 'up' ? 'var(--ok)' : status === 'down' ? 'var(--err)' : 'var(--idle)';
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-4)', userSelect: 'none' }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 }} />
+      {name}
+    </span>
+  );
+}
+
+function useServicesHealth() {
+  const [laminusStatus, setLaminusStatus] = useState<SvcStatus>('unconfigured');
+
+  useEffect(() => {
+    let alive = true;
+    function poll() {
+      fetch('/api/v1/laminus/catalog/status')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then((d: { laminus_configured: boolean; laminus: unknown }) => {
+          if (!alive) return;
+          if (!d.laminus_configured) setLaminusStatus('unconfigured');
+          else setLaminusStatus(d.laminus !== null ? 'up' : 'down');
+        })
+        .catch(() => { if (alive) setLaminusStatus('down'); });
+    }
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
+
+  return { laminusStatus };
+}
+
 function AppShell() {
   const { jobs } = useQueue();
   const { config: queueConfig } = useQueueConfig();
@@ -34,6 +69,7 @@ function AppShell() {
   const [navCollapsed, setNavCollapsed] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const { laminusStatus } = useServicesHealth();
 
   const screenConfig: Record<string, { title: string; crumbs: string[]; actions?: React.ReactNode }> = {
     '/queue':      { title: 'Job queue',        crumbs: ['Workshop'],
@@ -96,6 +132,14 @@ function AppShell() {
             <Route path="/settings/*"     element={<SettingsScreen />} />
             <Route path="*"               element={<Navigate to="/queue" replace />} />
           </Routes>
+        </div>
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 16,
+          height: 26, padding: '0 18px',
+          background: 'var(--bg-0)', borderTop: '1px solid var(--border-1)',
+          flexShrink: 0,
+        }}>
+          <ServiceBubble name="Laminus" status={laminusStatus} />
         </div>
       </div>
     </div>

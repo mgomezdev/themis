@@ -119,6 +119,7 @@ async def get_catalog_status() -> dict:
         "cached": _catalog_bytes is not None,
         "cached_bytes": len(_catalog_bytes) if _catalog_bytes else 0,
         "fetched_at": _catalog_fetched_at,
+        "laminus_configured": url is not None,
         "laminus": laminus_status,
     }
 
