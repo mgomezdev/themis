@@ -7,9 +7,11 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
+import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from ..config import get_laminus_sidecar_url
 from ..models import GcodeFile, Job, JobPrinterConfig, Printer, QueueConfig, UploadedFile
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
@@ -357,6 +359,23 @@ class QueueEngine:
         mismatch = _filament_mismatch(config, printer.loaded_filaments)
         if mismatch:
             await self._block_job(session, job, mismatch)
+            return
+
+        # Pre-flight: ensure Laminus is reachable before claiming this job.
+        # Block (not fail) so the job auto-retries when Laminus comes back.
+        sidecar_url = get_laminus_sidecar_url()
+        if not sidecar_url:
+            await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
+            return
+        try:
+            r = await asyncio.to_thread(
+                lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
+            )
+            if not r.is_success:
+                await self._block_job(session, job, "Laminus is not ready — slicing paused")
+                return
+        except Exception:
+            await self._block_job(session, job, "Laminus is unreachable — slicing paused")
             return
 
         # Claim → slice.
