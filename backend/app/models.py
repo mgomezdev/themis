@@ -84,10 +84,14 @@ class Job(Base):
     assigned_printer_id: Mapped[Optional[int]] = mapped_column(ForeignKey("printers.id"), nullable=True)
     queue_position: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="queued")
+    project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
+    completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    project_item_quantities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -114,6 +118,8 @@ class GcodeFile(Base):
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id"))
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id"))
     path: Mapped[str] = mapped_column(String(1024))
+    filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class QueueConfig(Base):
@@ -145,6 +151,7 @@ class Project(Base):
     result_file_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True
     )
+    order_id: Mapped[Optional[int]] = mapped_column(ForeignKey("orders.id"), nullable=True)
     source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -163,6 +170,27 @@ class ProjectItem(Base):
         ForeignKey("uploaded_files.id", ondelete="RESTRICT")
     )
     quantity: Mapped[int] = mapped_column(Integer, default=1)
+    quantity_completed: Mapped[int] = mapped_column(Integer, default=0)
+    quantity_failed: Mapped[int] = mapped_column(Integer, default=0)
     filament_profile_uuid: Mapped[str] = mapped_column(String(36))
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class WebhookConfig(Base):
+    __tablename__ = "webhook_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class JobItemFailure(Base):
+    __tablename__ = "job_item_failures"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"))
+    project_item_id: Mapped[int] = mapped_column(ForeignKey("project_items.id", ondelete="CASCADE"))
+    quantity_failed: Mapped[int] = mapped_column(Integer)
+    quantity_on_plate: Mapped[int] = mapped_column(Integer)

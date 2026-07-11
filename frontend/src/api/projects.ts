@@ -20,6 +20,8 @@ export interface ProjectItem {
   file_id: number;
   file_name: string;
   quantity: number;
+  quantity_completed: number;
+  quantity_failed: number;
   filament_profile_uuid: string;
   filament_display_name: string | null;
   color_hex: string;
@@ -33,13 +35,17 @@ export interface Project {
   process_uuid: string;
   notes: string | null;
   result_file_id: number | null;
+  order_id: number | null;
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
+  jobs_total: number;
+  jobs_complete: number;
 }
 
 export interface GenerateOut {
   project_id: number;
+  order_id: number | null;
   jobs: {
     id: number;
     uploaded_file_id: number;

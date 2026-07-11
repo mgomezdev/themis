@@ -72,7 +72,7 @@ def get_ffmpeg_executable() -> str:
     return os.environ.get("FFMPEG_EXECUTABLE", "ffmpeg")
 
 
-def get_orca_sidecar_url() -> str | None:
-    """Base URL of the orca sidecar service (e.g. 'http://localhost:5000').
-    Returns None when ORCA_SIDECAR_URL is not set (direct CLI mode)."""
-    return os.environ.get("ORCA_SIDECAR_URL")
+def get_laminus_sidecar_url() -> str | None:
+    """Base URL of the laminus sidecar service (e.g. 'http://localhost:5000').
+    Returns None when LAMINUS_SIDECAR_URL is not set (direct CLI mode)."""
+    return os.environ.get("LAMINUS_SIDECAR_URL")

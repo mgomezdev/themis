@@ -20,8 +20,8 @@ from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
 async def _fetch_sidecar_catalog() -> dict | None:
-    """Return the Themis-side catalog cache (never calls Orca directly)."""
-    from .orca import get_cached_catalog
+    """Return the Themis-side catalog cache (never calls Laminus directly)."""
+    from .laminus import get_cached_catalog
     try:
         return await get_cached_catalog()
     except Exception as e:
@@ -185,8 +185,8 @@ async def orca_machine_catalog() -> list[dict]:
 @router.post("/rescan-profiles")
 async def rescan_profiles() -> dict:
     """Trigger a catalog refresh from Orca and report the machine preset count."""
-    from .orca import refresh_catalog as _orca_refresh
-    await _orca_refresh()
+    from .laminus import refresh_catalog as _laminus_refresh
+    await _laminus_refresh()
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"machine_presets": 0}

@@ -15,7 +15,7 @@ def test_prepare_hook_raises_slice_error(tmp_path):
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
 
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="prepare_hook"):
             svc.slice(_req(prepare_hook=MagicMock()))
 
@@ -25,13 +25,13 @@ def test_no_hook_with_sidecar_succeeds(tmp_path):
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
 
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = {
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = {
         "machine": [{"name": "M", "uuid": "m1"}],
         "process": [{"name": "P", "uuid": "p1"}],
         "filament": [{"name": "F", "uuid": "f1"}],
     }
 
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
          patch.object(SlicerService, "_execute_slice_by_ids", return_value="out.gcode"):
         assert svc.slice(_req()) == "out.gcode"

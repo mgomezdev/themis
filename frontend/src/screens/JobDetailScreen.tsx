@@ -239,11 +239,21 @@ export function JobDetailScreen() {
               )}
 
               <div className="row gap-5" style={{ flexWrap: 'wrap' }}>
-                {job.plate?.estimated_time != null && (
-                  <Kv k="Est. print" v={<span className="num small">{fmtTime(Math.round(job.plate.estimated_time / 60))}</span>} />
+                {(job.estimated_seconds != null || job.plate?.estimated_time != null) && (
+                  <Kv k="Est. print" v={
+                    <span className="num small">
+                      {fmtTime(Math.round((job.estimated_seconds ?? job.plate!.estimated_time!) / 60))}
+                      {job.estimated_seconds != null && <span className="muted tiny" style={{ marginLeft: 4 }}>actual</span>}
+                    </span>
+                  } />
                 )}
-                {job.plate?.filament_g != null && (
-                  <Kv k="Filament" v={<span className="num small">{job.plate.filament_g.toFixed(1)} g</span>} />
+                {(job.filament_grams != null || job.plate?.filament_g != null) && (
+                  <Kv k="Filament" v={
+                    <span className="num small">
+                      {(job.filament_grams ?? job.plate!.filament_g!).toFixed(1)} g
+                      {job.filament_grams != null && <span className="muted tiny" style={{ marginLeft: 4 }}>actual</span>}
+                    </span>
+                  } />
                 )}
                 {job.queue_position != null && (
                   <Kv k="Queue pos." v={<span className="num small">#{job.queue_position}</span>} />

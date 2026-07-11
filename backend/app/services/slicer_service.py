@@ -58,10 +58,10 @@ class SlicerService:
         resolution, 3MF assembly, and gcode generation. Raises SliceError if the
         sidecar is unreachable, unconfigured, or any profile is not in its catalog.
         """
-        from ..config import get_orca_sidecar_url
-        sidecar_url = get_orca_sidecar_url()
+        from ..config import get_laminus_sidecar_url
+        sidecar_url = get_laminus_sidecar_url()
         if not sidecar_url:
-            raise SliceError("ORCA_SIDECAR_URL is not configured — Orca sidecar is required for slicing")
+            raise SliceError("LAMINUS_SIDECAR_URL is not configured — Laminus sidecar is required for slicing")
 
         if req.prepare_hook is not None:
             raise SliceError(
@@ -74,7 +74,7 @@ class SlicerService:
         uuids = self._resolve_uuids(req, sidecar_url)
         if uuids is None:
             raise SliceError(
-                f"Profile not found in Orca sidecar catalog — "
+                f"Profile not found in Laminus sidecar catalog — "
                 f"machine={req.machine_preset!r} process={req.process_preset!r} "
                 f"filaments={req.filament_presets!r}"
             )
@@ -96,16 +96,16 @@ class SlicerService:
         """
         # Prefer the Themis-side catalog cache (populated at boot) over a fresh
         # sidecar call. Falls back to a direct fetch only if not yet warmed.
-        from ..api.routes import orca as _orca_module
-        catalog = _orca_module._catalog_dict
+        from ..api.routes import laminus as _laminus_module
+        catalog = _laminus_module._catalog_dict
         if catalog is None:
             try:
-                from .orca_sidecar_client import OrcaSidecarClient
-                catalog = OrcaSidecarClient(sidecar_url).get_catalog()
-                _orca_module._catalog_dict = catalog
+                from .laminus_sidecar_client import LaminusSidecarClient
+                catalog = LaminusSidecarClient(sidecar_url).get_catalog()
+                _laminus_module._catalog_dict = catalog
             except Exception as exc:
                 logger.warning("Could not fetch sidecar catalog: %s", exc)
-                raise SliceError(f"Orca sidecar unreachable — cannot resolve profiles: {exc}") from exc
+                raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
         machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
         process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
         filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
@@ -147,8 +147,8 @@ class SlicerService:
         The sidecar resolves inheritance, builds the 3MF with extra_config merged
         on top, slices, and streams the artifact back. No local file access.
         """
-        from .orca_sidecar_client import OrcaSidecarClient, SidecarError
-        client = OrcaSidecarClient(sidecar_url)
+        from .laminus_sidecar_client import LaminusSidecarClient, SidecarError
+        client = LaminusSidecarClient(sidecar_url)
         export_3mf = _export_3mf_name(req.export_args) is not None
         source = Path(req.source_3mf)
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):

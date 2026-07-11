@@ -78,6 +78,8 @@ export interface ApiJobDetails extends ApiJob {
   plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
   printer_configs: ApiJobPrinterConfig[];
   assigned_printer: { id: number; name: string; printer_type: string } | null;
+  filament_grams: number | null;
+  estimated_seconds: number | null;
 }
 
 /** Build the URL that serves a plate's embedded thumbnail via the files API. */
@@ -238,6 +240,17 @@ export async function verifySlice(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ printer_id: printerId }),
+  });
+}
+
+export async function markJobOutcome(
+  jobId: number,
+  failures: { project_item_id: number; quantity_failed: number }[],
+): Promise<{ failures: { project_item_id: number; quantity_failed: number }[] }> {
+  return request(`/api/v1/jobs/${jobId}/outcome`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ failures }),
   });
 }
 

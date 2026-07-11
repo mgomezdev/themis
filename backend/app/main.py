@@ -22,7 +22,7 @@ from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
-from .api.routes.orca import router as orca_router
+from .api.routes.laminus import router as laminus_router
 from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
 from .api.routes.queue import router as queue_router
@@ -101,19 +101,19 @@ async def lifespan(app: FastAPI):
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
-    from .config import get_orca_sidecar_url as _get_sidecar_url
+    from .config import get_laminus_sidecar_url as _get_sidecar_url
     _sidecar_url = _get_sidecar_url()
     if _sidecar_url:
         try:
-            from .services.orca_sidecar_client import OrcaSidecarClient, SidecarError
-            await asyncio.to_thread(OrcaSidecarClient(_sidecar_url).health)
-            logging.getLogger("app").info("Orca sidecar healthy at %s", _sidecar_url)
+            from .services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+            await asyncio.to_thread(LaminusSidecarClient(_sidecar_url).health)
+            logging.getLogger("app").info("Laminus sidecar healthy at %s", _sidecar_url)
         except Exception as e:
             logging.getLogger("app").warning(
-                "Orca sidecar at %s is not reachable: %s", _sidecar_url, e
+                "Laminus sidecar at %s is not reachable: %s", _sidecar_url, e
             )
         # Kick off catalog warm-up in the background — don't block startup.
-        from .api.routes.orca import warm_catalog_cache as _warm_catalog
+        from .api.routes.laminus import warm_catalog_cache as _warm_catalog
         asyncio.create_task(_warm_catalog())
 
     yield
@@ -131,7 +131,7 @@ app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
-app.include_router(orca_router)
+app.include_router(laminus_router)
 app.include_router(projects_router)
 app.include_router(queue_router)
 app.include_router(settings_router)

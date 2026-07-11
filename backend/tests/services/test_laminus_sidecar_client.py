@@ -1,15 +1,15 @@
-"""Tests for OrcaSidecarClient using httpx.MockTransport."""
+"""Tests for LaminusSidecarClient using httpx.MockTransport."""
 from pathlib import Path
 
 import httpx
 import pytest
 
-from app.services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+from app.services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 
 
-def _client(transport: httpx.MockTransport) -> OrcaSidecarClient:
-    c = OrcaSidecarClient.__new__(OrcaSidecarClient)
-    c._client = httpx.Client(transport=transport, base_url="http://orca:5000")
+def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:
+    c = LaminusSidecarClient.__new__(LaminusSidecarClient)
+    c._client = httpx.Client(transport=transport, base_url="http://laminus:5000")
     return c
 
 

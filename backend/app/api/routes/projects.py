@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -12,11 +13,11 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...config import get_library_dir, get_orca_sidecar_url
+from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import Job, Project, ProjectItem, UploadedFile
+from ...models import GcodeFile, Job, Order, Project, ProjectItem, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
-from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,8 @@ def _item_dict(item: ProjectItem, file_name: str, filament_name: str | None) -> 
         "file_id": item.file_id,
         "file_name": file_name,
         "quantity": item.quantity,
+        "quantity_completed": item.quantity_completed,
+        "quantity_failed": item.quantity_failed,
         "filament_profile_uuid": item.filament_profile_uuid,
         "filament_display_name": filament_name,
         "color_hex": item.color_hex,
@@ -140,6 +143,17 @@ async def _project_dict(
     catalog: dict | None = None,
 ) -> dict:
     items = await _load_items(session, project.id, catalog)
+    jobs_total = (await session.execute(
+        select(func.count()).where(Job.project_id == project.id)
+    )).scalar() or 0
+    jobs_complete = (await session.execute(
+        select(func.count()).where(Job.project_id == project.id, Job.status == "complete")
+    )).scalar() or 0
+    gcode_rows = (await session.execute(
+        select(GcodeFile).join(Job, Job.id == GcodeFile.job_id).where(Job.project_id == project.id)
+    )).scalars().all()
+    total_grams = sum(g.filament_grams for g in gcode_rows if g.filament_grams is not None) or None
+    total_seconds = sum(g.estimated_seconds for g in gcode_rows if g.estimated_seconds is not None) or None
     return {
         "id": project.id,
         "name": project.name,
@@ -147,12 +161,17 @@ async def _project_dict(
         "process_uuid": project.process_uuid,
         "notes": project.notes,
         "result_file_id": project.result_file_id,
+        "order_id": project.order_id,
         "source_app": project.source_app,
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
+        "jobs_total": jobs_total,
+        "jobs_complete": jobs_complete,
+        "filament_grams": round(total_grams, 2) if total_grams is not None else None,
+        "estimated_seconds": total_seconds,
     }
 
 
@@ -208,8 +227,8 @@ async def get_project(
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
     catalog = None
-    if get_orca_sidecar_url():
-        from .orca import _catalog_dict
+    if get_laminus_sidecar_url():
+        from .laminus import _catalog_dict
         catalog = _catalog_dict
     return await _project_dict(proj, session, catalog)
 
@@ -382,9 +401,27 @@ async def generate_project(
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
 
-    sidecar_url = get_orca_sidecar_url()
+    # Create a linked internal Order on first generate so jobs appear in the Orders view
+    if proj.order_id is None:
+        now_ts = _now_iso()
+        order = Order(
+            order_type="internal",
+            customer="",
+            title=proj.name,
+            on_hold=False,
+            parts=[],
+            created_at=now_ts,
+            updated_at=now_ts,
+        )
+        session.add(order)
+        await session.commit()
+        await session.refresh(order)
+        proj.order_id = order.id
+        await session.commit()
+
+    sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
-        raise HTTPException(422, "ORCA_SIDECAR_URL is not configured — Orca sidecar required for generation")
+        raise HTTPException(422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
 
     # Load items ordered by sort_order, id
     item_rows = (
@@ -398,12 +435,20 @@ async def generate_project(
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Group items by (filament_profile_uuid, color_hex), preserving item order
+    # Group items by (filament_profile_uuid, color_hex), preserving item order.
+    # Items with no profile are skipped — the caller is expected to show a
+    # "assign filament profiles" banner; those items simply produce no job.
     groups: dict[tuple[str, str], list[ProjectItem]] = {}
     for item in item_rows:
         if not item.filament_profile_uuid:
-            raise HTTPException(422, f"Item {item.id} has no filament profile assigned")
+            continue
         groups.setdefault((item.filament_profile_uuid, item.color_hex), []).append(item)
+
+    if not groups:
+        raise HTTPException(
+            status_code=422,
+            detail="No items have filament profiles assigned — assign profiles in Themis before generating",
+        )
 
     # Resolve STL paths per group (repeated per quantity) and validate
     group_paths: dict[tuple[str, str], list[Path]] = {}
@@ -447,11 +492,13 @@ async def generate_project(
     projects_dir = library_dir / "Projects"
     projects_dir.mkdir(parents=True, exist_ok=True)
 
-    client = OrcaSidecarClient(sidecar_url)
+    client = LaminusSidecarClient(sidecar_url)
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
     for (fil_uuid, color_hex), stl_paths in group_paths.items():
+        group_items = groups[(fil_uuid, color_hex)]
+
         try:
             packed_bytes = await asyncio.to_thread(
                 client.pack_stls_by_uuid,
@@ -499,17 +546,32 @@ async def generate_project(
             "plate_count": len(plate_nums),
         })
 
+        # Compute per-plate quantity distribution for each item
+        effective_plates = plate_nums or [1]
+        num_plates = len(effective_plates)
+        plate_item_qtys: list[dict[str, int]] = []
+        for i in range(num_plates):
+            plate_q: dict[str, int] = {}
+            for item in group_items:
+                base = item.quantity // num_plates
+                extra = 1 if i < (item.quantity % num_plates) else 0
+                plate_q[str(item.id)] = base + extra
+            plate_item_qtys.append(plate_q)
+
         # One queued job per plate
         next_pos = await _max_queue_position(session) + 1.0
         new_jobs: list[Job] = []
-        for plate_num in (plate_nums or [1]):
+        for plate_idx, plate_num in enumerate(effective_plates):
             job = Job(
                 uploaded_file_id=new_file.id,
                 plate_number=plate_num,
+                project_id=proj.id,
+                order_id=proj.order_id,
                 queue_position=next_pos,
                 status="queued",
                 created_at=now,
                 updated_at=now,
+                project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
             )
             session.add(job)
             new_jobs.append(job)
@@ -526,4 +588,4 @@ async def generate_project(
     proj.updated_at = _now_iso()
     await session.commit()
 
-    return {"project_id": proj.id, "jobs": jobs_out, "files": files_out}
+    return {"project_id": proj.id, "order_id": proj.order_id, "jobs": jobs_out, "files": files_out}

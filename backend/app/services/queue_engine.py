@@ -3,16 +3,61 @@ import asyncio
 import logging
 import os
 import re
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Callable
 
+import httpx
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import GcodeFile, Job, JobPrinterConfig, Printer, QueueConfig, UploadedFile
+from ..config import get_laminus_sidecar_url
+from ..models import GcodeFile, Job, JobPrinterConfig, Printer, QueueConfig, UploadedFile, WebhookConfig
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
+from . import webhook_service
+
+
+def _parse_gcode_estimates(path: str) -> tuple[float | None, int | None]:
+    """Extract filament_grams and estimated_seconds from a .gcode or .gcode.3mf file."""
+    try:
+        if path.endswith(".3mf"):
+            with zipfile.ZipFile(path) as z:
+                names = [n for n in z.namelist() if n.endswith(".gcode")]
+                if not names:
+                    return None, None
+                text = z.read(names[0]).decode("utf-8", errors="replace")[:16000]
+        else:
+            with open(path, "r", errors="replace") as f:
+                text = f.read(16000)
+    except Exception:
+        return None, None
+
+    grams: float | None = None
+    seconds: int | None = None
+    for raw in text.splitlines():
+        line = raw.lstrip("; ").strip()
+        if "filament used [g]" in line.lower():
+            try:
+                grams = float(line.split("=")[-1].strip())
+            except ValueError:
+                pass
+        if "estimated printing time" in line.lower():
+            time_str = re.split(r"\s*\(", line.split("=")[-1].strip())[0].strip()
+            total = 0
+            for num, unit in re.findall(r"(\d+)([hms])", time_str):
+                if unit == "h":
+                    total += int(num) * 3600
+                elif unit == "m":
+                    total += int(num) * 60
+                else:
+                    total += int(num)
+            if total > 0:
+                seconds = total
+        if grams is not None and seconds is not None:
+            break
+    return grams, seconds
 
 logger = logging.getLogger(__name__)
 
@@ -293,6 +338,7 @@ class QueueEngine:
                     if job is None or job.status != "printing":
                         continue  # already resolved by the normal callback
                     job.status = "failed"
+                    job.completed_at = _now()
                     job.block_reason = "print cancelled or ended with failure on the printer"
                     job.assigned_printer_id = None
                     job.updated_at = _now()
@@ -356,6 +402,23 @@ class QueueEngine:
         mismatch = _filament_mismatch(config, printer.loaded_filaments)
         if mismatch:
             await self._block_job(session, job, mismatch)
+            return
+
+        # Pre-flight: ensure Laminus is reachable before claiming this job.
+        # Block (not fail) so the job auto-retries when Laminus comes back.
+        sidecar_url = get_laminus_sidecar_url()
+        if not sidecar_url:
+            await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
+            return
+        try:
+            r = await asyncio.to_thread(
+                lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
+            )
+            if not r.is_success:
+                await self._block_job(session, job, "Laminus is not ready — slicing paused")
+                return
+        except Exception:
+            await self._block_job(session, job, "Laminus is unreachable — slicing paused")
             return
 
         # Claim → slice.
@@ -480,7 +543,11 @@ class QueueEngine:
             job = await session.get(Job, job_id)
             if job is None or job.status == "cancelled":
                 return
-            gcode_rec = GcodeFile(job_id=job_id, printer_id=printer_id, path=gcode_path)
+            grams, secs = _parse_gcode_estimates(gcode_path)
+            gcode_rec = GcodeFile(
+                job_id=job_id, printer_id=printer_id, path=gcode_path,
+                filament_grams=grams, estimated_seconds=secs,
+            )
             session.add(gcode_rec)
             if slice_only or not self._mgr.is_printer_ready(printer_id):
                 job.status = "sliced"
@@ -522,12 +589,14 @@ class QueueEngine:
             await session.commit()
 
         await self._broadcast_job(job_id)
+        await self._fire_webhooks(job_id, "job.blocked")
 
     async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job:
                 job.status = "failed"
+                job.completed_at = _now()
                 job.block_reason = reason
                 job.assigned_printer_id = None
                 job.updated_at = _now()
@@ -547,6 +616,7 @@ class QueueEngine:
                 await session.delete(gcode)
             await session.commit()
         await self._broadcast_job(job_id)
+        await self._fire_webhooks(job_id, "job.failed")
 
     async def _has_pending_sliced_job(self, session: AsyncSession, printer_id: int) -> bool:
         stmt = (
@@ -689,6 +759,7 @@ class QueueEngine:
                 return
             job_id = job.id
             job.status = "complete"
+            job.completed_at = _now()
             job.updated_at = _now()
 
             # Delete gcode file from disk and DB
@@ -708,6 +779,16 @@ class QueueEngine:
             await session.commit()
 
         await self._broadcast_job(job_id)
+        await self._fire_webhooks(job_id, "job.complete")
+
+    async def _fire_webhooks(self, job_id: int, event: str) -> None:
+        try:
+            async with self._factory() as session:
+                cfg = await session.get(WebhookConfig, 1)
+            if cfg and cfg.url and (not cfg.events or event in cfg.events):
+                webhook_service.schedule(cfg.url, cfg.secret, event, job_id)
+        except Exception:
+            logger.exception("Failed to load webhook config for job %s", job_id)
 
     async def _broadcast_job(self, job_id: int | None) -> None:
         if not self._broadcast_cb or job_id is None:
@@ -721,6 +802,7 @@ class QueueEngine:
                         "status": job.status,
                         "assigned_printer_id": job.assigned_printer_id,
                         "queue_position": job.queue_position,
+                        "project_id": job.project_id,
                     })
                 # Full queue broadcast (active jobs only)
                 result = await session.execute(

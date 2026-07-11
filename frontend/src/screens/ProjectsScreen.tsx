@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Icons } from '../components/icons';
-import { Empty } from '../components/ui';
+import { Empty, Progress } from '../components/ui';
 import { useProjects, deleteProject, generateProject, type Project } from '../api/projects';
 
 function summarise(p: Project) {
@@ -59,6 +59,15 @@ function ProjectCard({
         )}
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-1)' }}>{project.name}</div>
         <div style={{ fontSize: 12, color: 'var(--text-3)' }}>{summarise(project)}</div>
+        {project.jobs_total > 0 && (
+          <div style={{ marginTop: 4 }}>
+            <Progress value={project.jobs_total > 0 ? (project.jobs_complete / project.jobs_total) * 100 : 0}
+                      tone={project.jobs_complete === project.jobs_total ? 'ok' : undefined} />
+            <div style={{ fontSize: 11, color: 'var(--text-3)', marginTop: 2 }}>
+              {project.jobs_complete} / {project.jobs_total} jobs complete
+            </div>
+          </div>
+        )}
         {error && <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 2 }}>{error}</div>}
       </div>
       <div style={{ display: 'flex', gap: 6 }}>

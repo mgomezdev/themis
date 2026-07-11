@@ -38,10 +38,10 @@ def _make_service(tmp_path):
 
 def test_raises_when_no_sidecar_url(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
-    with patch("app.config.get_orca_sidecar_url", return_value=None):
-        with pytest.raises(SliceError, match="ORCA_SIDECAR_URL"):
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
+    with patch("app.config.get_laminus_sidecar_url", return_value=None):
+        with pytest.raises(SliceError, match="LAMINUS_SIDECAR_URL"):
             svc.slice(_req(tmp_path))
 
 
@@ -52,10 +52,10 @@ def test_raises_when_machine_not_in_catalog(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = catalog
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
-        with pytest.raises(SliceError, match="not found in Orca sidecar catalog"):
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
 
 
@@ -66,38 +66,38 @@ def test_raises_when_filament_not_in_catalog(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [],
     }
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = catalog
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
-        with pytest.raises(SliceError, match="not found in Orca sidecar catalog"):
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
 
 
 def test_raises_with_clear_message_when_sidecar_unreachable(tmp_path):
     """Catalog fetch failure surfaces 'unreachable', not a misleading profile-not-found message."""
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = None  # force a live sidecar fetch
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = None  # force a live sidecar fetch
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.get_catalog.side_effect = _mod.SidecarError("Connection refused")
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client):
-        with pytest.raises(SliceError, match="Orca sidecar unreachable"):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+        with pytest.raises(SliceError, match="Laminus sidecar unreachable"):
             svc.slice(_req(tmp_path))
 
 
 def test_sidecar_error_converted_to_slice_error(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.slice_start.side_effect = _mod.SidecarError("timeout")
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
         with pytest.raises(SliceError, match="timeout"):
             svc.slice(_req(tmp_path))
 
@@ -106,21 +106,21 @@ def test_sidecar_error_converted_to_slice_error(tmp_path):
 
 def test_default_returns_raw_gcode(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
 
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
     gcode.parent.mkdir(parents=True, exist_ok=True)
     gcode.write_text("G28\n")
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "job-1"
     mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
     mock_client.download.return_value = gcode
 
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
         path = svc.slice(_req(tmp_path))
 
     assert path == str(gcode)
@@ -131,21 +131,21 @@ def test_default_returns_raw_gcode(tmp_path):
 
 def test_export_3mf_flag_forwarded(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
 
     archive = tmp_path / "gcode" / "1" / "model.gcode.3mf"
     archive.parent.mkdir(parents=True, exist_ok=True)
     archive.write_bytes(b"PK")
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "job-1"
     mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "model.gcode.3mf"}
     mock_client.download.return_value = archive
 
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
         path = svc.slice(_req(tmp_path, export_args=["--export-3mf", "model.gcode.3mf"]))
 
     assert path.endswith("model.gcode.3mf")
@@ -155,22 +155,22 @@ def test_export_3mf_flag_forwarded(tmp_path):
 
 def test_extra_config_passed_to_client(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
 
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
     gcode.parent.mkdir(parents=True, exist_ok=True)
     gcode.write_text("G28\n")
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "job-1"
     mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
     mock_client.download.return_value = gcode
 
     overrides = {"curr_bed_type": "textured_plate", "layer_height": "0.15"}
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client):
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
         svc.slice(_req(tmp_path, extra_config=overrides))
 
     call_kw = mock_client.slice_start.call_args[1]
@@ -179,15 +179,15 @@ def test_extra_config_passed_to_client(tmp_path):
 
 def test_slice_calls_inject_thumbnail_for_3mf_source(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = _DEFAULT_CATALOG
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = _DEFAULT_CATALOG
 
     three_mf = _3mf_with_thumb(tmp_path, plate=1)
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
     gcode.parent.mkdir(parents=True, exist_ok=True)
     gcode.write_text("G28\n")
 
-    from app.services import orca_sidecar_client as _mod
+    from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "job-1"
     mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
@@ -196,8 +196,8 @@ def test_slice_calls_inject_thumbnail_for_3mf_source(tmp_path):
     req = _req(tmp_path)
     req.source_3mf = str(three_mf)
 
-    with patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"), \
-         patch.object(_mod, "OrcaSidecarClient", return_value=mock_client), \
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client), \
          patch.object(svc, "_inject_thumbnail") as mock_inject:
         svc.slice(req)
 

@@ -135,8 +135,8 @@ def test_extra_config_forwarded_to_sidecar():
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = Path("/tmp")
 
-    import app.api.routes.orca as _orca
-    _orca._catalog_dict = {
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = {
         "machine": [{"name": "MyPrinter", "uuid": "m1"}],
         "process": [{"name": "MyProcess", "uuid": "p1"}],
         "filament": [{"name": "MyFilament", "uuid": "f1"}],
@@ -155,7 +155,7 @@ def test_extra_config_forwarded_to_sidecar():
     mock_client.download.return_value = Path("/tmp/out.gcode")
 
     with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \
-         patch("app.config.get_orca_sidecar_url", return_value="http://orca:5000"):
+         patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         mock_exec.return_value = "/tmp/out.gcode"
         svc.slice(req)
 
@@ -173,9 +173,9 @@ def test_slice_raises_without_sidecar():
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
         machine_preset="m", process_preset="p", filament_presets=["f"],
     )
-    with patch("app.config.get_orca_sidecar_url", return_value=None):
+    with patch("app.config.get_laminus_sidecar_url", return_value=None):
         try:
             svc.slice(req)
             assert False, "expected SliceError"
         except SliceError as e:
-            assert "ORCA_SIDECAR_URL" in str(e)
+            assert "LAMINUS_SIDECAR_URL" in str(e)

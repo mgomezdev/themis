@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Printer, QueueConfig, SpoolmanConfig
+from ...models import Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
 from ...services.printer_client_factory import REGISTRY, create_client
 from ...services.printer_manager import printer_manager
@@ -128,6 +128,53 @@ async def test_spoolman_connection(
 
 
 # ---------------------------------------------------------------------------
+# Webhook config
+# ---------------------------------------------------------------------------
+
+class WebhookConfigOut(BaseModel):
+    url: str | None
+    secret: str | None
+    events: list[str]
+
+
+class WebhookConfigIn(BaseModel):
+    url: str | None = None
+    secret: str | None = None
+    events: list[str] | None = None
+
+
+async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
+    row = await session.get(WebhookConfig, 1)
+    if row is None:
+        row = WebhookConfig(id=1, events=[])
+        session.add(row)
+        await session.flush()
+    return row
+
+
+@router.get("/webhook", response_model=WebhookConfigOut)
+async def get_webhook_config(session: AsyncSession = Depends(get_session)):
+    return await _get_or_create_webhook(session)
+
+
+@router.put("/webhook", response_model=WebhookConfigOut)
+async def update_webhook_config(
+    body: WebhookConfigIn,
+    session: AsyncSession = Depends(get_session),
+):
+    row = await _get_or_create_webhook(session)
+    if body.url is not None:
+        row.url = body.url or None
+    if body.secret is not None:
+        row.secret = body.secret or None
+    if body.events is not None:
+        row.events = body.events
+    await session.commit()
+    await session.refresh(row)
+    return row
+
+
+# ---------------------------------------------------------------------------
 # Fleet backup / restore
 # ---------------------------------------------------------------------------
 
@@ -190,7 +237,7 @@ async def fleet_import(
         raise HTTPException(400, f"Unsupported backup version: {version}")
 
     # Fetch catalog once for profile-name validation (best-effort)
-    from .orca import get_cached_catalog
+    from .laminus import get_cached_catalog
     cat: dict | None = None
     try:
         cat = await get_cached_catalog()

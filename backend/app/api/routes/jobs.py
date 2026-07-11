@@ -1,18 +1,20 @@
 from __future__ import annotations
 import asyncio
+import json
 import logging
 import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Order, Printer, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
@@ -73,12 +75,16 @@ def _to_dict(j: Job) -> dict:
         "uploaded_file_id": j.uploaded_file_id,
         "plate_number": j.plate_number,
         "order_id": j.order_id,
+        "project_id": j.project_id,
         "assigned_printer_id": j.assigned_printer_id,
         "queue_position": j.queue_position,
         "status": j.status,
         "overrides": j.overrides,
+        "outcome": j.outcome,
+        "project_item_quantities": json.loads(j.project_item_quantities) if j.project_item_quantities else None,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
+        "completed_at": j.completed_at,
     }
 
 
@@ -195,14 +201,14 @@ async def check_overrides(
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
     # project config. If the sidecar is unavailable or any required UUID is missing,
     # skip the diff rather than blocking job creation.
-    from ...config import get_orca_sidecar_url
-    from ...services.orca_sidecar_client import OrcaSidecarClient, SidecarError
+    from ...config import get_laminus_sidecar_url
+    from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 
-    sidecar_url = get_orca_sidecar_url()
+    sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:
-        return {**empty, "has_embedded_settings": True, "error": "Override check requires Orca sidecar"}
+        return {**empty, "has_embedded_settings": True, "error": "Override check requires Laminus sidecar"}
 
-    from ..routes.orca import get_cached_catalog
+    from ..routes.laminus import get_cached_catalog
     try:
         catalog = await get_cached_catalog()
     except Exception as e:
@@ -230,7 +236,8 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
 
     try:
-        config = await loop.run_in_executor(
+        client = LaminusSidecarClient(sidecar_url)
+        config = await asyncio.get_running_loop().run_in_executor(
             None, client.get_merged_config, machine_uuid, process_uuid, [filament_uuid]
         )
     except SidecarError as e:
@@ -244,6 +251,36 @@ async def check_overrides(
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     result = await session.execute(select(Job).order_by(Job.queue_position))
     return [_to_dict(j) for j in result.scalars().all()]
+
+
+@router.get("/history")
+async def list_history(
+    status: str = "complete,cancelled,failed",
+    project_id: Optional[int] = None,
+    limit: int = 100,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    statuses = [s.strip() for s in status.split(",") if s.strip()]
+    q = select(Job).where(Job.status.in_(statuses))
+    if project_id is not None:
+        q = q.where(Job.project_id == project_id)
+    q = q.order_by(Job.updated_at.desc()).limit(limit)
+    jobs = (await session.execute(q)).scalars().all()
+
+    out = []
+    for j in jobs:
+        d = _to_dict(j)
+        # Enrich with file name
+        f = await session.get(UploadedFile, j.uploaded_file_id)
+        d["file_name"] = f.original_filename if f else None
+        # Enrich with assigned printer name
+        p = await session.get(Printer, j.assigned_printer_id) if j.assigned_printer_id else None
+        d["printer_name"] = p.name if p else None
+        # Enrich with project name
+        proj = await session.get(Project, j.project_id) if j.project_id else None
+        d["project_name"] = proj.name if proj else None
+        out.append(d)
+    return out
 
 
 @router.get("/{job_id}")
@@ -308,6 +345,11 @@ async def get_job_details(
         if p:
             assigned_printer = {"id": p.id, "name": p.name, "printer_type": p.printer_type}
 
+    gcode_result = await session.execute(
+        select(GcodeFile).where(GcodeFile.job_id == job_id).limit(1)
+    )
+    gcode_rec = gcode_result.scalar_one_or_none()
+
     return {
         **_to_dict(job),
         "block_reason": job.block_reason,
@@ -315,6 +357,8 @@ async def get_job_details(
         "plate": plate_info,
         "printer_configs": printer_configs,
         "assigned_printer": assigned_printer,
+        "filament_grams": gcode_rec.filament_grams if gcode_rec else None,
+        "estimated_seconds": gcode_rec.estimated_seconds if gcode_rec else None,
     }
 
 
@@ -345,6 +389,7 @@ async def cancel_job(
             await session.delete(gcode_row)
 
     job.status = "cancelled"
+    job.completed_at = datetime.now(timezone.utc).isoformat()
     job.assigned_printer_id = None
     job.queue_position = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
@@ -564,3 +609,80 @@ async def get_slice_failures(
         }
         for c in result.scalars().all()
     ]
+
+
+class OutcomeFailureItem(BaseModel):
+    project_item_id: int
+    quantity_failed: int
+
+
+class OutcomeBody(BaseModel):
+    failures: list[OutcomeFailureItem] = []
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+@router.put("/{job_id}/outcome")
+async def mark_job_outcome(
+    job_id: int,
+    body: OutcomeBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    job = await _get_or_404(job_id, session)
+
+    if job.project_item_quantities is None:
+        raise HTTPException(400, "This job has no project items to mark")
+
+    plate_quantities: dict[str, int] = json.loads(job.project_item_quantities)
+
+    # Reverse previous increments
+    old_jifs = (await session.execute(
+        select(JobItemFailure).where(JobItemFailure.job_id == job_id)
+    )).scalars().all()
+
+    for jif in old_jifs:
+        pi = await session.get(ProjectItem, jif.project_item_id)
+        if pi is not None:
+            pi.quantity_failed = max(0, pi.quantity_failed - jif.quantity_failed)
+            pi.quantity_completed = max(0, pi.quantity_completed - (jif.quantity_on_plate - jif.quantity_failed))
+
+    # Delete existing failure records
+    await session.execute(delete(JobItemFailure).where(JobItemFailure.job_id == job_id))
+
+    # Parse new failures
+    failures_in: dict[int, int] = {
+        f.project_item_id: f.quantity_failed
+        for f in body.failures
+    }
+
+    # Apply new increments
+    new_failures: list[dict] = []
+    for k, qty_on_plate in plate_quantities.items():
+        item_id = int(k)
+        qty_failed = max(0, min(failures_in.get(item_id, 0), qty_on_plate))
+        qty_succeeded = qty_on_plate - qty_failed
+
+        if qty_on_plate > 0:
+            jif = JobItemFailure(
+                job_id=job.id,
+                project_item_id=item_id,
+                quantity_failed=qty_failed,
+                quantity_on_plate=qty_on_plate,
+            )
+            session.add(jif)
+
+        pi = await session.get(ProjectItem, item_id)
+        if pi is not None:
+            pi.quantity_failed += qty_failed
+            pi.quantity_completed += qty_succeeded
+
+        new_failures.append({"project_item_id": item_id, "quantity_failed": qty_failed})
+
+    job.outcome = "reviewed"
+    job.updated_at = _now()
+    await session.commit()
+    await session.refresh(job)
+
+    return {**_to_dict(job), "failures": new_failures}

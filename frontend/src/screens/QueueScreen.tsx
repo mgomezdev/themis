@@ -634,9 +634,23 @@ export function QueueScreen() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
+  const [laminusDown, setLaminusDown] = useState(false);
 
   const { jobs: rawJobs, refetch } = useQueue();
   const [printers] = useFleetData();
+
+  React.useEffect(() => {
+    let alive = true;
+    function poll() {
+      fetch('/api/v1/laminus/catalog/status')
+        .then(r => r.ok ? r.json() : Promise.reject())
+        .then((d: { laminus: unknown }) => { if (alive) setLaminusDown(d.laminus === null); })
+        .catch(() => { if (alive) setLaminusDown(true); });
+    }
+    poll();
+    const id = setInterval(poll, 30000);
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   // Collect unique file IDs to load plate metadata
   const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
@@ -755,6 +769,25 @@ export function QueueScreen() {
               sub="serial est."
               mono
             />
+          </div>
+        )}
+
+        {/* Laminus health banner */}
+        {laminusDown && (
+          <div style={{
+            padding: '10px 14px',
+            marginBottom: 14,
+            borderRadius: 6,
+            background: 'rgba(245,158,11,0.1)',
+            border: '1px solid rgba(245,158,11,0.35)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+          }}>
+            <span style={{ color: 'var(--warn, #f59e0b)', fontSize: 15 }}>⚠</span>
+            <span className="small" style={{ color: 'var(--text-1)' }}>
+              <strong>Laminus sidecar is unreachable.</strong> Slicing is paused — queued jobs will be blocked until the sidecar comes back online.
+            </span>
           </div>
         )}
 
