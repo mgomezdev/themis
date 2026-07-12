@@ -36,14 +36,22 @@ def _to_dict(t: Tag, usage: int) -> dict:
             "category": t.category, "usage_count": usage}
 
 
-@router.get("")
+@router.get("", summary="List tags")
 async def list_tags(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All tags ordered by category then name, each with a usage_count of how many files carry it."""
     usage = await _usage_counts(session)
     tags = (await session.execute(select(Tag).order_by(Tag.category, Tag.name))).scalars().all()
     return [_to_dict(t, usage.get(t.id, 0)) for t in tags]
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    summary="Create tag",
+    responses={
+        409: {"description": "A tag with this name already exists"},
+    },
+)
 async def create_tag(body: TagCreate, session: AsyncSession = Depends(get_session)) -> dict:
     existing = (await session.execute(select(Tag).where(Tag.name == body.name))).scalar_one_or_none()
     if existing is not None:
@@ -56,7 +64,14 @@ async def create_tag(body: TagCreate, session: AsyncSession = Depends(get_sessio
     return _to_dict(tag, 0)
 
 
-@router.patch("/{tag_id}")
+@router.patch(
+    "/{tag_id}",
+    summary="Update tag",
+    responses={
+        404: {"description": "Tag not found"},
+        409: {"description": "A tag with the requested name already exists"},
+    },
+)
 async def update_tag(tag_id: int, body: TagPatch, session: AsyncSession = Depends(get_session)) -> dict:
     tag = await session.get(Tag, tag_id)
     if tag is None:
@@ -75,7 +90,13 @@ async def update_tag(tag_id: int, body: TagPatch, session: AsyncSession = Depend
     return _to_dict(tag, usage)
 
 
-@router.delete("/{tag_id}")
+@router.delete(
+    "/{tag_id}",
+    summary="Delete tag",
+    responses={
+        404: {"description": "Tag not found"},
+    },
+)
 async def delete_tag(tag_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     tag = await session.get(Tag, tag_id)
     if tag is None:

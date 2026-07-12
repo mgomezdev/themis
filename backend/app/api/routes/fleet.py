@@ -51,7 +51,9 @@ def _fleet_dict(p: Printer) -> dict:
     return {**base, **live}
 
 
-@router.get("")
+@router.get("", summary="Fleet live state")
 async def list_fleet(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All printers with live telemetry (temperatures, progress, print state) merged in.
+    Offline or disconnected printers return a zeroed-out state block."""
     result = await session.execute(select(Printer))
     return [_fleet_dict(p) for p in result.scalars().all()]

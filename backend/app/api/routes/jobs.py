@@ -116,11 +116,21 @@ async def _front_queue_position(session: AsyncSession) -> float:
     return (current_min or 1.0) - 1.0
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    summary="Create job",
+    responses={
+        404: {"description": "File, printer, or order not found"},
+        422: {"description": "printer_configs is empty"},
+    },
+)
 async def create_job(
     body: JobCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Queue a new print job for a specific file plate. At least one printer config is required.
+    The job is added at the end of the queue and the engine is woken immediately."""
     # Validate file exists
     uploaded_file = await session.get(UploadedFile, body.uploaded_file_id)
     if uploaded_file is None:
@@ -177,7 +187,13 @@ async def create_job(
     return _to_dict(job)
 
 
-@router.post("/check-overrides")
+@router.post(
+    "/check-overrides",
+    summary="Check embedded settings vs presets",
+    responses={
+        404: {"description": "File or printer not found"},
+    },
+)
 async def check_overrides(
     body: OverrideCheckRequest,
     session: AsyncSession = Depends(get_session),
@@ -247,19 +263,22 @@ async def check_overrides(
     return inspect_overrides(uploaded_file.stored_path, config, slots)
 
 
-@router.get("")
+@router.get("", summary="List active jobs")
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All jobs ordered by queue position. Includes jobs in all statuses."""
     result = await session.execute(select(Job).order_by(Job.queue_position))
     return [_to_dict(j) for j in result.scalars().all()]
 
 
-@router.get("/history")
+@router.get("/history", summary="List job history")
 async def list_history(
     status: str = "complete,cancelled,failed",
     project_id: Optional[int] = None,
     limit: int = 100,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """Completed/cancelled/failed jobs enriched with file name, printer name, and project name.
+    `status` is a comma-separated list; `project_id` filters to a single project."""
     statuses = [s.strip() for s in status.split(",") if s.strip()]
     q = select(Job).where(Job.status.in_(statuses))
     if project_id is not None:
@@ -283,7 +302,13 @@ async def list_history(
     return out
 
 
-@router.get("/{job_id}")
+@router.get(
+    "/{job_id}",
+    summary="Get job",
+    responses={
+        404: {"description": "Job not found"},
+    },
+)
 async def get_job(
     job_id: int,
     session: AsyncSession = Depends(get_session),
@@ -291,7 +316,13 @@ async def get_job(
     return _to_dict(await _get_or_404(job_id, session))
 
 
-@router.get("/{job_id}/details")
+@router.get(
+    "/{job_id}/details",
+    summary="Get job details",
+    responses={
+        404: {"description": "Job not found"},
+    },
+)
 async def get_job_details(
     job_id: int,
     session: AsyncSession = Depends(get_session),
@@ -362,11 +393,20 @@ async def get_job_details(
     }
 
 
-@router.post("/{job_id}/cancel")
+@router.post(
+    "/{job_id}/cancel",
+    summary="Cancel job",
+    responses={
+        404: {"description": "Job not found"},
+        422: {"description": "Job is in a non-cancellable status"},
+    },
+)
 async def cancel_job(
     job_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Cancel a queued, printing, paused, slicing, or failed job. If a printer is
+    physically running the job it receives a stop command. A parked gcode file is deleted."""
     job = await _get_or_404(job_id, session)
     if job.status not in _CANCELLABLE_STATUSES:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be cancelled")
@@ -414,7 +454,14 @@ class JobConfigsUpdate(BaseModel):
     overrides: dict | None = None
 
 
-@router.patch("/{job_id}/configs")
+@router.patch(
+    "/{job_id}/configs",
+    summary="Update job configs",
+    responses={
+        404: {"description": "Job or printer not found"},
+        422: {"description": "Job is not in an editable status or printer_configs is empty"},
+    },
+)
 async def update_job_configs(
     job_id: int,
     body: JobConfigsUpdate,
@@ -465,7 +512,14 @@ async def update_job_configs(
     return _to_dict(job)
 
 
-@router.post("/{job_id}/unblock")
+@router.post(
+    "/{job_id}/unblock",
+    summary="Unblock job",
+    responses={
+        404: {"description": "Job not found"},
+        422: {"description": "Job is not in blocked status"},
+    },
+)
 async def unblock_job(
     job_id: int,
     session: AsyncSession = Depends(get_session),
@@ -499,13 +553,20 @@ class VerifySliceBody(BaseModel):
     printer_id: int
 
 
-@router.post("/{job_id}/verify-slice")
+@router.post(
+    "/{job_id}/verify-slice",
+    summary="Test-slice job",
+    responses={
+        404: {"description": "Job, printer, file, or printer config not found"},
+    },
+)
 async def verify_slice(
     job_id: int,
     body: VerifySliceBody,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Test-slice without printing or modifying job state. Debug use only."""
+    """Test-slice without printing or modifying job state. Debug use only.
+    Returns `{ok: true}` on success or `{ok: false, error: "..."}` on failure."""
     job = await _get_or_404(job_id, session)
 
     printer = await session.get(Printer, body.printer_id)
@@ -588,11 +649,18 @@ async def verify_slice(
         return {"ok": False, "error": f"Unexpected error: {exc}"}
 
 
-@router.get("/{job_id}/slice-failures")
+@router.get(
+    "/{job_id}/slice-failures",
+    summary="Get slice failures",
+    responses={
+        404: {"description": "Job not found"},
+    },
+)
 async def get_slice_failures(
     job_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """Printer configs that failed slicing, with the error message for each."""
     await _get_or_404(job_id, session)
     result = await session.execute(
         select(JobPrinterConfig).where(
@@ -624,12 +692,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-@router.put("/{job_id}/outcome")
+@router.put(
+    "/{job_id}/outcome",
+    summary="Mark job outcome",
+    responses={
+        400: {"description": "Job has no project items to mark"},
+        404: {"description": "Job not found"},
+    },
+)
 async def mark_job_outcome(
     job_id: int,
     body: OutcomeBody,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Record per-item pass/fail counts for a completed project job.
+    Increments `quantity_completed` and `quantity_failed` on each ProjectItem.
+    Calling again replaces the previous outcome (idempotent re-review)."""
     job = await _get_or_404(job_id, session)
 
     if job.project_item_quantities is None:

@@ -216,8 +216,10 @@ async def _get_project_or_404(project_id: int, session: AsyncSession) -> Project
 # Project CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("")
+@router.get("", summary="List projects")
 async def list_projects(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All projects ordered by creation date descending, each with items, links,
+    job counts, and aggregated filament/time estimates."""
     rows = (
         await session.execute(
             select(Project).order_by(Project.created_at.desc())
@@ -226,7 +228,7 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[di
     return [await _project_dict(p, session) for p in rows]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, summary="Create project")
 async def create_project(
     body: ProjectCreate,
     session: AsyncSession = Depends(get_session),
@@ -252,7 +254,13 @@ async def create_project(
     return await _project_dict(proj, session)
 
 
-@router.get("/{project_id}")
+@router.get(
+    "/{project_id}",
+    summary="Get project",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def get_project(
     project_id: int,
     session: AsyncSession = Depends(get_session),
@@ -261,7 +269,13 @@ async def get_project(
     return await _project_dict(proj, session)
 
 
-@router.patch("/{project_id}")
+@router.patch(
+    "/{project_id}",
+    summary="Update project",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def patch_project(
     project_id: int,
     body: ProjectPatch,
@@ -286,7 +300,13 @@ async def patch_project(
     return await _project_dict(proj, session)
 
 
-@router.delete("/{project_id}")
+@router.delete(
+    "/{project_id}",
+    summary="Delete project",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def delete_project(
     project_id: int,
     session: AsyncSession = Depends(get_session),
@@ -297,11 +317,18 @@ async def delete_project(
     return {"deleted": project_id}
 
 
-@router.get("/{project_id}/jobs")
+@router.get(
+    "/{project_id}/jobs",
+    summary="List project jobs",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def list_project_jobs(
     project_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """All jobs belonging to this project, ordered by job ID."""
     await _get_project_or_404(project_id, session)
     rows = (
         await session.execute(
@@ -341,7 +368,13 @@ async def list_project_jobs(
 # Project Item CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("/{project_id}/items")
+@router.get(
+    "/{project_id}/items",
+    summary="List project items",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def list_items(
     project_id: int,
     session: AsyncSession = Depends(get_session),
@@ -350,7 +383,14 @@ async def list_items(
     return await _load_items(session, project_id)
 
 
-@router.post("/{project_id}/items", status_code=201)
+@router.post(
+    "/{project_id}/items",
+    status_code=201,
+    summary="Add item to project",
+    responses={
+        404: {"description": "Project or file not found"},
+    },
+)
 async def add_item(
     project_id: int,
     body: ProjectItemCreate,
@@ -376,7 +416,13 @@ async def add_item(
     return _item_dict(item, f.original_filename)
 
 
-@router.put("/{project_id}/items/{item_id}")
+@router.put(
+    "/{project_id}/items/{item_id}",
+    summary="Update project item",
+    responses={
+        404: {"description": "Project or item not found"},
+    },
+)
 async def update_item(
     project_id: int,
     item_id: int,
@@ -404,7 +450,13 @@ async def update_item(
     return _item_dict(item, fname)
 
 
-@router.delete("/{project_id}/items/{item_id}")
+@router.delete(
+    "/{project_id}/items/{item_id}",
+    summary="Remove item from project",
+    responses={
+        404: {"description": "Project or item not found"},
+    },
+)
 async def delete_item(
     project_id: int,
     item_id: int,
@@ -419,12 +471,20 @@ async def delete_item(
     return {"deleted": item_id}
 
 
-@router.put("/{project_id}/items/reorder")
+@router.put(
+    "/{project_id}/items/reorder",
+    summary="Reorder project items",
+    responses={
+        404: {"description": "Project not found"},
+        422: {"description": "One or more item IDs do not belong to this project"},
+    },
+)
 async def reorder_items(
     project_id: int,
     body: list[ReorderEntry],
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """Set explicit sort_order values for project items. Returns the full updated item list."""
     await _get_project_or_404(project_id, session)
     item_ids = [e.id for e in body]
     rows = (
@@ -448,7 +508,13 @@ async def reorder_items(
 # Project Link CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("/{project_id}/links")
+@router.get(
+    "/{project_id}/links",
+    summary="List project links",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def list_links(
     project_id: int,
     session: AsyncSession = Depends(get_session),
@@ -457,7 +523,14 @@ async def list_links(
     return await _load_links(session, project_id)
 
 
-@router.post("/{project_id}/links", status_code=201)
+@router.post(
+    "/{project_id}/links",
+    status_code=201,
+    summary="Add project link",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
 async def add_link(
     project_id: int,
     body: ProjectLinkCreate,
@@ -477,7 +550,13 @@ async def add_link(
     return _link_dict(link)
 
 
-@router.put("/{project_id}/links/{link_id}")
+@router.put(
+    "/{project_id}/links/{link_id}",
+    summary="Update project link",
+    responses={
+        404: {"description": "Project or link not found"},
+    },
+)
 async def update_link(
     project_id: int,
     link_id: int,
@@ -499,7 +578,13 @@ async def update_link(
     return _link_dict(link)
 
 
-@router.delete("/{project_id}/links/{link_id}")
+@router.delete(
+    "/{project_id}/links/{link_id}",
+    summary="Delete project link",
+    responses={
+        404: {"description": "Project or link not found"},
+    },
+)
 async def delete_link(
     project_id: int,
     link_id: int,
@@ -550,13 +635,25 @@ def _filament_label(fil_type: str, fil_color: str, fil_id: int | None) -> str:
     return "-".join(parts) if parts else "any"
 
 
-@router.post("/{project_id}/generate")
+@router.post(
+    "/{project_id}/generate",
+    summary="Pack STLs and queue jobs",
+    responses={
+        404: {"description": "Project not found or a referenced file is missing"},
+        422: {"description": "Project has no items or contains non-STL files"},
+        502: {"description": "Orca sidecar error during generation"},
+        504: {"description": "Generation timed out"},
+    },
+)
 async def generate_project(
     project_id: int,
     body: GenerateRequest,
     background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Pack project STL items into 3MF files (one per filament group), save them to the library,
+    and queue one job per plate. Returns created job and file IDs plus the bed dimensions used
+    for packing."""
     proj = await _get_project_or_404(project_id, session)
 
     sidecar_url = get_laminus_sidecar_url()

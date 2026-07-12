@@ -115,22 +115,33 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-@router.get("/types")
+@router.get("/types", summary="List printer types")
 async def list_printer_types() -> list[dict]:
+    """Available printer driver types with display name and required connection config fields."""
     return get_printer_types_for_ui()
 
 
-@router.get("")
+@router.get("", summary="List printers")
 async def list_printers(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All configured printers with their current connection status."""
     result = await session.execute(select(Printer))
     return [_to_dict(p) for p in result.scalars().all()]
 
 
-@router.post("", status_code=201)
+@router.post(
+    "",
+    status_code=201,
+    summary="Create printer",
+    responses={
+        422: {"description": "Unknown printer_type"},
+    },
+)
 async def create_printer(
     body: PrinterCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Register a new printer and attempt an immediate connection. Connection failure
+    is non-fatal — the printer is saved and will retry on next restart."""
     if body.printer_type not in REGISTRY:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}. Valid types: {list(REGISTRY.keys())}")
     printer = Printer(
@@ -156,20 +167,19 @@ async def create_printer(
     return _to_dict(printer)
 
 
-@router.get("/orca-presets")
+@router.get("/orca-presets", summary="List OrcaSlicer machine preset names")
 async def list_orca_printer_presets() -> list[str]:
-    loop = asyncio.get_running_loop()
+    """Sorted list of all OrcaSlicer machine preset names available in the sidecar catalog."""
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return []
     return sorted({m["name"] for m in cat.get("machine", []) if m.get("name")})
 
 
-@router.get("/orca-machine-catalog")
+@router.get("/orca-machine-catalog", summary="OrcaSlicer machine catalog")
 async def orca_machine_catalog() -> list[dict]:
     """Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,
     source, uuid}]. Sourced exclusively from the Orca sidecar."""
-    loop = asyncio.get_running_loop()
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return []
@@ -190,7 +200,13 @@ async def orca_machine_catalog() -> list[dict]:
     )
 
 
-@router.post("/rescan-profiles")
+@router.post(
+    "/rescan-profiles",
+    summary="Rescan OrcaSlicer profiles",
+    responses={
+        502: {"description": "Laminus sidecar unreachable"},
+    },
+)
 async def rescan_profiles() -> dict:
     """Trigger a catalog refresh from Orca and report the machine preset count."""
     from .laminus import refresh_catalog as _laminus_refresh
@@ -237,8 +253,16 @@ async def _connect_failure_hint(client) -> str:
             f"or another app is holding the printer's single LAN connection (Bambu allows only one).")
 
 
-@router.post("/test-connection")
+@router.post(
+    "/test-connection",
+    summary="Test printer connection",
+    responses={
+        422: {"description": "Unknown printer_type"},
+    },
+)
 async def test_connection(body: TestConnectionRequest) -> dict:
+    """Attempt to connect with the given config and return `{ok: true}` or
+    `{ok: false, error: "..."}` with a human-readable hint about why it failed."""
     if body.printer_type not in REGISTRY:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
     client = None
@@ -261,17 +285,23 @@ async def test_connection(body: TestConnectionRequest) -> dict:
                 pass
 
 
-@router.get("/{printer_id}/profiles")
+@router.get(
+    "/{printer_id}/profiles",
+    summary="Get printer profiles",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+)
 async def get_profiles(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """OrcaSlicer print and filament profiles compatible with this printer's active machine preset."""
     printer = await _get_or_404(printer_id, session)
     if not printer.current_orca_printer_profile:
         return {"print_profiles": [], "filament_profiles": []}
     machine_name = printer.current_orca_printer_profile
 
-    loop = asyncio.get_running_loop()
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
@@ -287,7 +317,13 @@ async def get_profiles(
     return {"print_profiles": processes, "filament_profiles": filaments}
 
 
-@router.get("/{printer_id}")
+@router.get(
+    "/{printer_id}",
+    summary="Get printer",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+)
 async def get_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
@@ -295,12 +331,20 @@ async def get_printer(
     return _to_dict(await _get_or_404(printer_id, session))
 
 
-@router.patch("/{printer_id}")
+@router.patch(
+    "/{printer_id}",
+    summary="Update printer",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+)
 async def update_printer(
     printer_id: int,
     body: PrinterUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Update one or more printer fields. Omitted fields are left unchanged.
+    `current_orca_printer_profile` supports explicit null to clear the preset."""
     printer = await _get_or_404(printer_id, session)
     if body.name is not None:
         printer.name = body.name
@@ -331,7 +375,14 @@ async def update_printer(
     return _to_dict(printer)
 
 
-@router.delete("/{printer_id}", status_code=204)
+@router.delete(
+    "/{printer_id}",
+    status_code=204,
+    summary="Delete printer",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+)
 async def delete_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
@@ -348,11 +399,18 @@ async def delete_printer(
     await session.commit()
 
 
-@router.post("/{printer_id}/plate-cleared")
+@router.post(
+    "/{printer_id}/plate-cleared",
+    summary="Confirm plate cleared",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+)
 async def plate_cleared(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Mark the printer's bed as cleared so the queue engine can assign the next job."""
     printer = await _get_or_404(printer_id, session)
     printer.awaiting_plate_clear = False
     await session.commit()
@@ -361,12 +419,21 @@ async def plate_cleared(
     return {"ok": True}
 
 
-@router.patch("/{printer_id}/active-preset")
+@router.patch(
+    "/{printer_id}/active-preset",
+    summary="Switch active OrcaSlicer preset",
+    responses={
+        404: {"description": "Printer not found"},
+        422: {"description": "Preset not in this printer's configured profiles"},
+    },
+)
 async def switch_active_preset(
     printer_id: int,
     body: ActivePresetUpdate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Change the active OrcaSlicer machine preset. The preset must already be in
+    the printer's `orca_printer_profiles` list."""
     printer = await _get_or_404(printer_id, session)
     if body.preset not in (printer.orca_printer_profiles or []):
         raise HTTPException(422, f"Preset {body.preset!r} not in this printer's configured profiles")
@@ -376,11 +443,19 @@ async def switch_active_preset(
     return _to_dict(printer)
 
 
-@router.post("/{printer_id}/reconnect")
+@router.post(
+    "/{printer_id}/reconnect",
+    summary="Reconnect printer",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Connection attempt failed"},
+    },
+)
 async def reconnect_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Disconnect the current session and open a fresh connection."""
     printer = await _get_or_404(printer_id, session)
     printer_manager.disconnect_printer(printer_id)
     try:
@@ -391,7 +466,14 @@ async def reconnect_printer(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/pause")
+@router.post(
+    "/{printer_id}/pause",
+    summary="Pause print",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def pause_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
@@ -402,7 +484,14 @@ async def pause_printer(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/resume")
+@router.post(
+    "/{printer_id}/resume",
+    summary="Resume print",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def resume_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
@@ -413,11 +502,19 @@ async def resume_printer(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/stop")
+@router.post(
+    "/{printer_id}/stop",
+    summary="Stop print",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def stop_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Stop the active print and cancel any Themis job the printer was physically running."""
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     client.stop_print()
@@ -441,7 +538,14 @@ async def stop_printer(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/light")
+@router.post(
+    "/{printer_id}/light",
+    summary="Set chamber light",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def set_light(
     printer_id: int,
     body: LightBody,
@@ -453,7 +557,14 @@ async def set_light(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/jog-z")
+@router.post(
+    "/{printer_id}/jog-z",
+    summary="Jog Z axis",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def jog_z(
     printer_id: int,
     body: JogZBody,
@@ -465,12 +576,21 @@ async def jog_z(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/fan")
+@router.post(
+    "/{printer_id}/fan",
+    summary="Set fan speed",
+    responses={
+        404: {"description": "Printer not found"},
+        422: {"description": "Invalid fan name"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def set_fan(
     printer_id: int,
     body: FanBody,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Set fan speed (0–100 %) for `model`, `auxiliary`, or `box` fan."""
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     state = printer_manager.get_normalized_state(printer_id)
@@ -489,7 +609,14 @@ async def set_fan(
     return {"ok": True}
 
 
-@router.post("/{printer_id}/bed-temp")
+@router.post(
+    "/{printer_id}/bed-temp",
+    summary="Set bed temperature",
+    responses={
+        404: {"description": "Printer not found"},
+        503: {"description": "Printer not connected"},
+    },
+)
 async def set_bed_temp(
     printer_id: int,
     body: BedTempBody,
@@ -508,11 +635,21 @@ async def _activate_camera(client) -> None:
         await loop.run_in_executor(None, client.start_video_stream)
 
 
-@router.get("/{printer_id}/camera")
+@router.get(
+    "/{printer_id}/camera",
+    summary="Stream camera (MJPEG)",
+    responses={
+        404: {"description": "Printer not found or has no camera"},
+        503: {"description": "Printer not connected or ffmpeg unavailable for RTSP"},
+    },
+)
 async def stream_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
+    """MJPEG multipart stream from the printer camera. Supports both native MJPEG
+    and RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on
+    printers that time out after 60 s of inactivity."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
     if client is None or not client.connected:
@@ -560,7 +697,14 @@ async def stream_camera(
     )
 
 
-@router.get("/{printer_id}/snapshot")
+@router.get(
+    "/{printer_id}/snapshot",
+    summary="Camera snapshot",
+    responses={
+        404: {"description": "Printer not found, has no camera, or no camera source"},
+        503: {"description": "Printer not connected or camera unavailable"},
+    },
+)
 async def snapshot_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),

@@ -19,8 +19,15 @@ async def _config_or_503(session: AsyncSession) -> SpoolmanConfig:
     return row
 
 
-@router.get("/filaments")
+@router.get(
+    "/filaments",
+    summary="List Spoolman filaments",
+    responses={
+        503: {"description": "Spoolman not configured, disabled, or unreachable"},
+    },
+)
 async def get_filaments(session: AsyncSession = Depends(get_session)):
+    """Fetch all filament definitions from the configured Spoolman instance."""
     row = await _config_or_503(session)
     try:
         return await spoolman_service.fetch_filaments(row.url, row.api_key)
@@ -28,8 +35,15 @@ async def get_filaments(session: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=503, detail=str(e))
 
 
-@router.get("/spools")
+@router.get(
+    "/spools",
+    summary="List Spoolman spools",
+    responses={
+        503: {"description": "Spoolman not configured, disabled, or unreachable"},
+    },
+)
 async def get_spools(session: AsyncSession = Depends(get_session)):
+    """Fetch all spool inventory from the configured Spoolman instance."""
     row = await _config_or_503(session)
     try:
         return await spoolman_service.fetch_spools(row.url, row.api_key)
@@ -41,12 +55,19 @@ class FilamentPatchBody(BaseModel):
     orca_profiles: dict[str, list[str]]
 
 
-@router.patch("/filaments/{filament_id}")
+@router.patch(
+    "/filaments/{filament_id}",
+    summary="Update filament OrcaSlicer profiles",
+    responses={
+        503: {"description": "Spoolman not configured, disabled, or unreachable"},
+    },
+)
 async def patch_filament(
     filament_id: int,
     body: FilamentPatchBody,
     session: AsyncSession = Depends(get_session),
 ):
+    """Write OrcaSlicer profile assignments back to a Spoolman filament's extra fields."""
     row = await _config_or_503(session)
     try:
         return await spoolman_service.patch_filament(

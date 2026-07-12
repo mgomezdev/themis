@@ -38,8 +38,10 @@ def _to_dict(j: Job) -> dict:
     }
 
 
-@router.get("")
+@router.get("", summary="Get active queue")
 async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All jobs in an active status (queued, slicing, uploading, printing, paused, blocked, failed)
+    ordered by queue position ascending."""
     result = await session.execute(
         select(Job)
         .where(Job.status.in_(list(_ACTIVE_STATUSES)))
@@ -48,11 +50,19 @@ async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
     return [_to_dict(j) for j in result.scalars().all()]
 
 
-@router.patch("/reorder")
+@router.patch(
+    "/reorder",
+    summary="Reorder queue",
+    responses={
+        404: {"description": "Job not found"},
+        422: {"description": "Job is not in an active status and cannot be reordered"},
+    },
+)
 async def reorder_queue(
     body: ReorderRequest,
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """Set explicit queue positions for one or more active jobs. Returns the full updated queue."""
     now = datetime.now(timezone.utc).isoformat()
     for update in body.positions:
         job = await session.get(Job, update.job_id)

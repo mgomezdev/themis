@@ -41,16 +41,18 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     return row
 
 
-@router.get("/queue", response_model=QueueConfigOut)
+@router.get("/queue", response_model=QueueConfigOut, summary="Get queue config")
 async def get_queue_config(session: AsyncSession = Depends(get_session)):
+    """Queue engine settings: poll interval, operator name, and snapshot interval."""
     return await _get_or_create_queue(session)
 
 
-@router.put("/queue", response_model=QueueConfigOut)
+@router.put("/queue", response_model=QueueConfigOut, summary="Update queue config")
 async def update_queue_config(
     body: QueueConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Update one or more queue engine settings. Omitted fields are left unchanged."""
     row = await _get_or_create_queue(session)
     if body.check_interval_minutes is not None:
         row.check_interval_minutes = max(1, body.check_interval_minutes)
@@ -84,16 +86,18 @@ async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
     return row
 
 
-@router.get("/spoolman", response_model=SpoolmanConfigOut)
+@router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config")
 async def get_spoolman_config(session: AsyncSession = Depends(get_session)):
+    """Spoolman integration settings: enabled flag, base URL, and API key."""
     return await _get_or_create(session)
 
 
-@router.put("/spoolman", response_model=SpoolmanConfigOut)
+@router.put("/spoolman", response_model=SpoolmanConfigOut, summary="Update Spoolman config")
 async def update_spoolman_config(
     body: SpoolmanConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Update Spoolman integration settings. Omitted fields are left unchanged."""
     row = await _get_or_create(session)
     if body.enabled is not None:
         row.enabled = body.enabled
@@ -106,11 +110,13 @@ async def update_spoolman_config(
     return row
 
 
-@router.post("/spoolman/test")
+@router.post("/spoolman/test", summary="Test Spoolman connection")
 async def test_spoolman_connection(
     body: SpoolmanConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Verify connectivity to Spoolman. Uses the supplied URL/key if provided,
+    falling back to the saved config. Returns `{ok, version}` or `{ok, message}`."""
     url = body.url
     api_key = body.api_key
     if not url:
@@ -152,16 +158,18 @@ async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
     return row
 
 
-@router.get("/webhook", response_model=WebhookConfigOut)
+@router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config")
 async def get_webhook_config(session: AsyncSession = Depends(get_session)):
+    """Outbound webhook settings: endpoint URL, HMAC secret, and subscribed event types."""
     return await _get_or_create_webhook(session)
 
 
-@router.put("/webhook", response_model=WebhookConfigOut)
+@router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config")
 async def update_webhook_config(
     body: WebhookConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
+    """Update webhook settings. Omitted fields are left unchanged."""
     row = await _get_or_create_webhook(session)
     if body.url is not None:
         row.url = body.url or None
@@ -178,9 +186,16 @@ async def update_webhook_config(
 # Fleet backup / restore
 # ---------------------------------------------------------------------------
 
-@router.get("/fleet-backup")
+@router.get(
+    "/fleet-backup",
+    summary="Download fleet backup",
+    responses={},
+)
 async def fleet_backup(session: AsyncSession = Depends(get_session)) -> Response:
-    """Export all printer configs as a downloadable JSON file."""
+    """Export all printer configs as a downloadable JSON file.
+
+    The response has `Content-Disposition: attachment; filename=themis-fleet-backup.json`
+    so browsers will prompt to save it. Import with `POST /settings/fleet-import`."""
     result = await session.execute(select(Printer))
     printers = result.scalars().all()
 
@@ -217,12 +232,22 @@ class FleetImportReport(BaseModel):
     warnings: list[str]
 
 
-@router.post("/fleet-import", response_model=FleetImportReport)
+@router.post(
+    "/fleet-import",
+    response_model=FleetImportReport,
+    summary="Import fleet backup",
+    responses={
+        400: {"description": "Invalid or unsupported backup file"},
+    },
+)
 async def fleet_import(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
 ) -> FleetImportReport:
-    """Import printer configs from a backup file. Profile resolution failures are non-fatal."""
+    """Import printer configs from a backup file. Profile resolution failures are non-fatal.
+
+    Returns a report with counts of imported and skipped printers plus any warnings
+    about unrecognised OrcaSlicer profile names."""
     raw = await file.read()
     try:
         data = json.loads(raw)

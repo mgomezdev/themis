@@ -117,13 +117,15 @@ async def _get_or_404(order_id: int, session: AsyncSession) -> Order:
     return o
 
 
-@router.get("")
+@router.get("", summary="List orders")
 async def list_orders(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """All orders ordered by creation date descending. Each order includes derived
+    status (queued / in_progress / complete / hold) and progress fraction."""
     result = await session.execute(select(Order).order_by(Order.created_at.desc()))
     return [await _to_dict(session, o) for o in result.scalars().all()]
 
 
-@router.post("", status_code=201)
+@router.post("", status_code=201, summary="Create order")
 async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_session)) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     order = Order(
@@ -143,12 +145,25 @@ async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_se
     return await _to_dict(session, order, with_jobs=True)
 
 
-@router.get("/{order_id}")
+@router.get(
+    "/{order_id}",
+    summary="Get order",
+    responses={
+        404: {"description": "Order not found"},
+    },
+)
 async def get_order(order_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """Order detail including all non-cancelled jobs."""
     return await _to_dict(session, await _get_or_404(order_id, session), with_jobs=True)
 
 
-@router.patch("/{order_id}")
+@router.patch(
+    "/{order_id}",
+    summary="Update order",
+    responses={
+        404: {"description": "Order not found"},
+    },
+)
 async def patch_order(order_id: int, body: OrderPatch,
                       session: AsyncSession = Depends(get_session)) -> dict:
     order = await _get_or_404(order_id, session)
@@ -165,7 +180,14 @@ async def patch_order(order_id: int, body: OrderPatch,
     return await _to_dict(session, order, with_jobs=True)
 
 
-@router.delete("/{order_id}", status_code=204)
+@router.delete(
+    "/{order_id}",
+    status_code=204,
+    summary="Delete order",
+    responses={
+        404: {"description": "Order not found"},
+    },
+)
 async def delete_order(order_id: int, session: AsyncSession = Depends(get_session)) -> None:
     order = await _get_or_404(order_id, session)
     await session.execute(update(Job).where(Job.order_id == order_id).values(order_id=None))

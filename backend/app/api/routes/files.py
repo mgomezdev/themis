@@ -84,7 +84,7 @@ def _tree_insert(root: dict, folder: str) -> None:
 
 # ---------- list / tree ----------
 
-@router.get("")
+@router.get("", summary="List files")
 async def list_files(
     folder: str | None = None,
     tags: list[str] | None = None,
@@ -92,6 +92,9 @@ async def list_files(
     sort: str = "updated",
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
+    """All files in the library. Optional filters: `folder` (prefix match),
+    `tags` (all supplied tags must be present), `search` (filename substring).
+    `sort` accepts `updated` (default), `name`, or `size`."""
     rows = (await session.execute(select(UploadedFile))).scalars().all()
     if folder:
         rows = [r for r in rows if r.folder == folder or r.folder.startswith(folder.rstrip("/") + "/")]
@@ -111,8 +114,11 @@ async def list_files(
     return [_to_dict(r, tag_map.get(r.id, [])) for r in rows]
 
 
-@router.get("/tree")
+@router.get("/tree", summary="Folder tree (index-derived)")
 async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
+    """Hierarchical folder tree derived from the file index. Each node has
+    `name`, `path`, `count` (files in this folder and below), and `children`.
+    Empty folders are not included — use `/dirs` for those."""
     rows = (await session.execute(select(UploadedFile))).scalars().all()
     root: dict = {"name": "All files", "path": "", "count": 0, "children": {}}
     for r in rows:
@@ -121,7 +127,7 @@ async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
     return root
 
 
-@router.get("/dirs")
+@router.get("/dirs", summary="Folder tree with empty dirs")
 async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
     """Folder hierarchy from the actual on-disk library directory — includes
     EMPTY folders (unlike /tree, which is index-derived) — with recursive file
@@ -153,13 +159,23 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
 
 # ---------- upload ----------
 
-@router.post("/upload", status_code=201)
+@router.post(
+    "/upload",
+    status_code=201,
+    summary="Upload a file",
+    responses={
+        422: {"description": "Unsupported file type (only .3mf and .stl accepted)"},
+    },
+)
 async def upload_file(
     file: UploadFile,
     background_tasks: BackgroundTasks,
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
+    """Upload a .3mf or .stl file to the library. If identical content already exists
+    in the target folder the existing record is returned (deduplication by SHA-256).
+    Thumbnail generation is triggered in the background for .3mf files."""
     fname = (file.filename or "")
     ext = Path(fname).suffix.lower()
     if ext not in MODEL_EXTS:
@@ -217,15 +233,31 @@ class FolderCreate(BaseModel):
     path: str
 
 
-@router.post("/folders", status_code=201)
+@router.post(
+    "/folders",
+    status_code=201,
+    summary="Create folder",
+    responses={
+        400: {"description": "Path escapes the library root"},
+    },
+)
 async def create_folder(body: FolderCreate) -> dict:
+    """Create a directory in the library. Parent directories are created as needed."""
     library = config.get_library_dir()
     target = _safe_subpath(library, body.path)
     target.mkdir(parents=True, exist_ok=True)
     return {"path": "/" + target.relative_to(library).as_posix()}
 
 
-@router.delete("/folders")
+@router.delete(
+    "/folders",
+    summary="Delete empty folder",
+    responses={
+        400: {"description": "Cannot delete the library root or Job Uploads folder"},
+        404: {"description": "Folder not found"},
+        409: {"description": "Folder is not empty"},
+    },
+)
 async def delete_folder(path: str) -> dict:
     """Delete an EMPTY folder. Refuses (409) if it contains any files or
     subfolders, and never deletes the library root."""
@@ -250,9 +282,19 @@ class FilePatch(BaseModel):
     folder: str | None = None
 
 
-@router.patch("/{file_id}")
+@router.patch(
+    "/{file_id}",
+    summary="Rename or move file",
+    responses={
+        400: {"description": "Invalid filename or path escapes the library root"},
+        404: {"description": "File not found"},
+    },
+)
 async def update_file(file_id: int, body: FilePatch,
                       session: AsyncSession = Depends(get_session)) -> dict:
+    """Rename a file, move it to a different folder, or both. The destination folder
+    is created if it does not exist. Filename path separators are stripped to prevent
+    directory traversal."""
     f = await session.get(UploadedFile, file_id)
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
@@ -294,7 +336,14 @@ async def update_file(file_id: int, body: FilePatch,
 
 # ---------- delete ----------
 
-@router.delete("/{file_id}")
+@router.delete(
+    "/{file_id}",
+    summary="Delete file",
+    responses={
+        404: {"description": "File not found"},
+        409: {"description": "File is referenced by an active job"},
+    },
+)
 async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     f = await session.get(UploadedFile, file_id)
     if f is None:
@@ -325,9 +374,16 @@ class TagAssign(BaseModel):
     tag_id: int
 
 
-@router.post("/{file_id}/tags")
+@router.post(
+    "/{file_id}/tags",
+    summary="Assign tag to file",
+    responses={
+        404: {"description": "File or tag not found"},
+    },
+)
 async def add_file_tag(file_id: int, body: TagAssign,
                        session: AsyncSession = Depends(get_session)) -> dict:
+    """Assign a tag to a file. Idempotent — no error if the tag is already assigned."""
     if await session.get(UploadedFile, file_id) is None:
         raise HTTPException(404, f"File {file_id} not found")
     if await session.get(Tag, body.tag_id) is None:
@@ -341,9 +397,10 @@ async def add_file_tag(file_id: int, body: TagAssign,
     return {"file_id": file_id, "tag_id": body.tag_id}
 
 
-@router.delete("/{file_id}/tags/{tag_id}")
+@router.delete("/{file_id}/tags/{tag_id}", summary="Remove tag from file")
 async def remove_file_tag(file_id: int, tag_id: int,
                           session: AsyncSession = Depends(get_session)) -> dict:
+    """Remove a tag from a file. Idempotent — no error if the tag is not assigned."""
     link = (await session.execute(
         select(FileTag).where(FileTag.file_id == file_id, FileTag.tag_id == tag_id)
     )).scalar_one_or_none()
@@ -355,24 +412,40 @@ async def remove_file_tag(file_id: int, tag_id: int,
 
 # ---------- rescan ----------
 
-@router.post("/rescan")
+@router.post("/rescan", summary="Rescan library")
 async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
+    """Walk the library directory and sync the file index — adds missing records,
+    marks orphaned records as missing, and re-parses plate metadata."""
     scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir())
     return await scanner.scan()
 
 
 # ---------- plates / thumbnails ----------
 
-@router.get("/{file_id}/plates")
+@router.get(
+    "/{file_id}/plates",
+    summary="Get file plates",
+    responses={
+        404: {"description": "File not found"},
+    },
+)
 async def get_plates(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Plate metadata extracted from the 3MF (estimated time, filament grams, thumbnail path)."""
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
     return record.plates or []
 
 
-@router.get("/{file_id}/model-filaments")
+@router.get(
+    "/{file_id}/model-filaments",
+    summary="Get 3MF model filaments",
+    responses={
+        404: {"description": "File not found"},
+    },
+)
 async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Filament definitions embedded in the 3MF model XML (type, colour, vendor)."""
     from ...services.three_mf_parser import parse_model_filaments
     record = await session.get(UploadedFile, file_id)
     if record is None:
@@ -380,8 +453,15 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
     return parse_model_filaments(record.stored_path)
 
 
-@router.get("/{file_id}/embedded-settings")
+@router.get(
+    "/{file_id}/embedded-settings",
+    summary="Get 3MF embedded settings",
+    responses={
+        404: {"description": "File not found"},
+    },
+)
 async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """OrcaSlicer project settings embedded in `Metadata/project_settings.config` inside the 3MF."""
     from ...services.three_mf_parser import parse_embedded_settings
     record = await session.get(UploadedFile, file_id)
     if record is None:
@@ -389,9 +469,18 @@ async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(ge
     return parse_embedded_settings(record.stored_path)
 
 
-@router.get("/{file_id}/thumbnails/{filename}")
+@router.get(
+    "/{file_id}/thumbnails/{filename}",
+    summary="Serve plate thumbnail",
+    responses={
+        400: {"description": "Invalid thumbnail filename"},
+        404: {"description": "File or thumbnail not found"},
+    },
+)
 async def get_thumbnail(file_id: int, filename: str,
                         session: AsyncSession = Depends(get_session)) -> FileResponse:
+    """Return a PNG thumbnail for a specific plate. The filename is the basename
+    of the thumbnail path from the plates list."""
     if await session.get(UploadedFile, file_id) is None:
         raise HTTPException(404, f"File {file_id} not found")
     thumb_dir = (config.get_filecache_dir() / str(file_id) / "thumbnails").resolve()

@@ -123,7 +123,16 @@ async def lifespan(app: FastAPI):
         printer_manager.disconnect_printer(pid)
 
 
-app = FastAPI(title="Themis", lifespan=lifespan)
+app = FastAPI(
+    title="Themis",
+    description=(
+        "Print queue API for the Themis 3D printing management system. "
+        "Manages files, printers, jobs, projects, orders, queue, and settings. "
+        "Requires the Laminus OrcaSlicer sidecar for slicing operations."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
 app.include_router(orders_router)

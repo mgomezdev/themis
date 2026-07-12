@@ -86,9 +86,17 @@ async def warm_catalog_cache() -> None:
 # Routes
 # ---------------------------------------------------------------------------
 
-@router.get("/catalog")
+@router.get(
+    "/catalog",
+    summary="Get profile catalog",
+    responses={
+        502: {"description": "Laminus sidecar unreachable"},
+        503: {"description": "Laminus sidecar not configured"},
+    },
+)
 async def get_laminus_catalog():
-    """Return the full machine/process/filament catalog (cached JSON bytes)."""
+    """Return the full machine/process/filament catalog as JSON (served from the
+    Themis-side cache; the sidecar is only contacted if the cache is cold)."""
     global _catalog_bytes
     if _catalog_bytes is not None:
         return Response(content=_catalog_bytes, media_type="application/json")
@@ -96,9 +104,11 @@ async def get_laminus_catalog():
     return Response(content=data, media_type="application/json")
 
 
-@router.get("/catalog/status")
+@router.get("/catalog/status", summary="Catalog cache status")
 async def get_catalog_status() -> dict:
-    """Whether the Themis catalog cache is populated and Laminus's build state."""
+    """Whether the Themis catalog cache is populated and Laminus's build state.
+    Includes `laminus` sub-object with `catalog_loaded`, `catalog_building`, and
+    `profile_count` if the sidecar is reachable."""
     url = get_laminus_sidecar_url()
     laminus_status: dict | None = None
     if url:
@@ -124,7 +134,14 @@ async def get_catalog_status() -> dict:
     }
 
 
-@router.post("/catalog/refresh")
+@router.post(
+    "/catalog/refresh",
+    summary="Refresh catalog from Laminus",
+    responses={
+        502: {"description": "Laminus sidecar unreachable"},
+        503: {"description": "Laminus sidecar not configured"},
+    },
+)
 async def refresh_catalog() -> dict:
     """Re-fetch the catalog from Laminus and update the Themis cache.
 
@@ -138,7 +155,15 @@ async def refresh_catalog() -> dict:
     return {"ok": True, "bytes": len(data)}
 
 
-@router.post("/catalog/rescan")
+@router.post(
+    "/catalog/rescan",
+    summary="Rescan profiles and refresh catalog",
+    responses={
+        502: {"description": "Laminus sidecar unreachable"},
+        503: {"description": "Laminus sidecar not configured"},
+        504: {"description": "Laminus catalog rebuild did not complete within 120 s"},
+    },
+)
 async def rescan_and_refresh_catalog() -> dict:
     """Tell Laminus to rebuild its catalog from disk, then update the Themis cache.
 
