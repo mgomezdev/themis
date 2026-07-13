@@ -1,8 +1,10 @@
 from __future__ import annotations
 import asyncio
+import itertools
 import logging
 import os
 import re
+import shutil
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -211,11 +213,34 @@ class QueueEngine:
         self._event = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="slicer")
+        self._slice_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._slice_seq: itertools.count = itertools.count()
+        self._slice_worker_task: asyncio.Task | None = None
+        self._estimate_tasks: set[asyncio.Task] = set()
+
+    async def _slice_worker(self) -> None:
+        try:
+            while True:
+                priority, _seq, coro = await self._slice_queue.get()
+                try:
+                    await coro
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Slice worker: unhandled exception in queued coro")
+                finally:
+                    self._slice_queue.task_done()
+        except asyncio.CancelledError:
+            pass
 
     def wake(self) -> None:
         self._event.set()
 
     async def start(self) -> None:
+        # Sweep stale estimate gcode from a prior run so we don't serve stale data.
+        estimate_gcode_dir = self._slicer._data_dir / "gcode_estimates"
+        shutil.rmtree(estimate_gcode_dir, ignore_errors=True)
+
         # slicing and uploading are non-resumable transient states — reset them to
         # queued immediately so they re-enter the queue on this boot.
         async with self._factory() as session:
@@ -252,12 +277,30 @@ class QueueEngine:
                     if self._broadcast_cb:
                         await self._broadcast_cb("job_updated", {"job_id": job.id})
 
+        # Reset any estimate_status='pending' left from a prior unclean shutdown.
+        from sqlalchemy import text as _text
+        async with self._factory() as session:
+            await session.execute(
+                _text("UPDATE jobs SET estimate_status=NULL WHERE estimate_status='pending'")
+            )
+            await session.commit()
+
+        self._slice_worker_task = asyncio.create_task(
+            self._slice_worker(), name="slice_worker"
+        )
         self._task = asyncio.create_task(self._loop(), name="queue_engine")
 
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        if self._slice_worker_task:
+            self._slice_worker_task.cancel()
+            await asyncio.gather(self._slice_worker_task, return_exceptions=True)
+        for t in list(self._estimate_tasks):
+            t.cancel()
+        if self._estimate_tasks:
+            await asyncio.gather(*self._estimate_tasks, return_exceptions=True)
         self._executor.shutdown(wait=False)
 
     async def _loop(self) -> None:
@@ -538,8 +581,27 @@ class QueueEngine:
             prepare_hook=prepare_hook,
             extra_config=plate_config,
         )
+        # Ensure the slice worker is running (start() handles production; this guard
+        # covers test scenarios where start() is not called).
+        if self._slice_worker_task is None or self._slice_worker_task.done():
+            self._slice_worker_task = asyncio.create_task(
+                self._slice_worker(), name="slice_worker"
+            )
+
+        fut: asyncio.Future = loop.create_future()
+
+        async def _do_prod_slice():
+            try:
+                result = await asyncio.to_thread(self._slicer.slice, req)
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception as exc:
+                if not fut.done():
+                    fut.set_exception(exc)
+
+        await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
         try:
-            gcode_path: str = await loop.run_in_executor(self._executor, self._slicer.slice, req)
+            gcode_path = await fut
         except SliceError as exc:
             await self._handle_slice_failure(job_id, printer_id, str(exc))
             return

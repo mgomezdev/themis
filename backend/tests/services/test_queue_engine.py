@@ -477,3 +477,58 @@ def test_parse_gcode_estimates_missing_returns_none(tmp_path):
     assert grams is None
     assert secs is None
     assert extruder_grams is None
+
+
+@pytest.mark.asyncio
+async def test_priority_queue_orders_production_before_estimate(db):
+    """Production slices (priority 0) are dequeued before estimate slices (priority 1)."""
+    import itertools
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    mgr = _make_mock_printer_manager([])
+    slicer = MagicMock(spec=SlicerService)
+
+    engine = QueueEngine(db, mgr, slicer)
+    seq = itertools.count()
+
+    results = []
+
+    async def coro(label):
+        results.append(label)
+
+    # Put estimate first, then production
+    await engine._slice_queue.put((1, next(seq), coro("estimate")))
+    await engine._slice_queue.put((0, next(seq), coro("production")))
+
+    # Drain both
+    for _ in range(2):
+        _, _s, c = await engine._slice_queue.get()
+        await c
+        engine._slice_queue.task_done()
+
+    assert results == ["production", "estimate"]
+
+
+@pytest.mark.asyncio
+async def test_equal_priority_no_type_error(db):
+    """Two equal-priority items with seq tiebreaker don't raise TypeError."""
+    import itertools
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    mgr = _make_mock_printer_manager([])
+    slicer = MagicMock(spec=SlicerService)
+    engine = QueueEngine(db, mgr, slicer)
+    seq = itertools.count()
+
+    async def noop():
+        pass
+
+    await engine._slice_queue.put((1, next(seq), noop()))
+    await engine._slice_queue.put((1, next(seq), noop()))
+    # Should not raise — drain without error
+    for _ in range(2):
+        _, _s, c = await engine._slice_queue.get()
+        await c
+        engine._slice_queue.task_done()
