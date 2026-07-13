@@ -357,10 +357,7 @@ class QueueEngine:
 
         # Step 4 — Parse, discard gcode, write results
         grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
-        try:
-            shutil.rmtree(output_dir, ignore_errors=True)
-        except OSError:
-            pass
+        shutil.rmtree(output_dir, ignore_errors=True)
 
         breakdown = None
         if extruder_grams is not None:

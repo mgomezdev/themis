@@ -760,3 +760,57 @@ async def test_run_estimate_failure_sets_failed(db):
         assert job.estimate_status == "failed"
         assert job.status == "queued"  # job.status must not be touched
         assert job.block_reason is None
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_discards_result_when_token_incremented(db):
+    """If estimate_token is incremented (re-trigger) before the write, results are discarded."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1  # original token
+        await session.commit()
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "M"
+        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n; estimated printing time (normal mode) = 30m\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, mgr, slicer)
+
+    # Simulate re-trigger: increment token BEFORE the coro runs
+    async def fake_put(item):
+        _, _seq, coro = item
+        async with db() as session:
+            j = await session.get(Job, job_id)
+            j.estimate_token = 2  # bumped by re-trigger
+            await session.commit()
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    with patch.object(slicer, "slice", return_value=fake_gcode):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        # Token mismatch → rowcount=0 → results discarded; status still "pending"
+        assert job.estimate_filament_grams is None
+        assert job.estimate_status == "pending"  # not overwritten to "done"
+
+    os.unlink(fake_gcode)
