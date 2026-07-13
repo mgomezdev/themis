@@ -223,6 +223,7 @@ class QueueEngine:
             priority, _seq, coro = await self._slice_queue.get()
             try:
                 await coro
+            # CancelledError (BaseException) propagates unimpeded — do not broaden this catch
             except Exception:
                 logger.exception("Slice worker: unhandled exception in queued coro")
             finally:
@@ -581,15 +582,18 @@ class QueueEngine:
         async def _do_prod_slice():
             try:
                 result = await asyncio.to_thread(self._slicer.slice, req)
-                if not fut.done():
+                if not fut.cancelled():
                     fut.set_result(result)
             except Exception as exc:
-                if not fut.done():
+                if not fut.cancelled():
                     fut.set_exception(exc)
 
         await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
         try:
             gcode_path = await fut
+        except asyncio.CancelledError:
+            fut.cancel()
+            raise
         except SliceError as exc:
             await self._handle_slice_failure(job_id, printer_id, str(exc))
             return
