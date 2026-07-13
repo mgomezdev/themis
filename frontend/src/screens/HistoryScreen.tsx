@@ -22,6 +22,16 @@ interface HistoryJob {
   file_name: string | null;
   printer_name: string | null;
   project_name: string | null;
+  estimate_filament_grams: number | null;
+  estimate_seconds: number | null;
+  actual_filament_grams: number | null;
+  actual_seconds: number | null;
+}
+
+function fmtTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
 function fmtDate(iso: string | null): string {
@@ -82,6 +92,10 @@ export function HistoryScreen() {
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Printer</th>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Status</th>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Project</th>
+              <th style={{ padding: '8px 12px', fontWeight: 500 }}>Est. Filament</th>
+              <th style={{ padding: '8px 12px', fontWeight: 500 }}>Est. Time</th>
+              <th style={{ padding: '8px 12px', fontWeight: 500 }}>Act. Filament</th>
+              <th style={{ padding: '8px 12px', fontWeight: 500 }}>Act. Time</th>
               <th style={{ padding: '8px 12px', fontWeight: 500 }}>Outcome</th>
             </tr>
           </thead>
@@ -109,6 +123,18 @@ export function HistoryScreen() {
                       {j.project_name ?? `Project ${j.project_id}`}
                     </Link>
                   ) : '—'}
+                </td>
+                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {j.estimate_filament_grams !== null ? `${j.estimate_filament_grams.toFixed(1)} g` : '—'}
+                </td>
+                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {j.estimate_seconds !== null ? fmtTime(Math.round(j.estimate_seconds / 60)) : '—'}
+                </td>
+                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {j.actual_filament_grams !== null ? `${j.actual_filament_grams.toFixed(1)} g` : '—'}
+                </td>
+                <td style={{ padding: '8px 12px', color: 'var(--text-2)', whiteSpace: 'nowrap' }}>
+                  {j.actual_seconds !== null ? fmtTime(Math.round(j.actual_seconds / 60)) : '—'}
                 </td>
                 <td style={{ padding: '8px 12px' }}>
                   {j.outcome === 'reviewed' ? (

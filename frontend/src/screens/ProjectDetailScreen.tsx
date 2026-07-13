@@ -150,9 +150,37 @@ export function ProjectDetailScreen() {
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4,
                           fontSize: 12, color: 'var(--text-3)' }}>
               <span>{project.jobs_complete} / {project.jobs_total} jobs complete</span>
-              <span style={{ display: 'flex', gap: 12 }}>
-                {project.filament_grams != null && <span>{project.filament_grams}g</span>}
-                {project.estimated_seconds != null && <span>{fmtDuration(project.estimated_seconds)}</span>}
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, alignItems: 'flex-end', fontSize: 11 }}>
+                <span style={{ color: 'var(--text-3)' }}>
+                  Est. total:{' '}
+                  {project.estimate_filament_grams_total != null
+                    ? `${project.estimate_filament_grams_total.toFixed(1)} g`
+                    : '—'}
+                  {' / '}
+                  {project.estimate_seconds_total != null
+                    ? fmtDuration(project.estimate_seconds_total)
+                    : '—'}
+                </span>
+                <span style={{ color: 'var(--text-3)' }}>
+                  Est. remaining:{' '}
+                  {project.estimate_filament_grams_remaining != null
+                    ? `${project.estimate_filament_grams_remaining.toFixed(1)} g`
+                    : '—'}
+                  {' / '}
+                  {project.estimate_seconds_remaining != null
+                    ? fmtDuration(project.estimate_seconds_remaining)
+                    : '—'}
+                </span>
+                <span style={{ color: 'var(--text-3)' }}>
+                  Actual:{' '}
+                  {project.actual_filament_grams != null
+                    ? `${project.actual_filament_grams.toFixed(1)} g`
+                    : '—'}
+                  {' / '}
+                  {project.actual_seconds != null
+                    ? fmtDuration(project.actual_seconds)
+                    : '—'}
+                </span>
               </span>
             </div>
             <Progress
