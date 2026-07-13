@@ -50,3 +50,17 @@ async def patch_filament(
                 response=patch_resp,
             )
         return patch_resp.json()
+
+
+async def record_spool_use(
+    url: str, api_key: Optional[str], spool_id: int, grams: float
+) -> None:
+    """PUT /api/v1/spool/{spool_id}/use — records filament consumption."""
+    headers = _headers(api_key)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.put(
+            f"{url.rstrip('/')}/api/v1/spool/{spool_id}/use",
+            json={"use_weight": grams},
+            headers=headers,
+        )
+        resp.raise_for_status()

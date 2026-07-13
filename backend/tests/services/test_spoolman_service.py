@@ -184,3 +184,68 @@ async def test_patch_target_url_is_correct():
     url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
     assert url == "http://spoolman.test/api/v1/filament/42"
     assert "//api" not in url, "Trailing slash on base URL must not produce double slash"
+
+
+# ---------------------------------------------------------------------------
+# record_spool_use tests
+# ---------------------------------------------------------------------------
+
+from app.services.spoolman_service import record_spool_use
+
+
+def _ok_response_with_request(data: dict, url: str = "http://spoolman.test/api/v1/spool/42/use") -> httpx.Response:
+    resp = httpx.Response(200, json=data)
+    resp._request = httpx.Request("PUT", url)
+    return resp
+
+
+def _mock_client_put(put_response: httpx.Response):
+    """Return a context manager that patches httpx.AsyncClient for PUT requests."""
+    mock_instance = AsyncMock()
+    mock_instance.put = AsyncMock(return_value=put_response)
+
+    @asynccontextmanager
+    async def _ctx(*args, **kwargs):
+        yield mock_instance
+
+    return patch("app.services.spoolman_service.httpx.AsyncClient", side_effect=_ctx), mock_instance
+
+
+@pytest.mark.asyncio
+async def test_record_spool_use_calls_correct_endpoint():
+    """Verify record_spool_use calls PUT /api/v1/spool/{spool_id}/use with correct body."""
+    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/42/use"))
+    with ctx:
+        await record_spool_use("http://spoolman.test", "key123", spool_id=42, grams=15.5)
+
+    mock_client.put.assert_called_once()
+    call_args = mock_client.put.call_args
+    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
+    assert "/api/v1/spool/42/use" in url
+    assert call_args.kwargs["json"] == {"use_weight": 15.5}
+    assert call_args.kwargs["headers"]["X-API-Key"] == "key123"
+
+
+@pytest.mark.asyncio
+async def test_record_spool_use_no_api_key():
+    """Verify X-API-Key header is omitted when api_key is None."""
+    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/7/use"))
+    with ctx:
+        await record_spool_use("http://spoolman.test", None, spool_id=7, grams=5.0)
+
+    call_args = mock_client.put.call_args
+    headers = call_args.kwargs.get("headers", {})
+    assert "X-API-Key" not in headers
+
+
+@pytest.mark.asyncio
+async def test_record_spool_use_strips_trailing_slash():
+    """Verify trailing slash on base URL does not produce double slash."""
+    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/42/use"))
+    with ctx:
+        await record_spool_use("http://spoolman.test/", None, spool_id=42, grams=10.0)
+
+    call_args = mock_client.put.call_args
+    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
+    assert url == "http://spoolman.test/api/v1/spool/42/use"
+    assert "//api" not in url
