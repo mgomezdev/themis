@@ -94,6 +94,18 @@ class Job(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     outcome: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     project_item_quantities: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # --- Actual values (set at production slice time, before GcodeFile deleted) ---
+    actual_filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    actual_filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    deduction_skipped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # --- Estimate values (set after background test slice) ---
+    estimate_token: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    estimate_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    estimate_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    estimate_filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    estimate_filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -131,6 +143,7 @@ class QueueConfig(Base):
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
+    estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SpoolmanConfig(Base):
