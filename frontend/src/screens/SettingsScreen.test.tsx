@@ -70,4 +70,26 @@ describe('SettingsScreen', () => {
     expect(screen.queryByText('Released')).toBeNull();
     expect(screen.queryByText('Channel')).toBeNull();
   });
+
+  it('renders estimates_enabled toggle in queue settings', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({
+        check_interval_minutes: 5,
+        operator_name: null,
+        snapshot_interval_seconds: 2,
+        estimates_enabled: false,
+      }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /print defaults/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/enable estimate generation/i)).toBeInTheDocument();
+    });
+  });
 });

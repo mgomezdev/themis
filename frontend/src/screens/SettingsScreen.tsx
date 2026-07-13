@@ -430,6 +430,17 @@ function PrintDefaultsPage() {
     finally { setSavingName(false); }
   }
 
+  // Estimate generation toggle
+  const [estimatesEnabled, setEstimatesEnabled] = useState<boolean>(false);
+  useEffect(() => {
+    getQueueConfig().then(c => setEstimatesEnabled(c.estimates_enabled ?? false)).catch(console.error);
+  }, []);
+  async function commitEstimatesEnabled(enabled: boolean) {
+    setEstimatesEnabled(enabled);
+    try { await saveQueueConfig({ estimates_enabled: enabled }); }
+    catch (e) { console.error(e); }
+  }
+
   // Printer preset rescan (old legacy rescan endpoint)
   const [rescanning, setRescanning] = useState(false);
   const [rescanMsg, setRescanMsg] = useState<string | null>(null);
@@ -527,6 +538,11 @@ function PrintDefaultsPage() {
                onBlur={e => commitOperatorName(e.target.value)}
                placeholder="e.g. Workshop Lead" style={{ width: '100%' }} />
         {savingName && <span className="muted small">saving…</span>}
+      </FieldRow>
+
+      <FieldRow label="Enable estimate generation"
+                hint="When enabled, a test slice runs immediately after job creation to estimate print time and filament use. The gcode is discarded — only time and grams are stored.">
+        <Toggle checked={estimatesEnabled} onChange={commitEstimatesEnabled} />
       </FieldRow>
 
       <FieldRow label="OrcaSlicer profiles"
