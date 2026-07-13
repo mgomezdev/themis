@@ -219,19 +219,14 @@ class QueueEngine:
         self._estimate_tasks: set[asyncio.Task] = set()
 
     async def _slice_worker(self) -> None:
-        try:
-            while True:
-                priority, _seq, coro = await self._slice_queue.get()
-                try:
-                    await coro
-                except asyncio.CancelledError:
-                    raise
-                except Exception:
-                    logger.exception("Slice worker: unhandled exception in queued coro")
-                finally:
-                    self._slice_queue.task_done()
-        except asyncio.CancelledError:
-            pass
+        while True:
+            priority, _seq, coro = await self._slice_queue.get()
+            try:
+                await coro
+            except Exception:
+                logger.exception("Slice worker: unhandled exception in queued coro")
+            finally:
+                self._slice_queue.task_done()
 
     def wake(self) -> None:
         self._event.set()
@@ -581,13 +576,6 @@ class QueueEngine:
             prepare_hook=prepare_hook,
             extra_config=plate_config,
         )
-        # Ensure the slice worker is running (start() handles production; this guard
-        # covers test scenarios where start() is not called).
-        if self._slice_worker_task is None or self._slice_worker_task.done():
-            self._slice_worker_task = asyncio.create_task(
-                self._slice_worker(), name="slice_worker"
-            )
-
         fut: asyncio.Future = loop.create_future()
 
         async def _do_prod_slice():

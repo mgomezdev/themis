@@ -37,6 +37,20 @@ def _make_mock_printer_manager(printer_ids_ready: list[int]) -> PrinterManager:
     return mgr
 
 
+def _install_fake_put(engine: QueueEngine) -> None:
+    """Bypass the slice worker by running queued coroutines inline.
+
+    Unit tests that call _process_queue() directly never call start(), so the
+    _slice_worker_task is not running. Replacing _slice_queue.put with this
+    inline executor avoids PytestUnraisableExceptionWarning from orphaned tasks.
+    """
+    async def fake_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = fake_put  # type: ignore[method-assign]
+
+
 async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
     async with factory() as session:
         # Ensure the target printer exists (queue engine checks queue_on before claiming)
@@ -87,6 +101,7 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
     mock_slicer.slice.return_value = gcode_path
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -138,6 +153,7 @@ async def test_slice_failure_blocks_job(db):
     mock_slicer.slice.side_effect = SliceError("Profile not found")
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -158,6 +174,7 @@ async def test_slice_failure_requeues_when_other_printers_available(db):
     mock_slicer.slice.side_effect = SliceError("fail")
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
 
     async with db() as session:
         for pid in (1, 2):
@@ -254,6 +271,7 @@ async def test_filament_match_allows_claim(db, tmp_path):
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
     # case- and #-insensitive match
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "pla", "color": "FFFFFF"}])
@@ -274,6 +292,7 @@ async def test_slice_uses_filament_profile_from_loaded_slot(db, tmp_path):
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
     # Clear the job-level filament_profile so the slot's preset is the only option.
     async with db() as session:
@@ -304,6 +323,7 @@ async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PLA", "color": "#FFFFFF"}])
 
@@ -323,6 +343,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
     mock_slicer.slice.return_value = gp
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PETG", "color": "#000000"}])
 
@@ -377,6 +398,7 @@ async def test_offline_printer_slices_job_to_sliced_status(db, tmp_path):
     mock_slicer.slice.return_value = gcode_path
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
@@ -398,6 +420,7 @@ async def test_sliced_job_resumes_when_printer_comes_online(db, tmp_path):
     mock_slicer.slice.return_value = gcode_path
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
 
     # First cycle: offline → job reaches "sliced"
@@ -430,6 +453,7 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
     mock_slicer.slice.return_value = gcode_path
 
     qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
     job_id = await _seed_job(db, printer_id=1)
 
     # First cycle slices the job
