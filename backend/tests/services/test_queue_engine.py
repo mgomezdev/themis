@@ -814,3 +814,118 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
         assert job.estimate_status == "pending"  # not overwritten to "done"
 
     os.unlink(fake_gcode)
+
+
+@pytest.mark.asyncio
+async def test_handle_print_complete_fires_spoolman_deduction(db):
+    """On completion, deducts actual_filament_grams from Spoolman using slot's spool_id."""
+    from unittest.mock import patch, AsyncMock, MagicMock
+    from app.models import Job, GcodeFile, SpoolmanConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
+                                      "spoolman_spool_id": 42}]
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        job.actual_filament_grams = 17.5
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
+        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    engine = QueueEngine(db, mgr, slicer)
+
+    deduction_calls = []
+
+    async def fake_deduct(url, api_key, spool_id, grams):
+        deduction_calls.append({"spool_id": spool_id, "grams": grams})
+
+    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
+        await engine.handle_print_complete(printer_id)
+
+    assert len(deduction_calls) == 1
+    assert deduction_calls[0]["spool_id"] == 42
+    assert deduction_calls[0]["grams"] == pytest.approx(17.5)
+
+
+@pytest.mark.asyncio
+async def test_handle_print_complete_skips_deduction_when_grams_none(db):
+    """Deduction is skipped when actual_filament_grams is None."""
+    from unittest.mock import patch, MagicMock
+    from app.models import Job, GcodeFile, SpoolmanConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.loaded_filaments = [{"spoolman_spool_id": 5}]
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        job.actual_filament_grams = None  # not captured
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
+        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    engine = QueueEngine(db, mgr, slicer)
+
+    deduction_calls = []
+    async def fake_deduct(*a, **kw):
+        deduction_calls.append(a)
+
+    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
+        await engine.handle_print_complete(printer_id)
+
+    assert deduction_calls == []
+
+
+@pytest.mark.asyncio
+async def test_startup_resets_pending_estimates(db):
+    """QueueEngine.start() resets all estimate_status='pending' to NULL."""
+    from unittest.mock import patch, MagicMock
+    from app.models import Job, QueueConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    engine = QueueEngine(db, mgr, slicer)
+
+    # Patch _loop and _slice_worker so create_task returns immediately without
+    # spawning real background tasks (which would hang the test event loop).
+    with patch.object(engine, "_loop", new_callable=AsyncMock), \
+         patch.object(engine, "_slice_worker", new_callable=AsyncMock):
+        await engine.start()
+        # Cancel the tasks to avoid pending-task warnings
+        if engine._task:
+            engine._task.cancel()
+        if engine._slice_worker_task:
+            engine._slice_worker_task.cancel()
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status is None

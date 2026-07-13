@@ -81,6 +81,15 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+async def _deduct_spool(url: str, api_key: str | None, spool_id: int, grams: float) -> None:
+    """Fire-and-forget Spoolman deduction. Logs warning on failure; never raises."""
+    try:
+        from .spoolman_service import record_spool_use
+        await record_spool_use(url, api_key, spool_id, grams)
+    except Exception:
+        logger.warning("Spoolman deduction failed: spool_id=%s grams=%s", spool_id, grams)
+
+
 def _norm_color(value) -> str:
     return str(value or "").strip().lstrip("#").lower()
 
@@ -572,6 +581,7 @@ class QueueEngine:
                     job.block_reason = "print cancelled or ended with failure on the printer"
                     job.assigned_printer_id = None
                     job.updated_at = _now()
+                    job.deduction_skipped = True
                     gcode_result = await session.execute(
                         select(GcodeFile).where(
                             GcodeFile.job_id == job_id,
@@ -1003,7 +1013,13 @@ class QueueEngine:
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
+        from ..models import SpoolmanConfig
         job_id = None
+        spoolman_url: str | None = None
+        spoolman_key: str | None = None
+        spool_id: int | None = None
+        grams_to_deduct: float | None = None
+
         async with self._factory() as session:
             result = await session.execute(
                 select(Job).where(
@@ -1018,6 +1034,30 @@ class QueueEngine:
             job.status = "complete"
             job.completed_at = _now()
             job.updated_at = _now()
+
+            # Collect Spoolman deduction data before session closes
+            actual_grams = job.actual_filament_grams
+            if actual_grams is not None:
+                spoolman_cfg = await session.get(SpoolmanConfig, 1)
+                if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+                    spoolman_url = spoolman_cfg.url
+                    spoolman_key = spoolman_cfg.api_key
+                    printer = await session.get(Printer, printer_id)
+                    loaded = (printer.loaded_filaments if printer else None) or []
+                    cfg_result = await session.execute(
+                        select(JobPrinterConfig).where(
+                            JobPrinterConfig.job_id == job_id,
+                            JobPrinterConfig.printer_id == printer_id,
+                        )
+                    )
+                    config = cfg_result.scalar_one_or_none()
+                    if config is not None:
+                        slot = _slot_for_config(config, loaded)
+                        if slot is not None:
+                            raw_spool_id = slot.get("spoolman_spool_id")
+                            if raw_spool_id is not None:
+                                spool_id = int(raw_spool_id)
+                                grams_to_deduct = actual_grams
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1034,6 +1074,13 @@ class QueueEngine:
                     pass
                 await session.delete(gcode)
             await session.commit()
+
+        if spool_id is not None and spoolman_url and grams_to_deduct is not None:
+            task = asyncio.create_task(
+                _deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct)
+            )
+            self._estimate_tasks.add(task)
+            task.add_done_callback(self._estimate_tasks.discard)
 
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.complete")
