@@ -610,3 +610,153 @@ async def test_actual_values_captured_at_slice_time(db):
         assert job.actual_filament_breakdown[0]["grams"] == pytest.approx(15.50)
 
     os.unlink(fake_gcode)
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_sets_done_with_fields(db):
+    """run_estimate writes estimate fields when slice succeeds."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job, QueueConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        await session.commit()
+
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "Test Machine"
+        printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n; estimated printing time (normal mode) = 30m 0s\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+
+    engine = QueueEngine(db, mgr, slicer)
+
+    async def fake_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    with patch.object(slicer, "slice", return_value=fake_gcode):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status == "done"
+        assert job.estimate_filament_grams == pytest.approx(10.0)
+        assert job.estimate_seconds == 1800
+        assert job.estimate_filament_breakdown is not None
+        assert job.estimate_preset_label is not None
+
+    os.unlink(fake_gcode)
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_conditional_update_guards_against_cancel(db):
+    """If estimate_status is cleared (cancellation) before write, results are discarded."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        await session.commit()
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "M"
+        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n; estimated printing time (normal mode) = 30m\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, mgr, slicer)
+
+    # Cancel the estimate mid-flight (simulates cancel_job clearing estimate_status)
+    async def fake_put(item):
+        _, _seq, coro = item
+        # Clear the status BEFORE running the coro (simulating cancellation race)
+        async with db() as session:
+            j = await session.get(Job, job_id)
+            j.estimate_status = None
+            await session.commit()
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    with patch.object(slicer, "slice", return_value=fake_gcode):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status is None  # cleared, not overwritten
+        assert job.estimate_filament_grams is None
+
+    os.unlink(fake_gcode)
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_failure_sets_failed(db):
+    """SliceError from slicer: estimate_status becomes 'failed'; job.status unchanged."""
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService, SliceError
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        await session.commit()
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "M"
+        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp/test_estimates")
+
+    engine = QueueEngine(db, mgr, slicer)
+
+    async def fake_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    with patch.object(slicer, "slice", side_effect=SliceError("profile not found")):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status == "failed"
+        assert job.status == "queued"  # job.status must not be touched
+        assert job.block_reason is None

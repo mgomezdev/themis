@@ -229,6 +229,190 @@ class QueueEngine:
             finally:
                 self._slice_queue.task_done()
 
+    def spawn_estimate(self, job_id: int) -> None:
+        """Create and track a background estimate task for job_id."""
+        task = asyncio.create_task(
+            self.run_estimate(job_id), name=f"estimate-{job_id}"
+        )
+        self._estimate_tasks.add(task)
+        task.add_done_callback(self._estimate_tasks.discard)
+
+    async def run_estimate(self, job_id: int) -> None:
+        """Background test slice to populate estimate_* fields on the Job row."""
+        import json as _json
+
+        # Step 1 — Load job and resolve config
+        token: int | None = None
+        machine_preset: str | None = None
+        stored_path: str | None = None
+        filament_profiles: list[str] = []
+        print_profile: str | None = None
+        printer_name: str | None = None
+        preset_label: dict | None = None
+
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status in ("cancelled", "complete", "failed"):
+                return
+            if job.estimate_status != "pending":
+                return
+            token = job.estimate_token
+
+            # Load the first JobPrinterConfig (lowest id)
+            cfg_result = await session.execute(
+                select(JobPrinterConfig)
+                .where(JobPrinterConfig.job_id == job_id)
+                .order_by(JobPrinterConfig.id.asc())
+                .limit(1)
+            )
+            config = cfg_result.scalar_one_or_none()
+            if config is None:
+                return
+
+            printer = await session.get(Printer, config.printer_id)
+            if printer is None:
+                return
+            uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+
+            # Capture all scalars before session closes
+            machine_preset = printer.current_orca_printer_profile or ""
+            print_profile = config.print_profile or ""
+            stored_path = uploaded_file.stored_path if uploaded_file else None
+            printer_name = printer.name
+            loaded = printer.loaded_filaments or []
+
+            # Resolve filament profiles
+            fmap = config.filament_map
+            if fmap:
+                for entry in sorted(fmap, key=lambda e: e.get("tool_index", 0) or 0):
+                    ti = entry.get("tool_index")
+                    ep = entry.get("filament_profile")
+                    if ep:
+                        filament_profiles.append(ep)
+                    elif ti is not None and ti < len(loaded):
+                        filament_profiles.append(loaded[ti].get("filament_profile", ""))
+            else:
+                slot = _slot_for_config(config, loaded)
+                fp = config.filament_profile or (slot.get("filament_profile") if slot else None)
+                if fp:
+                    filament_profiles.append(fp)
+
+            preset_label = {
+                "printer_name": printer_name,
+                "machine_profile": machine_preset,
+                "process_profile": print_profile,
+                "filament_profiles": filament_profiles,
+            }
+
+        # Step 2 — Pre-flight validation
+        if not machine_preset or not stored_path or not filament_profiles:
+            await self._fail_estimate(job_id, token, "missing machine preset, file, or filament profile")
+            return
+
+        # Step 3 — Enqueue slice
+        output_dir = self._slicer._data_dir / "gcode_estimates" / str(job_id)
+        req = SliceRequest(
+            job_id=job_id,
+            source_3mf=stored_path,
+            plate_number=1,
+            machine_preset=machine_preset,
+            process_preset=print_profile,
+            filament_presets=filament_profiles,
+            filament_colours=[],
+            export_args=[],
+            prepare_hook=None,
+        )
+
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+
+        async def _do_estimate_slice():
+            try:
+                async with self._factory() as s:
+                    j = await s.get(Job, job_id)
+                    if j is None or j.status in ("cancelled", "complete", "failed"):
+                        if not fut.cancelled():
+                            fut.cancel()
+                        return
+                    if j.estimate_status != "pending":
+                        if not fut.cancelled():
+                            fut.cancel()
+                        return
+                result = await asyncio.to_thread(self._slicer.slice, req, output_dir)
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception as exc:
+                if not fut.done():
+                    fut.set_exception(exc)
+
+        await self._slice_queue.put((1, next(self._slice_seq), _do_estimate_slice()))
+
+        try:
+            gcode_path = await fut
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:
+            logger.warning("Estimate slice failed for job %s: %s", job_id, exc)
+            await self._fail_estimate(job_id, token, str(exc))
+            return
+
+        # Step 4 — Parse, discard gcode, write results
+        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+        try:
+            shutil.rmtree(output_dir, ignore_errors=True)
+        except OSError:
+            pass
+
+        breakdown = None
+        if extruder_grams is not None:
+            breakdown = [
+                {
+                    "extruder_index": i,
+                    "filament_profile": filament_profiles[i] if i < len(filament_profiles) else None,
+                    "grams": g,
+                }
+                for i, g in enumerate(extruder_grams)
+            ]
+
+        from sqlalchemy import text as _text
+        async with self._factory() as session:
+            result = await session.execute(
+                _text(
+                    "UPDATE jobs SET estimate_status='done', estimate_seconds=:secs, "
+                    "estimate_filament_grams=:grams, estimate_filament_breakdown=:bd, "
+                    "estimate_preset_label=:label, updated_at=:now "
+                    "WHERE id=:id AND estimate_status='pending' AND estimate_token=:token"
+                ),
+                {
+                    "secs": secs,
+                    "grams": grams,
+                    "bd": _json.dumps(breakdown),
+                    "label": _json.dumps(preset_label),
+                    "now": _now(),
+                    "id": job_id,
+                    "token": token,
+                }
+            )
+            if result.rowcount == 0:
+                return  # cancelled or retriggered — discard
+            await session.commit()
+
+        await self._broadcast_job(job_id)
+
+    async def _fail_estimate(self, job_id: int, token: int, reason: str) -> None:
+        from sqlalchemy import text as _text
+        async with self._factory() as session:
+            result = await session.execute(
+                _text(
+                    "UPDATE jobs SET estimate_status='failed', updated_at=:now "
+                    "WHERE id=:id AND estimate_status='pending' AND estimate_token=:token"
+                ),
+                {"now": _now(), "id": job_id, "token": token}
+            )
+            if result.rowcount > 0:
+                await session.commit()
+        logger.warning("Estimate failed for job %s: %s", job_id, reason)
+        await self._broadcast_job(job_id)
+
     def wake(self) -> None:
         self._event.set()
 
