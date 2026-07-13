@@ -14,7 +14,7 @@ from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
@@ -85,6 +85,17 @@ def _to_dict(j: Job) -> dict:
         "created_at": j.created_at,
         "updated_at": j.updated_at,
         "completed_at": j.completed_at,
+        # Actual values (populated at production slice time)
+        "actual_filament_grams": j.actual_filament_grams,
+        "actual_seconds": j.actual_seconds,
+        "actual_filament_breakdown": j.actual_filament_breakdown,
+        "deduction_skipped": j.deduction_skipped,
+        # Estimate values (populated after background test slice)
+        "estimate_status": j.estimate_status,
+        "estimate_seconds": j.estimate_seconds,
+        "estimate_filament_grams": j.estimate_filament_grams,
+        "estimate_filament_breakdown": j.estimate_filament_breakdown,
+        "estimate_preset_label": j.estimate_preset_label,
     }
 
 
@@ -183,6 +194,15 @@ async def create_job(
     await session.refresh(job)
 
     queue_engine.wake()
+
+    # Trigger background estimate if enabled
+    queue_cfg = await session.get(QueueConfig, 1)
+    estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
+    if estimates_enabled:
+        job.estimate_token = (job.estimate_token or 0) + 1
+        job.estimate_status = "pending"
+        await session.commit()
+        queue_engine.spawn_estimate(job.id)
 
     return _to_dict(job)
 
@@ -388,8 +408,8 @@ async def get_job_details(
         "plate": plate_info,
         "printer_configs": printer_configs,
         "assigned_printer": assigned_printer,
-        "filament_grams": gcode_rec.filament_grams if gcode_rec else None,
-        "estimated_seconds": gcode_rec.estimated_seconds if gcode_rec else None,
+        "filament_grams_live": gcode_rec.filament_grams if gcode_rec else None,
+        "estimated_seconds_live": gcode_rec.estimated_seconds if gcode_rec else None,
     }
 
 
@@ -428,6 +448,8 @@ async def cancel_job(
                 pass
             await session.delete(gcode_row)
 
+    if getattr(job, "estimate_status", None) == "pending":
+        job.estimate_status = None
     job.status = "cancelled"
     job.completed_at = datetime.now(timezone.utc).isoformat()
     job.assigned_printer_id = None
@@ -484,6 +506,13 @@ async def update_job_configs(
     for row in existing.scalars().all():
         await session.delete(row)
 
+    # Clear stale estimate fields
+    job.estimate_status = None
+    job.estimate_seconds = None
+    job.estimate_filament_grams = None
+    job.estimate_filament_breakdown = None
+    job.estimate_preset_label = None
+
     for cfg in body.printer_configs:
         session.add(JobPrinterConfig(
             job_id=job_id,
@@ -509,6 +538,16 @@ async def update_job_configs(
     await session.commit()
     await session.refresh(job)
     queue_engine.wake()
+
+    # Re-trigger background estimate if enabled
+    queue_cfg = await session.get(QueueConfig, 1)
+    estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
+    if estimates_enabled:
+        job.estimate_token = (job.estimate_token or 0) + 1
+        job.estimate_status = "pending"
+        await session.commit()
+        queue_engine.spawn_estimate(job.id)
+
     return _to_dict(job)
 
 

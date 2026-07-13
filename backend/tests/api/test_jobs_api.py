@@ -321,3 +321,85 @@ async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
         mock_client.stop_print.assert_not_called()
     finally:
         printer_manager._clients.pop(printer_id, None)
+
+
+async def test_job_response_includes_estimate_fields(client, tmp_path):
+    """POST /jobs response includes all new estimate and actual fields."""
+    from unittest.mock import MagicMock
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    payload = {
+        "uploaded_file_id": file_id,
+        "plate_number": 1,
+        "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}],
+    }
+    with patch("app.api.routes.jobs.queue_engine") as mock_qe:
+        mock_qe.spawn_estimate = MagicMock()
+        mock_qe.wake = MagicMock()
+        resp = await client.post("/api/v1/jobs", json=payload)
+    assert resp.status_code == 201
+    data = resp.json()
+    for field in ["estimate_status", "estimate_filament_grams", "estimate_seconds",
+                  "estimate_filament_breakdown", "estimate_preset_label",
+                  "actual_filament_grams", "actual_seconds", "deduction_skipped"]:
+        assert field in data, f"missing: {field}"
+
+
+async def test_cancel_job_clears_estimate_status(client, tmp_path):
+    """POST /jobs/{id}/cancel clears estimate_status when it is 'pending'."""
+    from unittest.mock import MagicMock
+    from app.models import Job
+    from app.database import get_session
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    with patch("app.api.routes.jobs.queue_engine") as mock_qe:
+        mock_qe.spawn_estimate = MagicMock()
+        mock_qe.wake = MagicMock()
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+        })
+    job_id = resp.json()["id"]
+
+    # Set estimate_status to pending via the test DB session
+    from app.main import app
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.estimate_status = "pending"
+    await session.commit()
+    await agen.aclose()
+
+    with patch("app.api.routes.jobs.queue_engine") as mock_qe:
+        mock_qe.wake = MagicMock()
+        cancel_resp = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+
+    assert cancel_resp.status_code == 200
+    data = cancel_resp.json()
+    assert data["estimate_status"] is None
+
+
+async def test_job_details_returns_live_fields(client, tmp_path):
+    """GET /jobs/{id}/details returns filament_grams_live and estimated_seconds_live."""
+    from unittest.mock import MagicMock
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    with patch("app.api.routes.jobs.queue_engine") as mock_qe:
+        mock_qe.spawn_estimate = MagicMock()
+        mock_qe.wake = MagicMock()
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+        })
+    job_id = resp.json()["id"]
+
+    detail_resp = await client.get(f"/api/v1/jobs/{job_id}/details")
+    assert detail_resp.status_code == 200
+    detail = detail_resp.json()
+    assert "filament_grams_live" in detail
+    assert "estimated_seconds_live" in detail
+    assert "filament_grams" not in detail
+    assert "estimated_seconds" not in detail
