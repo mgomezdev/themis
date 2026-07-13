@@ -173,16 +173,13 @@ async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
 async def _project_dict(project: Project, session: AsyncSession) -> dict:
     items = await _load_items(session, project.id)
     links = await _load_links(session, project.id)
-    jobs_total = (await session.execute(
-        select(func.count()).where(Job.project_id == project.id)
-    )).scalar() or 0
-    jobs_complete = (await session.execute(
-        select(func.count()).where(Job.project_id == project.id, Job.status == "complete")
-    )).scalar() or 0
 
     job_rows = (await session.execute(
         select(Job).where(Job.project_id == project.id)
     )).scalars().all()
+
+    jobs_total = len(job_rows)
+    jobs_complete = sum(1 for j in job_rows if j.status == "complete")
 
     _TERMINAL = {"complete", "failed", "cancelled"}
 
