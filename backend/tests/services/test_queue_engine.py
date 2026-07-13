@@ -556,3 +556,57 @@ async def test_equal_priority_no_type_error(db):
         _, _s, c = await engine._slice_queue.get()
         await c
         engine._slice_queue.task_done()
+
+
+@pytest.mark.asyncio
+async def test_actual_values_captured_at_slice_time(db):
+    """After a production slice, actual_filament_grams/actual_seconds/actual_filament_breakdown
+    are persisted on the Job row in the same session block as GcodeFile creation."""
+    import tempfile, os
+    from pathlib import Path
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from app.models import Job, QueueConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    # Set up a printer with filament profile
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "Test Machine"
+        printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    # Mock the slice to write a fake gcode file
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 15.50\n; estimated printing time (normal mode) = 1h 0m 0s\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+
+    engine = QueueEngine(db, mgr, slicer)
+
+    # Patch the priority queue to run synchronously
+    async def fake_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    with patch.object(slicer, "slice", return_value=fake_gcode), \
+         patch.object(engine, "_do_upload_and_print", new_callable=AsyncMock):
+        await engine._run_slice_and_print(job_id, printer_id, 1)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.actual_filament_grams == pytest.approx(15.50)
+        assert job.actual_seconds == 3600
+        assert job.actual_filament_breakdown is not None
+        assert len(job.actual_filament_breakdown) == 1
+        assert job.actual_filament_breakdown[0]["grams"] == pytest.approx(15.50)
+
+    os.unlink(fake_gcode)

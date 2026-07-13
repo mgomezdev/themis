@@ -613,6 +613,18 @@ class QueueEngine:
                 filament_grams=grams, estimated_seconds=secs,
             )
             session.add(gcode_rec)
+            # Persist actuals on Job NOW — before GcodeFile is ever deleted.
+            job.actual_filament_grams = grams
+            job.actual_seconds = secs
+            if extruder_grams is not None:
+                job.actual_filament_breakdown = [
+                    {
+                        "extruder_index": i,
+                        "filament_profile": req.filament_presets[i] if i < len(req.filament_presets) else None,
+                        "grams": g,
+                    }
+                    for i, g in enumerate(extruder_grams)
+                ]
             if slice_only or not self._mgr.is_printer_ready(printer_id):
                 job.status = "sliced"
                 job.assigned_printer_id = None
