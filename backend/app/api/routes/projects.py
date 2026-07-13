@@ -16,9 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, UploadedFile
+from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, QueueConfig, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+from ...services.queue_engine import queue_engine
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
@@ -178,11 +179,38 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
     jobs_complete = (await session.execute(
         select(func.count()).where(Job.project_id == project.id, Job.status == "complete")
     )).scalar() or 0
-    gcode_rows = (await session.execute(
-        select(GcodeFile).join(Job, Job.id == GcodeFile.job_id).where(Job.project_id == project.id)
+
+    job_rows = (await session.execute(
+        select(Job).where(Job.project_id == project.id)
     )).scalars().all()
-    total_grams = sum(g.filament_grams for g in gcode_rows if g.filament_grams is not None) or None
-    total_seconds = sum(g.estimated_seconds for g in gcode_rows if g.estimated_seconds is not None) or None
+
+    _TERMINAL = {"complete", "failed", "cancelled"}
+
+    estimate_filament_grams_total = (
+        sum(j.estimate_filament_grams for j in job_rows if j.estimate_filament_grams is not None) or None
+    )
+    estimate_seconds_total = (
+        sum(j.estimate_seconds for j in job_rows if j.estimate_seconds is not None) or None
+    )
+    estimate_filament_grams_remaining = (
+        sum(
+            j.estimate_filament_grams for j in job_rows
+            if j.estimate_filament_grams is not None and j.status not in _TERMINAL
+        ) or None
+    )
+    estimate_seconds_remaining = (
+        sum(
+            j.estimate_seconds for j in job_rows
+            if j.estimate_seconds is not None and j.status not in _TERMINAL
+        ) or None
+    )
+    actual_filament_grams = (
+        sum(j.actual_filament_grams for j in job_rows if j.actual_filament_grams is not None) or None
+    )
+    actual_seconds = (
+        sum(j.actual_seconds for j in job_rows if j.actual_seconds is not None) or None
+    )
+
     return {
         "id": project.id,
         "name": project.name,
@@ -201,8 +229,12 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "links": links,
         "jobs_total": jobs_total,
         "jobs_complete": jobs_complete,
-        "filament_grams": round(total_grams, 2) if total_grams is not None else None,
-        "estimated_seconds": total_seconds,
+        "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
+        "estimate_seconds_total": estimate_seconds_total,
+        "estimate_filament_grams_remaining": round(estimate_filament_grams_remaining, 2) if estimate_filament_grams_remaining else None,
+        "estimate_seconds_remaining": estimate_seconds_remaining,
+        "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
+        "actual_seconds": actual_seconds,
     }
 
 
@@ -853,6 +885,18 @@ async def generate_project(
                     print_profile=p.current_orca_printer_profile or "",
                 ))
         await session.commit()
+
+        # Trigger estimates for each new job if enabled.
+        queue_cfg = await session.get(QueueConfig, 1)
+        est_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
+        if est_enabled:
+            for j in new_jobs:
+                j.estimate_token = (j.estimate_token or 0) + 1
+                j.estimate_status = "pending"
+            await session.commit()
+            for j in new_jobs:
+                queue_engine.spawn_estimate(j.id)
+
         jobs_out.extend({
             "id": j.id,
             "uploaded_file_id": j.uploaded_file_id,

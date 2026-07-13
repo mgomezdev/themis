@@ -2,7 +2,7 @@ import io
 import zipfile
 import pytest
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _make_stl_bytes() -> bytes:
@@ -199,3 +199,81 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
 
     job_pack_dir = lib / "Job Pack 3MFs" / expected_label
     assert job_pack_dir.is_dir()
+
+
+async def test_project_estimate_rollup_keys(client):
+    """GET /projects/{id} response includes new rollup keys and excludes old ones."""
+    resp = await client.post("/api/v1/projects", json={
+        "name": "Test", "customer": "", "order_type": "internal",
+        "on_hold": False, "due_date": None, "notes": None,
+    })
+    assert resp.status_code == 201
+    proj_id = resp.json()["id"]
+
+    get_resp = await client.get(f"/api/v1/projects/{proj_id}")
+    data = get_resp.json()
+    for key in ["estimate_filament_grams_total", "estimate_seconds_total",
+                "estimate_filament_grams_remaining", "estimate_seconds_remaining",
+                "actual_filament_grams", "actual_seconds"]:
+        assert key in data, f"missing: {key}"
+    assert "filament_grams" not in data
+    assert "estimated_seconds" not in data
+
+
+async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_path):
+    """estimate_filament_grams_remaining excludes completed/cancelled/failed jobs."""
+    from app.main import app
+    from app.database import get_session
+    from app.models import Job
+
+    resp = await client.post("/api/v1/projects", json={
+        "name": "P", "customer": "", "order_type": "internal",
+        "on_hold": False, "due_date": None, "notes": None,
+    })
+    proj_id = resp.json()["id"]
+
+    # Upload a file and create a printer so we can create a job
+    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
+        (tmp_path / "library").mkdir(exist_ok=True)
+        (tmp_path / "filecache").mkdir(exist_ok=True)
+        import io as _io, zipfile as _zf
+        buf = _io.BytesIO()
+        with _zf.ZipFile(buf, "w") as zf:
+            zf.writestr("Metadata/plate_1.png", b"\x89PNG")
+        file_resp = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("m.3mf", buf.getvalue(), "application/octet-stream")},
+        )
+    file_id = file_resp.json()["id"]
+
+    printer_resp = await client.post("/api/v1/printers", json={
+        "name": "P1S", "printer_type": "bambu",
+        "connection_config": {},
+        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
+        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+    })
+    printer_id = printer_resp.json()["id"]
+
+    with patch("app.api.routes.jobs.queue_engine") as mock_qe:
+        mock_qe.spawn_estimate = MagicMock()
+        mock_qe.wake = MagicMock()
+        j1 = (await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+        })).json()
+
+    # Set project_id and estimates on job via DB override
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, j1["id"])
+    job.project_id = proj_id
+    job.estimate_filament_grams = 10.0
+    job.status = "complete"  # terminal — excluded from remaining
+    await session.commit()
+    await agen.aclose()
+
+    detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
+    assert detail["estimate_filament_grams_total"] == pytest.approx(10.0)
+    assert detail["estimate_filament_grams_remaining"] is None  # all jobs terminal
+    assert detail["actual_filament_grams"] is None
