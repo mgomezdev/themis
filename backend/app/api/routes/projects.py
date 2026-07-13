@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -729,8 +730,8 @@ async def generate_project(
         await session.commit()
 
     library_dir = get_library_dir()
-    projects_dir = library_dir / "Projects"
-    projects_dir.mkdir(parents=True, exist_ok=True)
+    job_pack_dir = library_dir / "Job Pack 3MFs"
+    job_pack_dir.mkdir(parents=True, exist_ok=True)
 
     client = LaminusSidecarClient(sidecar_url)
     jobs_out: list[dict] = []
@@ -764,7 +765,10 @@ async def generate_project(
 
         label = _filament_label(fil_type, fil_color, fil_id)
         out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
-        out_path = LibraryScanner.unique_path(projects_dir, out_filename)
+        # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
+        tmp_subdir = job_pack_dir / f"_tmp_{_uuid.uuid4().hex[:10]}"
+        tmp_subdir.mkdir(parents=True, exist_ok=True)
+        out_path = tmp_subdir / out_filename
         out_path.write_bytes(packed_bytes)
 
         plate_nums = _parse_plate_nums(out_path)
@@ -777,7 +781,7 @@ async def generate_project(
             plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
             uploaded_at=now,
             relative_path=rel,
-            folder="/Projects",
+            folder="/Job Pack 3MFs",
             size_bytes=out_path.stat().st_size,
             content_hash="",
             mtime=out_path.stat().st_mtime,
@@ -786,15 +790,6 @@ async def generate_project(
         session.add(new_file)
         await session.commit()
         await session.refresh(new_file)
-
-        background_tasks.add_task(regen_file_thumbnails, new_file.id)
-
-        files_out.append({
-            "id": new_file.id,
-            "original_filename": new_file.original_filename,
-            "folder": new_file.folder,
-            "plate_count": len(plate_nums),
-        })
 
         effective_plates = plate_nums or [1]
         num_plates = len(effective_plates)
@@ -826,9 +821,29 @@ async def generate_project(
             next_pos += 1.0
         # Commit jobs so the DB assigns their autoincrement IDs.
         await session.commit()
-        # Refresh each job so j.id is populated (mirrors new_file refresh above).
+        # Refresh each job so j.id is populated.
         for j in new_jobs:
             await session.refresh(j)
+
+        # Rename temp dir to the job-ID subfolder now that IDs are known.
+        job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
+        final_subdir = job_pack_dir / job_id_label
+        tmp_subdir.rename(final_subdir)
+        final_path = final_subdir / out_filename
+        new_file.stored_path = str(final_path)
+        new_file.relative_path = final_path.relative_to(library_dir).as_posix()
+        new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
+        await session.commit()
+
+        background_tasks.add_task(regen_file_thumbnails, new_file.id)
+
+        files_out.append({
+            "id": new_file.id,
+            "original_filename": new_file.original_filename,
+            "folder": new_file.folder,
+            "plate_count": len(plate_nums),
+        })
+
         # Create printer configs for each eligible printer × job.
         for j in new_jobs:
             for p in eligible_printers:
