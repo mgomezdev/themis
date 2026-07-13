@@ -239,19 +239,19 @@ export function JobDetailScreen() {
               )}
 
               <div className="row gap-5" style={{ flexWrap: 'wrap' }}>
-                {(job.estimated_seconds != null || job.plate?.estimated_time != null) && (
+                {(job.estimated_seconds_live != null || job.plate?.estimated_time != null) && (
                   <Kv k="Est. print" v={
                     <span className="num small">
-                      {fmtTime(Math.round((job.estimated_seconds ?? job.plate!.estimated_time!) / 60))}
-                      {job.estimated_seconds != null && <span className="muted tiny" style={{ marginLeft: 4 }}>actual</span>}
+                      {fmtTime(Math.round((job.estimated_seconds_live ?? job.plate!.estimated_time!) / 60))}
+                      {job.estimated_seconds_live != null && <span className="muted tiny" style={{ marginLeft: 4 }}>live</span>}
                     </span>
                   } />
                 )}
-                {(job.filament_grams != null || job.plate?.filament_g != null) && (
+                {(job.filament_grams_live != null || job.plate?.filament_g != null) && (
                   <Kv k="Filament" v={
                     <span className="num small">
-                      {(job.filament_grams ?? job.plate!.filament_g!).toFixed(1)} g
-                      {job.filament_grams != null && <span className="muted tiny" style={{ marginLeft: 4 }}>actual</span>}
+                      {(job.filament_grams_live ?? job.plate!.filament_g!).toFixed(1)} g
+                      {job.filament_grams_live != null && <span className="muted tiny" style={{ marginLeft: 4 }}>live</span>}
                     </span>
                   } />
                 )}
@@ -290,6 +290,78 @@ export function JobDetailScreen() {
                   />
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Estimate */}
+          {job.estimate_status !== null && (
+            <div className="card" style={{ padding: 20 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Estimate</div>
+              {job.estimate_status === 'pending' && (
+                <p style={{ color: 'var(--muted)', margin: 0 }}>Estimating…</p>
+              )}
+              {job.estimate_status === 'done' && job.estimate_seconds !== null && (
+                <>
+                  <div className="col gap-2">
+                    <div className="row between">
+                      <span className="small muted">Time</span>
+                      <span className="num small">{fmtTime(Math.round(job.estimate_seconds / 60))}</span>
+                    </div>
+                    <div className="row between">
+                      <span className="small muted">Filament</span>
+                      <span className="num small">{job.estimate_filament_grams?.toFixed(1)} g</span>
+                    </div>
+                  </div>
+                  {job.estimate_filament_breakdown && job.estimate_filament_breakdown.length > 0 && (
+                    <ul style={{ margin: '10px 0 0 0', padding: '0 0 0 18px' }}>
+                      {job.estimate_filament_breakdown.map((b) => (
+                        <li key={b.extruder_index} className="small">
+                          T{b.extruder_index}: {b.filament_profile ?? '—'} — {b.grams.toFixed(1)} g
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {job.estimate_preset_label && (
+                    <div style={{ marginTop: 10, fontSize: '0.8rem', color: 'var(--text-3)' }}>
+                      {job.estimate_preset_label.printer_name} · {job.estimate_preset_label.process_profile}
+                    </div>
+                  )}
+                </>
+              )}
+              {job.estimate_status === 'failed' && (
+                <p style={{ color: 'var(--text-3)', margin: 0 }}>Estimate unavailable</p>
+              )}
+            </div>
+          )}
+
+          {/* Actual */}
+          {(job.status === 'complete' || job.status === 'failed') && job.actual_filament_grams !== null && (
+            <div className="card" style={{ padding: 20 }}>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Actual</div>
+              <div className="col gap-2">
+                <div className="row between">
+                  <span className="small muted">Time</span>
+                  <span className="num small">{job.actual_seconds !== null ? fmtTime(Math.round(job.actual_seconds / 60)) : '—'}</span>
+                </div>
+                <div className="row between">
+                  <span className="small muted">Filament</span>
+                  <span className="num small">{job.actual_filament_grams.toFixed(1)} g</span>
+                </div>
+              </div>
+              {job.actual_filament_breakdown && job.actual_filament_breakdown.length > 0 && (
+                <ul style={{ margin: '10px 0 0 0', padding: '0 0 0 18px' }}>
+                  {job.actual_filament_breakdown.map((b) => (
+                    <li key={b.extruder_index} className="small">
+                      T{b.extruder_index}: {b.filament_profile ?? '—'} — {b.grams.toFixed(1)} g
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {job.deduction_skipped && (
+                <div style={{ marginTop: 10, color: 'var(--warn, #f59e0b)', fontWeight: 500, fontSize: 13 }}>
+                  Print was aborted — please manually update your Spoolman inventory.
+                </div>
+              )}
             </div>
           )}
         </div>
