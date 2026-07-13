@@ -46,6 +46,17 @@ export interface ApiJob {
   status: string;
   overrides: Record<string, string> | null;
   block_reason: string | null;
+  // Actual values
+  actual_filament_grams: number | null;
+  actual_seconds: number | null;
+  actual_filament_breakdown: Array<{ extruder_index: number; filament_profile: string | null; grams: number }> | null;
+  deduction_skipped: boolean | null;
+  // Estimate values
+  estimate_status: 'pending' | 'done' | 'failed' | null;
+  estimate_seconds: number | null;
+  estimate_filament_grams: number | null;
+  estimate_filament_breakdown: Array<{ extruder_index: number; filament_profile: string | null; grams: number }> | null;
+  estimate_preset_label: { printer_name: string; machine_profile: string; process_profile: string; filament_profiles: string[] } | null;
   created_at: string;
   updated_at: string;
 }
@@ -78,8 +89,8 @@ export interface ApiJobDetails extends ApiJob {
   plate: { estimated_time: number | null; filament_g: number | null; thumbnail_path: string | null } | null;
   printer_configs: ApiJobPrinterConfig[];
   assigned_printer: { id: number; name: string; printer_type: string } | null;
-  filament_grams: number | null;
-  estimated_seconds: number | null;
+  filament_grams_live: number | null;       // from live GcodeFile (slicing→printing only)
+  estimated_seconds_live: number | null;    // from live GcodeFile (slicing→printing only)
 }
 
 /** Build the URL that serves a plate's embedded thumbnail via the files API. */
@@ -169,7 +180,7 @@ export async function checkOverrides(body: {
   });
 }
 
-export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number; }
+export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number; estimates_enabled: boolean; }
 
 export async function getQueueConfig(): Promise<QueueConfig> {
   return request('/api/v1/settings/queue');

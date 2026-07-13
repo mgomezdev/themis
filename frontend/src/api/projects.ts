@@ -55,8 +55,12 @@ export interface Project {
   links: ProjectLink[];
   jobs_total: number;
   jobs_complete: number;
-  filament_grams: number | null;
-  estimated_seconds: number | null;
+  estimate_filament_grams_total: number | null;
+  estimate_seconds_total: number | null;
+  estimate_filament_grams_remaining: number | null;
+  estimate_seconds_remaining: number | null;
+  actual_filament_grams: number | null;
+  actual_seconds: number | null;
 }
 
 export interface GenerateOut {
