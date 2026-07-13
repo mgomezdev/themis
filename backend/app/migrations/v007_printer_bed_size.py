@@ -7,8 +7,11 @@ name = "printer_bed_size"
 
 
 async def up(conn) -> None:
-    await conn.execute(text("ALTER TABLE printers ADD COLUMN bed_x_mm REAL NOT NULL DEFAULT 256.0"))
-    await conn.execute(text("ALTER TABLE printers ADD COLUMN bed_y_mm REAL NOT NULL DEFAULT 256.0"))
+    cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+    if "bed_x_mm" not in cols:
+        await conn.execute(text("ALTER TABLE printers ADD COLUMN bed_x_mm REAL NOT NULL DEFAULT 256.0"))
+    if "bed_y_mm" not in cols:
+        await conn.execute(text("ALTER TABLE printers ADD COLUMN bed_y_mm REAL NOT NULL DEFAULT 256.0"))
 
 
 async def down(conn) -> None:

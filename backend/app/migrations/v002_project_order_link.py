@@ -7,7 +7,9 @@ name = "project_order_link"
 
 
 async def up(conn) -> None:
-    await conn.execute(text("ALTER TABLE projects ADD COLUMN order_id INTEGER REFERENCES orders(id)"))
+    cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(projects)"))).fetchall()}
+    if "order_id" not in cols:
+        await conn.execute(text("ALTER TABLE projects ADD COLUMN order_id INTEGER REFERENCES orders(id)"))
 
 
 async def down(conn) -> None:
