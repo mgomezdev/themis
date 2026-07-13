@@ -39,3 +39,18 @@ async def test_put_empty_operator_name_clears_it_to_null(client: AsyncClient):
 
     assert resp.status_code == 200
     assert resp.json()["operator_name"] is None
+
+
+async def test_estimates_enabled_get_put(client: AsyncClient):
+    """GET /settings/queue includes estimates_enabled; PUT persists it."""
+    get_resp = await client.get("/api/v1/settings/queue")
+    assert get_resp.status_code == 200
+    assert "estimates_enabled" in get_resp.json()
+    assert get_resp.json()["estimates_enabled"] is False
+
+    put_resp = await client.put("/api/v1/settings/queue", json={"estimates_enabled": True})
+    assert put_resp.status_code == 200
+    assert put_resp.json()["estimates_enabled"] is True
+
+    get_resp2 = await client.get("/api/v1/settings/queue")
+    assert get_resp2.json()["estimates_enabled"] is True
