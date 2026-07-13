@@ -19,30 +19,40 @@ from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import webhook_service
 
 
-def _parse_gcode_estimates(path: str) -> tuple[float | None, int | None]:
-    """Extract filament_grams and estimated_seconds from a .gcode or .gcode.3mf file."""
+def _parse_gcode_estimates(path: str) -> tuple[float | None, int | None, list[float] | None]:
+    """Extract filament_grams (total), estimated_seconds, per-extruder grams from gcode.
+
+    Returns (total_grams, seconds, extruder_grams_list). extruder_grams_list has one
+    entry per comma-separated value in the 'filament used [g]' line. Returns None for
+    each field independently if parsing fails.
+    """
     try:
         if path.endswith(".3mf"):
             with zipfile.ZipFile(path) as z:
                 names = [n for n in z.namelist() if n.endswith(".gcode")]
                 if not names:
-                    return None, None
+                    return None, None, None
                 text = z.read(names[0]).decode("utf-8", errors="replace")[:16000]
         else:
             with open(path, "r", errors="replace") as f:
                 text = f.read(16000)
     except Exception:
-        return None, None
+        return None, None, None
 
     grams: float | None = None
+    extruder_grams: list[float] | None = None
     seconds: int | None = None
     for raw in text.splitlines():
         line = raw.lstrip("; ").strip()
         if "filament used [g]" in line.lower():
+            raw_val = line.split("=")[-1].strip()
+            parts = [p.strip() for p in raw_val.split(",")]
             try:
-                grams = float(line.split("=")[-1].strip())
+                extruder_grams = [float(p) for p in parts if p]
+                grams = sum(extruder_grams)
             except ValueError:
-                pass
+                extruder_grams = None
+                grams = None
         if "estimated printing time" in line.lower():
             time_str = re.split(r"\s*\(", line.split("=")[-1].strip())[0].strip()
             total = 0
@@ -57,7 +67,7 @@ def _parse_gcode_estimates(path: str) -> tuple[float | None, int | None]:
                 seconds = total
         if grams is not None and seconds is not None:
             break
-    return grams, seconds
+    return grams, seconds, extruder_grams
 
 logger = logging.getLogger(__name__)
 
@@ -543,7 +553,7 @@ class QueueEngine:
             job = await session.get(Job, job_id)
             if job is None or job.status == "cancelled":
                 return
-            grams, secs = _parse_gcode_estimates(gcode_path)
+            grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
                 filament_grams=grams, estimated_seconds=secs,

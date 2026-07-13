@@ -441,3 +441,39 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
     await qe._process_queue()
     await asyncio.sleep(0.05)
     assert mock_slicer.slice.call_count == 1  # no additional calls
+
+
+def test_parse_gcode_estimates_single_extruder(tmp_path):
+    from app.services.queue_engine import _parse_gcode_estimates
+    gcode = tmp_path / "test.gcode"
+    gcode.write_text(
+        "; filament used [g] = 12.50\n"
+        "; estimated printing time (normal mode) = 1h 30m 45s\n"
+    )
+    grams, secs, extruder_grams = _parse_gcode_estimates(str(gcode))
+    assert grams == pytest.approx(12.50)
+    assert secs == 1 * 3600 + 30 * 60 + 45
+    assert extruder_grams == [pytest.approx(12.50)]
+
+
+def test_parse_gcode_estimates_multi_extruder(tmp_path):
+    from app.services.queue_engine import _parse_gcode_estimates
+    gcode = tmp_path / "test.gcode"
+    gcode.write_text(
+        "; filament used [g] = 15.23, 8.45\n"
+        "; estimated printing time (normal mode) = 2h 0m 0s\n"
+    )
+    grams, secs, extruder_grams = _parse_gcode_estimates(str(gcode))
+    assert grams == pytest.approx(23.68)
+    assert secs == 7200
+    assert extruder_grams == [pytest.approx(15.23), pytest.approx(8.45)]
+
+
+def test_parse_gcode_estimates_missing_returns_none(tmp_path):
+    from app.services.queue_engine import _parse_gcode_estimates
+    gcode = tmp_path / "test.gcode"
+    gcode.write_text("; no filament info here\n")
+    grams, secs, extruder_grams = _parse_gcode_estimates(str(gcode))
+    assert grams is None
+    assert secs is None
+    assert extruder_grams is None
