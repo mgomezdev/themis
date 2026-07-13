@@ -288,3 +288,36 @@ def test_inject_thumbnail_noop_for_invalid_png_magic(tmp_path):
     svc._inject_thumbnail(str(gcode), str(path), plate_number=1)
 
     assert gcode.read_text() == original
+
+
+@pytest.mark.asyncio
+async def test_slice_uses_custom_output_dir(tmp_path):
+    """When output_dir is provided, the slice method uses it instead of the default."""
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+    from app.services.slicer_service import SlicerService, SliceRequest
+
+    custom_dir = tmp_path / "estimates" / "99"
+
+    svc = SlicerService(data_dir=str(tmp_path))
+
+    req = SliceRequest(
+        job_id=99, source_3mf="model.3mf", plate_number=1,
+        machine_preset="M", process_preset="P", filament_presets=["F"],
+    )
+
+    captured_out_dir = None
+
+    def fake_execute(self_inner, req_inner, machine_uuid, process_uuid, filament_uuids,
+                     out_dir, sidecar_url):
+        nonlocal captured_out_dir
+        captured_out_dir = out_dir
+        return str(out_dir / "result.gcode")
+
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+         patch.object(SlicerService, "_resolve_uuids", return_value=("m", "p", ["f"])), \
+         patch.object(SlicerService, "_execute_slice_by_ids", fake_execute):
+        svc.slice(req, output_dir=custom_dir)
+
+    assert captured_out_dir == custom_dir
+    assert custom_dir.exists()

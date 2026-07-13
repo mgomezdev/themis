@@ -52,11 +52,15 @@ class SlicerService:
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
 
     # ── public API ────────────────────────────────────────────────────────────
-    def slice(self, req: SliceRequest) -> str:
+    def slice(self, req: SliceRequest, output_dir: "Path | None" = None) -> str:
         """Resolve profile names to sidecar UUIDs and delegate the full slice to
         the Orca sidecar (POST /api/slice/start). The sidecar owns all profile
         resolution, 3MF assembly, and gcode generation. Raises SliceError if the
         sidecar is unreachable, unconfigured, or any profile is not in its catalog.
+
+        ``output_dir`` overrides the default gcode directory
+        (``<data_dir>/gcode/<job_id>``). Callers can use this to isolate estimate
+        gcode from production gcode. The directory is created if it does not exist.
         """
         from ..config import get_laminus_sidecar_url
         sidecar_url = get_laminus_sidecar_url()
@@ -68,7 +72,7 @@ class SlicerService:
                 "Multi-extruder remapping via prepare_hook is not supported in sidecar-only mode"
             )
 
-        out_dir = self._data_dir / "gcode" / str(req.job_id)
+        out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)
 
         uuids = self._resolve_uuids(req, sidecar_url)
