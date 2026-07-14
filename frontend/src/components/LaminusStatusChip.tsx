@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { OrcaCatalogStatus } from '../api/orca';
 
 const DOT_COLORS: Record<string, string> = {

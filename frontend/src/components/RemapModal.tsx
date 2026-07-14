@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import type { PendingRemaps, Resolutions, ConfirmResult } from '../api/laminus';
 import { confirmRemap } from '../api/laminus';
 

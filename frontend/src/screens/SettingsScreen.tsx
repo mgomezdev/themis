@@ -510,7 +510,7 @@ function PrintDefaultsPage() {
     }
   }
 
-  const orcaCount = catalogStatus?.orca?.profile_count;
+  const orcaCount = catalogStatus?.catalog_counts;
   const catalogSummary = orcaCount
     ? `${orcaCount.machine} machines · ${orcaCount.process} processes · ${orcaCount.filament} filaments`
     : catalogStatus?.cached
@@ -575,7 +575,7 @@ function PrintDefaultsPage() {
         hint="Themis caches the full machine/process/filament catalog from Orca. Refresh fetches the latest copy from Orca. Rescan & rebuild tells Orca to re-read all profiles from disk first (needed after installing new OrcaSlicer profiles).">
         <div className="col gap-2">
           <div className="muted small" style={{ marginBottom: 2 }}>
-            {catalogStatus?.orca?.catalog_building
+            {catalogStatus?.laminus?.catalog_building
               ? 'Orca is building catalog…'
               : catalogStatus?.cached
               ? catalogSummary
