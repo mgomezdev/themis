@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import type { SyncResponse } from './laminus';
 
 export interface ApiFilament {
   id: number;
@@ -93,13 +94,18 @@ export async function saveSpoolmanConfig(cfg: Partial<SpoolmanConfig>): Promise<
 
 export async function testSpoolmanConnection(
   url: string,
-  api_key?: string | null,
-): Promise<{ ok: boolean; version?: string; message?: string }> {
-  return request('/api/v1/settings/spoolman/test', {
+  api_key: string | null,
+): Promise<SyncResponse> {
+  const r = await fetch('/api/v1/settings/spoolman/test', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ url, api_key }),
   });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.message || `${r.status}`);
+  }
+  return r.json();
 }
 
 export async function fetchFilaments(): Promise<ApiFilament[]> {
