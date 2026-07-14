@@ -68,6 +68,12 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
 
   const safeId = (s: string) => s.replace(/[^a-z0-9]/gi, '_');
 
+  const filterOpts = (opts: string[], query: string): string[] => {
+    if (!query) return opts.slice(0, 50);
+    const q = query.toLowerCase();
+    return opts.filter(o => o.toLowerCase().includes(q)).slice(0, 50);
+  };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       {/* flex column: scrollable body + fixed footer */}
@@ -92,7 +98,8 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                 const key = `${entry.field}|${entry.stale_value}`;
                 const listId = `p-${safeId(key)}`;
                 const optList = entry.options_kind === 'machine' ? options.machine : options.filament;
-                const isValid = optList.includes(printerSelections[key] ?? '');
+                const printerQuery = printerSelections[key] ?? '';
+                const isValid = optList.includes(printerQuery);
                 return (
                   <div key={key} style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
@@ -102,13 +109,13 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                     <input
                       type="text"
                       list={listId}
-                      value={printerSelections[key] ?? ''}
+                      value={printerQuery}
                       onChange={e => setPrinterSelections(s => ({ ...s, [key]: e.target.value }))}
                       placeholder="Search or select a replacement…"
                       style={{ width: '100%', marginTop: 4, padding: '4px 8px', boxSizing: 'border-box' }}
                     />
                     <datalist id={listId}>
-                      {optList.map(o => <option key={o} value={o} />)}
+                      {filterOpts(optList, printerQuery).map(o => <option key={o} value={o} />)}
                     </datalist>
                     {entry.required && !isValid && (
                       <div style={{ color: 'var(--err, #f87171)', fontSize: 12, marginTop: 2 }}>Required — choose from the list</div>
@@ -126,6 +133,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                 const key = `${entry.field}|${entry.stale_value}`;
                 const listId = `j-${safeId(key)}`;
                 const optList = entry.options_kind === 'process' ? options.process : options.filament;
+                const jobQuery = jobSelections[key] ?? '';
                 return (
                   <div key={key} style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
@@ -135,13 +143,13 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                     <input
                       type="text"
                       list={listId}
-                      value={jobSelections[key] ?? ''}
+                      value={jobQuery}
                       onChange={e => setJobSelections(s => ({ ...s, [key]: e.target.value }))}
                       placeholder="Search or leave blank to clear…"
                       style={{ width: '100%', marginTop: 4, padding: '4px 8px', boxSizing: 'border-box' }}
                     />
                     <datalist id={listId}>
-                      {optList.map(o => <option key={o} value={o} />)}
+                      {filterOpts(optList, jobQuery).map(o => <option key={o} value={o} />)}
                     </datalist>
                   </div>
                 );
@@ -154,6 +162,8 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
               <h3>Spoolman Filaments</h3>
               {pending.spoolman_filaments.map(entry => {
                 const listId = `s-${safeId(entry.stale_uuid)}`;
+                const spoolQuery = spoolmanSelections[entry.stale_uuid] ?? '';
+                const spoolOpts = filterOpts(filamentUuids.map(o => o.name), spoolQuery);
                 return (
                   <div key={entry.stale_uuid} style={{ marginBottom: 12 }}>
                     <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
@@ -163,13 +173,13 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
                     <input
                       type="text"
                       list={listId}
-                      value={spoolmanSelections[entry.stale_uuid] ?? ''}
+                      value={spoolQuery}
                       onChange={e => setSpoolmanSelections(s => ({ ...s, [entry.stale_uuid]: e.target.value }))}
                       placeholder="Search or leave blank to clear…"
                       style={{ width: '100%', marginTop: 4, padding: '4px 8px', boxSizing: 'border-box' }}
                     />
                     <datalist id={listId}>
-                      {filamentUuids.map(o => <option key={o.uuid} value={o.name} />)}
+                      {spoolOpts.map(o => <option key={o} value={o} />)}
                     </datalist>
                   </div>
                 );
