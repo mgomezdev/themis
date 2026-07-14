@@ -346,12 +346,13 @@ async def confirm_remap(
                 continue
             if slot is None:
                 printer.current_orca_printer_profile = new_val
+                applied_printers += 1
             else:
                 loaded = list(printer.loaded_filaments or [])
                 if slot < len(loaded):
                     loaded[slot] = {**loaded[slot], "filament_profile": new_val}
                     printer.loaded_filaments = loaded
-            applied_printers += 1
+                    applied_printers += 1
 
     # Apply JobPrinterConfig updates
     applied_jobs = 0
