@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom';
 import { Icons } from './icons';
+import { LaminusStatusChip } from './LaminusStatusChip';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
 
@@ -92,6 +93,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
           {Icons.settings}
           <span className="label">Settings</span>
         </NavLink>
+        <LaminusStatusChip />
       </div>
 
       <div className="sidebar-toggle">
