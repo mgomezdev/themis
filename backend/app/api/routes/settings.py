@@ -182,6 +182,11 @@ async def test_spoolman_connection(
                     "sync_id": sync_id,
                     "raw": None,
                     "catalog": None,
+                    "pending": {
+                        "printers": [],
+                        "jobs": [],
+                        "spoolman_filaments": list(spoolman_groups.values()),
+                    },
                     "created_at": _time.time(),
                 }
                 return {

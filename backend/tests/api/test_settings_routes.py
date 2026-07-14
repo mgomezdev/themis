@@ -63,29 +63,38 @@ async def test_estimates_enabled_get_put(client: AsyncClient):
 async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
     """All Spoolman filament UUIDs present in catalog → normal success response."""
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]}
+    original_catalog = lmod._catalog_dict
+    original_pending = lmod._pending_sync
     lmod._catalog_dict = catalog
 
     filaments_response = [
         {"id": 1, "name": "PLA Red", "extra": {"orca_profiles": json.dumps(json.dumps({"f1": "PLA"}))}}
     ]
 
-    with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-         patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-        mock_test.return_value = {"version": "0.19.0"}
-        mock_fetch.return_value = filaments_response
+    try:
+        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
+             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
+            mock_test.return_value = {"version": "0.19.0"}
+            mock_fetch.return_value = filaments_response
 
-        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+            resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
-    assert resp.status_code == 200
-    body = resp.json()
-    # Status is "ok" (in some shape) — the exact key depends on the existing handler shape
-    # Accept either {"status": "ok"} or {"ok": True}
-    assert body.get("status") == "ok" or body.get("ok") is True
+        assert resp.status_code == 200
+        body = resp.json()
+        # Status is "ok" (in some shape) — the exact key depends on the existing handler shape
+        # Accept either {"status": "ok"} or {"ok": True}
+        assert body.get("status") == "ok" or body.get("ok") is True
+        mock_fetch.assert_called_once()
+    finally:
+        lmod._catalog_dict = original_catalog
+        lmod._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_stale_uuid_returns_pending_remaps(client):
     """Three filaments share one stale UUID → single grouped entry with three affected_filament_ids."""
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]}
+    original_catalog = lmod._catalog_dict
+    original_pending = lmod._pending_sync
     lmod._catalog_dict = catalog
     lmod._pending_sync = None
 
@@ -95,35 +104,45 @@ async def test_spoolman_test_connection_stale_uuid_returns_pending_remaps(client
         {"id": 22, "name": "White PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"stale-uuid": "PLA Old"}))}},
     ]
 
-    with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-         patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-        mock_test.return_value = {"version": "0.19.0"}
-        mock_fetch.return_value = filaments_response
+    try:
+        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
+             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
+            mock_test.return_value = {"version": "0.19.0"}
+            mock_fetch.return_value = filaments_response
 
-        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+            resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "pending_remaps"
-    assert "sync_id" in body
-    spool_entries = body["pending"]["spoolman_filaments"]
-    assert len(spool_entries) == 1
-    assert set(spool_entries[0]["affected_filament_ids"]) == {9, 14, 22}
-    assert body["pending"]["printers"] == []
-    assert body["pending"]["jobs"] == []
-    assert lmod._pending_sync is not None
-    assert lmod._pending_sync["raw"] is None  # Spoolman-only
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "pending_remaps"
+        assert "sync_id" in body
+        spool_entries = body["pending"]["spoolman_filaments"]
+        assert len(spool_entries) == 1
+        assert set(spool_entries[0]["affected_filament_ids"]) == {9, 14, 22}
+        assert body["pending"]["printers"] == []
+        assert body["pending"]["jobs"] == []
+        assert lmod._pending_sync is not None
+        assert lmod._pending_sync["raw"] is None  # Spoolman-only
+    finally:
+        lmod._catalog_dict = original_catalog
+        lmod._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
     """Cold cache → skip UUID check, return normal success."""
+    original_catalog = lmod._catalog_dict
+    original_pending = lmod._pending_sync
     lmod._catalog_dict = None
 
-    with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-         patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-        mock_test.return_value = {"version": "0.19.0"}
+    try:
+        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
+             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
+            mock_test.return_value = {"version": "0.19.0"}
 
-        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+            resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
-    mock_fetch.assert_not_called()
-    assert resp.status_code == 200
+        mock_fetch.assert_not_called()
+        assert resp.status_code == 200
+    finally:
+        lmod._catalog_dict = original_catalog
+        lmod._pending_sync = original_pending
