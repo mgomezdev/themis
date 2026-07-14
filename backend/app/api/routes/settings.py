@@ -281,8 +281,8 @@ async def fleet_import(
     machine_names: set[str] = set()
     filament_names: set[str] = set()
     if cat:
-        machine_names = {m["name"] for m in cat.get("machine", []) if m.get("name")}
-        filament_names = {f["name"] for f in cat.get("filament", []) if f.get("name")}
+        from ...services.catalog_utils import catalog_name_sets
+        machine_names, _, filament_names, _ = catalog_name_sets(cat)
 
     warnings: list[str] = []
     imported = 0
