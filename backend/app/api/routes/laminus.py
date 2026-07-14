@@ -4,12 +4,17 @@ import asyncio
 import json
 import logging
 import time
+import uuid as _uuid
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_laminus_sidecar_url
+from ...database import get_session
+from ...models import SpoolmanConfig
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 
 logger = logging.getLogger("app.laminus")
@@ -26,6 +31,11 @@ _catalog_fetched_at: float | None = None
 # Module-level pending-sync slot. Holds {sync_id, raw, catalog, pending, created_at}.
 # raw=None signals a Spoolman-only pending (no catalog swap on confirm).
 _pending_sync: dict | None = None
+
+# 30-second health memo to avoid hammering Laminus on every catalog/status call.
+_health_memo: dict | None = None
+_health_memo_at: float = 0.0
+_HEALTH_MEMO_TTL = 30.0
 
 
 def _sidecar_client() -> tuple[str, LaminusSidecarClient]:
@@ -123,29 +133,95 @@ async def get_laminus_catalog():
 async def get_catalog_status() -> dict:
     """Whether the Themis catalog cache is populated and Laminus's build state.
     Includes `laminus` sub-object with `catalog_loaded`, `catalog_building`, and
-    `profile_count` if the sidecar is reachable."""
+    `profile_count` if the sidecar is reachable. Health result is memoized for 30 s."""
+    global _health_memo, _health_memo_at
     url = get_laminus_sidecar_url()
     laminus_status: dict | None = None
+    status = "unconfigured"
+
     if url:
-        try:
-            r = await asyncio.to_thread(
-                lambda: httpx.get(f"{url}/api/health", timeout=5)
-            )
-            if r.status_code == 200:
-                h = r.json()
-                laminus_status = {
-                    "catalog_loaded": h.get("catalog_loaded", False),
-                    "catalog_building": h.get("catalog_building", False),
-                    "profile_count": h.get("catalog_profile_count"),
-                }
-        except Exception:
-            pass
+        now = time.time()
+        if _health_memo is not None and now - _health_memo_at < _HEALTH_MEMO_TTL:
+            h = _health_memo
+        else:
+            try:
+                r = await asyncio.to_thread(
+                    lambda: httpx.get(f"{url}/api/health", timeout=5)
+                )
+                if r.status_code == 200:
+                    h = r.json()
+                elif r.status_code == 503:
+                    h = {"catalog_loaded": False, "catalog_building": True}
+                else:
+                    h = None
+            except Exception:
+                h = None
+            _health_memo = h
+            _health_memo_at = now
+
+        if h is None:
+            status = "offline"
+        elif h.get("catalog_building"):
+            status = "building"
+        elif h.get("catalog_loaded"):
+            status = "online"
+        else:
+            status = "offline"
+
+        if h:
+            laminus_status = {
+                "catalog_loaded": h.get("catalog_loaded", False),
+                "catalog_building": h.get("catalog_building", False),
+                "profile_count": h.get("catalog_profile_count"),
+            }
+
+    catalog_counts = {
+        "machine": len(_catalog_dict.get("machine", [])),
+        "process": len(_catalog_dict.get("process", [])),
+        "filament": len(_catalog_dict.get("filament", [])),
+    } if _catalog_dict else None
+
     return {
         "cached": _catalog_bytes is not None,
         "cached_bytes": len(_catalog_bytes) if _catalog_bytes else 0,
         "fetched_at": _catalog_fetched_at,
         "laminus_configured": url is not None,
         "laminus": laminus_status,
+        "catalog_counts": catalog_counts,
+        "status": status,
+    }
+
+
+async def _apply_drift_gate(raw: bytes, new_catalog: dict, session: AsyncSession) -> dict:
+    """Check for drift, commit immediately or park pending. Returns HTTP response dict."""
+    global _pending_sync
+    old_catalog = _catalog_dict
+
+    if old_catalog is None:
+        # Cold cache — first sync ever, commit directly.
+        _commit_catalog(raw, new_catalog)
+        return {"status": "ok", "bytes": len(raw)}
+
+    from ...services.catalog_utils import compute_drift
+    spoolman_cfg = await session.get(SpoolmanConfig, 1)
+    drift = await compute_drift(old_catalog, new_catalog, session, spoolman_cfg)
+
+    if drift is None:
+        _commit_catalog(raw, new_catalog)
+        return {"status": "ok", "bytes": len(raw)}
+
+    sync_id = str(_uuid.uuid4())
+    _pending_sync = {
+        "sync_id": sync_id,
+        "raw": raw,
+        "catalog": new_catalog,
+        "pending": drift["pending"],
+        "created_at": time.time(),
+    }
+    return {
+        "status": "pending_remaps",
+        "sync_id": sync_id,
+        **drift,
     }
 
 
@@ -157,17 +233,11 @@ async def get_catalog_status() -> dict:
         503: {"description": "Laminus sidecar not configured"},
     },
 )
-async def refresh_catalog() -> dict:
-    """Re-fetch the catalog from Laminus and update the Themis cache.
-
-    Use when Laminus already has fresh profiles (e.g., user uploaded a new preset
-    via the Laminus API) and you want Themis to pick them up without a full rescan.
-    """
-    global _catalog_dict, _catalog_bytes
-    _catalog_dict = None
-    _catalog_bytes = None
-    data = await _fetch_and_cache()
-    return {"ok": True, "bytes": len(data)}
+async def refresh_catalog(session: AsyncSession = Depends(get_session)) -> dict:
+    """Re-fetch the catalog from Laminus. If removed profiles are referenced by live data,
+    returns pending_remaps instead of committing. Old catalog remains active until confirmed."""
+    raw, new_catalog = await _fetch_catalog()
+    return await _apply_drift_gate(raw, new_catalog, session)
 
 
 @router.post(
@@ -179,14 +249,9 @@ async def refresh_catalog() -> dict:
         504: {"description": "Laminus catalog rebuild did not complete within 120 s"},
     },
 )
-async def rescan_and_refresh_catalog() -> dict:
+async def rescan_and_refresh_catalog(session: AsyncSession = Depends(get_session)) -> dict:
     """Tell Laminus to rebuild its catalog from disk, then update the Themis cache.
-
-    Use after installing new OrcaSlicer profiles or adding user presets to disk.
-    Laminus re-walks all profile directories and rebuilds inheritance; this can
-    take up to 60 s on Windows WSL2 volumes. Themis polls until the rebuild
-    completes before re-fetching.
-    """
+    If removed profiles are referenced by live data, returns pending_remaps."""
     url, _ = _sidecar_client()
 
     # Trigger Laminus rebuild (returns immediately; rebuild runs in background).
@@ -214,9 +279,5 @@ async def rescan_and_refresh_catalog() -> dict:
     else:
         raise HTTPException(504, "Laminus catalog rebuild did not complete within 120 s")
 
-    # Invalidate Themis cache and re-fetch.
-    global _catalog_dict, _catalog_bytes
-    _catalog_dict = None
-    _catalog_bytes = None
-    data = await _fetch_and_cache()
-    return {"ok": True, "bytes": len(data)}
+    raw, new_catalog = await _fetch_catalog()
+    return await _apply_drift_gate(raw, new_catalog, session)
