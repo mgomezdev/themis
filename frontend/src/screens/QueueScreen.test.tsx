@@ -20,18 +20,26 @@ vi.mock('../api/fleet', () => ({
 import * as queueApi from '../api/queue';
 import * as fleetApi from '../api/fleet';
 
+const nullEstimate = {
+  actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
+  deduction_skipped: null, estimate_status: null, estimate_seconds: null,
+  estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
+};
+
 const mockJobs: ApiJob[] = [
   {
     id: 1, uploaded_file_id: 10, plate_number: 1,
     order_id: null, assigned_printer_id: 2,
     queue_position: 1.0, status: 'printing', overrides: null, block_reason: null,
     created_at: '2026-05-27T00:00:00Z', updated_at: '2026-05-27T00:00:00Z',
+    ...nullEstimate,
   },
   {
     id: 2, uploaded_file_id: 10, plate_number: 2,
     order_id: null, assigned_printer_id: null,
     queue_position: 2.0, status: 'queued', overrides: null, block_reason: null,
     created_at: '2026-05-27T00:00:00Z', updated_at: '2026-05-27T00:00:00Z',
+    ...nullEstimate,
   },
 ];
 
@@ -101,6 +109,7 @@ describe('QueueScreen', () => {
       block_reason: 'Gcode upload failed: [WinError 10054] Connection reset',
       created_at: '2026-05-27T00:00:00Z',
       updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
     };
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [failedJob], refetch: vi.fn() });
 
@@ -125,6 +134,7 @@ describe('QueueScreen', () => {
       block_reason: 'filament mismatch: PLA color #ff0000 not found',
       created_at: '2026-05-27T00:00:00Z',
       updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
     };
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [blockedJob], refetch: vi.fn() });
 
@@ -149,6 +159,7 @@ describe('QueueScreen', () => {
       block_reason: null,
       created_at: '2026-05-27T00:00:00Z',
       updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
     };
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [activeJob], refetch: vi.fn() });
     
