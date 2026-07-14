@@ -23,6 +23,9 @@ router = APIRouter(prefix="/api/v1/laminus", tags=["laminus"])
 _catalog_dict: dict | None = None   # for internal callers (printers, jobs, projects)
 _catalog_bytes: bytes | None = None  # pre-serialised for the HTTP response
 _catalog_fetched_at: float | None = None
+# Module-level pending-sync slot. Holds {sync_id, raw, catalog, pending, created_at}.
+# raw=None signals a Spoolman-only pending (no catalog swap on confirm).
+_pending_sync: dict | None = None
 
 
 def _sidecar_client() -> tuple[str, LaminusSidecarClient]:
@@ -32,19 +35,31 @@ def _sidecar_client() -> tuple[str, LaminusSidecarClient]:
     return url, LaminusSidecarClient(url)
 
 
-async def _fetch_and_cache() -> bytes:
-    """Pull catalog from Laminus, populate module-level cache, return JSON bytes."""
-    global _catalog_dict, _catalog_bytes, _catalog_fetched_at
+async def _fetch_catalog() -> tuple[bytes, dict]:
+    """Pull catalog from Laminus sidecar. No module-level side effects."""
     _, client = _sidecar_client()
     try:
         catalog = await asyncio.to_thread(client.get_catalog)
     except SidecarError as exc:
         raise HTTPException(502, f"Laminus sidecar unreachable: {exc}") from exc
-    _catalog_dict = catalog
-    _catalog_bytes = json.dumps(catalog).encode()
+    raw = json.dumps(catalog).encode()
+    return raw, catalog
+
+
+def _commit_catalog(raw: bytes, parsed: dict) -> None:
+    """Write the fetched catalog to the module-level cache."""
+    global _catalog_dict, _catalog_bytes, _catalog_fetched_at
+    _catalog_dict = parsed
+    _catalog_bytes = raw
     _catalog_fetched_at = time.time()
-    logger.info("Catalog cached: %d bytes", len(_catalog_bytes))
-    return _catalog_bytes
+    logger.info("Catalog cached: %d bytes", len(raw))
+
+
+async def _fetch_and_cache() -> bytes:
+    """Backward-compat: fetch + commit in one step (used by warm_catalog_cache)."""
+    raw, catalog = await _fetch_catalog()
+    _commit_catalog(raw, catalog)
+    return raw
 
 
 async def get_cached_catalog() -> dict:
