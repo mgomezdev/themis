@@ -125,7 +125,9 @@ async def test_spoolman_connection(
     session: AsyncSession = Depends(get_session),
 ):
     """Verify connectivity to Spoolman. Uses the supplied URL/key if provided,
-    falling back to the saved config. Returns `{ok, version}` or `{ok, message}`."""
+    falling back to the saved config. Returns `{ok, version}` or `{ok, message}`.
+    If the catalog is warm and stale UUIDs are detected in Spoolman filaments,
+    returns `{status: "pending_remaps", ...}` instead."""
     url = body.url
     api_key = body.api_key
     if not url:
@@ -137,9 +139,77 @@ async def test_spoolman_connection(
         return {"ok": False, "message": "No URL configured"}
     try:
         info = await spoolman_service.test_connection(url, api_key)
-        return {"ok": True, "version": info.get("version", "unknown")}
     except Exception as e:
         return {"ok": False, "message": str(e)}
+
+    # --- Spoolman UUID sanity check (best-effort) ---
+    import app.api.routes.laminus as _lam_mod
+    from ...services.catalog_utils import catalog_name_sets
+
+    _catalog = _lam_mod._catalog_dict
+    if _catalog is not None:
+        try:
+            _, _, _, catalog_uuids = catalog_name_sets(_catalog)
+            spool_filaments = await spoolman_service.fetch_filaments(url, api_key)
+            spoolman_groups: dict[str, dict] = {}
+            for fil in spool_filaments:
+                raw_extra = (fil.get("extra") or {}).get("orca_profiles")
+                if not raw_extra:
+                    continue
+                try:
+                    profiles: dict = json.loads(json.loads(raw_extra))
+                except Exception:
+                    continue
+                for uid in profiles:
+                    if uid not in catalog_uuids:
+                        stale_name = profiles[uid] if isinstance(profiles[uid], str) else str(uid)
+                        g = spoolman_groups.setdefault(uid, {
+                            "stale_uuid": uid,
+                            "stale_name": stale_name,
+                            "options_kind": "filament_uuid",
+                            "required": False,
+                            "affected_filament_ids": [],
+                            "affected_filament_names": [],
+                        })
+                        g["affected_filament_ids"].append(fil["id"])
+                        g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+
+            if spoolman_groups:
+                import uuid as _uuid
+                sync_id = str(_uuid.uuid4())
+                import time as _time
+                _lam_mod._pending_sync = {
+                    "sync_id": sync_id,
+                    "raw": None,
+                    "catalog": None,
+                    "created_at": _time.time(),
+                }
+                return {
+                    "status": "pending_remaps",
+                    "ok": True,
+                    "sync_id": sync_id,
+                    "pending": {
+                        "printers": [],
+                        "jobs": [],
+                        "spoolman_filaments": list(spoolman_groups.values()),
+                    },
+                    "options": {
+                        "machine": [],
+                        "process": [],
+                        "filament": [],
+                        "filament_uuids": [
+                            {"uuid": f["uuid"], "name": f["name"]}
+                            for f in _catalog.get("filament", [])
+                            if f.get("uuid") and f.get("name")
+                        ],
+                    },
+                    "spoolman_error": None,
+                }
+        except Exception:
+            # Best-effort: if fetch_filaments fails, fall through to normal success
+            pass
+
+    return {"ok": True, "status": "ok", "version": info.get("version", "unknown")}
 
 
 # ---------------------------------------------------------------------------
