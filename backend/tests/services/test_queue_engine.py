@@ -13,7 +13,7 @@ from app.database import Base
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
-from app.services.slicer_service import SliceError
+from app.services.slicer_service import SliceError, SlicerService
 
 
 @pytest_asyncio.fixture
@@ -892,6 +892,33 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
         await engine.handle_print_complete(printer_id)
 
     assert deduction_calls == []
+
+
+@pytest.mark.asyncio
+async def test_slice_worker_continues_after_exception(db):
+    """_slice_worker logs the error and calls task_done; the next coro still runs."""
+    mgr = _make_mock_printer_manager([])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    engine = QueueEngine(db, mgr, slicer)
+
+    results = []
+
+    async def raising_coro():
+        raise RuntimeError("injected error")
+
+    async def ok_coro():
+        results.append("ok")
+
+    worker = asyncio.create_task(engine._slice_worker())
+    await engine._slice_queue.put((0, 0, raising_coro()))
+    await engine._slice_queue.put((0, 1, ok_coro()))
+    await engine._slice_queue.join()
+
+    worker.cancel()
+    await asyncio.gather(worker, return_exceptions=True)
+
+    assert results == ["ok"]
 
 
 @pytest.mark.asyncio

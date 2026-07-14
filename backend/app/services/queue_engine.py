@@ -772,6 +772,13 @@ class QueueEngine:
 
         async def _do_prod_slice():
             try:
+                # Skip the slice if the job was cancelled while waiting in the queue.
+                async with self._factory() as s:
+                    j = await s.get(Job, job_id)
+                    if j is None or j.status == "cancelled":
+                        if not fut.cancelled():
+                            fut.cancel()
+                        return
                 result = await asyncio.to_thread(self._slicer.slice, req)
                 if not fut.cancelled():
                     fut.set_result(result)
@@ -1056,8 +1063,15 @@ class QueueEngine:
                         if slot is not None:
                             raw_spool_id = slot.get("spoolman_spool_id")
                             if raw_spool_id is not None:
-                                spool_id = int(raw_spool_id)
-                                grams_to_deduct = actual_grams
+                                try:
+                                    spool_id = int(raw_spool_id)
+                                    grams_to_deduct = actual_grams
+                                    job.deduction_skipped = False
+                                except (TypeError, ValueError):
+                                    logger.warning(
+                                        "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                                        raw_spool_id, job_id,
+                                    )
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(

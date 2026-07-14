@@ -195,7 +195,6 @@ async def create_job(
 
     queue_engine.wake()
 
-    # Trigger background estimate if enabled
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
     if estimates_enabled:
@@ -539,7 +538,6 @@ async def update_job_configs(
     await session.refresh(job)
     queue_engine.wake()
 
-    # Re-trigger background estimate if enabled
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
     if estimates_enabled:

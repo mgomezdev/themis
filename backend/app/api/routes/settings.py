@@ -64,6 +64,11 @@ async def update_queue_config(
         row.snapshot_interval_seconds = max(1, body.snapshot_interval_seconds)
     if body.estimates_enabled is not None:
         row.estimates_enabled = body.estimates_enabled
+        if not body.estimates_enabled:
+            from sqlalchemy import text as _text
+            await session.execute(
+                _text("UPDATE jobs SET estimate_status=NULL WHERE estimate_status='pending'")
+            )
     await session.commit()
     await session.refresh(row)
     return row
