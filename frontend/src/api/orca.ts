@@ -35,7 +35,7 @@ export interface OrcaCatalog {
 }
 
 export const getOrcaCatalog = (): Promise<OrcaCatalog> =>
-  fetch('/api/v1/orca/catalog').then(r => {
+  fetch('/api/v1/laminus/catalog').then(r => {
     if (!r.ok) throw new Error(`${r.status}`);
     return r.json();
   });
@@ -44,23 +44,18 @@ export interface OrcaCatalogStatus {
   cached: boolean;
   cached_bytes: number;
   fetched_at: number | null;
-  orca: { catalog_loaded: boolean; catalog_building: boolean; profile_count: { machine: number; process: number; filament: number } | null } | null;
+  laminus_configured: boolean;
+  laminus: {
+    catalog_loaded: boolean;
+    catalog_building: boolean;
+    profile_count: number | null;
+  } | null;
+  catalog_counts: { machine: number; process: number; filament: number } | null;
+  status: 'online' | 'building' | 'offline' | 'unconfigured';
 }
 
 export const getOrcaCatalogStatus = (): Promise<OrcaCatalogStatus> =>
-  fetch('/api/v1/orca/catalog/status').then(r => r.json());
-
-export const refreshOrcaCatalog = (): Promise<{ ok: boolean; bytes: number }> =>
-  fetch('/api/v1/orca/catalog/refresh', { method: 'POST' }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.json();
-  });
-
-export const rescanOrcaCatalog = (): Promise<{ ok: boolean; bytes: number }> =>
-  fetch('/api/v1/orca/catalog/rescan', { method: 'POST' }).then(r => {
-    if (!r.ok) throw new Error(`${r.status}`);
-    return r.json();
-  });
+  fetch('/api/v1/laminus/catalog/status').then(r => r.json());
 
 export function useOrcaCatalog() {
   const [catalog, setCatalog] = useState<OrcaCatalog | null>(null);
