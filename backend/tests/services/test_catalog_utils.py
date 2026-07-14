@@ -332,5 +332,5 @@ async def test_compute_drift_spoolman_disabled_skips_section(drift_session):
 
     mock_fetch.assert_not_called()
     # If filament was stale, it should show in printers section even though spoolman skipped
-    if result is not None:
-        assert result["pending"]["spoolman_filaments"] == []
+    assert result is not None
+    assert result["pending"]["spoolman_filaments"] == []

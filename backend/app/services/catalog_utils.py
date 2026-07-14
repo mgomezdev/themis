@@ -31,7 +31,7 @@ async def compute_drift(
     Returns a pending-remaps payload dict (without sync_id/status) if anything
     is affected, or None if the swap can proceed immediately.
     """
-    from app.models import Printer, Job, JobPrinterConfig, SpoolmanConfig
+    from app.models import Printer, Job, JobPrinterConfig
 
     old_machines, old_processes, old_filaments, old_uuids = catalog_name_sets(old_catalog)
     new_machines, new_processes, new_filaments, new_uuids = catalog_name_sets(new_catalog)
