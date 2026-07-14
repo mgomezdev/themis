@@ -4,7 +4,9 @@ import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpool
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
-import { getOrcaCatalogStatus, refreshOrcaCatalog, rescanOrcaCatalog, type OrcaCatalogStatus } from '../api/orca';
+import { getOrcaCatalogStatus, type OrcaCatalogStatus } from '../api/orca';
+import { refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
+import { RemapModal } from '../components/RemapModal';
 import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
@@ -461,19 +463,28 @@ function PrintDefaultsPage() {
   const [catalogStatus, setCatalogStatus] = useState<OrcaCatalogStatus | null>(null);
   const [catalogOp, setCatalogOp] = useState<'idle' | 'refreshing' | 'rescanning'>('idle');
   const [catalogMsg, setCatalogMsg] = useState<string | null>(null);
+  const [pendingRemap, setPendingRemap] = useState<PendingRemaps | null>(null);
 
   useEffect(() => {
     getOrcaCatalogStatus().then(setCatalogStatus).catch(console.error);
   }, []);
 
+  async function doLoadCatalogStatus() {
+    const s = await getOrcaCatalogStatus();
+    setCatalogStatus(s);
+  }
+
   async function doRefreshCatalog() {
     setCatalogOp('refreshing');
     setCatalogMsg(null);
     try {
-      const r = await refreshOrcaCatalog();
-      setCatalogMsg(`Catalog refreshed — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
-      const s = await getOrcaCatalogStatus();
-      setCatalogStatus(s);
+      const r: SyncResponse = await refreshCatalog();
+      if (r.status === 'pending_remaps') {
+        setPendingRemap(r);
+      } else {
+        setCatalogMsg(`Catalog refreshed — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+        doLoadCatalogStatus();
+      }
     } catch (e) {
       setCatalogMsg(`Refresh failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -485,10 +496,13 @@ function PrintDefaultsPage() {
     setCatalogOp('rescanning');
     setCatalogMsg(null);
     try {
-      const r = await rescanOrcaCatalog();
-      setCatalogMsg(`Rescan complete — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
-      const s = await getOrcaCatalogStatus();
-      setCatalogStatus(s);
+      const r: SyncResponse = await rescanCatalog();
+      if (r.status === 'pending_remaps') {
+        setPendingRemap(r);
+      } else {
+        setCatalogMsg(`Rescan complete — ${(r.bytes / 1024).toFixed(0)} KB cached.`);
+        doLoadCatalogStatus();
+      }
     } catch (e) {
       setCatalogMsg(`Rescan failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -504,6 +518,7 @@ function PrintDefaultsPage() {
     : 'Not cached';
 
   return (
+    <>
     <div className="card" style={{ padding: 28 }}>
       <PageHeader title="Print defaults"
                   sub="Workshop-wide print behavior. Per-job overrides win when set during new-job intake." />
@@ -583,6 +598,22 @@ function PrintDefaultsPage() {
       </FieldRow>
 
     </div>
+    {pendingRemap && (
+      <RemapModal
+        payload={pendingRemap}
+        onDone={(result: ConfirmResult) => {
+          setPendingRemap(null);
+          const total = result.applied.printers + result.applied.jobs + result.applied.spoolman_filaments;
+          setCatalogMsg(`Remapping applied — ${total} reference${total !== 1 ? 's' : ''} updated.`);
+          doLoadCatalogStatus();
+        }}
+        onCancel={() => {
+          setPendingRemap(null);
+          setCatalogMsg('Remap cancelled — stale references unchanged.');
+        }}
+      />
+    )}
+    </>
   );
 }
 
@@ -667,6 +698,7 @@ function SpoolmanPage() {
 
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [spoolmanPendingRemap, setSpoolmanPendingRemap] = useState<PendingRemaps | null>(null);
 
   useEffect(() => {
     getSpoolmanConfig()
@@ -699,10 +731,12 @@ function SpoolmanPage() {
     try {
       await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: s.apiKey || null });
       const result = await testSpoolmanConnection(s.url, s.apiKey || null);
-      update({
-        connectionStatus: result.ok ? 'connected' : 'error',
-        lastSyncedAt: result.ok ? new Date().toISOString() : s.lastSyncedAt,
-      });
+      if (result.status === 'pending_remaps') {
+        setSpoolmanPendingRemap(result);
+        update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
+      } else {
+        update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
+      }
     } catch {
       update({ connectionStatus: 'error' });
     } finally {
@@ -718,13 +752,21 @@ function SpoolmanPage() {
   function syncNow() {
     update({ connectionStatus: 'connecting' });
     testSpoolmanConnection(s.url, s.apiKey || null)
-      .then(r => update({ connectionStatus: r.ok ? 'connected' : 'error', lastSyncedAt: r.ok ? new Date().toISOString() : s.lastSyncedAt }))
+      .then(r => {
+        if (r.status === 'pending_remaps') {
+          setSpoolmanPendingRemap(r);
+          update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
+        } else {
+          update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
+        }
+      })
       .catch(() => update({ connectionStatus: 'error' }));
   }
 
   const isConnected = s.connectionStatus === 'connected';
 
   return (
+    <>
     <div className="col gap-3">
       <div className="card" style={{ padding: 28 }}>
         <div className="row between" style={{ marginBottom: 18, alignItems: 'flex-start' }}>
@@ -856,6 +898,20 @@ function SpoolmanPage() {
         </div>
       </div>
     </div>
+    {spoolmanPendingRemap && (
+      <RemapModal
+        payload={spoolmanPendingRemap}
+        onDone={(result: ConfirmResult) => {
+          setSpoolmanPendingRemap(null);
+          const total = result.applied.printers + result.applied.jobs + result.applied.spoolman_filaments;
+          console.info(`[Spoolman] Remap applied — ${total} reference${total !== 1 ? 's' : ''} updated.`);
+        }}
+        onCancel={() => {
+          setSpoolmanPendingRemap(null);
+        }}
+      />
+    )}
+    </>
   );
 }
 
