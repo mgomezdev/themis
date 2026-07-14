@@ -1,4 +1,4 @@
-"""Tests for /api/v1/laminus/catalog/* routes (Features 2 and 3)."""
+"""Tests for /api/v1/laminus/catalog/* routes (Features 2, 3, and 4)."""
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -174,3 +174,130 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
     assert lmod._pending_sync is not None
     assert lmod._pending_sync["sync_id"] == body["sync_id"]
     assert lmod._pending_sync["raw"] == new_bytes
+
+
+# ---- confirm-remap tests (Feature 4) ----
+
+async def test_confirm_remap_no_pending_returns_409(client: AsyncClient):
+    """No pending slot → 409."""
+    lmod._pending_sync = None
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "any-id",
+        "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
+    })
+    assert resp.status_code == 409
+
+
+async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
+    """Wrong sync_id → 409."""
+    lmod._pending_sync = {
+        "sync_id": "correct-id", "raw": b'{}', "catalog": {},
+        "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
+        "created_at": 0,
+    }
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "wrong-id",
+        "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
+    })
+    assert resp.status_code == 409
+
+
+async def test_confirm_remap_missing_required_printer_resolution_returns_422(client: AsyncClient):
+    """Missing required printer resolution → 422."""
+    lmod._pending_sync = {
+        "sync_id": "sync-1", "raw": b'{}', "catalog": {},
+        "pending": {
+            "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
+                          "required": True, "options_kind": "machine",
+                          "affected_printer_ids": [1], "affected_printer_names": ["P1"],
+                          "affected_slots": [None]}],
+            "jobs": [], "spoolman_filaments": [],
+        },
+        "created_at": 0,
+    }
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "sync-1",
+        "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
+    })
+    assert resp.status_code == 422
+
+
+async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncClient):
+    """Valid confirm: updates Printer row, commits pending catalog, clears pending slot."""
+    # Create a printer via API
+    create_resp = await client.post("/api/v1/printers", json={
+        "name": "Test Printer",
+        "printer_type": "bambu",
+        "connection_config": {"ip_address": "1.2.3.4"},
+        "current_orca_printer_profile": "Stale Machine",
+        "orca_printer_profiles": ["Stale Machine"],
+        "loaded_filaments": [],
+    })
+    assert create_resp.status_code == 201
+    printer_id = create_resp.json()["id"]
+
+    new_catalog = {"machine": [{"name": "New Machine", "uuid": "m2"}], "process": [], "filament": []}
+    pending_bytes = json.dumps(new_catalog).encode()
+
+    lmod._pending_sync = {
+        "sync_id": "sync-apply",
+        "raw": pending_bytes,
+        "catalog": new_catalog,
+        "pending": {
+            "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
+                          "required": True, "options_kind": "machine",
+                          "affected_printer_ids": [printer_id], "affected_printer_names": ["Test Printer"],
+                          "affected_slots": [None]}],
+            "jobs": [], "spoolman_filaments": [],
+        },
+        "created_at": 0,
+    }
+
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "sync-apply",
+        "resolutions": {
+            "printers": [{"field": "current_orca_printer_profile",
+                          "stale_value": "Stale Machine", "new_value": "New Machine"}],
+            "jobs": [], "spoolman_filaments": [],
+        }
+    })
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["applied"]["printers"] == 1
+    assert lmod._pending_sync is None
+    assert lmod._catalog_dict == new_catalog
+
+    # Verify DB updated
+    printer_resp = await client.get(f"/api/v1/printers/{printer_id}")
+    assert printer_resp.json()["current_orca_printer_profile"] == "New Machine"
+
+
+async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client: AsyncClient):
+    """raw=None (Spoolman-only pending): clears pending, does NOT swap catalog."""
+    original_catalog = lmod._catalog_dict
+    lmod._pending_sync = {
+        "sync_id": "spoolman-only",
+        "raw": None,
+        "catalog": None,
+        "pending": {
+            "printers": [], "jobs": [],
+            "spoolman_filaments": [{"stale_uuid": "old-uuid", "stale_name": "Old PLA",
+                                    "required": False, "options_kind": "filament_uuid",
+                                    "affected_filament_ids": [5], "affected_filament_names": ["Red PLA"]}],
+        },
+        "created_at": 0,
+    }
+
+    with patch("app.services.spoolman_service.patch_filament", new_callable=AsyncMock):
+        resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+            "sync_id": "spoolman-only",
+            "resolutions": {
+                "printers": [], "jobs": [],
+                "spoolman_filaments": [{"stale_uuid": "old-uuid", "new_uuid": None}]
+            }
+        })
+
+    assert resp.status_code == 200
+    assert lmod._pending_sync is None
+    assert lmod._catalog_dict is original_catalog  # NOT swapped

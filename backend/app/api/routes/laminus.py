@@ -9,12 +9,18 @@ import uuid as _uuid
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_laminus_sidecar_url
 from ...database import get_session
 from ...models import SpoolmanConfig
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+
+
+class ConfirmRemapBody(BaseModel):
+    sync_id: str
+    resolutions: dict  # {printers: [...], jobs: [...], spoolman_filaments: [...]}
 
 logger = logging.getLogger("app.laminus")
 
@@ -280,3 +286,145 @@ async def rescan_and_refresh_catalog(session: AsyncSession = Depends(get_session
 
     raw, new_catalog = await _fetch_catalog()
     return await _apply_drift_gate(raw, new_catalog, session)
+
+
+@router.post("/catalog/confirm-remap", summary="Confirm pending profile remap and commit catalog")
+async def confirm_remap(
+    body: ConfirmRemapBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    global _pending_sync
+
+    if _pending_sync is None or _pending_sync["sync_id"] != body.sync_id:
+        raise HTTPException(409, "Sync superseded or expired — re-run the catalog sync")
+
+    pending = _pending_sync["pending"]
+    resolutions = body.resolutions
+    incoming_catalog = _pending_sync.get("catalog") or {}
+
+    from ...services.catalog_utils import catalog_name_sets
+    new_machines, new_processes, new_filaments, new_uuids = catalog_name_sets(incoming_catalog)
+
+    # Build resolution lookup maps keyed by (field, stale_value)
+    printer_res_map: dict[tuple[str, str], str | None] = {
+        (r["field"], r["stale_value"]): r.get("new_value")
+        for r in resolutions.get("printers", [])
+    }
+    job_res_map: dict[tuple[str, str], str | None] = {
+        (r["field"], r["stale_value"]): r.get("new_value")
+        for r in resolutions.get("jobs", [])
+    }
+    spoolman_res_map: dict[str, str | None] = {
+        r["stale_uuid"]: r.get("new_uuid")
+        for r in resolutions.get("spoolman_filaments", [])
+    }
+
+    # Validate all required printer entries have valid resolutions
+    unresolved = []
+    for entry in pending.get("printers", []):
+        key = (entry["field"], entry["stale_value"])
+        new_val = printer_res_map.get(key)
+        if entry.get("required") and not new_val:
+            unresolved.append(f"Printer {entry['field']}={entry['stale_value']}")
+        elif new_val:
+            valid_set = new_machines if entry.get("options_kind") == "machine" else new_filaments
+            if new_val not in valid_set:
+                unresolved.append(f"Invalid value '{new_val}' for {entry['field']}")
+
+    if unresolved:
+        raise HTTPException(422, {"detail": "Unresolved required remaps", "unresolved": unresolved})
+
+    # Apply Printer updates
+    from ...models import Printer as PrinterModel, JobPrinterConfig as JPC
+    applied_printers = 0
+    for entry in pending.get("printers", []):
+        key = (entry["field"], entry["stale_value"])
+        new_val = printer_res_map.get(key)
+        for printer_id, slot in zip(entry["affected_printer_ids"], entry["affected_slots"]):
+            printer = await session.get(PrinterModel, printer_id)
+            if printer is None:
+                continue
+            if slot is None:
+                printer.current_orca_printer_profile = new_val
+            else:
+                loaded = list(printer.loaded_filaments or [])
+                if slot < len(loaded):
+                    loaded[slot] = {**loaded[slot], "filament_profile": new_val}
+                    printer.loaded_filaments = loaded
+            applied_printers += 1
+
+    # Apply JobPrinterConfig updates
+    applied_jobs = 0
+    for entry in pending.get("jobs", []):
+        key = (entry["field"], entry["stale_value"])
+        new_val = job_res_map.get(key)
+        for cfg_id in entry["affected_config_ids"]:
+            cfg = await session.get(JPC, cfg_id)
+            if cfg is None:
+                continue
+            if entry["field"] == "print_profile":
+                cfg.print_profile = new_val or ""
+            else:
+                cfg.filament_profile = new_val
+            applied_jobs += 1
+
+    await session.commit()
+
+    # Spoolman patches — best-effort after DB commit
+    from ...services import spoolman_service as _spoolman
+    spoolman_failures: list[str] = []
+    applied_spoolman = 0
+    if pending.get("spoolman_filaments"):
+        spoolman_cfg = await session.get(SpoolmanConfig, 1)
+        if spoolman_cfg and spoolman_cfg.url:
+            for entry in pending["spoolman_filaments"]:
+                new_uuid = spoolman_res_map.get(entry["stale_uuid"])
+                stale_uuid = entry["stale_uuid"]
+                for fil_id in entry["affected_filament_ids"]:
+                    try:
+                        headers = {}
+                        if spoolman_cfg.api_key:
+                            headers["X-API-Key"] = spoolman_cfg.api_key
+                        r = await asyncio.to_thread(
+                            lambda: httpx.get(
+                                f"{spoolman_cfg.url.rstrip('/')}/api/v1/filament/{fil_id}",
+                                headers=headers, timeout=10,
+                            )
+                        )
+                        r.raise_for_status()
+                        fil_data = r.json()
+                        raw_extra = (fil_data.get("extra") or {}).get("orca_profiles", "null")
+                        try:
+                            profiles: dict = json.loads(json.loads(raw_extra))
+                        except Exception:
+                            profiles = {}
+                        profiles.pop(stale_uuid, None)
+                        if new_uuid:
+                            cat_filaments = (incoming_catalog or {}).get("filament", [])
+                            name = next(
+                                (f["name"] for f in cat_filaments if f.get("uuid") == new_uuid),
+                                new_uuid,
+                            )
+                            profiles[new_uuid] = name
+                        await _spoolman.patch_filament(
+                            spoolman_cfg.url, spoolman_cfg.api_key, fil_id, profiles
+                        )
+                        applied_spoolman += 1
+                    except Exception as exc:
+                        spoolman_failures.append(f"filament {fil_id}: {exc}")
+                        logger.warning("Spoolman patch failed for filament %s: %s", fil_id, exc)
+
+    # Commit catalog only when raw is not None (Spoolman-only pending skips this)
+    if _pending_sync.get("raw") is not None:
+        _commit_catalog(_pending_sync["raw"], _pending_sync["catalog"])
+
+    _pending_sync = None
+    return {
+        "status": "ok",
+        "applied": {
+            "printers": applied_printers,
+            "jobs": applied_jobs,
+            "spoolman_filaments": applied_spoolman,
+        },
+        "spoolman_failures": spoolman_failures,
+    }
