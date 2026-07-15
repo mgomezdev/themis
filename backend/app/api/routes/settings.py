@@ -189,6 +189,27 @@ async def test_spoolman_connection(
                     },
                     "created_at": _time.time(),
                 }
+                # Build replacement options from Spoolman filaments using
+                # their non-stale OrcaSlicer UUIDs — not the full OrcaSlicer catalog.
+                stale_uuids = set(spoolman_groups.keys())
+                fil_uuid_opts: list[dict] = []
+                seen_fil_names: set[str] = set()
+                for fil in spool_filaments:
+                    name = (fil.get("name") or "").strip()
+                    if not name or name in seen_fil_names:
+                        continue
+                    raw2 = (fil.get("extra") or {}).get("orca_profiles")
+                    if not raw2:
+                        continue
+                    try:
+                        p2: dict = json.loads(json.loads(raw2))
+                    except Exception:
+                        continue
+                    for uid in p2:
+                        if uid not in stale_uuids:
+                            fil_uuid_opts.append({"uuid": uid, "name": name})
+                            seen_fil_names.add(name)
+                            break
                 return {
                     "status": "pending_remaps",
                     "ok": True,
@@ -202,11 +223,7 @@ async def test_spoolman_connection(
                         "machine": [],
                         "process": [],
                         "filament": [],
-                        "filament_uuids": [
-                            {"uuid": f["uuid"], "name": f["name"]}
-                            for f in _catalog.get("filament", [])
-                            if f.get("uuid") and f.get("name")
-                        ],
+                        "filament_uuids": fil_uuid_opts,
                     },
                     "spoolman_error": None,
                 }

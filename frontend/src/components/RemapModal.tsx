@@ -69,9 +69,9 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
   const safeId = (s: string) => s.replace(/[^a-z0-9]/gi, '_');
 
   const filterOpts = (opts: string[], query: string): string[] => {
-    if (!query) return opts.slice(0, 50);
+    if (!query) return opts;
     const q = query.toLowerCase();
-    return opts.filter(o => o.toLowerCase().includes(q)).slice(0, 50);
+    return opts.filter(o => o.toLowerCase().includes(q));
   };
 
   return (

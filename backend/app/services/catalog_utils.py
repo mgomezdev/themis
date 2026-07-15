@@ -122,6 +122,7 @@ async def compute_drift(
     # Spoolman filaments: group by stale_uuid
     spoolman_groups: dict[str, dict] = {}
     spoolman_error: str | None = None
+    spool_filaments: list = []
     if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url and removed_uuids:
         try:
             spool_filaments = await fetch_filaments(spoolman_cfg.url, spoolman_cfg.api_key)
@@ -157,6 +158,30 @@ async def compute_drift(
     if not any([all_printer, all_jobs, all_spoolman]):
         return None
 
+    # Build filament_uuids from Spoolman filaments (non-stale orca UUIDs only).
+    # This gives the user their own library (~tens of items) instead of the full
+    # OrcaSlicer catalog (~7000 items).
+    fil_uuid_opts: list[dict] = []
+    if spool_filaments:
+        stale_uuids = set(spoolman_groups.keys())
+        seen_names: set[str] = set()
+        for fil in spool_filaments:
+            name = (fil.get("name") or "").strip()
+            if not name or name in seen_names:
+                continue
+            raw_extra = (fil.get("extra") or {}).get("orca_profiles")
+            if not raw_extra:
+                continue
+            try:
+                profiles2: dict = json.loads(json.loads(raw_extra))
+            except Exception:
+                continue
+            for uid in profiles2:
+                if uid not in stale_uuids:
+                    fil_uuid_opts.append({"uuid": uid, "name": name})
+                    seen_names.add(name)
+                    break
+
     return {
         "pending": {
             "printers": all_printer,
@@ -167,11 +192,7 @@ async def compute_drift(
             "machine": sorted(new_machines),
             "process": sorted(new_processes),
             "filament": sorted(new_filaments),
-            "filament_uuids": [
-                {"uuid": f["uuid"], "name": f["name"]}
-                for f in new_catalog.get("filament", [])
-                if f.get("uuid") and f.get("name")
-            ],
+            "filament_uuids": fil_uuid_opts,
         },
         "spoolman_error": spoolman_error,
     }
