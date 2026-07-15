@@ -20,7 +20,7 @@ const MATERIALS = [
 function extractMaterialAndBrand(name: string): { material: string; brand: string } {
   const base = name.replace(/@.*$/, '').trim();
   for (const m of MATERIALS) {
-    const regex = new RegExp(`(^|\\s|-)${m}(\\s|-|$)`, 'i');
+    const regex = new RegExp(`(^|\\s|-)${m}([^a-zA-Z0-9]|$)`, 'i');
     const match = regex.exec(base);
     if (match) {
       const matStart = match.index + match[1].length;
