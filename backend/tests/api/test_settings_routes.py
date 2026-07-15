@@ -90,18 +90,20 @@ async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
         lmod._pending_sync = original_pending
 
 
-async def test_spoolman_test_connection_stale_uuid_returns_pending_remaps(client):
-    """Three filaments share one stale UUID → single grouped entry with three affected_filament_ids."""
+async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client):
+    """Three filaments share one stale profile name → single grouped entry with three affected_filament_ids."""
+    # Catalog has "PLA New" but NOT "PLA Old" — so "PLA Old" is stale
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]}
     original_catalog = lmod._catalog_dict
     original_pending = lmod._pending_sync
     lmod._catalog_dict = catalog
     lmod._pending_sync = None
 
+    # Three Spoolman filaments all reference "PLA Old" for the same printer preset
     filaments_response = [
-        {"id": 9, "name": "Red PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"stale-uuid": "PLA Old"}))}},
-        {"id": 14, "name": "Blue PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"stale-uuid": "PLA Old"}))}},
-        {"id": 22, "name": "White PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"stale-uuid": "PLA Old"}))}},
+        {"id": 9, "name": "Red PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
+        {"id": 14, "name": "Blue PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
+        {"id": 22, "name": "White PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
     ]
 
     try:
@@ -118,7 +120,10 @@ async def test_spoolman_test_connection_stale_uuid_returns_pending_remaps(client
         assert "sync_id" in body
         spool_entries = body["pending"]["spoolman_filaments"]
         assert len(spool_entries) == 1
-        assert set(spool_entries[0]["affected_filament_ids"]) == {9, 14, 22}
+        entry = spool_entries[0]
+        assert entry["printer_preset"] == "Bambu X1C 0.4 nozzle"
+        assert entry["stale_name"] == "PLA Old"
+        assert set(entry["affected_filament_ids"]) == {9, 14, 22}
         assert body["pending"]["printers"] == []
         assert body["pending"]["jobs"] == []
         assert lmod._pending_sync is not None

@@ -229,26 +229,26 @@ async def test_compute_drift_two_queued_jobs_same_stale_profile(drift_session):
 
 
 @pytest.mark.asyncio
-async def test_compute_drift_spoolman_stale_uuid(drift_session):
-    """Spoolman filaments with removed UUID → one grouped entry per unique UUID."""
-    removed_uuid = "aaaa-1111"
+async def test_compute_drift_spoolman_stale_name(drift_session):
+    """Spoolman filaments referencing a removed profile name → one grouped entry per (preset, name)."""
+    # "Bambu PLA Basic" exists in OLD_CAT but is removed in new_cat
     new_cat = {
         "machine": [{"name": "Bambu X1C"}],
         "process": [{"name": "0.20mm Standard"}],
-        "filament": [{"name": "Bambu PLA New", "uuid": "bbbb-9999"}],  # aaaa-1111 removed
+        "filament": [{"name": "Bambu PLA New", "uuid": "bbbb-9999"}],
     }
 
-    # Two Spoolman filaments that both reference the removed uuid
+    # Two Spoolman filaments both have "Bambu PLA Basic" listed for the same printer preset
     spool_filaments = [
         {
             "id": 1,
             "name": "Spool A",
-            "extra": {"orca_profiles": json.dumps(json.dumps({removed_uuid: "Bambu PLA Basic"}))},
+            "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["Bambu PLA Basic"]}))},
         },
         {
             "id": 2,
             "name": "Spool B",
-            "extra": {"orca_profiles": json.dumps(json.dumps({removed_uuid: "Bambu PLA Basic"}))},
+            "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["Bambu PLA Basic"]}))},
         },
     ]
 
@@ -262,10 +262,11 @@ async def test_compute_drift_spoolman_stale_uuid(drift_session):
 
     assert result is not None
     spool_entries = result["pending"]["spoolman_filaments"]
-    # One entry grouped by stale UUID
+    # One entry grouped by (printer_preset, stale_name)
     assert len(spool_entries) == 1
     entry = spool_entries[0]
-    assert entry["stale_uuid"] == removed_uuid
+    assert entry["printer_preset"] == "Bambu X1C 0.4 nozzle"
+    assert entry["stale_name"] == "Bambu PLA Basic"
     assert set(entry["affected_filament_ids"]) == {1, 2}
     assert set(entry["affected_filament_names"]) == {"Spool A", "Spool B"}
 

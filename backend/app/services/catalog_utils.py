@@ -33,15 +33,14 @@ async def compute_drift(
     """
     from app.models import Printer, Job, JobPrinterConfig
 
-    old_machines, old_processes, old_filaments, old_uuids = catalog_name_sets(old_catalog)
-    new_machines, new_processes, new_filaments, new_uuids = catalog_name_sets(new_catalog)
+    old_machines, old_processes, old_filaments, _ = catalog_name_sets(old_catalog)
+    new_machines, new_processes, new_filaments, _ = catalog_name_sets(new_catalog)
 
     removed_machines = old_machines - new_machines
     removed_processes = old_processes - new_processes
     removed_filaments = old_filaments - new_filaments
-    removed_uuids = old_uuids - new_uuids
 
-    if not any([removed_machines, removed_processes, removed_filaments, removed_uuids]):
+    if not any([removed_machines, removed_processes, removed_filaments]):
         return None
 
     # --- Collect raw hits and group by (field, stale_value) ---
@@ -119,11 +118,11 @@ async def compute_drift(
                 g["affected_config_ids"].append(cfg.id)
                 g["affected_file_names"].append(f"job#{job.id}")
 
-    # Spoolman filaments: group by stale_uuid
-    spoolman_groups: dict[str, dict] = {}
+    # Spoolman filaments: check that profile NAME strings in orca_profiles exist in the new catalog.
+    # orca_profiles is {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
+    spoolman_groups: dict[tuple[str, str], dict] = {}
     spoolman_error: str | None = None
-    spool_filaments: list = []
-    if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url and removed_uuids:
+    if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url and removed_filaments:
         try:
             spool_filaments = await fetch_filaments(spoolman_cfg.url, spoolman_cfg.api_key)
             for fil in spool_filaments:
@@ -134,19 +133,21 @@ async def compute_drift(
                     profiles: dict = json.loads(json.loads(raw_extra))
                 except Exception:
                     continue
-                for uid in profiles:
-                    if uid in removed_uuids:
-                        stale_name = profiles[uid] if isinstance(profiles[uid], str) else str(uid)
-                        g = spoolman_groups.setdefault(uid, {
-                            "stale_uuid": uid,
-                            "stale_name": stale_name,
-                            "options_kind": "filament_uuid",
-                            "required": False,
-                            "affected_filament_ids": [],
-                            "affected_filament_names": [],
-                        })
-                        g["affected_filament_ids"].append(fil["id"])
-                        g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+                for printer_preset, names in profiles.items():
+                    if not isinstance(names, list):
+                        continue
+                    for name in names:
+                        if name in removed_filaments:
+                            key = (printer_preset, name)
+                            g = spoolman_groups.setdefault(key, {
+                                "printer_preset": printer_preset,
+                                "stale_name": name,
+                                "required": False,
+                                "affected_filament_ids": [],
+                                "affected_filament_names": [],
+                            })
+                            g["affected_filament_ids"].append(fil["id"])
+                            g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
         except Exception as exc:
             spoolman_error = str(exc)
             logger.warning("Spoolman fetch failed during drift check: %s", exc)
@@ -158,30 +159,6 @@ async def compute_drift(
     if not any([all_printer, all_jobs, all_spoolman]):
         return None
 
-    # Build filament_uuids from Spoolman filaments (non-stale orca UUIDs only).
-    # This gives the user their own library (~tens of items) instead of the full
-    # OrcaSlicer catalog (~7000 items).
-    fil_uuid_opts: list[dict] = []
-    if spool_filaments:
-        stale_uuids = set(spoolman_groups.keys())
-        seen_names: set[str] = set()
-        for fil in spool_filaments:
-            name = (fil.get("name") or "").strip()
-            if not name or name in seen_names:
-                continue
-            raw_extra = (fil.get("extra") or {}).get("orca_profiles")
-            if not raw_extra:
-                continue
-            try:
-                profiles2: dict = json.loads(json.loads(raw_extra))
-            except Exception:
-                continue
-            for uid in profiles2:
-                if uid not in stale_uuids:
-                    fil_uuid_opts.append({"uuid": uid, "name": name})
-                    seen_names.add(name)
-                    break
-
     return {
         "pending": {
             "printers": all_printer,
@@ -192,7 +169,6 @@ async def compute_drift(
             "machine": sorted(new_machines),
             "process": sorted(new_processes),
             "filament": sorted(new_filaments),
-            "filament_uuids": fil_uuid_opts,
         },
         "spoolman_error": spoolman_error,
     }

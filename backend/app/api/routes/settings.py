@@ -142,16 +142,17 @@ async def test_spoolman_connection(
     except Exception as e:
         return {"ok": False, "message": str(e)}
 
-    # --- Spoolman UUID sanity check (best-effort) ---
+    # --- Spoolman profile-name sanity check (best-effort) ---
+    # Check that profile name strings in each filament's orca_profiles exist in the catalog.
     import app.api.routes.laminus as _lam_mod
     from ...services.catalog_utils import catalog_name_sets
 
     _catalog = _lam_mod._catalog_dict
     if _catalog is not None:
         try:
-            _, _, _, catalog_uuids = catalog_name_sets(_catalog)
+            _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
             spool_filaments = await spoolman_service.fetch_filaments(url, api_key)
-            spoolman_groups: dict[str, dict] = {}
+            spoolman_groups: dict[tuple[str, str], dict] = {}
             for fil in spool_filaments:
                 raw_extra = (fil.get("extra") or {}).get("orca_profiles")
                 if not raw_extra:
@@ -160,24 +161,27 @@ async def test_spoolman_connection(
                     profiles: dict = json.loads(json.loads(raw_extra))
                 except Exception:
                     continue
-                for uid in profiles:
-                    if uid not in catalog_uuids:
-                        stale_name = profiles[uid] if isinstance(profiles[uid], str) else str(uid)
-                        g = spoolman_groups.setdefault(uid, {
-                            "stale_uuid": uid,
-                            "stale_name": stale_name,
-                            "options_kind": "filament_uuid",
-                            "required": False,
-                            "affected_filament_ids": [],
-                            "affected_filament_names": [],
-                        })
-                        g["affected_filament_ids"].append(fil["id"])
-                        g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+                for printer_preset, names in profiles.items():
+                    if not isinstance(names, list):
+                        continue
+                    for name in names:
+                        if name not in catalog_filaments:
+                            key = (printer_preset, name)
+                            g = spoolman_groups.setdefault(key, {
+                                "printer_preset": printer_preset,
+                                "stale_name": name,
+                                "required": False,
+                                "affected_filament_ids": [],
+                                "affected_filament_names": [],
+                            })
+                            g["affected_filament_ids"].append(fil["id"])
+                            g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
 
             if spoolman_groups:
                 import uuid as _uuid
-                sync_id = str(_uuid.uuid4())
                 import time as _time
+                sync_id = str(_uuid.uuid4())
+                pending_entries = list(spoolman_groups.values())
                 _lam_mod._pending_sync = {
                     "sync_id": sync_id,
                     "raw": None,
@@ -185,31 +189,10 @@ async def test_spoolman_connection(
                     "pending": {
                         "printers": [],
                         "jobs": [],
-                        "spoolman_filaments": list(spoolman_groups.values()),
+                        "spoolman_filaments": pending_entries,
                     },
                     "created_at": _time.time(),
                 }
-                # Build replacement options from Spoolman filaments using
-                # their non-stale OrcaSlicer UUIDs — not the full OrcaSlicer catalog.
-                stale_uuids = set(spoolman_groups.keys())
-                fil_uuid_opts: list[dict] = []
-                seen_fil_names: set[str] = set()
-                for fil in spool_filaments:
-                    name = (fil.get("name") or "").strip()
-                    if not name or name in seen_fil_names:
-                        continue
-                    raw2 = (fil.get("extra") or {}).get("orca_profiles")
-                    if not raw2:
-                        continue
-                    try:
-                        p2: dict = json.loads(json.loads(raw2))
-                    except Exception:
-                        continue
-                    for uid in p2:
-                        if uid not in stale_uuids:
-                            fil_uuid_opts.append({"uuid": uid, "name": name})
-                            seen_fil_names.add(name)
-                            break
                 return {
                     "status": "pending_remaps",
                     "ok": True,
@@ -217,13 +200,12 @@ async def test_spoolman_connection(
                     "pending": {
                         "printers": [],
                         "jobs": [],
-                        "spoolman_filaments": list(spoolman_groups.values()),
+                        "spoolman_filaments": pending_entries,
                     },
                     "options": {
                         "machine": [],
                         "process": [],
-                        "filament": [],
-                        "filament_uuids": fil_uuid_opts,
+                        "filament": sorted(catalog_filaments),
                     },
                     "spoolman_error": None,
                 }

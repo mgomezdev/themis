@@ -20,6 +20,14 @@ async def fetch_filaments(url: str, api_key: Optional[str] = None) -> list[dict]
         return resp.json()
 
 
+async def fetch_filament(url: str, api_key: Optional[str] = None, filament_id: int = 0) -> dict:
+    headers = _headers(api_key)
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{url.rstrip('/')}/api/v1/filament/{filament_id}", headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+
 async def fetch_spools(url: str, api_key: Optional[str] = None) -> list[dict]:
     headers = _headers(api_key)
     async with httpx.AsyncClient(timeout=10) as client:

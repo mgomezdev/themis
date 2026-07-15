@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { PendingRemaps, Resolutions, ConfirmResult } from '../api/laminus';
 import { confirmRemap } from '../api/laminus';
 
@@ -10,16 +10,51 @@ interface Props {
 
 type SelectionMap = Record<string, string>;
 
+// Sorted longest-first so longer keywords (PETG, Nylon) win over shorter ones (PA, PC).
+const MATERIALS = [
+  'Nylon', 'PETG', 'PEKK', 'PEEK', 'PA12', 'HIPS', 'BVOH', 'FLEX',
+  'ASA', 'ABS', 'TPU', 'TPE', 'PVA', 'PPS', 'PEI', 'PHA', 'PA6',
+  'PLA', 'PA', 'PC', 'PP',
+];
+
+function extractMaterialAndBrand(name: string): { material: string; brand: string } {
+  const base = name.replace(/@.*$/, '').trim();
+  for (const m of MATERIALS) {
+    const regex = new RegExp(`(^|\\s|-)${m}(\\s|-|$)`, 'i');
+    const match = regex.exec(base);
+    if (match) {
+      const matStart = match.index + match[1].length;
+      const brand = base.slice(0, matStart).trim();
+      return { material: m.toUpperCase(), brand: brand || 'Generic' };
+    }
+  }
+  return { material: 'Other', brand: 'Generic' };
+}
+
 export function RemapModal({ payload, onDone, onCancel }: Props) {
   const [printerSelections, setPrinterSelections] = useState<SelectionMap>({});
   const [jobSelections, setJobSelections] = useState<SelectionMap>({});
-  // Stores filament display name; resolved to UUID on submit
-  const [spoolmanSelections, setSpoolmanSelections] = useState<SelectionMap>({});
+  const [spoolMaterial, setSpoolMaterial] = useState<SelectionMap>({});
+  const [spoolBrand, setSpoolBrand] = useState<SelectionMap>({});
+  const [spoolSearch, setSpoolSearch] = useState<SelectionMap>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const { pending, options, spoolman_error, sync_id } = payload;
-  const filamentUuids = options.filament_uuids ?? [];
+
+  // Parse all filament names into { material → { brand → [names] } } once.
+  const parsedFilaments = useMemo(() => {
+    const map: Record<string, Record<string, string[]>> = {};
+    for (const name of options.filament) {
+      const { material, brand } = extractMaterialAndBrand(name);
+      if (!map[material]) map[material] = {};
+      if (!map[material][brand]) map[material][brand] = [];
+      map[material][brand].push(name);
+    }
+    return map;
+  }, [options.filament]);
+
+  const materialList = useMemo(() => Object.keys(parsedFilaments).sort(), [parsedFilaments]);
 
   const requiredPrintersMet = pending.printers.every(entry => {
     const key = `${entry.field}|${entry.stale_value}`;
@@ -33,8 +68,6 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
     setSubmitting(true);
     setError(null);
 
-    const nameToUuid = Object.fromEntries(filamentUuids.map(o => [o.name, o.uuid]));
-
     const resolutions: Resolutions = {
       printers: pending.printers.map(entry => {
         const val = printerSelections[`${entry.field}|${entry.stale_value}`] ?? '';
@@ -45,8 +78,14 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
         return { field: entry.field, stale_value: entry.stale_value, new_value: val || null };
       }),
       spoolman_filaments: pending.spoolman_filaments.map(entry => {
-        const name = spoolmanSelections[entry.stale_uuid] ?? '';
-        return { stale_uuid: entry.stale_uuid, new_uuid: name ? (nameToUuid[name] ?? null) : null };
+        const key = `${entry.printer_preset}|${entry.stale_name}`;
+        const name = spoolSearch[key] ?? '';
+        return {
+          printer_preset: entry.printer_preset,
+          stale_name: entry.stale_name,
+          new_name: name || null,
+          affected_filament_ids: entry.affected_filament_ids,
+        };
       }),
     };
 
@@ -74,9 +113,22 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
     return opts.filter(o => o.toLowerCase().includes(q));
   };
 
+  const filterSpoolOpts = (opts: string[], query: string): string[] => {
+    const cap = 50;
+    if (!query) return opts.slice(0, cap);
+    const q = query.toLowerCase();
+    const result: string[] = [];
+    for (const o of opts) {
+      if (o.toLowerCase().includes(q)) {
+        result.push(o);
+        if (result.length >= cap) break;
+      }
+    }
+    return result;
+  };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      {/* flex column: scrollable body + fixed footer */}
       <div style={{ background: 'var(--surface, #1e1e2e)', borderRadius: 8, minWidth: 480, maxWidth: 640, maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
 
         <div style={{ padding: '24px 24px 12px', overflowY: 'auto', flex: 1 }}>
@@ -161,26 +213,71 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
             <section>
               <h3>Spoolman Filaments</h3>
               {pending.spoolman_filaments.map(entry => {
-                const listId = `s-${safeId(entry.stale_uuid)}`;
-                const spoolQuery = spoolmanSelections[entry.stale_uuid] ?? '';
-                const spoolOpts = filterOpts(filamentUuids.map(o => o.name), spoolQuery);
+                const key = `${entry.printer_preset}|${entry.stale_name}`;
+                const listId = `s-${safeId(key)}`;
+                const mat = spoolMaterial[key] ?? '';
+                const brand = spoolBrand[key] ?? '';
+                const search = spoolSearch[key] ?? '';
+                const brandList = mat ? Object.keys(parsedFilaments[mat] || {}).sort() : [];
+                const candidates: string[] = !mat
+                  ? []
+                  : brand
+                  ? parsedFilaments[mat]?.[brand] ?? []
+                  : Object.values(parsedFilaments[mat] || {}).flat();
+                const filtered = filterSpoolOpts(candidates, search);
                 return (
-                  <div key={entry.stale_uuid} style={{ marginBottom: 12 }}>
-                    <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)' }}>
-                      <s>{entry.stale_name}</s>{' → '}
+                  <div key={key} style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted, #aaa)', marginBottom: 6 }}>
+                      <s>{entry.stale_name}</s>
+                      {' on '}<em>{entry.printer_preset}</em>{' → '}
                       <span style={{ fontSize: 12 }}>{countBadge(entry.affected_filament_names, 'filaments')}</span>
                     </div>
-                    <input
-                      type="text"
-                      list={listId}
-                      value={spoolQuery}
-                      onChange={e => setSpoolmanSelections(s => ({ ...s, [entry.stale_uuid]: e.target.value }))}
-                      placeholder="Search or leave blank to clear…"
-                      style={{ width: '100%', marginTop: 4, padding: '4px 8px', boxSizing: 'border-box' }}
-                    />
-                    <datalist id={listId}>
-                      {spoolOpts.map(o => <option key={o} value={o} />)}
-                    </datalist>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 4 }}>
+                      <select
+                        value={mat}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setSpoolMaterial(s => ({ ...s, [key]: v }));
+                          setSpoolBrand(s => ({ ...s, [key]: '' }));
+                          setSpoolSearch(s => ({ ...s, [key]: '' }));
+                        }}
+                        style={{ flex: '0 0 auto', padding: '4px 6px' }}
+                      >
+                        <option value="">— material —</option>
+                        {materialList.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                      {mat && (
+                        <select
+                          value={brand}
+                          onChange={e => {
+                            setSpoolBrand(s => ({ ...s, [key]: e.target.value }));
+                            setSpoolSearch(s => ({ ...s, [key]: '' }));
+                          }}
+                          style={{ flex: '0 0 auto', padding: '4px 6px' }}
+                        >
+                          <option value="">Any Brand</option>
+                          {brandList.map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      )}
+                      {mat && (
+                        <input
+                          type="text"
+                          list={listId}
+                          value={search}
+                          onChange={e => setSpoolSearch(s => ({ ...s, [key]: e.target.value }))}
+                          placeholder={brand ? `Search ${mat} by ${brand}…` : `Search ${mat} (any brand)…`}
+                          style={{ flex: 1, minWidth: 180, padding: '4px 8px' }}
+                        />
+                      )}
+                    </div>
+                    {mat && (
+                      <datalist id={listId}>
+                        {filtered.map(o => <option key={o} value={o} />)}
+                      </datalist>
+                    )}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted, #888)' }}>
+                      Leave blank to remove this profile reference from the filament
+                    </div>
                   </div>
                 );
               })}

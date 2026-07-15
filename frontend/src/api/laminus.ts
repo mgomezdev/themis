@@ -23,9 +23,8 @@ export interface JobPendingEntry {
 }
 
 export interface SpoolmanPendingEntry {
-  stale_uuid: string;
+  printer_preset: string;
   stale_name: string;
-  options_kind: 'filament_uuid';
   required: false;
   affected_filament_ids: number[];
   affected_filament_names: string[];
@@ -43,7 +42,6 @@ export interface PendingRemaps {
     machine: string[];
     process: string[];
     filament: string[];
-    filament_uuids: { uuid: string; name: string }[];
   };
   spoolman_error: string | null;
 }
@@ -63,8 +61,10 @@ export interface JobResolution {
 }
 
 export interface SpoolmanResolution {
-  stale_uuid: string;
-  new_uuid: string | null;
+  printer_preset: string;
+  stale_name: string;
+  new_name: string | null;
+  affected_filament_ids: number[];
 }
 
 export interface Resolutions {

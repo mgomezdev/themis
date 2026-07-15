@@ -303,7 +303,7 @@ async def confirm_remap(
     incoming_catalog = _pending_sync.get("catalog") or {}
 
     from ...services.catalog_utils import catalog_name_sets
-    new_machines, new_processes, new_filaments, new_uuids = catalog_name_sets(incoming_catalog)
+    new_machines, new_processes, new_filaments, _ = catalog_name_sets(incoming_catalog)
 
     # Build resolution lookup maps keyed by (field, stale_value)
     printer_res_map: dict[tuple[str, str], str | None] = {
@@ -314,8 +314,9 @@ async def confirm_remap(
         (r["field"], r["stale_value"]): r.get("new_value")
         for r in resolutions.get("jobs", [])
     }
-    spoolman_res_map: dict[str, str | None] = {
-        r["stale_uuid"]: r.get("new_uuid")
+    # Spoolman resolutions keyed by (printer_preset, stale_name) → new_name | None
+    spoolman_res_map: dict[tuple[str, str], str | None] = {
+        (r["printer_preset"], r["stale_name"]): r.get("new_name")
         for r in resolutions.get("spoolman_filaments", [])
     }
 
@@ -372,6 +373,8 @@ async def confirm_remap(
     await session.commit()
 
     # Spoolman patches — best-effort after DB commit
+    # For each stale entry: remove the stale name from the printer_preset list in orca_profiles;
+    # optionally insert the new_name in its place.
     from ...services import spoolman_service as _spoolman
     spoolman_failures: list[str] = []
     applied_spoolman = 0
@@ -379,34 +382,28 @@ async def confirm_remap(
         spoolman_cfg = await session.get(SpoolmanConfig, 1)
         if spoolman_cfg and spoolman_cfg.url:
             for entry in pending["spoolman_filaments"]:
-                new_uuid = spoolman_res_map.get(entry["stale_uuid"])
-                stale_uuid = entry["stale_uuid"]
+                printer_preset = entry["printer_preset"]
+                stale_name = entry["stale_name"]
+                new_name = spoolman_res_map.get((printer_preset, stale_name))
                 for fil_id in entry["affected_filament_ids"]:
                     try:
-                        headers = {}
-                        if spoolman_cfg.api_key:
-                            headers["X-API-Key"] = spoolman_cfg.api_key
-                        r = await asyncio.to_thread(
-                            lambda: httpx.get(
-                                f"{spoolman_cfg.url.rstrip('/')}/api/v1/filament/{fil_id}",
-                                headers=headers, timeout=10,
-                            )
+                        fil_data = await _spoolman.fetch_filament(
+                            spoolman_cfg.url, spoolman_cfg.api_key, fil_id
                         )
-                        r.raise_for_status()
-                        fil_data = r.json()
                         raw_extra = (fil_data.get("extra") or {}).get("orca_profiles", "null")
                         try:
                             profiles: dict = json.loads(json.loads(raw_extra))
                         except Exception:
                             profiles = {}
-                        profiles.pop(stale_uuid, None)
-                        if new_uuid:
-                            cat_filaments = (incoming_catalog or {}).get("filament", [])
-                            name = next(
-                                (f["name"] for f in cat_filaments if f.get("uuid") == new_uuid),
-                                new_uuid,
-                            )
-                            profiles[new_uuid] = name
+                        names = profiles.get(printer_preset, [])
+                        if isinstance(names, list):
+                            names = [n for n in names if n != stale_name]
+                            if new_name:
+                                names.append(new_name)
+                        if names:
+                            profiles[printer_preset] = names
+                        else:
+                            profiles.pop(printer_preset, None)
                         await _spoolman.patch_filament(
                             spoolman_cfg.url, spoolman_cfg.api_key, fil_id, profiles
                         )

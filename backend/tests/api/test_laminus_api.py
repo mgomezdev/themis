@@ -151,7 +151,7 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
                           "affected_slots": [None]}],
             "jobs": [], "spoolman_filaments": [],
         },
-        "options": {"machine": [], "process": [], "filament": [], "filament_uuids": []},
+        "options": {"machine": [], "process": [], "filament": []},
         "spoolman_error": None,
     }
 
@@ -282,19 +282,30 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
         "catalog": None,
         "pending": {
             "printers": [], "jobs": [],
-            "spoolman_filaments": [{"stale_uuid": "old-uuid", "stale_name": "Old PLA",
-                                    "required": False, "options_kind": "filament_uuid",
-                                    "affected_filament_ids": [5], "affected_filament_names": ["Red PLA"]}],
+            "spoolman_filaments": [{
+                "printer_preset": "Bambu X1C 0.4 nozzle",
+                "stale_name": "Old PLA",
+                "required": False,
+                "affected_filament_ids": [5],
+                "affected_filament_names": ["Red PLA"],
+            }],
         },
         "created_at": 0,
     }
 
-    with patch("app.services.spoolman_service.patch_filament", new_callable=AsyncMock):
+    with patch("app.services.spoolman_service.fetch_filament", new_callable=AsyncMock,
+               return_value={"extra": {"orca_profiles": '"\\"{}\\""'}}), \
+         patch("app.services.spoolman_service.patch_filament", new_callable=AsyncMock):
         resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
             "sync_id": "spoolman-only",
             "resolutions": {
                 "printers": [], "jobs": [],
-                "spoolman_filaments": [{"stale_uuid": "old-uuid", "new_uuid": None}]
+                "spoolman_filaments": [{
+                    "printer_preset": "Bambu X1C 0.4 nozzle",
+                    "stale_name": "Old PLA",
+                    "new_name": None,
+                    "affected_filament_ids": [5],
+                }]
             }
         })
 
