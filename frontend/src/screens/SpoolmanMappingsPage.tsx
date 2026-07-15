@@ -196,7 +196,7 @@ export function SpoolmanMappingsPage() {
       .filter(f => !activeIds.has(f.id))
       .filter(f =>
         filamentDisplayName(f).toLowerCase().includes(q) ||
-        f.material.toLowerCase().includes(q) ||
+        (f.material ?? '').toLowerCase().includes(q) ||
         (f.vendor?.name ?? '').toLowerCase().includes(q)
       )
       .slice(0, 8);

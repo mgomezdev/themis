@@ -5,7 +5,7 @@ export interface ApiFilament {
   id: number;
   name: string;
   vendor?: { id: number; name: string };
-  material: string;
+  material: string | null;
   color_hex?: string;
   settings_extruder_temp?: number;
   settings_bed_temp?: number;
