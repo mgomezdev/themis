@@ -63,7 +63,7 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
   const orphanedPresets = Object.keys(saved).filter(p => !presetPrinterMap.has(p));
 
   return (
-    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
       <div
         className="row gap-3"
         style={{ padding: '12px 16px', cursor: 'pointer', alignItems: 'center' }}
