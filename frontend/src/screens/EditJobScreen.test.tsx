@@ -81,6 +81,8 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   estimate_filament_grams: null,
   estimate_filament_breakdown: null,
   estimate_preset_label: null,
+  materials: [],
+  eligible_printers: [],
   printer_configs: [
     {
       printer_id: 3,

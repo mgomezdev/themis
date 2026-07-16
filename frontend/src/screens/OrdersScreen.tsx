@@ -42,7 +42,7 @@ function PartsTable({ order }: { order: ApiOrder }) {
 function JobsFilling({ jobs }: { jobs: OrderJobSummary[] }) {
   const navigate = useNavigate();
   const fileIds = useMemo(() => [...new Set(jobs.map(j => j.uploaded_file_id))], [jobs]);
-  const getPlate = useFilePlates(fileIds);
+  const { getPlate } = useFilePlates(fileIds);
   if (jobs.length === 0) {
     return <div className="tiny muted" style={{ padding: '12px 18px' }}>No jobs linked yet.</div>;
   }
