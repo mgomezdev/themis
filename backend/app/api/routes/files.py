@@ -492,3 +492,15 @@ async def get_thumbnail(file_id: int, filename: str,
     if not thumb_path.exists():
         raise HTTPException(404, "Thumbnail not found")
     return FileResponse(str(thumb_path), media_type="image/png")
+
+
+@router.get("/{file_id}/download", summary="Download raw file")
+async def download_file(file_id: int, session: AsyncSession = Depends(get_session)) -> FileResponse:
+    """Serve the raw uploaded file (STL, 3MF, etc.) for client-side use."""
+    f = await session.get(UploadedFile, file_id)
+    if f is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    p = Path(f.stored_path)
+    if not p.exists():
+        raise HTTPException(404, "File data not found")
+    return FileResponse(str(p), filename=f.original_filename)

@@ -4,6 +4,7 @@ import { fmtTime, matColor } from '../data/helpers';
 import {
   StatusPill, Progress, MaterialChip, Empty, Kv,
 } from '../components/ui';
+import { StlPreview } from '../components/StlPreview';
 import { Icons } from '../components/icons';
 import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
 import { useFleetData } from '../api/fleet';
@@ -168,6 +169,8 @@ function JobCardRich({
           {thumbUrl ? (
             <img src={thumbUrl} alt={job.plateName}
                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : job.fileName?.toLowerCase().endsWith('.stl') ? (
+            <StlPreview fileId={job.fileId} size={80} />
           ) : (
             <span style={{
               color: 'rgba(255,255,255,0.5)',
