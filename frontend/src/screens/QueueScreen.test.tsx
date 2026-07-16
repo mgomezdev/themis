@@ -10,6 +10,11 @@ vi.mock('../api/queue', () => ({
   useQueue: vi.fn(() => ({ jobs: [], refetch: vi.fn() })),
   useFilePlates: vi.fn(() => ({ getPlate: () => null, getFileName: () => null })),
   cancelJob: vi.fn(),
+  unblockJob: vi.fn(),
+  reorderJob: vi.fn(),
+  getSliceFailures: vi.fn(() => Promise.resolve([])),
+  getJobDetails: vi.fn(() => Promise.resolve({ printer_configs: [] })),
+  verifySlice: vi.fn(),
   plateThumbnailUrl: vi.fn(() => null),
 }));
 
@@ -163,7 +168,7 @@ describe('QueueScreen', () => {
       ...nullEstimate,
     };
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [activeJob], refetch: vi.fn() });
-    
+
     // Mock printer 1 with 61 minutes remaining
     const mockPrinter = {
       id: '1',
@@ -202,9 +207,115 @@ describe('QueueScreen', () => {
     });
 
     render(<QueueScreen />, { wrapper });
-    
+
     // We expect the remaining time (61m = 1h 1m) to be rendered on the page
     expect(screen.getByText('1h 1m')).toBeTruthy();
+  });
+
+  it('shows filename on job card when available', async () => {
+    const queuedJob: ApiJob = {
+      id: 5,
+      uploaded_file_id: 20,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'queued',
+      overrides: null,
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [queuedJob], refetch: vi.fn() });
+    vi.mocked(queueApi.useFilePlates).mockReturnValue({
+      getPlate: () => null,
+      getFileName: () => 'my_model.3mf',
+    });
+
+    render(<QueueScreen />, { wrapper });
+
+    expect(screen.getByText('my_model.3mf')).toBeTruthy();
+  });
+
+  it('blocked job appears in queued filter', async () => {
+    const user = userEvent.setup();
+    const blockedJob: ApiJob = {
+      id: 6,
+      uploaded_file_id: 10,
+      plate_number: 3,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'blocked',
+      overrides: null,
+      block_reason: 'no matching filament',
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [blockedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    const queuedBtn = screen.getByRole('button', { name: /queued/i });
+    await user.click(queuedBtn);
+
+    // Plate 3 (blocked) should still be visible under "queued" filter
+    expect(screen.getByText('Plate 3')).toBeTruthy();
+  });
+
+  it('failed chip appears when failed jobs exist', () => {
+    const failedJob: ApiJob = {
+      id: 7,
+      uploaded_file_id: 10,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'failed',
+      overrides: null,
+      block_reason: 'slicing failed: some error',
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [failedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    expect(screen.getByRole('button', { name: /failed/i })).toBeTruthy();
+  });
+
+  it('reorder buttons appear for queued jobs in detail panel', async () => {
+    const user = userEvent.setup();
+    const queuedJob: ApiJob = {
+      id: 8,
+      uploaded_file_id: 10,
+      plate_number: 2,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'queued',
+      overrides: null,
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [queuedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    // Click the job card to open the detail panel
+    const cards = screen.getAllByText(/Plate \d/i);
+    await user.click(cards[0]);
+
+    // Reorder buttons should be visible
+    expect(screen.getByRole('button', { name: /front/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /up/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /down/i })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /back/i })).toBeTruthy();
   });
 });
 

@@ -5,7 +5,7 @@ import {
   StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, unblockJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 
@@ -13,11 +13,12 @@ import type { StatusKey } from '../data/types';
 interface DisplayJob {
   id: string;
   rawId: number;
+  fileName: string | null;
   plateName: string;
   status: string;
   blockReason: string | null;
-  material: string;
-  eligiblePrinters: string[];
+  materials: string[];
+  eligiblePrinters: Array<{ id: number; name: string }>;
   estTime: number;
   filamentG: number;
   elapsed: number;
@@ -25,8 +26,10 @@ interface DisplayJob {
   layer: { now: number; total: number } | null;
   sliced: boolean;
   queuePosition: number;
+  ordinalRank: number;
   fileId: number;
   thumbnailPath: string | null;
+  printerName: string | null;
 }
 
 // ---- FilterChip ----
@@ -136,7 +139,6 @@ function JobCardRich({
   const isActive = job.status === 'printing' || job.status === 'paused';
   const isFailed = job.status === 'failed';
   const isBlocked = job.status === 'blocked';
-  const color = matColor(job.material);
   const thumbUrl = plateThumbnailUrl(job.fileId, job.thumbnailPath);
 
   return (
@@ -182,6 +184,11 @@ function JobCardRich({
                 <span className="mono tiny muted">#{job.rawId}</span>
                 <div style={{ fontSize: 15, fontWeight: 500 }}>{job.plateName}</div>
               </div>
+              {job.fileName && (
+                <div className="tiny muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {job.fileName}
+                </div>
+              )}
             </div>
             {(showStatus || isFailed) && (
               <div className="row gap-2">
@@ -191,11 +198,15 @@ function JobCardRich({
           </div>
 
           <div className="row gap-5" style={{ marginTop: 4 }}>
-            {job.material !== '—' && (
-              <Kv k="Material" v={<MaterialChip material={job.material} color={color} />} />
+            {job.materials.length > 0 && (
+              <Kv k="Material" v={
+                <div className="row gap-1">
+                  {job.materials.map(m => <MaterialChip key={m} material={m} color={matColor(m)} />)}
+                </div>
+              } />
             )}
             {job.eligiblePrinters.length > 0 && (
-              <Kv k="Eligible" v={<EligibilityChips ids={job.eligiblePrinters} />} />
+              <Kv k="Eligible" v={<EligibilityChips ids={job.eligiblePrinters.map(p => p.name)} />} />
             )}
             {job.estTime > 0 && (
               <Kv k="Est. print" v={<span className="num">{fmtTime(job.estTime)}</span>} />
@@ -209,21 +220,20 @@ function JobCardRich({
                   </span>
                 }
               />
-            ) : isFailed ? (
-              <Kv k="Slicing" v="ready" />
-            ) : isBlocked ? (
-              <Kv
-                k="Slicing"
-                v={
-                  job.blockReason?.toLowerCase().includes('slice') ? (
-                    <span style={{ color: 'var(--err)' }}>failed</span>
-                  ) : (
-                    <span style={{ color: 'var(--warn)' }}>blocked</span>
-                  )
-                }
-              />
-            ) : (
-              <Kv k="Slicing" v={job.sliced ? 'ready' : <span title="Will slice when a printer claims this job">on claim</span>} />
+            ) : null}
+            {!isActive && !isFailed && (
+              <Kv k="Slicing" v={
+                isBlocked && job.blockReason?.toLowerCase().includes('slice')
+                  ? <span style={{ color: 'var(--err)' }}>failed</span>
+                  : isBlocked
+                    ? <span style={{ color: 'var(--warn)' }}>blocked</span>
+                    : job.sliced
+                      ? 'ready'
+                      : <span title="Will slice when a printer claims this job">on claim</span>
+              } />
+            )}
+            {isActive && job.printerName && (
+              <Kv k="Printer" v={<span className="small">{job.printerName}</span>} />
             )}
           </div>
 
@@ -306,11 +316,13 @@ function JobDetailPanel({
   onClose,
   onCancel,
   onUnblock,
+  onReorder,
 }: {
   job: DisplayJob;
   onClose: () => void;
   onCancel: (jobId: number) => void;
   onUnblock: (jobId: number) => void;
+  onReorder: (jobId: number, action: 'promote' | 'demote' | 'front' | 'back') => void;
 }) {
   const navigate = useNavigate();
   const isActive = job.status === 'printing' || job.status === 'paused';
@@ -446,10 +458,10 @@ function JobDetailPanel({
             <span className="small muted">Slicing</span>
             <span className="small">{job.sliced ? 'Ready' : 'On claim'}</span>
           </div>
-          {job.queuePosition > 0 && (
+          {job.ordinalRank > 0 && (
             <div className="row between">
               <span className="small muted">Queue position</span>
-              <span className="num small">#{job.queuePosition}</span>
+              <span className="num small">#{job.ordinalRank}</span>
             </div>
           )}
         </div>
@@ -459,12 +471,12 @@ function JobDetailPanel({
             <div className="divider" />
             <div className="tag-key" style={{ marginBottom: 8 }}>Eligible printers</div>
             <div className="col gap-2" style={{ marginBottom: 14 }}>
-              {job.eligiblePrinters.map(id => (
-                <div key={id} className="row between" style={{
+              {job.eligiblePrinters.map(p => (
+                <div key={p.id} className="row between" style={{
                   padding: '6px 10px', background: 'var(--bg-1)',
                   borderRadius: 0, border: '1px solid var(--border-1)',
                 }}>
-                  <div className="small muted">Printer {id}</div>
+                  <div className="small">{p.name}</div>
                 </div>
               ))}
             </div>
@@ -613,6 +625,23 @@ function JobDetailPanel({
           </button>
         )}
 
+        {(job.status === 'queued' || job.status === 'blocked') && (
+          <>
+            <div className="divider" />
+            <div className="tag-key" style={{ marginBottom: 8 }}>Queue position</div>
+            <div className="row gap-2" style={{ marginBottom: 8, flexWrap: 'wrap' }}>
+              <button className="btn ghost sm" style={{ flex: 1 }}
+                      onClick={() => onReorder(job.rawId, 'front')}>⇤ Front</button>
+              <button className="btn ghost sm" style={{ flex: 1 }}
+                      onClick={() => onReorder(job.rawId, 'promote')}>↑ Up</button>
+              <button className="btn ghost sm" style={{ flex: 1 }}
+                      onClick={() => onReorder(job.rawId, 'demote')}>↓ Down</button>
+              <button className="btn ghost sm" style={{ flex: 1 }}
+                      onClick={() => onReorder(job.rawId, 'back')}>⇥ Back</button>
+            </div>
+          </>
+        )}
+
         {cancellable && (
           <button
             className="btn ghost sm"
@@ -628,7 +657,7 @@ function JobDetailPanel({
 }
 
 // ---- QueueScreen ----
-type FilterKey = 'all' | 'active' | 'queued' | 'done';
+type FilterKey = 'all' | 'active' | 'queued' | 'done' | 'failed';
 
 export function QueueScreen() {
   const navigate = useNavigate();
@@ -654,66 +683,91 @@ export function QueueScreen() {
 
   // Collect unique file IDs to load plate metadata
   const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
-  const { getPlate } = useFilePlates(fileIds);
+  const { getPlate, getFileName } = useFilePlates(fileIds);
 
   // Map ApiJob → DisplayJob
   const jobs: DisplayJob[] = useMemo(() => {
     return rawJobs.map(j => {
       const plate = getPlate(j.uploaded_file_id, j.plate_number);
-      
+      const fileName = getFileName(j.uploaded_file_id);
+
+      // Prefer job-level estimate (from test-slice) over plate metadata
+      const estTime = Math.round(
+        ((j.estimate_status === 'done' && j.estimate_seconds != null
+          ? j.estimate_seconds
+          : plate?.estimated_time) ?? 0) / 60
+      );
+      const filamentG =
+        j.estimate_status === 'done' && j.estimate_filament_grams != null
+          ? j.estimate_filament_grams
+          : (plate?.filament_g ?? 0);
+
       let elapsed = 0;
       let progress = 0;
-      let layer = null;
-      const estTime = Math.round((plate?.estimated_time ?? 0) / 60);
+      let layer: { now: number; total: number } | null = null;
+      let printerName: string | null = null;
       if (j.status === 'printing' || j.status === 'paused') {
         const printer = printers.find(p => p.id === String(j.assigned_printer_id));
         if (printer) {
-          progress = printer.progress;
-          layer = printer.layer;
-          elapsed = estTime - printer.timeRemaining;
+          progress = printer.progress ?? 0;
+          layer = printer.layer ?? null;
+          elapsed = estTime - (printer.timeRemaining ?? 0);
+          printerName = printer.name ?? null;
         }
       }
+
+      // sliced = gcode ready; statuses where slicing hasn't happened or failed
+      const sliced = ['sliced', 'uploading', 'printing', 'paused'].includes(j.status);
 
       return {
         id: String(j.id),
         rawId: j.id,
-        plateName: plate ? `Plate ${j.plate_number}` : `Plate ${j.plate_number}`,
+        fileName: fileName ?? null,
+        plateName: `Plate ${j.plate_number}`,
         status: j.status,
         blockReason: j.block_reason ?? null,
-        material: '—',
-        eligiblePrinters: [],
+        materials: j.materials ?? [],
+        eligiblePrinters: j.eligible_printers ?? [],
         estTime,
-        filamentG: plate?.filament_g ?? 0,
+        filamentG,
         elapsed,
         progress,
         layer,
-        sliced: j.status !== 'queued',
+        sliced,
         queuePosition: j.queue_position ?? 0,
+        ordinalRank: 0,   // filled in after sort below
         fileId: j.uploaded_file_id,
         thumbnailPath: plate?.thumbnail_path ?? null,
+        printerName,
       };
     }).sort((a, b) => {
-      const order: Record<string, number> = { printing: 0, paused: 0, slicing: 1, uploading: 1, queued: 2, complete: 3 };
+      const order: Record<string, number> = { printing: 0, paused: 0, slicing: 1, uploading: 1, queued: 2, blocked: 2, complete: 3, failed: 4 };
       const sa = order[a.status] ?? 9;
       const sb = order[b.status] ?? 9;
       if (sa !== sb) return sa - sb;
       return a.queuePosition - b.queuePosition;
+    }).map((job, _, arr) => {
+      const queueable = arr.filter(j => j.status === 'queued' || j.status === 'blocked');
+      const rank = queueable.findIndex(j => j.id === job.id);
+      return { ...job, ordinalRank: rank >= 0 ? rank + 1 : 0 };
     });
-  }, [rawJobs, getPlate, printers]);
+  }, [rawJobs, getPlate, getFileName, printers]);
 
   const filtered = jobs.filter(j => {
     if (filter === 'all') return true;
     if (filter === 'active') return j.status === 'printing' || j.status === 'paused' || j.status === 'slicing' || j.status === 'uploading';
-    if (filter === 'queued') return j.status === 'queued';
+    if (filter === 'queued') return j.status === 'queued' || j.status === 'blocked';
     if (filter === 'done') return j.status === 'complete';
+    if (filter === 'failed') return j.status === 'failed';
     return true;
   });
 
   const totals = {
     active: jobs.filter(j => ['printing', 'paused', 'slicing', 'uploading'].includes(j.status)).length,
-    queued: jobs.filter(j => j.status === 'queued').length,
+    queued: jobs.filter(j => j.status === 'queued' || j.status === 'blocked').length,
     done: jobs.filter(j => j.status === 'complete').length,
-    timeLeft: jobs.filter(j => j.status === 'queued').reduce((acc, j) => acc + j.estTime, 0),
+    failed: jobs.filter(j => j.status === 'failed').length,
+    timeLeft: jobs.filter(j => j.status === 'queued' || j.status === 'blocked').reduce((acc, j) => acc + j.estTime, 0),
   };
 
   const selectedJob = selectedJobId != null ? jobs.find(j => j.rawId === selectedJobId) ?? null : null;
@@ -741,6 +795,15 @@ export function QueueScreen() {
       refetch();
     } catch (err) {
       console.error('Failed to unblock job:', err);
+    }
+  }
+
+  async function handleReorder(jobId: number, action: 'promote' | 'demote' | 'front' | 'back') {
+    try {
+      await reorderJob(jobId, action);
+      refetch();
+    } catch (err) {
+      console.error('Failed to reorder job:', err);
     }
   }
 
@@ -822,6 +885,11 @@ export function QueueScreen() {
                 {totals.done}
               </span>
             </FilterChip>
+            {totals.failed > 0 && (
+              <FilterChip active={filter === 'failed'} onClick={() => setFilter('failed')}>
+                Failed <span className="num muted" style={{ marginLeft: 4 }}>{totals.failed}</span>
+              </FilterChip>
+            )}
           </div>
           <div className="row gap-2">
             <button className="btn sm">
@@ -860,6 +928,7 @@ export function QueueScreen() {
           onClose={() => setSelectedJobId(null)}
           onCancel={handleCancel}
           onUnblock={handleUnblock}
+          onReorder={handleReorder}
         />
       )}
     </div>
