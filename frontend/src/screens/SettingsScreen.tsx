@@ -1245,7 +1245,7 @@ export function SettingsScreen() {
   return (
     <div>
       {/* mobile tab bar */}
-      <nav className="settings-tabs" style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
+      <nav className="settings-tabs" style={{ gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
         {sections.flatMap(s => s.items).map(item => (
           <button key={item.id}
                   onClick={() => setActivePage(item.id)}

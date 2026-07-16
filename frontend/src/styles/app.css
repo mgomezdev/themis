@@ -694,6 +694,26 @@ input, textarea, select { font-family: inherit; color: inherit; }
   text-align: center;
 }
 
+/* ---------- settings mobile tab bar ---------- */
+.settings-tabs {
+  display: none;
+}
+.settings-tab {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-1);
+  background: var(--bg-1);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.settings-tab.active {
+  background: var(--bg-3);
+  color: var(--text-1);
+  border-color: var(--border-2);
+}
+
 /* ---------- responsive layout ≤ 1024px ---------- */
 @media (max-width: 1024px) {
   .app {
@@ -710,6 +730,9 @@ input, textarea, select { font-family: inherit; color: inherit; }
   }
   .content {
     padding: 12px;
+  }
+  .settings-tabs {
+    display: flex;
   }
   .topbar .crumb,
   .topbar .search,
