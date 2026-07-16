@@ -454,10 +454,12 @@ function JobDetailPanel({
               <span className="num small">{job.filamentG.toFixed(1)} g</span>
             </div>
           )}
-          <div className="row between">
-            <span className="small muted">Slicing</span>
-            <span className="small">{job.sliced ? 'Ready' : 'On claim'}</span>
-          </div>
+          {!isFailed && (
+            <div className="row between">
+              <span className="small muted">Slicing</span>
+              <span className="small">{job.sliced ? 'Ready' : 'On claim'}</span>
+            </div>
+          )}
           {job.ordinalRank > 0 && (
             <div className="row between">
               <span className="small muted">Queue position</span>
