@@ -82,7 +82,25 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve([MOCK_PRINTER]) });
+  mockFetch.mockImplementation((url: string) => {
+    let data: unknown;
+    if (url === '/api/v1/printers') {
+      data = [MOCK_PRINTER];
+    } else if (url === `/api/v1/files/${MOCK_UPLOADED_FILE.id}/plates`) {
+      data = { filename: MOCK_UPLOADED_FILE.original_filename, plates: MOCK_UPLOADED_FILE.plates };
+    } else if (url.includes('/model-filaments')) {
+      data = [];
+    } else if (url.includes('/embedded-settings')) {
+      data = [];
+    } else if (url === '/api/v1/orders') {
+      data = [];
+    } else if (url.startsWith('/api/v1/files')) {
+      data = [];
+    } else {
+      data = [];
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
+  });
   vi.mocked(queueApi.uploadFile).mockResolvedValue(MOCK_UPLOADED_FILE as never);
   vi.mocked(queueApi.createJob).mockResolvedValue({ id: 1, status: 'queued' } as never);
   mockSpoolmanDisconnected();
