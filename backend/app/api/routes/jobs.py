@@ -604,6 +604,75 @@ async def unblock_job(
     return _to_dict(job)
 
 
+_REORDERABLE_STATUSES = {"queued", "blocked"}
+
+
+class ReorderBody(BaseModel):
+    action: str  # "promote" | "demote" | "front" | "back"
+
+
+@router.post(
+    "/{job_id}/reorder",
+    summary="Reorder job in queue",
+    responses={
+        404: {"description": "Job not found"},
+        422: {"description": "Job is not in a reorderable status or action is invalid"},
+    },
+)
+async def reorder_job(
+    job_id: int,
+    body: ReorderBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Move a queued or blocked job within the queue.
+    Actions: 'front', 'back', 'promote' (one step up), 'demote' (one step down)."""
+    if body.action not in ("promote", "demote", "front", "back"):
+        raise HTTPException(422, f"Invalid action {body.action!r}")
+
+    job = await _get_or_404(job_id, session)
+    if job.status not in _REORDERABLE_STATUSES:
+        raise HTTPException(422, f"Job in status {job.status!r} cannot be reordered")
+
+    # All queued/blocked jobs ordered by position
+    result = await session.execute(
+        select(Job)
+        .where(Job.status.in_(list(_REORDERABLE_STATUSES)))
+        .order_by(Job.queue_position)
+    )
+    ordered = result.scalars().all()
+    idx = next((i for i, j in enumerate(ordered) if j.id == job_id), None)
+    if idx is None:
+        raise HTTPException(422, "Job not found in reorderable queue")
+
+    positions = [j.queue_position for j in ordered]
+
+    if body.action == "front":
+        new_pos = (positions[0] or 1.0) - 1.0
+    elif body.action == "back":
+        new_pos = (positions[-1] or 1.0) + 1.0
+    elif body.action == "promote":
+        if idx == 0:
+            new_pos = job.queue_position  # already at front, no-op
+        elif idx == 1:
+            new_pos = (positions[0] or 1.0) - 1.0
+        else:
+            new_pos = (positions[idx - 2] + positions[idx - 1]) / 2.0
+    else:  # demote
+        if idx == len(ordered) - 1:
+            new_pos = job.queue_position  # already at back, no-op
+        elif idx == len(ordered) - 2:
+            new_pos = (positions[-1] or 1.0) + 1.0
+        else:
+            new_pos = (positions[idx + 1] + positions[idx + 2]) / 2.0
+
+    job.queue_position = new_pos
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
+    return _to_dict(job)
+
+
 class VerifySliceBody(BaseModel):
     printer_id: int
 

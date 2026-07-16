@@ -440,3 +440,97 @@ async def test_job_details_returns_live_fields(client, tmp_path):
     assert "estimated_seconds_live" in detail
     assert "filament_grams" not in detail
     assert "estimated_seconds" not in detail
+
+
+async def test_reorder_front_gives_lowest_position(client):
+    """POST /jobs/{id}/reorder with action='front' moves job ahead of all others."""
+    from app.models import UploadedFile, Job
+    from app.main import app
+    from app.database import get_session
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                     plates=[], uploaded_at="2026-01-01T00:00:00")
+    session.add(f)
+    await session.flush()
+    j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+             queue_position=1.0, created_at="2026-01-01T00:00:00",
+             updated_at="2026-01-01T00:00:00")
+    j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+             queue_position=2.0, created_at="2026-01-01T00:00:00",
+             updated_at="2026-01-01T00:00:00")
+    session.add_all([j1, j2])
+    await session.commit()
+    j1_id, j2_id = j1.id, j2.id
+    j1_pos = j1.queue_position
+    await agen.aclose()
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post(f"/api/v1/jobs/{j2_id}/reorder", json={"action": "front"})
+    assert resp.status_code == 200
+
+    agen2 = app.dependency_overrides[get_session]()
+    session2 = await agen2.__anext__()
+    j2_refreshed = await session2.get(Job, j2_id)
+    assert j2_refreshed.queue_position < j1_pos
+    await agen2.aclose()
+
+
+async def test_reorder_promote_moves_ahead_of_previous(client):
+    """POST /jobs/{id}/reorder with action='promote' moves job one step up."""
+    from app.models import UploadedFile, Job
+    from app.main import app
+    from app.database import get_session
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                     plates=[], uploaded_at="2026-01-01T00:00:00")
+    session.add(f)
+    await session.flush()
+    j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+             queue_position=1.0, created_at="2026-01-01T00:00:00",
+             updated_at="2026-01-01T00:00:00")
+    j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+             queue_position=2.0, created_at="2026-01-01T00:00:00",
+             updated_at="2026-01-01T00:00:00")
+    session.add_all([j1, j2])
+    await session.commit()
+    j1_id, j2_id = j1.id, j2.id
+    j1_pos = j1.queue_position
+    await agen.aclose()
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post(f"/api/v1/jobs/{j2_id}/reorder", json={"action": "promote"})
+    assert resp.status_code == 200
+
+    agen2 = app.dependency_overrides[get_session]()
+    session2 = await agen2.__anext__()
+    j2_refreshed = await session2.get(Job, j2_id)
+    assert j2_refreshed.queue_position < j1_pos
+    await agen2.aclose()
+
+
+async def test_reorder_rejects_non_queued_job(client):
+    """POST /jobs/{id}/reorder returns 422 for jobs not in queued/blocked status."""
+    from app.models import UploadedFile, Job
+    from app.main import app
+    from app.database import get_session
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                     plates=[], uploaded_at="2026-01-01T00:00:00")
+    session.add(f)
+    await session.flush()
+    j = Job(uploaded_file_id=f.id, plate_number=1, status="printing",
+            queue_position=1.0, created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00")
+    session.add(j)
+    await session.commit()
+    j_id = j.id
+    await agen.aclose()
+
+    resp = await client.post(f"/api/v1/jobs/{j_id}/reorder", json={"action": "promote"})
+    assert resp.status_code == 422
