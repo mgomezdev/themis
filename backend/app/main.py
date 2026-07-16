@@ -39,35 +39,31 @@ _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
 
 
+async def _remove_placeholder_printer_from_db() -> None:
+    """Remove legacy placeholder printer if present from old installations."""
+    from sqlalchemy import select as _select, delete as _delete
+    from .models import Printer as _Printer
+    _NAME = "Elegoo Centauri Carbon (placeholder)"
+    async with SessionLocal() as _sess:
+        existing = (await _sess.execute(
+            _select(_Printer).where(_Printer.name == _NAME)
+        )).scalar_one_or_none()
+        if existing is not None:
+            try:
+                await _sess.execute(_delete(_Printer).where(_Printer.name == _NAME))
+                await _sess.commit()
+                logging.getLogger("app").info("Removed legacy placeholder printer")
+            except Exception:
+                logging.getLogger("app").warning(
+                    "Could not remove placeholder printer (jobs may reference it) — remove manually"
+                )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
 
-    # Seed placeholder Elegoo Centauri Carbon for test slicing (idempotent).
-    from sqlalchemy import select as _select
-    from .models import Printer as _Printer
-    async with SessionLocal() as _sess:
-        _existing = (await _sess.execute(
-            _select(_Printer).where(_Printer.name == "Elegoo Centauri Carbon (placeholder)")
-        )).scalar_one_or_none()
-        if _existing is None:
-            _sess.add(_Printer(
-                name="Elegoo Centauri Carbon (placeholder)",
-                printer_type="elegoo_centauri",
-                connection_config={"ip_address": "192.0.2.1"},
-                current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
-                orca_printer_profiles=["Elegoo Centauri Carbon 0.4 nozzle"],
-                loaded_filaments=[{
-                    "slot": 0,
-                    "type": "PLA",
-                    "color": "white",
-                    "filament_profile": "Elegoo PLA @ECC",
-                }],
-                enabled=True,
-                queue_on=True,
-            ))
-            await _sess.commit()
-            logging.getLogger("app").info("Seeded placeholder Elegoo Centauri Carbon printer")
+    await _remove_placeholder_printer_from_db()
 
     # File library: migrate legacy uploads, then index the library dir.
     from . import config as _config
