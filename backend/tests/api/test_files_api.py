@@ -78,7 +78,9 @@ async def test_get_plates(client, tmp_path):
         file_id = upload.json()["id"]
         response = await client.get(f"/api/v1/files/{file_id}/plates")
     assert response.status_code == 200
-    plates = response.json()
+    body = response.json()
+    assert body["filename"] == "model.3mf"
+    plates = body["plates"]
     assert len(plates) == 2
     assert plates[0]["plate_number"] == 1
     assert plates[0]["estimated_time"] == 3600
@@ -87,6 +89,22 @@ async def test_get_plates(client, tmp_path):
 async def test_get_plates_not_found(client):
     response = await client.get("/api/v1/files/9999/plates")
     assert response.status_code == 404
+
+
+async def test_get_plates_includes_filename(client, tmp_path):
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
+        upload = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("rocket_part.3mf", _make_three_mf_bytes(), "application/octet-stream")},
+        )
+        file_id = upload.json()["id"]
+        response = await client.get(f"/api/v1/files/{file_id}/plates")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["filename"] == "rocket_part.3mf"
+    assert isinstance(body["plates"], list)
+    assert body["plates"][0]["plate_number"] == 1
 
 
 async def test_thumbnail_served(client, tmp_path):

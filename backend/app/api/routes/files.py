@@ -429,12 +429,12 @@ async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
         404: {"description": "File not found"},
     },
 )
-async def get_plates(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+async def get_plates(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     """Plate metadata extracted from the 3MF (estimated time, filament grams, thumbnail path)."""
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
-    return record.plates or []
+    return {"filename": record.original_filename, "plates": record.plates or []}
 
 
 @router.get(
