@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { fmtTime, matColor } from '../data/helpers';
 import {
-  StatusPill, Progress, EligibilityChips, MaterialChip, Empty, Kv,
+  StatusPill, Progress, MaterialChip, Empty, Kv,
 } from '../components/ui';
 import { Icons } from '../components/icons';
 import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
@@ -206,7 +206,13 @@ function JobCardRich({
               } />
             )}
             {job.eligiblePrinters.length > 0 && (
-              <Kv k="Eligible" v={<EligibilityChips ids={job.eligiblePrinters.map(p => p.name)} />} />
+              <Kv k="Eligible" v={
+                <span className="row gap-1" style={{ flexWrap: 'wrap' }}>
+                  {job.eligiblePrinters.map(p => (
+                    <span key={p.id} className="pill idle">{p.name}</span>
+                  ))}
+                </span>
+              } />
             )}
             {job.estTime > 0 && (
               <Kv k="Est. print" v={<span className="num">{fmtTime(job.estTime)}</span>} />

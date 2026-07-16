@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import Job
+from ...models import Job, JobPrinterConfig, Printer
 
 router = APIRouter(prefix="/api/v1/queue", tags=["queue"])
 
@@ -23,7 +23,7 @@ class ReorderRequest(BaseModel):
     positions: list[PositionUpdate]
 
 
-def _to_dict(j: Job) -> dict:
+def _base_dict(j: Job) -> dict:
     return {
         "id": j.id,
         "uploaded_file_id": j.uploaded_file_id,
@@ -38,6 +38,22 @@ def _to_dict(j: Job) -> dict:
     }
 
 
+async def _enrich(j: Job, session: AsyncSession) -> dict:
+    d = _base_dict(j)
+    cfg_result = await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
+    )
+    configs = cfg_result.scalars().all()
+    d["materials"] = sorted({c.filament_type for c in configs if c.filament_type})
+    eligible = []
+    for c in configs:
+        p = await session.get(Printer, c.printer_id)
+        if p:
+            eligible.append({"id": p.id, "name": p.name})
+    d["eligible_printers"] = eligible
+    return d
+
+
 @router.get("", summary="Get active queue")
 async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs in an active status (queued, slicing, uploading, printing, paused, blocked, failed)
@@ -47,7 +63,7 @@ async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
         .where(Job.status.in_(list(_ACTIVE_STATUSES)))
         .order_by(Job.queue_position.asc())
     )
-    return [_to_dict(j) for j in result.scalars().all()]
+    return [await _enrich(j, session) for j in result.scalars().all()]
 
 
 @router.patch(
@@ -79,4 +95,4 @@ async def reorder_queue(
         .where(Job.status.in_(list(_ACTIVE_STATUSES)))
         .order_by(Job.queue_position.asc())
     )
-    return [_to_dict(j) for j in result.scalars().all()]
+    return [await _enrich(j, session) for j in result.scalars().all()]
