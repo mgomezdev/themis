@@ -71,6 +71,18 @@ describe('SettingsScreen', () => {
     expect(screen.queryByText('Channel')).toBeNull();
   });
 
+  it('has no aside sub-nav column', () => {
+    const { container } = render(<SettingsScreen />, { wrapper });
+    expect(container.querySelector('aside')).toBeNull();
+  });
+
+  it('has mobile settings tab bar with page buttons', () => {
+    const { container } = render(<SettingsScreen />, { wrapper });
+    const tabBar = container.querySelector('.settings-tabs');
+    expect(tabBar).not.toBeNull();
+    expect(tabBar!.querySelector('[class*="settings-tab"]')).not.toBeNull();
+  });
+
   it('renders estimates_enabled toggle in queue settings', async () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

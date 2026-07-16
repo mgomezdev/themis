@@ -1243,43 +1243,27 @@ export function SettingsScreen() {
   ];
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '240px 1fr', gap: 18, minHeight: 0 }}>
-      {/* sub-nav */}
-      <aside style={{
-        position: 'sticky', top: 0, height: 'fit-content',
-        background: 'var(--bg-2)',
-        border: '1px solid var(--border-1)',
-        borderRadius: 12,
-        padding: 8,
-      }}>
-        {sections.map((sec, si) => (
-          <div key={sec.label} style={{ marginTop: si === 0 ? 0 : 12 }}>
-            <div className="nav-section-label" style={{ padding: '8px 12px 4px' }}>{sec.label}</div>
-            <div className="col" style={{ gap: 1 }}>
-              {sec.items.map(item => (
-                <button key={item.id}
-                        onClick={() => setActivePage(item.id)}
-                        className={`nav-item ${activePage === item.id ? 'active' : ''}`}
-                        style={{ borderRadius: 8 }}>
-                  {item.icon}
-                  <span className="label">{item.label}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+    <div>
+      {/* mobile tab bar */}
+      <nav className="settings-tabs" style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
+        {sections.flatMap(s => s.items).map(item => (
+          <button key={item.id}
+                  onClick={() => setActivePage(item.id)}
+                  className={`settings-tab ${activePage === item.id ? 'active' : ''}`}
+                  style={{ whiteSpace: 'nowrap' }}>
+            {item.label}
+          </button>
         ))}
-      </aside>
+      </nav>
 
       {/* page content */}
-      <div style={{ minWidth: 0 }}>
-        {activePage === 'tags'          && <TagsPage />}
-        {activePage === 'print'         && <PrintDefaultsPage />}
-        {activePage === 'spoolman'          && <SpoolmanPage />}
-        {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
-        {activePage === 'webhook'           && <WebhookPage />}
-        {activePage === 'fleet-backup'      && <FleetBackupPage />}
-        {activePage === 'about'             && <AboutPage />}
-      </div>
+      {activePage === 'tags'              && <TagsPage />}
+      {activePage === 'print'             && <PrintDefaultsPage />}
+      {activePage === 'spoolman'          && <SpoolmanPage />}
+      {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
+      {activePage === 'webhook'           && <WebhookPage />}
+      {activePage === 'fleet-backup'      && <FleetBackupPage />}
+      {activePage === 'about'             && <AboutPage />}
     </div>
   );
 }
