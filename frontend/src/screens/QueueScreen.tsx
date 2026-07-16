@@ -897,9 +897,6 @@ export function QueueScreen() {
             <button className="btn sm">
               <span style={{ display: 'inline-flex' }}>{Icons.sort}</span> Sort
             </button>
-            <button className="btn sm">
-              <span style={{ display: 'inline-flex' }}>{Icons.filter}</span> Material
-            </button>
             <button className="btn primary sm" onClick={() => navigate('/queue/new')}>
               {Icons.plus} New job
             </button>
