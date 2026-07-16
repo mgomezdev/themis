@@ -381,6 +381,43 @@ async def test_cancel_job_clears_estimate_status(client, tmp_path):
     assert data["estimate_status"] is None
 
 
+async def test_list_jobs_includes_materials_and_printers(client):
+    from app.models import UploadedFile, Job, JobPrinterConfig, Printer
+    from app.main import app
+    from app.database import get_session
+
+    # Build fixtures directly via the test session
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+
+    p1 = Printer(name="X1C", printer_type="bambu", connection_config={})
+    session.add(p1)
+    f = UploadedFile(original_filename="x.3mf", stored_path="/tmp/x.3mf",
+                     plates=[], uploaded_at="2026-01-01T00:00:00")
+    session.add(f)
+    await session.flush()
+
+    j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+            queue_position=1.0, created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00")
+    session.add(j)
+    await session.flush()
+
+    cfg = JobPrinterConfig(job_id=j.id, printer_id=p1.id,
+                           print_profile="0.20mm", filament_profile="PLA Basic",
+                           filament_type="PLA")
+    session.add(cfg)
+    await session.commit()
+    await agen.aclose()
+
+    resp = await client.get("/api/v1/jobs")
+    assert resp.status_code == 200
+    jobs = resp.json()
+    job = next(jj for jj in jobs if jj["id"] == j.id)
+    assert job["materials"] == ["PLA"]
+    assert any(ep["id"] == p1.id and ep["name"] == "X1C" for ep in job["eligible_printers"])
+
+
 async def test_job_details_returns_live_fields(client, tmp_path):
     """GET /jobs/{id}/details returns filament_grams_live and estimated_seconds_live."""
     from unittest.mock import MagicMock

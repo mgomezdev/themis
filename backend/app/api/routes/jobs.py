@@ -286,7 +286,25 @@ async def check_overrides(
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs ordered by queue position. Includes jobs in all statuses."""
     result = await session.execute(select(Job).order_by(Job.queue_position))
-    return [_to_dict(j) for j in result.scalars().all()]
+    jobs = result.scalars().all()
+
+    out = []
+    for j in jobs:
+        d = _to_dict(j)
+        cfg_result = await session.execute(
+            select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
+        )
+        configs = cfg_result.scalars().all()
+        materials = sorted({c.filament_type for c in configs if c.filament_type})
+        eligible_printers = []
+        for c in configs:
+            p = await session.get(Printer, c.printer_id)
+            if p:
+                eligible_printers.append({"id": p.id, "name": p.name})
+        d["materials"] = materials
+        d["eligible_printers"] = eligible_printers
+        out.append(d)
+    return out
 
 
 @router.get("/history", summary="List job history")
