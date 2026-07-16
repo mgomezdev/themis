@@ -100,6 +100,12 @@ function AppShell() {
   const navigate = useNavigate();
   const { laminusStatus } = useServicesHealth();
 
+  useEffect(() => {
+    if (location.pathname.startsWith('/settings')) {
+      setNavCollapsed(false);
+    }
+  }, [location.pathname]);
+
   const screenConfig: Record<string, { title: string; crumbs: string[]; actions?: React.ReactNode }> = {
     '/queue':      { title: 'Job queue',        crumbs: ['Workshop'],
                      actions: <><button className="btn sm">{Icons.refresh} Resync</button>

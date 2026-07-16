@@ -1,7 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () =>
+    new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 })
+  ));
+});
 
 // Renders on /fleet so the Job Queue nav item is NOT active, giving unambiguous badge colors.
 function renderOnFleet(
@@ -159,6 +165,39 @@ describe('Queue badge status semantics', () => {
     // No active or pending badge — confirms blocked is its own category
     expect(screen.queryByTestId('badge-active')).toBeNull();
     expect(screen.queryByTestId('badge-pending')).toBeNull();
+  });
+});
+
+// ─── Settings sub-nav items ───────────────────────────────────────────────────
+
+function renderOnSettings(collapsed = false) {
+  return render(
+    <MemoryRouter initialEntries={['/settings/tags']}>
+      <Sidebar queueCounts={{ active: 0, pending: 0, blocked: 0 }}
+               operatorName={null} printerCount={0} collapsed={collapsed} />
+    </MemoryRouter>
+  );
+}
+
+describe('Settings sub-nav items', () => {
+  it('hides settings sub-items when not on a settings route', () => {
+    renderOnFleet(0, 0, 0);
+    expect(screen.queryByText('Print defaults')).toBeNull();
+    expect(screen.queryByText('Webhooks')).toBeNull();
+  });
+
+  it('shows settings sub-items when on /settings/* and not collapsed', () => {
+    renderOnSettings(false);
+    expect(screen.getByText('Tags')).toBeTruthy();
+    expect(screen.getByText('Print defaults')).toBeTruthy();
+    expect(screen.getByText('Webhooks')).toBeTruthy();
+    expect(screen.queryByText('Filament Mappings')).toBeNull(); // spoolman disabled
+  });
+
+  it('hides settings sub-items when collapsed even on settings route', () => {
+    renderOnSettings(true);
+    expect(screen.queryByText('Print defaults')).toBeNull();
+    expect(screen.queryByText('Webhooks')).toBeNull();
   });
 });
 

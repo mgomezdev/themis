@@ -1,6 +1,7 @@
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
+import { useSpoolmanConfig } from '../api/spoolman';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
 
@@ -51,6 +52,21 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/history',   label: 'History',     icon: Icons.clock },
   ];
 
+  const location = useLocation();
+  const isSettingsRoute = location.pathname.startsWith('/settings');
+  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+
+  const settingsSubItems = [
+    { to: '/settings/tags',             label: 'Tags' },
+    { to: '/settings/print',            label: 'Print defaults' },
+    { to: '/settings/spoolman',         label: 'Spoolman' },
+    ...(spoolmanEnabled ? [{ to: '/settings/spoolman-mappings', label: 'Filament Mappings' }] : []),
+    { to: '/settings/webhook',          label: 'Webhooks' },
+    { to: '/settings/fleet-backup',     label: 'Fleet backup' },
+    { to: '/settings/about',            label: 'About' },
+  ];
+
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -93,6 +109,17 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
           {Icons.settings}
           <span className="label">Settings</span>
         </NavLink>
+        {!collapsed && isSettingsRoute && (
+          <div style={{ paddingLeft: 12 }}>
+            {settingsSubItems.map(item => (
+              <NavLink key={item.to} to={item.to}
+                       className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+                       style={{ fontSize: 12, paddingLeft: 8 }}>
+                <span className="label">{item.label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
         <LaminusStatusChip />
       </div>
 
