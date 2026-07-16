@@ -45,11 +45,11 @@ describe('Empty', () => {
 });
 
 describe('VideoTile', () => {
-  it('renders img with camera URL when printerId is set and live is true', () => {
+  it('renders img with snapshot URL when printerId is set and live is true', () => {
     render(<VideoTile live={true} printerId="42" />);
     const img = document.querySelector('img');
     expect(img).toBeTruthy();
-    expect(img!.getAttribute('src')).toContain('/api/v1/printers/42/camera');
+    expect(img!.getAttribute('src')).toContain('/api/v1/printers/42/snapshot');
   });
 
   it('does not render img when live is false even with printerId', () => {
@@ -62,19 +62,9 @@ describe('VideoTile', () => {
     expect(document.querySelector('img')).toBeNull();
   });
 
-  it('falls back to snapshot polling when MJPEG onError fires', () => {
+  it('hides img when onError fires', () => {
     render(<VideoTile live={true} printerId="42" />);
-    const img = document.querySelector('img')!;
-    expect(img.src).toContain('/camera');
-    fireEvent.error(img);
-    const snap = document.querySelector('img')!;
-    expect(snap.src).toContain('/snapshot');
-  });
-
-  it('hides img entirely when snapshot also fails', () => {
-    render(<VideoTile live={true} printerId="42" />);
-    fireEvent.error(document.querySelector('img')!);  // MJPEG → snapshot
-    fireEvent.error(document.querySelector('img')!);  // snapshot → placeholder
+    fireEvent.error(document.querySelector('img')!);
     expect(document.querySelector('img')).toBeNull();
   });
 });
