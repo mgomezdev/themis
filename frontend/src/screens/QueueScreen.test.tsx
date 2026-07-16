@@ -8,7 +8,7 @@ import type { ApiJob } from '../api/queue';
 // Mock the queue API module
 vi.mock('../api/queue', () => ({
   useQueue: vi.fn(() => ({ jobs: [], refetch: vi.fn() })),
-  useFilePlates: vi.fn(() => () => null),
+  useFilePlates: vi.fn(() => ({ getPlate: () => null, getFileName: () => null })),
   cancelJob: vi.fn(),
   plateThumbnailUrl: vi.fn(() => null),
 }));
@@ -24,6 +24,7 @@ const nullEstimate = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
+  materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
 };
 
 const mockJobs: ApiJob[] = [
@@ -50,7 +51,7 @@ const wrapper = ({ children }: { children: React.ReactNode }) => (
 describe('QueueScreen', () => {
   beforeEach(() => {
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: mockJobs, refetch: vi.fn() });
-    vi.mocked(queueApi.useFilePlates).mockReturnValue(() => null);
+    vi.mocked(queueApi.useFilePlates).mockReturnValue({ getPlate: () => null, getFileName: () => null });
   });
 
   it('renders summary stats', () => {
@@ -195,12 +196,10 @@ describe('QueueScreen', () => {
     vi.mocked(fleetApi.useFleetData).mockReturnValue([[mockPrinter], vi.fn()]);
 
     // Mock useFilePlates to return estimated_time = 0
-    vi.mocked(queueApi.useFilePlates).mockReturnValue(() => ({
-      plate_number: 1,
-      thumbnail_path: null,
-      estimated_time: 0,
-      filament_g: 0,
-    }));
+    vi.mocked(queueApi.useFilePlates).mockReturnValue({
+      getPlate: () => ({ plate_number: 1, thumbnail_path: null, estimated_time: 0, filament_g: 0 }),
+      getFileName: () => null,
+    });
 
     render(<QueueScreen />, { wrapper });
     

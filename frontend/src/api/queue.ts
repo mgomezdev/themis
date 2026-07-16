@@ -59,6 +59,8 @@ export interface ApiJob {
   estimate_preset_label: { printer_name: string; machine_profile: string; process_profile: string; filament_profiles: string[] } | null;
   created_at: string;
   updated_at: string;
+  materials: string[];
+  eligible_printers: Array<{ id: number; name: string }>;
 }
 
 export interface ApiSliceFailure {
@@ -123,7 +125,8 @@ export async function uploadFile(file: File, folder?: string): Promise<ApiUpload
 }
 
 export async function getFilePlates(fileId: number): Promise<ApiPlate[]> {
-  return request(`/api/v1/files/${fileId}/plates`);
+  const body = await request<{ filename: string; plates: ApiPlate[] }>(`/api/v1/files/${fileId}/plates`);
+  return body.plates;
 }
 
 export async function getModelFilaments(fileId: number): Promise<ModelFilament[]> {
@@ -223,6 +226,17 @@ export async function unblockJob(jobId: number): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/unblock`, { method: 'POST' });
 }
 
+export async function reorderJob(
+  jobId: number,
+  action: 'promote' | 'demote' | 'front' | 'back',
+): Promise<ApiJob> {
+  return request<ApiJob>(`/api/v1/jobs/${jobId}/reorder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action }),
+  });
+}
+
 export async function updateJobConfigs(
   jobId: number,
   configs: PrinterConfigInput[],
@@ -296,8 +310,12 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: unknown };
         if (msg.type === 'queue_update' && Array.isArray(msg.data)) {
-          // Full queue replacement from server broadcast
-          setJobs(msg.data as ApiJob[]);
+          // Merge status/position updates so enriched fields (materials, eligible_printers) survive
+          const updates = msg.data as Array<{ id: number; status: string; queue_position: number | null }>;
+          setJobs(prev => {
+            const prevMap = new Map(prev.map(j => [j.id, j]));
+            return updates.map(u => ({ ...(prevMap.get(u.id) ?? {} as ApiJob), ...u }));
+          });
         } else if (msg.type === 'job_update') {
           const update = msg.data as ApiJob;
           setJobs(prev => {
@@ -321,9 +339,13 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
 
 // Cache file plate metadata to avoid repeated fetches for the same file
 const _plateCache = new Map<number, ApiPlate[]>();
+const _filenameCache = new Map<number, string>();
 const _plateCallbacks = new Map<number, Set<() => void>>();
 
-export function useFilePlates(fileIds: number[]): (fileId: number, plateNumber: number) => ApiPlate | null {
+export function useFilePlates(fileIds: number[]): {
+  getPlate: (fileId: number, plateNumber: number) => ApiPlate | null;
+  getFileName: (fileId: number) => string | null;
+} {
   const [, setVersion] = useState(0);
 
   useEffect(() => {
@@ -333,9 +355,10 @@ export function useFilePlates(fileIds: number[]): (fileId: number, plateNumber: 
     unique.forEach(id => {
       if (!_plateCallbacks.has(id)) {
         _plateCallbacks.set(id, new Set());
-        getFilePlates(id)
-          .then(plates => {
-            _plateCache.set(id, plates);
+        request<{ filename: string; plates: ApiPlate[] }>(`/api/v1/files/${id}/plates`)
+          .then(body => {
+            _plateCache.set(id, body.plates);
+            _filenameCache.set(id, body.filename);
             _plateCallbacks.get(id)?.forEach(cb => cb());
             _plateCallbacks.delete(id);
           })
@@ -350,9 +373,12 @@ export function useFilePlates(fileIds: number[]): (fileId: number, plateNumber: 
     };
   }, [fileIds.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return (fileId: number, plateNumber: number) => {
-    const plates = _plateCache.get(fileId);
-    if (!plates) return null;
-    return plates.find(p => p.plate_number === plateNumber) ?? null;
+  return {
+    getPlate: (fileId: number, plateNumber: number) => {
+      const plates = _plateCache.get(fileId);
+      if (!plates) return null;
+      return plates.find(p => p.plate_number === plateNumber) ?? null;
+    },
+    getFileName: (fileId: number) => _filenameCache.get(fileId) ?? null,
   };
 }

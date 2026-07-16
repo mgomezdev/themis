@@ -50,7 +50,7 @@ describe('uploadFile', () => {
 describe('getFilePlates', () => {
   it('fetches plates for a file', async () => {
     const plates = [{ plate_number: 1, estimated_time: 100, filament_g: 10, thumbnail_path: null }];
-    mockOk(plates);
+    mockOk({ filename: 'model.3mf', plates });
     const result = await getFilePlates(5);
     expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/5/plates');
     expect(result).toEqual(plates);

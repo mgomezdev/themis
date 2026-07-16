@@ -654,7 +654,7 @@ export function QueueScreen() {
 
   // Collect unique file IDs to load plate metadata
   const fileIds = useMemo(() => [...new Set(rawJobs.map(j => j.uploaded_file_id))], [rawJobs]);
-  const getPlate = useFilePlates(fileIds);
+  const { getPlate } = useFilePlates(fileIds);
 
   // Map ApiJob → DisplayJob
   const jobs: DisplayJob[] = useMemo(() => {
