@@ -217,21 +217,6 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
             self.state.connected = False
             self.state.klippy_ready = False
 
-    def check_staleness(self) -> bool:
-        if not self.connected:
-            return False
-        now = time.time()
-        if (now - self._last_message_time > _STALE_TIMEOUT
-                and now - self._last_reconnect_time > _STALE_RECONNECT_COOLDOWN):
-            self._last_reconnect_time = now
-            ws = self._ws
-            if ws:
-                try:
-                    ws.close()
-                except Exception:
-                    pass
-        return self.connected
-
     # ---- WebSocket JSON-RPC ----
     def _next_id(self) -> int:
         return next(self._rpc_id)

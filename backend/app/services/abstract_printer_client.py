@@ -74,9 +74,6 @@ class AbstractPrinterClient(ABC):
     @abstractmethod
     def disconnect(self, timeout: int = 0) -> None: ...
 
-    @abstractmethod
-    def check_staleness(self) -> bool: ...
-
     # --- Print control (must implement) ---
 
     @abstractmethod
@@ -142,9 +139,6 @@ class AbstractPrinterClient(ABC):
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities()
-
-    def on_forced_offline(self) -> None:
-        pass
 
     @property
     def is_idle(self) -> bool:

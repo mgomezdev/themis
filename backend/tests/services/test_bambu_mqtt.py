@@ -139,12 +139,6 @@ def test_start_print_publishes():
     assert client._client.publish.called
 
 
-def test_check_staleness_returns_connected_state():
-    client = _make_client()
-    client.state.connected = False
-    assert client.check_staleness() is False
-
-
 def test_upload_file_uses_implicit_ftps(mocker):
     client = _make_client()
     mock_ftp = MagicMock()

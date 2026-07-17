@@ -21,9 +21,6 @@ class MinimalClient(AbstractPrinterClient):
     def disconnect(self, timeout: int = 0) -> None:
         pass
 
-    def check_staleness(self) -> bool:
-        return True
-
     def start_print(self, file_name, options=None) -> bool:
         return True
 
@@ -150,8 +147,6 @@ class _Dummy(AbstractPrinterClient):
     def connect(self, loop=None): pass
 
     def disconnect(self, timeout=0): pass
-
-    def check_staleness(self): return False
 
     def start_print(self, f, opts=None): return False
 

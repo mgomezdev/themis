@@ -1,8 +1,6 @@
 import type {
   Printer,
-  Order,
   Job,
-  ProcessPreset,
 } from './types';
 
 export const PRINTERS: Printer[] = [
@@ -90,94 +88,6 @@ export const PRINTERS: Printer[] = [
     queueOn: true,
     awaitingPlateClear: false,
     noSnapshotsWhileIdle: false,
-  },
-];
-
-export const ORDERS: Order[] = [
-  {
-    id: 'ORD-2241',
-    type: 'customer',
-    customer: 'Vela Robotics',
-    title: 'Mk3 chassis brackets — batch 4',
-    placed: '2026-05-18',
-    due: '2026-05-24',
-    status: 'in_progress',
-    notes: 'Customer prefers PA-CF for structural. Match black tone across set.',
-    parts: [
-      { id: 'vr-arm-l',  name: 'Arm bracket — L', qty: 8,  printed: 5,  material: 'PA-CF', est: 78, thumbColor: '#16203a' },
-      { id: 'vr-arm-r',  name: 'Arm bracket — R', qty: 8,  printed: 4,  material: 'PA-CF', est: 78, thumbColor: '#16203a' },
-      { id: 'vr-clamp',  name: 'Cable clamp',      qty: 24, printed: 24, material: 'PETG',  est: 12, thumbColor: '#1e3a5a' },
-      { id: 'vr-spacer', name: 'Standoff spacer',  qty: 32, printed: 8,  material: 'PLA',   est: 6,  thumbColor: '#2a3552' },
-    ],
-  },
-  {
-    id: 'ORD-2242',
-    type: 'internal',
-    customer: 'Internal — R&D',
-    title: 'Reflow oven enclosure prototypes',
-    placed: '2026-05-19',
-    due: '2026-05-23',
-    status: 'queued',
-    notes: '',
-    parts: [
-      { id: 'ro-wall',  name: 'Side panel',     qty: 4, printed: 0, material: 'ABS',   est: 192, thumbColor: '#222b41' },
-      { id: 'ro-hinge', name: 'Hinge assembly', qty: 4, printed: 0, material: 'PA-CF', est: 44,  thumbColor: '#16203a' },
-    ],
-  },
-  {
-    id: 'ORD-2243',
-    type: 'customer',
-    customer: 'Hartwell Models',
-    title: 'Diorama figures — wave 12',
-    placed: '2026-05-15',
-    due: '2026-05-22',
-    status: 'in_progress',
-    notes: 'Multi-color via U1 only.',
-    parts: [
-      { id: 'hm-fig-a', name: 'Figure A (multi-color)', qty: 12, printed: 9, material: 'PLA', est: 38, thumbColor: '#3a2a3a' },
-      { id: 'hm-fig-b', name: 'Figure B (multi-color)', qty: 12, printed: 4, material: 'PLA', est: 41, thumbColor: '#3a3a2a' },
-    ],
-  },
-  {
-    id: 'ORD-2244',
-    type: 'customer',
-    customer: 'Northbeam Audio',
-    title: 'Microphone cradle pre-prod',
-    placed: '2026-05-20',
-    due: '2026-05-27',
-    status: 'queued',
-    notes: 'Send proof photo before final batch.',
-    parts: [
-      { id: 'na-cradle', name: 'Cradle body',   qty: 6,  printed: 0, material: 'PETG', est: 64, thumbColor: '#1e3a4a' },
-      { id: 'na-foot',   name: 'Foot dampener', qty: 12, printed: 0, material: 'TPU',  est: 18, thumbColor: '#4a1a1a' },
-    ],
-  },
-  {
-    id: 'ORD-2240',
-    type: 'customer',
-    customer: 'Vela Robotics',
-    title: 'Mk3 chassis brackets — batch 3',
-    placed: '2026-05-08',
-    due: '2026-05-15',
-    status: 'complete',
-    notes: '',
-    parts: [
-      { id: 'vr-arm-l3', name: 'Arm bracket — L', qty: 8, printed: 8, material: 'PA-CF', est: 78, thumbColor: '#16203a' },
-      { id: 'vr-arm-r3', name: 'Arm bracket — R', qty: 8, printed: 8, material: 'PA-CF', est: 78, thumbColor: '#16203a' },
-    ],
-  },
-  {
-    id: 'ORD-2245',
-    type: 'internal',
-    customer: 'Internal — Marketing',
-    title: 'Trade show display props',
-    placed: '2026-05-20',
-    due: '2026-06-05',
-    status: 'hold',
-    notes: 'On hold pending final design from L.',
-    parts: [
-      { id: 'tm-disp', name: 'Display stand', qty: 3, printed: 0, material: 'PLA', est: 220, thumbColor: '#2a3552' },
-    ],
   },
 ];
 
@@ -320,38 +230,3 @@ export const JOBS: Job[] = [
     sliced: true,
   },
 ];
-
-
-export const PROCESS_PRESETS: ProcessPreset[] = [
-  // Bambu P1S — Atlas
-  { id: 'proc-p1s-04-std',    printerId: 'p1s-01', name: '0.20mm Standard',      nozzle: '0.4mm',          layerHeight: 0.20, infill: 15, walls: 3, speed: 'Normal',  description: 'Default workshop profile. Balanced quality / time.' },
-  { id: 'proc-p1s-04-fine',   printerId: 'p1s-01', name: '0.16mm Fine',          nozzle: '0.4mm',          layerHeight: 0.16, infill: 18, walls: 3, speed: 'Quality', description: 'Lower layers for silk + cosmetic surfaces.' },
-  { id: 'proc-p1s-04-draft',  printerId: 'p1s-01', name: '0.28mm Draft',         nozzle: '0.4mm',          layerHeight: 0.28, infill: 10, walls: 2, speed: 'Fast',    description: 'Drop-in for rapid prototypes.' },
-  { id: 'proc-p1s-04-strong', printerId: 'p1s-01', name: '0.20mm Strong',        nozzle: '0.4mm',          layerHeight: 0.20, infill: 40, walls: 5, speed: 'Normal',  description: 'Mechanical parts — higher infill + walls.' },
-
-  // Elegoo Centauri Carbon — Forge
-  { id: 'proc-ecc-04-std',      printerId: 'ecc-01', name: '0.20mm Standard',         nozzle: '0.4mm',          layerHeight: 0.20, infill: 15, walls: 3, speed: 'Normal',  description: 'Chamber-on default.' },
-  { id: 'proc-ecc-04-hf',       printerId: 'ecc-01', name: '0.20mm HF (hardened)',    nozzle: '0.4mm hardened', layerHeight: 0.20, infill: 20, walls: 4, speed: 'Normal',  description: 'Abrasive (CF) filaments. Hardened nozzle required.' },
-  { id: 'proc-ecc-06-draft',    printerId: 'ecc-01', name: '0.32mm Draft (0.6)',      nozzle: '0.6mm hardened', layerHeight: 0.32, infill: 12, walls: 3, speed: 'Fast',    description: 'Bulk PETG / PA-CF drafts.' },
-  { id: 'proc-ecc-04-struct',   printerId: 'ecc-01', name: '0.20mm Structural',       nozzle: '0.4mm hardened', layerHeight: 0.20, infill: 45, walls: 5, speed: 'Quality', description: 'Vela arm brackets. Max walls, slow cooling.' },
-  { id: 'proc-ecc-04-chamber',  printerId: 'ecc-01', name: '0.20mm Chamber 60°',      nozzle: '0.4mm',          layerHeight: 0.20, infill: 20, walls: 4, speed: 'Normal',  description: 'ABS / ASA / PC. Holds 55–60 °C chamber.' },
-
-  // Snapmaker U1 — Iris
-  { id: 'proc-snp-04-multi',  printerId: 'snp-01', name: '0.20mm Multi-color',  nozzle: '0.4mm', layerHeight: 0.20, infill: 15, walls: 3, speed: 'Normal',  description: '4-slot color-swap default. Adds 240mm³ purge.' },
-  { id: 'proc-snp-04-single', printerId: 'snp-01', name: '0.20mm Single-color', nozzle: '0.4mm', layerHeight: 0.20, infill: 15, walls: 3, speed: 'Normal',  description: 'Bypass color-changer for one filament jobs.' },
-  { id: 'proc-snp-04-fine',   printerId: 'snp-01', name: '0.16mm Fine multi',   nozzle: '0.4mm', layerHeight: 0.16, infill: 18, walls: 3, speed: 'Quality', description: 'Hartwell figures — pairs with silk filaments.' },
-];
-
-
-export function getPrinter(id: string): Printer | undefined {
-  return PRINTERS.find(p => p.id === id);
-}
-
-export function getOrder(id: string): Order | undefined {
-  return ORDERS.find(o => o.id === id);
-}
-
-export function getPart(orderId: string, partId: string) {
-  const o = getOrder(orderId);
-  return o ? o.parts.find(p => p.id === partId) : undefined;
-}

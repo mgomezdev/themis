@@ -160,20 +160,6 @@ class BambuMQTTClient(AbstractPrinterClient):
             self._client.disconnect()
         self.state.connected = False
 
-    def check_staleness(self) -> bool:
-        if not self.state.connected:
-            return False
-        now = time.time()
-        if (now - self._last_message_time > STALE_TIMEOUT and
-                now - self._last_reconnect_time > STALE_RECONNECT_COOLDOWN):
-            self._last_reconnect_time = now
-            if self._client:
-                try:
-                    self._client.socket().close()
-                except Exception:
-                    pass
-        return self.state.connected
-
     @property
     def file_upload_supported(self) -> bool:
         return True

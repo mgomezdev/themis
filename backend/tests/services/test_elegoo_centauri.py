@@ -189,18 +189,6 @@ def test_state_shim_remaining_time():
 
 
 # ---------------------------------------------------------------------------
-# check_staleness
-# ---------------------------------------------------------------------------
-
-def test_check_staleness_returns_connected():
-    client = _make_client()
-    assert client.check_staleness() is False
-    with client._lock:
-        client.state.connected = True
-    assert client.check_staleness() is True
-
-
-# ---------------------------------------------------------------------------
 # Print control commands
 # ---------------------------------------------------------------------------
 

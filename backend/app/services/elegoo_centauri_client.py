@@ -267,9 +267,6 @@ class ElegooCentauriClient(AbstractPrinterClient):
     def gcode_supported(self) -> bool:
         return False
 
-    def check_staleness(self) -> bool:
-        return self.connected
-
     # ------------------------------------------------------------------
     # Connection lifecycle
     # ------------------------------------------------------------------
