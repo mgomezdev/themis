@@ -197,7 +197,6 @@ class ProjectItem(Base):
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
     filament_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Legacy OrcaSlicer fields kept for backward compat with pre-v005 rows
-    filament_profile_uuid: Mapped[str] = mapped_column(String(36), default="")
     color_hex: Mapped[str] = mapped_column(String(7), default="#FFFFFF")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
 
