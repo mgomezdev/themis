@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { JOBS } from '../data/mock';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
-import type { Printer, Job } from '../data/types';
+import type { Printer } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
@@ -13,10 +12,6 @@ import { MachinePicker } from '../components/MachinePicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 
 type Layout = 'cards' | 'rows';
-
-function partsFromJob(job: Job) {
-  return job.parts.map(p => ({ name: p.partId, orderId: p.orderId, material: job.material, qty: p.qty }));
-}
 
 // ── Telem row ────────────────────────────────────────────────────────────────
 function Telem({ label, value, target, tone }: { label: string; value: string; target: string; tone?: string | null }) {
@@ -444,7 +439,6 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
 
   useEffect(() => { setNickname(p.nickname); }, [p.nickname]);
 
-  const job: Job | undefined = p.currentJobId ? JOBS.find(j => j.id === p.currentJobId) : undefined;
   const mats = p.materials ?? [p.material];
 
   return (
@@ -571,34 +565,6 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               )}
             </div>
 
-            {job && (
-              <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
-                <div className="row between" style={{ marginBottom: 10, alignItems: 'center' }}>
-                  <div className="col">
-                    <span className="tag-key">Current job</span>
-                    <div className="row gap-2" style={{ marginTop: 2 }}>
-                      <span className="mono tiny muted">{job.id}</span>
-                      <span style={{ fontSize: 13, fontWeight: 500 }}>{job.plateName}</span>
-                    </div>
-                  </div>
-                  <button className="btn ghost sm">{Icons.arrowR} Open job</button>
-                </div>
-                <div className="col gap-2">
-                  {partsFromJob(job).map((part, i) => (
-                    <div key={i} className="row between" style={{
-                      padding: '8px 12px', background: 'var(--bg-2)',
-                      borderRadius: 8, border: '1px solid var(--border-1)',
-                    }}>
-                      <div className="col" style={{ minWidth: 0 }}>
-                        <div className="small" style={{ fontWeight: 500 }}>{part.name}</div>
-                        <div className="tiny muted">{part.orderId} · {part.material}</div>
-                      </div>
-                      <div className="num small" style={{ flexShrink: 0 }}>×{part.qty}</div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* RIGHT */}

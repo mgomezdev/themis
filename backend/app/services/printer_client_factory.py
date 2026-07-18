@@ -1,15 +1,17 @@
 from __future__ import annotations
-import importlib
 import inspect
 from dataclasses import asdict
 
 from ..models import Printer
 from .abstract_printer_client import AbstractPrinterClient
+from .bambu_mqtt import BambuMQTTClient
+from .elegoo_centauri_client import ElegooCentauriClient
+from .snapmaker_client import SnapmakerExtendedClient
 
-REGISTRY: dict[str, str] = {
-    "bambu": "app.services.bambu_mqtt.BambuMQTTClient",
-    "elegoo_centauri": "app.services.elegoo_centauri_client.ElegooCentauriClient",
-    "snapmaker_extended": "app.services.snapmaker_client.SnapmakerExtendedClient",
+REGISTRY: dict[str, type[AbstractPrinterClient]] = {
+    "bambu": BambuMQTTClient,
+    "elegoo_centauri": ElegooCentauriClient,
+    "snapmaker_extended": SnapmakerExtendedClient,
 }
 
 _DISPLAY_NAMES: dict[str, str] = {
@@ -19,18 +21,15 @@ _DISPLAY_NAMES: dict[str, str] = {
 }
 
 
-def _load_class(printer_type: str) -> type[AbstractPrinterClient]:
+def _get_class(printer_type: str) -> type[AbstractPrinterClient]:
     if printer_type not in REGISTRY:
         raise ValueError(f"Unknown printer type: {printer_type!r}")
-    module_path, class_name = REGISTRY[printer_type].rsplit(".", 1)
-    module = importlib.import_module(module_path)
-    return getattr(module, class_name)
+    return REGISTRY[printer_type]
 
 
 def get_printer_types_for_ui() -> list[dict]:
     result = []
-    for printer_type, dotted in REGISTRY.items():
-        cls = _load_class(printer_type)
+    for printer_type, cls in REGISTRY.items():
         fields = [asdict(f) for f in cls.connection_fields()]
         result.append({
             "printer_type": printer_type,
@@ -41,7 +40,7 @@ def get_printer_types_for_ui() -> list[dict]:
 
 
 def create_client(printer: Printer, **callbacks) -> AbstractPrinterClient:
-    cls = _load_class(printer.printer_type)
+    cls = _get_class(printer.printer_type)
     cfg = printer.connection_config or {}
     accepted = {f.name for f in cls.connection_fields()}
     kwargs = {k: v for k, v in cfg.items() if k in accepted}
@@ -53,7 +52,7 @@ def create_client(printer: Printer, **callbacks) -> AbstractPrinterClient:
 
 
 def create_client_from_config(printer_type: str, connection_config: dict) -> AbstractPrinterClient:
-    cls = _load_class(printer_type)
+    cls = _get_class(printer_type)
     accepted = {f.name for f in cls.connection_fields()}
     kwargs = {k: v for k, v in connection_config.items() if k in accepted}
     return cls(**kwargs)

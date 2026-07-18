@@ -1,6 +1,5 @@
 import React from 'react';
 import { Icons } from './icons';
-import { PRINTERS } from '../data/mock';
 import type { StatusKey } from '../data/types';
 import { fmtClock } from '../data/helpers';
 
@@ -115,24 +114,6 @@ export function VideoTile({
 
 export function Card({ children, className = '', ...rest }: React.HTMLAttributes<HTMLDivElement>) {
   return <div className={`card ${className}`} {...rest}>{children}</div>;
-}
-
-export function PrinterBadge({ printerId }: { printerId: string }) {
-  const p = PRINTERS.find(pr => pr.id === printerId);
-  if (!p) return null;
-  return <span className="elig on" title={p.name}>{p.badge}</span>;
-}
-
-export function EligibilityChips({ ids }: { ids: string[] }) {
-  return (
-    <span className="row gap-2" style={{ flexWrap: 'wrap' }}>
-      {PRINTERS.map(p => (
-        <span key={p.id} className={`elig ${ids.includes(p.id) ? 'on' : 'off'}`} title={p.name}>
-          {p.badge}
-        </span>
-      ))}
-    </span>
-  );
 }
 
 export function SectionHeader({ title, sub, actions }: { title: React.ReactNode; sub?: string; actions?: React.ReactNode }) {

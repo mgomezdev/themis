@@ -48,13 +48,7 @@ export interface PendingRemaps {
 
 export type SyncResponse = SyncOk | PendingRemaps;
 
-export interface PrinterResolution {
-  field: string;
-  stale_value: string;
-  new_value: string | null;
-}
-
-export interface JobResolution {
+export interface ProfileResolution {
   field: string;
   stale_value: string;
   new_value: string | null;
@@ -68,8 +62,8 @@ export interface SpoolmanResolution {
 }
 
 export interface Resolutions {
-  printers: PrinterResolution[];
-  jobs: JobResolution[];
+  printers: ProfileResolution[];
+  jobs: ProfileResolution[];
   spoolman_filaments: SpoolmanResolution[];
 }
 

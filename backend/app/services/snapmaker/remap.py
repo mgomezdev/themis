@@ -47,10 +47,6 @@ def _find_model_part(entries: dict[str, bytes]) -> str | None:
 _3D_MODEL_RE = re.compile(r"3D/.*\.model$", re.IGNORECASE)
 
 
-# ---------------------------------------------------------------------------
-# Helpers — copied verbatim from mesh_3mf_builder.py
-# ---------------------------------------------------------------------------
-
 def _model_settings_with_extruder(object_ids: list[str], extruder_1based: int) -> bytes:
     """A fresh model_settings.config assigning each object id to the given extruder."""
     objs = "".join(
