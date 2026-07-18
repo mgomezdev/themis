@@ -6,17 +6,20 @@ from ..models import Printer
 from .abstract_printer_client import AbstractPrinterClient
 from .bambu_mqtt import BambuMQTTClient
 from .elegoo_centauri_client import ElegooCentauriClient
+from .mock_printer_client import MockPrinterClient
 from .snapmaker_client import SnapmakerExtendedClient
 
 REGISTRY: dict[str, type[AbstractPrinterClient]] = {
     "bambu": BambuMQTTClient,
     "elegoo_centauri": ElegooCentauriClient,
+    "mock": MockPrinterClient,
     "snapmaker_extended": SnapmakerExtendedClient,
 }
 
 _DISPLAY_NAMES: dict[str, str] = {
     "bambu": "Bambu Lab",
     "elegoo_centauri": "Elegoo Centauri",
+    "mock": "Mock Printer (Testing)",
     "snapmaker_extended": "Snapmaker U1 (Extended)",
 }
 
