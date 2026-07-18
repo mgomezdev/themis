@@ -6,7 +6,6 @@ import logging
 import socket
 import ssl
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Optional
 
@@ -21,8 +20,6 @@ from .abstract_printer_client import (
 
 logger = logging.getLogger(__name__)
 
-STALE_TIMEOUT = 60
-STALE_RECONNECT_COOLDOWN = 30
 MQTT_PORT = 8883
 FTPS_PORT = 990  # Bambu LAN file transfer is implicit FTPS
 
@@ -115,8 +112,6 @@ class BambuMQTTClient(AbstractPrinterClient):
         self._use_ams = _as_bool(use_ams)
         self.state = PrinterState()
         self._client: mqtt.Client | None = None
-        self._last_message_time: float = 0.0
-        self._last_reconnect_time: float = 0.0
         self._loop = None
 
     @classmethod
@@ -347,7 +342,6 @@ class BambuMQTTClient(AbstractPrinterClient):
         return (self._ip, MQTT_PORT)
 
     def _on_message(self, client, userdata, msg) -> None:
-        self._last_message_time = time.time()
         try:
             data = json.loads(msg.payload)
         except Exception:

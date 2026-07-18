@@ -4,7 +4,6 @@ import itertools
 import json
 import logging
 import threading
-import time
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar
 
@@ -22,9 +21,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PORT = 7125
 _RECONNECT_DELAY = 5.0
-_STALE_TIMEOUT = 30.0
-_STALE_RECONNECT_COOLDOWN = 20.0
-
 # Klipper print_stats.state -> Themis normalized state string.
 _NORM_STATE = {
     "standby": "IDLE",
@@ -124,8 +120,6 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._stop_event = threading.Event()
         self._ws: websocket.WebSocketApp | None = None
         self._loop = None
-        self._last_message_time = 0.0
-        self._last_reconnect_time = 0.0
         self._prev_print_state = "standby"
         self._rpc_id = itertools.count(1)
 
@@ -254,7 +248,6 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         logger.warning("Snapmaker %s: WebSocket error: %s", self._ip, error)
 
     def _on_ws_message(self, ws, message: str) -> None:
-        self._last_message_time = time.time()
         try:
             data = json.loads(message)
         except Exception:
