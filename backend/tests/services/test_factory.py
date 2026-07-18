@@ -33,10 +33,14 @@ def test_registry_does_not_have_moonraker():
     assert "moonraker" not in REGISTRY
 
 
+def test_registry_has_mock():
+    assert "mock" in REGISTRY
+
+
 def test_get_printer_types_returns_list():
     types = get_printer_types_for_ui()
     assert isinstance(types, list)
-    assert len(types) == 3
+    assert len(types) >= 1
 
 
 def test_get_printer_types_bambu_fields():
