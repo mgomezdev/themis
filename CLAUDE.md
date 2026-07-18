@@ -46,7 +46,7 @@ Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker contain
 
 ### Key design patterns
 
-**Printer integration:** `AbstractPrinterClient` ABC with capability flags, factory + registry, `PrinterManager` singleton. See `docs/printer-interface.md` for the full pattern (ported from GroundsKeeper). Adding a vendor = add one class + one registry entry, nothing else changes.
+**Printer integration:** `AbstractPrinterClient` ABC with capability flags, a plain `dict[str, type]` registry in `printer_client_factory.py`, and a `PrinterManager` singleton. See `docs/printer-interface.md` for the full pattern. Adding a vendor = add one class + one registry entry, nothing else changes.
 
 **Queue engine:** Single asyncio background task (`queue_loop`) woken by an `asyncio.Event`. A printer is eligible for a new job only when `is_idle == True` AND `awaiting_plate_clear == False`. Slicing runs in a `ThreadPoolExecutor` to avoid blocking the event loop.
 
@@ -59,7 +59,7 @@ Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker contain
 **OrcaSlicer profiles:** in Docker, `/root/.config/OrcaSlicer` is bind-mounted read-only from the host. For local dev `app.config` resolves the config dir and executable per-platform (Windows → `%APPDATA%\OrcaSlicer` and `…\Program Files\OrcaSlicer\orca-slicer.exe`), so no env vars are needed; `ORCA_CONFIG_DIR` / `ORCA_EXECUTABLE` still override. `ProfileIndex` resolves preset inheritance and filters by `compatible_printers` against the printer's `current_orca_printer_profile`.
 
 ### Database
-SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `uploaded_files`, `orders`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`. A job links to at most one order via `jobs.order_id`. No migration tool — `Base.metadata.create_all` on startup, plus a small idempotent `_migrate()` in `database.py` that `ALTER TABLE … ADD COLUMN`s for fields added after the initial schema.
+SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `uploaded_files`, `orders`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`. A job links to at most one order via `jobs.order_id`. Versioned Flyway-style migrations live in `backend/app/migrations/` (v001–v009); `runner.py` applies them in order on startup. To add a migration: create `vNNN_<name>.py` with `version`, `name`, `up(conn)` (and optionally `down(conn)`), then import and register it in `runner.py`.
 
 ### Volumes (Docker)
 - `/data` — SQLite file + uploaded 3MF files + sliced gcode cache
