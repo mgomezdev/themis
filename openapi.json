@@ -1,0 +1,5997 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Themis",
+    "description": "Print queue API for the Themis 3D printing management system. Manages files, printers, jobs, projects, orders, queue, and settings. Requires the Laminus OrcaSlicer sidecar for slicing operations.",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/v1/orders": {
+      "get": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "List orders",
+        "description": "All orders ordered by creation date descending. Each order includes derived\nstatus (queued / in_progress / complete / hold) and progress fraction.",
+        "operationId": "list_orders_api_v1_orders_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Orders Api V1 Orders Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Create order",
+        "operationId": "create_order_api_v1_orders_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Order Api V1 Orders Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/orders/{order_id}": {
+      "get": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Get order",
+        "description": "Order detail including all non-cancelled jobs.",
+        "operationId": "get_order_api_v1_orders__order_id__get",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Order Api V1 Orders  Order Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Order not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Update order",
+        "operationId": "patch_order_api_v1_orders__order_id__patch",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OrderPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Order Api V1 Orders  Order Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Order not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "orders"
+        ],
+        "summary": "Delete order",
+        "operationId": "delete_order_api_v1_orders__order_id__delete",
+        "parameters": [
+          {
+            "name": "order_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Order Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Order not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/types": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List printer types",
+        "description": "Available printer driver types with display name and required connection config fields.",
+        "operationId": "list_printer_types_api_v1_printers_types_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Printer Types Api V1 Printers Types Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List printers",
+        "description": "All configured printers with their current connection status.",
+        "operationId": "list_printers_api_v1_printers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Printers Api V1 Printers Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Create printer",
+        "description": "Register a new printer and attempt an immediate connection. Connection failure\nis non-fatal \u2014 the printer is saved and will retry on next restart.",
+        "operationId": "create_printer_api_v1_printers_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrinterCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Printer Api V1 Printers Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown printer_type"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/orca-presets": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List OrcaSlicer machine preset names",
+        "description": "Sorted list of all OrcaSlicer machine preset names available in the sidecar catalog.",
+        "operationId": "list_orca_printer_presets_api_v1_printers_orca_presets_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response List Orca Printer Presets Api V1 Printers Orca Presets Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/orca-machine-catalog": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "OrcaSlicer machine catalog",
+        "description": "Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,\nsource, uuid}]. Sourced exclusively from the Orca sidecar.",
+        "operationId": "orca_machine_catalog_api_v1_printers_orca_machine_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Orca Machine Catalog Api V1 Printers Orca Machine Catalog Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/rescan-profiles": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Rescan OrcaSlicer profiles",
+        "description": "Trigger a catalog refresh from Orca and report the machine preset count.",
+        "operationId": "rescan_profiles_api_v1_printers_rescan_profiles_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Rescan Profiles Api V1 Printers Rescan Profiles Post"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Laminus sidecar unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/test-connection": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Test printer connection",
+        "description": "Attempt to connect with the given config and return `{ok: true}` or\n`{ok: false, error: \"...\"}` with a human-readable hint about why it failed.",
+        "operationId": "test_connection_api_v1_printers_test_connection_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TestConnectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Test Connection Api V1 Printers Test Connection Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown printer_type"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/profiles": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Get printer profiles",
+        "description": "OrcaSlicer print and filament profiles compatible with this printer's active machine preset.",
+        "operationId": "get_profiles_api_v1_printers__printer_id__profiles_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Profiles Api V1 Printers  Printer Id  Profiles Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Get printer",
+        "operationId": "get_printer_api_v1_printers__printer_id__get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Printer Api V1 Printers  Printer Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Update printer",
+        "description": "Update one or more printer fields. Omitted fields are left unchanged.\n`current_orca_printer_profile` supports explicit null to clear the preset.",
+        "operationId": "update_printer_api_v1_printers__printer_id__patch",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrinterUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Printer Api V1 Printers  Printer Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Delete printer",
+        "operationId": "delete_printer_api_v1_printers__printer_id__delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/plate-cleared": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Confirm plate cleared",
+        "description": "Mark the printer's bed as cleared so the queue engine can assign the next job.",
+        "operationId": "plate_cleared_api_v1_printers__printer_id__plate_cleared_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Plate Cleared Api V1 Printers  Printer Id  Plate Cleared Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/active-preset": {
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Switch active OrcaSlicer preset",
+        "description": "Change the active OrcaSlicer machine preset. The preset must already be in\nthe printer's `orca_printer_profiles` list.",
+        "operationId": "switch_active_preset_api_v1_printers__printer_id__active_preset_patch",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ActivePresetUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Switch Active Preset Api V1 Printers  Printer Id  Active Preset Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Preset not in this printer's configured profiles"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/reconnect": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Reconnect printer",
+        "description": "Disconnect the current session and open a fresh connection.",
+        "operationId": "reconnect_printer_api_v1_printers__printer_id__reconnect_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reconnect Printer Api V1 Printers  Printer Id  Reconnect Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Connection attempt failed"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/pause": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Pause print",
+        "operationId": "pause_printer_api_v1_printers__printer_id__pause_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Pause Printer Api V1 Printers  Printer Id  Pause Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/resume": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Resume print",
+        "operationId": "resume_printer_api_v1_printers__printer_id__resume_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Resume Printer Api V1 Printers  Printer Id  Resume Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/stop": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Stop print",
+        "description": "Stop the active print and cancel any Themis job the printer was physically running.",
+        "operationId": "stop_printer_api_v1_printers__printer_id__stop_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Stop Printer Api V1 Printers  Printer Id  Stop Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/light": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set chamber light",
+        "operationId": "set_light_api_v1_printers__printer_id__light_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LightBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Light Api V1 Printers  Printer Id  Light Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/jog-z": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Jog Z axis",
+        "operationId": "jog_z_api_v1_printers__printer_id__jog_z_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JogZBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Jog Z Api V1 Printers  Printer Id  Jog Z Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/fan": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set fan speed",
+        "description": "Set fan speed (0\u2013100 %) for `model`, `auxiliary`, or `box` fan.",
+        "operationId": "set_fan_api_v1_printers__printer_id__fan_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FanBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Fan Api V1 Printers  Printer Id  Fan Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Invalid fan name"
+          },
+          "503": {
+            "description": "Printer not connected"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/bed-temp": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set bed temperature",
+        "operationId": "set_bed_temp_api_v1_printers__printer_id__bed_temp_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BedTempBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Bed Temp Api V1 Printers  Printer Id  Bed Temp Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/camera": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Stream camera (MJPEG)",
+        "description": "MJPEG multipart stream from the printer camera. Supports both native MJPEG\nand RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on\nprinters that time out after 60 s of inactivity.",
+        "operationId": "stream_camera_api_v1_printers__printer_id__camera_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found or has no camera"
+          },
+          "503": {
+            "description": "Printer not connected or ffmpeg unavailable for RTSP"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/snapshot": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Camera snapshot",
+        "description": "Return a single JPEG frame from any camera source (MJPEG or RTSP).",
+        "operationId": "snapshot_camera_api_v1_printers__printer_id__snapshot_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found, has no camera, or no camera source"
+          },
+          "503": {
+            "description": "Printer not connected or camera unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet": {
+      "get": {
+        "tags": [
+          "fleet"
+        ],
+        "summary": "Fleet live state",
+        "description": "All printers with live telemetry (temperatures, progress, print state) merged in.\nOffline or disconnected printers return a zeroed-out state block.",
+        "operationId": "list_fleet_api_v1_fleet_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Fleet Api V1 Fleet Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "List files",
+        "description": "All files in the library. Optional filters: `folder` (prefix match),\n`tags` (all supplied tags must be present), `search` (filename substring).\n`sort` accepts `updated` (default), `name`, or `size`.",
+        "operationId": "list_files_api_v1_files_get",
+        "parameters": [
+          {
+            "name": "folder",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Folder"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Search"
+            }
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "updated",
+              "title": "Sort"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Tags"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Files Api V1 Files Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/tree": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Folder tree (index-derived)",
+        "description": "Hierarchical folder tree derived from the file index. Each node has\n`name`, `path`, `count` (files in this folder and below), and `children`.\nEmpty folders are not included \u2014 use `/dirs` for those.",
+        "operationId": "folder_tree_api_v1_files_tree_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Folder Tree Api V1 Files Tree Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/dirs": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Folder tree with empty dirs",
+        "description": "Folder hierarchy from the actual on-disk library directory \u2014 includes\nEMPTY folders (unlike /tree, which is index-derived) \u2014 with recursive file\ncounts overlaid from the index. Used by the move-destination picker.",
+        "operationId": "folder_dirs_api_v1_files_dirs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Folder Dirs Api V1 Files Dirs Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/upload": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Upload a file",
+        "description": "Upload a .3mf or .stl file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
+        "operationId": "upload_file_api_v1_files_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_file_api_v1_files_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Upload File Api V1 Files Upload Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unsupported file type (only .3mf and .stl accepted)"
+          }
+        }
+      }
+    },
+    "/api/v1/files/folders": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Create folder",
+        "description": "Create a directory in the library. Parent directories are created as needed.",
+        "operationId": "create_folder_api_v1_files_folders_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FolderCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Folder Api V1 Files Folders Post"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Path escapes the library root"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Delete empty folder",
+        "description": "Delete an EMPTY folder. Refuses (409) if it contains any files or\nsubfolders, and never deletes the library root.",
+        "operationId": "delete_folder_api_v1_files_folders_delete",
+        "parameters": [
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Folder Api V1 Files Folders Delete"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cannot delete the library root or Job Uploads folder"
+          },
+          "404": {
+            "description": "Folder not found"
+          },
+          "409": {
+            "description": "Folder is not empty"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}": {
+      "patch": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Rename or move file",
+        "description": "Rename a file, move it to a different folder, or both. The destination folder\nis created if it does not exist. Filename path separators are stripped to prevent\ndirectory traversal.",
+        "operationId": "update_file_api_v1_files__file_id__patch",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FilePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update File Api V1 Files  File Id  Patch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid filename or path escapes the library root"
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Delete file",
+        "operationId": "delete_file_api_v1_files__file_id__delete",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete File Api V1 Files  File Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "409": {
+            "description": "File is referenced by an active job"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/tags": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Assign tag to file",
+        "description": "Assign a tag to a file. Idempotent \u2014 no error if the tag is already assigned.",
+        "operationId": "add_file_tag_api_v1_files__file_id__tags_post",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagAssign"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add File Tag Api V1 Files  File Id  Tags Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File or tag not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/tags/{tag_id}": {
+      "delete": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Remove tag from file",
+        "description": "Remove a tag from a file. Idempotent \u2014 no error if the tag is not assigned.",
+        "operationId": "remove_file_tag_api_v1_files__file_id__tags__tag_id__delete",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Remove File Tag Api V1 Files  File Id  Tags  Tag Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/rescan": {
+      "post": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Rescan library",
+        "description": "Walk the library directory and sync the file index \u2014 adds missing records,\nmarks orphaned records as missing, and re-parses plate metadata.",
+        "operationId": "rescan_api_v1_files_rescan_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Rescan Api V1 Files Rescan Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/plates": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Get file plates",
+        "description": "Plate metadata extracted from the 3MF (estimated time, filament grams, thumbnail path).",
+        "operationId": "get_plates_api_v1_files__file_id__plates_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Plates Api V1 Files  File Id  Plates Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/model-filaments": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Get 3MF model filaments",
+        "description": "Filament definitions embedded in the 3MF model XML (type, colour, vendor).",
+        "operationId": "get_model_filaments_api_v1_files__file_id__model_filaments_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Model Filaments Api V1 Files  File Id  Model Filaments Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/embedded-settings": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Get 3MF embedded settings",
+        "description": "OrcaSlicer project settings embedded in `Metadata/project_settings.config` inside the 3MF.",
+        "operationId": "get_embedded_settings_api_v1_files__file_id__embedded_settings_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Embedded Settings Api V1 Files  File Id  Embedded Settings Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/thumbnails/{filename}": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Serve plate thumbnail",
+        "description": "Return a PNG thumbnail for a specific plate. The filename is the basename\nof the thumbnail path from the plates list.",
+        "operationId": "get_thumbnail_api_v1_files__file_id__thumbnails__filename__get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "filename",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Filename"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid thumbnail filename"
+          },
+          "404": {
+            "description": "File or thumbnail not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/download": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Download raw file",
+        "description": "Serve the raw uploaded file (STL, 3MF, etc.) for client-side use.",
+        "operationId": "download_file_api_v1_files__file_id__download_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List active jobs",
+        "description": "All jobs ordered by queue position. Includes jobs in all statuses.",
+        "operationId": "list_jobs_api_v1_jobs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Jobs Api V1 Jobs Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create job",
+        "description": "Queue a new print job for a specific file plate. At least one printer config is required.\nThe job is added at the end of the queue and the engine is woken immediately.",
+        "operationId": "create_job_api_v1_jobs_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Job Api V1 Jobs Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File, printer, or order not found"
+          },
+          "422": {
+            "description": "printer_configs is empty"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/check-overrides": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Check embedded settings vs presets",
+        "description": "Flag settings baked into the uploaded 3MF that the chosen presets would\nchange, so the New Job flow can warn before slicing replaces them.",
+        "operationId": "check_overrides_api_v1_jobs_check_overrides_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OverrideCheckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Check Overrides Api V1 Jobs Check Overrides Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File or printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/history": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List job history",
+        "description": "Completed/cancelled/failed jobs enriched with file name, printer name, and project name.\n`status` is a comma-separated list; `project_id` filters to a single project.",
+        "operationId": "list_history_api_v1_jobs_history_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "complete,cancelled,failed",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List History Api V1 Jobs History Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get job",
+        "operationId": "get_job_api_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Api V1 Jobs  Job Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/details": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get job details",
+        "description": "Full job detail: file name, plate stats, per-printer slicing configs, assigned printer.",
+        "operationId": "get_job_details_api_v1_jobs__job_id__details_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Details Api V1 Jobs  Job Id  Details Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/cancel": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Cancel job",
+        "description": "Cancel a queued, printing, paused, slicing, or failed job. If a printer is\nphysically running the job it receives a stop command. A parked gcode file is deleted.",
+        "operationId": "cancel_job_api_v1_jobs__job_id__cancel_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cancel Job Api V1 Jobs  Job Id  Cancel Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Job is in a non-cancellable status"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/configs": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Update job configs",
+        "description": "Replace printer configs for a queued/blocked/failed job and re-queue it.",
+        "operationId": "update_job_configs_api_v1_jobs__job_id__configs_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobConfigsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Job Configs Api V1 Jobs  Job Id  Configs Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job or printer not found"
+          },
+          "422": {
+            "description": "Job is not in an editable status or printer_configs is empty"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/unblock": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Unblock job",
+        "description": "Re-queue a blocked job at the top of the queue and wake the engine.\n\nClears any prior slice-failure flags so the job is actually re-sliced \u2014 a\nconfig left with ``slice_failed`` would otherwise be re-blocked on the next\nclaim with its stale error, never retrying.",
+        "operationId": "unblock_job_api_v1_jobs__job_id__unblock_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Unblock Job Api V1 Jobs  Job Id  Unblock Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Job is not in blocked status"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/reorder": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Reorder job in queue",
+        "description": "Move a queued or blocked job within the queue.\nActions: 'front', 'back', 'promote' (one step up), 'demote' (one step down).",
+        "operationId": "reorder_job_api_v1_jobs__job_id__reorder_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Reorder Job Api V1 Jobs  Job Id  Reorder Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Job is not in a reorderable status or action is invalid"
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/verify-slice": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Test-slice job",
+        "description": "Test-slice without printing or modifying job state. Debug use only.\nReturns `{ok: true}` on success or `{ok: false, error: \"...\"}` on failure.",
+        "operationId": "verify_slice_api_v1_jobs__job_id__verify_slice_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifySliceBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Verify Slice Api V1 Jobs  Job Id  Verify Slice Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job, printer, file, or printer config not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/slice-failures": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get slice failures",
+        "description": "Printer configs that failed slicing, with the error message for each.",
+        "operationId": "get_slice_failures_api_v1_jobs__job_id__slice_failures_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Get Slice Failures Api V1 Jobs  Job Id  Slice Failures Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/outcome": {
+      "put": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Mark job outcome",
+        "description": "Record per-item pass/fail counts for a completed project job.\nIncrements `quantity_completed` and `quantity_failed` on each ProjectItem.\nCalling again replaces the previous outcome (idempotent re-review).",
+        "operationId": "mark_job_outcome_api_v1_jobs__job_id__outcome_put",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OutcomeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Mark Job Outcome Api V1 Jobs  Job Id  Outcome Put"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Job has no project items to mark"
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/laminus/catalog": {
+      "get": {
+        "tags": [
+          "laminus"
+        ],
+        "summary": "Get profile catalog",
+        "description": "Return the full machine/process/filament catalog as JSON (served from the\nThemis-side cache; the sidecar is only contacted if the cache is cold).",
+        "operationId": "get_laminus_catalog_api_v1_laminus_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "502": {
+            "description": "Laminus sidecar unreachable"
+          },
+          "503": {
+            "description": "Laminus sidecar not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/laminus/catalog/status": {
+      "get": {
+        "tags": [
+          "laminus"
+        ],
+        "summary": "Catalog cache status",
+        "description": "Whether the Themis catalog cache is populated and Laminus's build state.\nIncludes `laminus` sub-object with `catalog_loaded`, `catalog_building`, and\n`profile_count` if the sidecar is reachable. Health result is memoized for 30 s.",
+        "operationId": "get_catalog_status_api_v1_laminus_catalog_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Catalog Status Api V1 Laminus Catalog Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/laminus/catalog/refresh": {
+      "post": {
+        "tags": [
+          "laminus"
+        ],
+        "summary": "Refresh catalog from Laminus",
+        "description": "Re-fetch the catalog from Laminus. If removed profiles are referenced by live data,\nreturns pending_remaps instead of committing. Old catalog remains active until confirmed.",
+        "operationId": "refresh_catalog_api_v1_laminus_catalog_refresh_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Refresh Catalog Api V1 Laminus Catalog Refresh Post"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Laminus sidecar unreachable"
+          },
+          "503": {
+            "description": "Laminus sidecar not configured"
+          }
+        }
+      }
+    },
+    "/api/v1/laminus/catalog/rescan": {
+      "post": {
+        "tags": [
+          "laminus"
+        ],
+        "summary": "Rescan profiles and refresh catalog",
+        "description": "Tell Laminus to rebuild its catalog from disk, then update the Themis cache.\nIf removed profiles are referenced by live data, returns pending_remaps.",
+        "operationId": "rescan_and_refresh_catalog_api_v1_laminus_catalog_rescan_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Rescan And Refresh Catalog Api V1 Laminus Catalog Rescan Post"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Laminus sidecar unreachable"
+          },
+          "503": {
+            "description": "Laminus sidecar not configured"
+          },
+          "504": {
+            "description": "Laminus catalog rebuild did not complete within 120 s"
+          }
+        }
+      }
+    },
+    "/api/v1/laminus/catalog/confirm-remap": {
+      "post": {
+        "tags": [
+          "laminus"
+        ],
+        "summary": "Confirm pending profile remap and commit catalog",
+        "operationId": "confirm_remap_api_v1_laminus_catalog_confirm_remap_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfirmRemapBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Confirm Remap Api V1 Laminus Catalog Confirm Remap Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List projects",
+        "description": "All projects ordered by creation date descending, each with items, links,\njob counts, and aggregated filament/time estimates.",
+        "operationId": "list_projects_api_v1_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Projects Api V1 Projects Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create project",
+        "operationId": "create_project_api_v1_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Project Api V1 Projects Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Get project",
+        "operationId": "get_project_api_v1_projects__project_id__get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Project Api V1 Projects  Project Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Update project",
+        "operationId": "patch_project_api_v1_projects__project_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Project Api V1 Projects  Project Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete project",
+        "operationId": "delete_project_api_v1_projects__project_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Project Api V1 Projects  Project Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/jobs": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List project jobs",
+        "description": "All jobs belonging to this project, ordered by job ID.",
+        "operationId": "list_project_jobs_api_v1_projects__project_id__jobs_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Project Jobs Api V1 Projects  Project Id  Jobs Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/items": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List project items",
+        "operationId": "list_items_api_v1_projects__project_id__items_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Items Api V1 Projects  Project Id  Items Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add item to project",
+        "operationId": "add_item_api_v1_projects__project_id__items_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectItemCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Item Api V1 Projects  Project Id  Items Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or file not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/items/{item_id}": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Update project item",
+        "operationId": "update_item_api_v1_projects__project_id__items__item_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectItemUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Item Api V1 Projects  Project Id  Items  Item Id  Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Remove item from project",
+        "operationId": "delete_item_api_v1_projects__project_id__items__item_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Item Api V1 Projects  Project Id  Items  Item Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/items/reorder": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Reorder project items",
+        "description": "Set explicit sort_order values for project items. Returns the full updated item list.",
+        "operationId": "reorder_items_api_v1_projects__project_id__items_reorder_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReorderEntry"
+                },
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Reorder Items Api V1 Projects  Project Id  Items Reorder Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "One or more item IDs do not belong to this project"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/links": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "List project links",
+        "operationId": "list_links_api_v1_projects__project_id__links_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Links Api V1 Projects  Project Id  Links Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add project link",
+        "operationId": "add_link_api_v1_projects__project_id__links_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectLinkCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Link Api V1 Projects  Project Id  Links Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/links/{link_id}": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Update project link",
+        "operationId": "update_link_api_v1_projects__project_id__links__link_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectLinkUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Link Api V1 Projects  Project Id  Links  Link Id  Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or link not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Delete project link",
+        "operationId": "delete_link_api_v1_projects__project_id__links__link_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "link_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Link Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Link Api V1 Projects  Project Id  Links  Link Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or link not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/generate": {
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Pack STLs and queue jobs",
+        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.",
+        "operationId": "generate_project_api_v1_projects__project_id__generate_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GenerateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Generate Project Api V1 Projects  Project Id  Generate Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found or a referenced file is missing"
+          },
+          "422": {
+            "description": "Project has no items or contains non-STL files"
+          },
+          "502": {
+            "description": "Orca sidecar error during generation"
+          },
+          "504": {
+            "description": "Generation timed out"
+          }
+        }
+      }
+    },
+    "/api/v1/queue": {
+      "get": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Get active queue",
+        "description": "All jobs in an active status (queued, slicing, uploading, printing, paused, blocked, failed)\nordered by queue position ascending.",
+        "operationId": "get_queue_api_v1_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Get Queue Api V1 Queue Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/queue/reorder": {
+      "patch": {
+        "tags": [
+          "queue"
+        ],
+        "summary": "Reorder queue",
+        "description": "Set explicit queue positions for one or more active jobs. Returns the full updated queue.",
+        "operationId": "reorder_queue_api_v1_queue_reorder_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Reorder Queue Api V1 Queue Reorder Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Job is not in an active status and cannot be reordered"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/queue": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get queue config",
+        "description": "Queue engine settings: poll interval, operator name, and snapshot interval.",
+        "operationId": "get_queue_config_api_v1_settings_queue_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update queue config",
+        "description": "Update one or more queue engine settings. Omitted fields are left unchanged.",
+        "operationId": "update_queue_config_api_v1_settings_queue_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueueConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueueConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Spoolman config",
+        "description": "Spoolman integration settings: enabled flag, base URL, and API key.",
+        "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Spoolman config",
+        "description": "Update Spoolman integration settings. Omitted fields are left unchanged.",
+        "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test Spoolman connection",
+        "description": "Verify connectivity to Spoolman. Uses the supplied URL/key if provided,\nfalling back to the saved config. Returns `{ok, version}` or `{ok, message}`.\nIf the catalog is warm and stale UUIDs are detected in Spoolman filaments,\nreturns `{status: \"pending_remaps\", ...}` instead.",
+        "operationId": "test_spoolman_connection_api_v1_settings_spoolman_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/webhook": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get webhook config",
+        "description": "Outbound webhook settings: endpoint URL, HMAC secret, and subscribed event types.",
+        "operationId": "get_webhook_config_api_v1_settings_webhook_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update webhook config",
+        "description": "Update webhook settings. Omitted fields are left unchanged.",
+        "operationId": "update_webhook_config_api_v1_settings_webhook_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/fleet-backup": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Download fleet backup",
+        "description": "Export all printer configs as a downloadable JSON file.\n\nThe response has `Content-Disposition: attachment; filename=themis-fleet-backup.json`\nso browsers will prompt to save it. Import with `POST /settings/fleet-import`.",
+        "operationId": "fleet_backup_api_v1_settings_fleet_backup_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/fleet-import": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Import fleet backup",
+        "description": "Import printer configs from a backup file. Profile resolution failures are non-fatal.\n\nReturns a report with counts of imported and skipped printers plus any warnings\nabout unrecognised OrcaSlicer profile names.",
+        "operationId": "fleet_import_api_v1_settings_fleet_import_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_fleet_import_api_v1_settings_fleet_import_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FleetImportReport"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsupported backup file"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/filaments": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "List Spoolman filaments",
+        "description": "Fetch all filament definitions from the configured Spoolman instance.",
+        "operationId": "get_filaments_api_v1_spoolman_filaments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/spools": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "List Spoolman spools",
+        "description": "Fetch all spool inventory from the configured Spoolman instance.",
+        "operationId": "get_spools_api_v1_spoolman_spools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/filaments/{filament_id}": {
+      "patch": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Update filament OrcaSlicer profiles",
+        "description": "Write OrcaSlicer profile assignments back to a Spoolman filament's extra fields.",
+        "operationId": "patch_filament_api_v1_spoolman_filaments__filament_id__patch",
+        "parameters": [
+          {
+            "name": "filament_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Filament Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FilamentPatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags": {
+      "get": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "List tags",
+        "description": "All tags ordered by category then name, each with a usage_count of how many files carry it.",
+        "operationId": "list_tags_api_v1_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Tags Api V1 Tags Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Create tag",
+        "operationId": "create_tag_api_v1_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Tag Api V1 Tags Post"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A tag with this name already exists"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/tags/{tag_id}": {
+      "patch": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Update tag",
+        "operationId": "update_tag_api_v1_tags__tag_id__patch",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Tag Api V1 Tags  Tag Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tag not found"
+          },
+          "409": {
+            "description": "A tag with the requested name already exists"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "tags"
+        ],
+        "summary": "Delete tag",
+        "operationId": "delete_tag_api_v1_tags__tag_id__delete",
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Tag Api V1 Tags  Tag Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Tag not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Health Api V1 Health Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ActivePresetUpdate": {
+        "properties": {
+          "preset": {
+            "type": "string",
+            "title": "Preset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "preset"
+        ],
+        "title": "ActivePresetUpdate"
+      },
+      "BedTempBody": {
+        "properties": {
+          "celsius": {
+            "type": "integer",
+            "title": "Celsius"
+          }
+        },
+        "type": "object",
+        "required": [
+          "celsius"
+        ],
+        "title": "BedTempBody"
+      },
+      "Body_fleet_import_api_v1_settings_fleet_import_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_fleet_import_api_v1_settings_fleet_import_post"
+      },
+      "Body_upload_file_api_v1_files_upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "folder": {
+            "type": "string",
+            "title": "Folder",
+            "default": "/Job Uploads"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_file_api_v1_files_upload_post"
+      },
+      "ConfirmRemapBody": {
+        "properties": {
+          "sync_id": {
+            "type": "string",
+            "title": "Sync Id"
+          },
+          "resolutions": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Resolutions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sync_id",
+          "resolutions"
+        ],
+        "title": "ConfirmRemapBody"
+      },
+      "FanBody": {
+        "properties": {
+          "fan": {
+            "type": "string",
+            "title": "Fan"
+          },
+          "speed_pct": {
+            "type": "integer",
+            "title": "Speed Pct"
+          }
+        },
+        "type": "object",
+        "required": [
+          "fan",
+          "speed_pct"
+        ],
+        "title": "FanBody"
+      },
+      "FilamentPatchBody": {
+        "properties": {
+          "orca_profiles": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Orca Profiles"
+          }
+        },
+        "type": "object",
+        "required": [
+          "orca_profiles"
+        ],
+        "title": "FilamentPatchBody"
+      },
+      "FilePatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "folder": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Folder"
+          }
+        },
+        "type": "object",
+        "title": "FilePatch"
+      },
+      "FleetImportReport": {
+        "properties": {
+          "imported": {
+            "type": "integer",
+            "title": "Imported"
+          },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "imported",
+          "skipped",
+          "warnings"
+        ],
+        "title": "FleetImportReport"
+      },
+      "FolderCreate": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "title": "FolderCreate"
+      },
+      "GenerateRequest": {
+        "properties": {
+          "eligible_printer_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Eligible Printer Ids",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "GenerateRequest"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "JobConfigsUpdate": {
+        "properties": {
+          "printer_configs": {
+            "items": {
+              "$ref": "#/components/schemas/PrinterConfigInput"
+            },
+            "type": "array",
+            "title": "Printer Configs"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_configs"
+        ],
+        "title": "JobConfigsUpdate"
+      },
+      "JobCreate": {
+        "properties": {
+          "uploaded_file_id": {
+            "type": "integer",
+            "title": "Uploaded File Id"
+          },
+          "plate_number": {
+            "type": "integer",
+            "title": "Plate Number",
+            "default": 1
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Id"
+          },
+          "printer_configs": {
+            "items": {
+              "$ref": "#/components/schemas/PrinterConfigInput"
+            },
+            "type": "array",
+            "title": "Printer Configs"
+          },
+          "overrides": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uploaded_file_id",
+          "printer_configs"
+        ],
+        "title": "JobCreate"
+      },
+      "JogZBody": {
+        "properties": {
+          "distance_mm": {
+            "type": "number",
+            "title": "Distance Mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "distance_mm"
+        ],
+        "title": "JogZBody"
+      },
+      "LightBody": {
+        "properties": {
+          "on": {
+            "type": "boolean",
+            "title": "On"
+          }
+        },
+        "type": "object",
+        "required": [
+          "on"
+        ],
+        "title": "LightBody"
+      },
+      "OrderCreate": {
+        "properties": {
+          "order_type": {
+            "type": "string",
+            "title": "Order Type"
+          },
+          "customer": {
+            "type": "string",
+            "title": "Customer"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/OrderPartIn"
+            },
+            "type": "array",
+            "title": "Parts",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "order_type",
+          "customer",
+          "title"
+        ],
+        "title": "OrderCreate"
+      },
+      "OrderPartIn": {
+        "properties": {
+          "id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "qty": {
+            "type": "integer",
+            "title": "Qty",
+            "default": 1
+          },
+          "material": {
+            "type": "string",
+            "title": "Material",
+            "default": ""
+          },
+          "est_minutes": {
+            "type": "integer",
+            "title": "Est Minutes",
+            "default": 0
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "OrderPartIn"
+      },
+      "OrderPatch": {
+        "properties": {
+          "order_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Type"
+          },
+          "customer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "on_hold": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Hold"
+          },
+          "parts": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OrderPartIn"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parts"
+          }
+        },
+        "type": "object",
+        "title": "OrderPatch"
+      },
+      "OutcomeBody": {
+        "properties": {
+          "failures": {
+            "items": {
+              "$ref": "#/components/schemas/OutcomeFailureItem"
+            },
+            "type": "array",
+            "title": "Failures",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "OutcomeBody"
+      },
+      "OutcomeFailureItem": {
+        "properties": {
+          "project_item_id": {
+            "type": "integer",
+            "title": "Project Item Id"
+          },
+          "quantity_failed": {
+            "type": "integer",
+            "title": "Quantity Failed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_item_id",
+          "quantity_failed"
+        ],
+        "title": "OutcomeFailureItem"
+      },
+      "OverrideCheckRequest": {
+        "properties": {
+          "uploaded_file_id": {
+            "type": "integer",
+            "title": "Uploaded File Id"
+          },
+          "printer_id": {
+            "type": "integer",
+            "title": "Printer Id"
+          },
+          "print_profile": {
+            "type": "string",
+            "title": "Print Profile"
+          },
+          "filament_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Profile"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          }
+        },
+        "type": "object",
+        "required": [
+          "uploaded_file_id",
+          "printer_id",
+          "print_profile"
+        ],
+        "title": "OverrideCheckRequest"
+      },
+      "PositionUpdate": {
+        "properties": {
+          "job_id": {
+            "type": "integer",
+            "title": "Job Id"
+          },
+          "queue_position": {
+            "type": "number",
+            "title": "Queue Position"
+          }
+        },
+        "type": "object",
+        "required": [
+          "job_id",
+          "queue_position"
+        ],
+        "title": "PositionUpdate"
+      },
+      "PrinterConfigInput": {
+        "properties": {
+          "printer_id": {
+            "type": "integer",
+            "title": "Printer Id"
+          },
+          "print_profile": {
+            "type": "string",
+            "title": "Print Profile"
+          },
+          "filament_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Profile"
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
+          "tool_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Index"
+          },
+          "filament_map": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Map"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_id",
+          "print_profile"
+        ],
+        "title": "PrinterConfigInput"
+      },
+      "PrinterCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "printer_type": {
+            "type": "string",
+            "title": "Printer Type"
+          },
+          "connection_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Connection Config"
+          },
+          "orca_printer_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Orca Printer Profiles",
+            "default": []
+          },
+          "current_orca_printer_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Orca Printer Profile"
+          },
+          "loaded_filaments": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Loaded Filaments",
+            "default": []
+          },
+          "build_plate_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Plate Type"
+          },
+          "no_snapshots_while_idle": {
+            "type": "boolean",
+            "title": "No Snapshots While Idle",
+            "default": false
+          },
+          "bed_x_mm": {
+            "type": "number",
+            "title": "Bed X Mm",
+            "default": 256.0
+          },
+          "bed_y_mm": {
+            "type": "number",
+            "title": "Bed Y Mm",
+            "default": 256.0
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "printer_type",
+          "connection_config"
+        ],
+        "title": "PrinterCreate"
+      },
+      "PrinterUpdate": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "connection_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Connection Config"
+          },
+          "orca_printer_profiles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Orca Printer Profiles"
+          },
+          "current_orca_printer_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Orca Printer Profile"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "queue_on": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Queue On"
+          },
+          "loaded_filaments": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Loaded Filaments"
+          },
+          "build_plate_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Build Plate Type"
+          },
+          "no_snapshots_while_idle": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Snapshots While Idle"
+          },
+          "bed_x_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed X Mm"
+          },
+          "bed_y_mm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Y Mm"
+          }
+        },
+        "type": "object",
+        "title": "PrinterUpdate"
+      },
+      "ProjectCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "customer": {
+            "type": "string",
+            "title": "Customer",
+            "default": ""
+          },
+          "order_type": {
+            "type": "string",
+            "title": "Order Type",
+            "default": "internal"
+          },
+          "on_hold": {
+            "type": "boolean",
+            "title": "On Hold",
+            "default": false
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "source_app": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source App"
+          },
+          "source_user": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source User"
+          },
+          "source_layout_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Layout Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ProjectCreate"
+      },
+      "ProjectItemCreate": {
+        "properties": {
+          "file_id": {
+            "type": "integer",
+            "title": "File Id"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "default": 1
+          },
+          "filament_type": {
+            "type": "string",
+            "title": "Filament Type",
+            "default": "any"
+          },
+          "filament_color": {
+            "type": "string",
+            "title": "Filament Color",
+            "default": "any"
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "ProjectItemCreate"
+      },
+      "ProjectItemUpdate": {
+        "properties": {
+          "quantity": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quantity"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "type": "object",
+        "title": "ProjectItemUpdate"
+      },
+      "ProjectLinkCreate": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "ProjectLinkCreate"
+      },
+      "ProjectLinkUpdate": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "sort_order": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sort Order"
+          }
+        },
+        "type": "object",
+        "title": "ProjectLinkUpdate"
+      },
+      "ProjectPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "customer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Customer"
+          },
+          "order_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Order Type"
+          },
+          "on_hold": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "On Hold"
+          },
+          "due_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Due Date"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "ProjectPatch"
+      },
+      "QueueConfigIn": {
+        "properties": {
+          "check_interval_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Interval Minutes"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "snapshot_interval_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snapshot Interval Seconds"
+          },
+          "estimates_enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Estimates Enabled"
+          }
+        },
+        "type": "object",
+        "title": "QueueConfigIn"
+      },
+      "QueueConfigOut": {
+        "properties": {
+          "check_interval_minutes": {
+            "type": "integer",
+            "title": "Check Interval Minutes"
+          },
+          "operator_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator Name"
+          },
+          "snapshot_interval_seconds": {
+            "type": "integer",
+            "title": "Snapshot Interval Seconds"
+          },
+          "estimates_enabled": {
+            "type": "boolean",
+            "title": "Estimates Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "check_interval_minutes",
+          "operator_name",
+          "snapshot_interval_seconds",
+          "estimates_enabled"
+        ],
+        "title": "QueueConfigOut"
+      },
+      "ReorderBody": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "title": "Action"
+          }
+        },
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "ReorderBody"
+      },
+      "ReorderEntry": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "sort_order": {
+            "type": "integer",
+            "title": "Sort Order"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "sort_order"
+        ],
+        "title": "ReorderEntry"
+      },
+      "ReorderRequest": {
+        "properties": {
+          "positions": {
+            "items": {
+              "$ref": "#/components/schemas/PositionUpdate"
+            },
+            "type": "array",
+            "title": "Positions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "positions"
+        ],
+        "title": "ReorderRequest"
+      },
+      "SpoolmanConfigIn": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "type": "object",
+        "title": "SpoolmanConfigIn"
+      },
+      "SpoolmanConfigOut": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "url",
+          "api_key"
+        ],
+        "title": "SpoolmanConfigOut"
+      },
+      "TagAssign": {
+        "properties": {
+          "tag_id": {
+            "type": "integer",
+            "title": "Tag Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tag_id"
+        ],
+        "title": "TagAssign"
+      },
+      "TagCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "color": {
+            "type": "string",
+            "title": "Color",
+            "default": "#64748b"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagCreate"
+      },
+      "TagPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Category"
+          }
+        },
+        "type": "object",
+        "title": "TagPatch"
+      },
+      "TestConnectionRequest": {
+        "properties": {
+          "printer_type": {
+            "type": "string",
+            "title": "Printer Type"
+          },
+          "connection_config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Connection Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_type",
+          "connection_config"
+        ],
+        "title": "TestConnectionRequest"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "VerifySliceBody": {
+        "properties": {
+          "printer_id": {
+            "type": "integer",
+            "title": "Printer Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_id"
+        ],
+        "title": "VerifySliceBody"
+      },
+      "WebhookConfigIn": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "title": "WebhookConfigIn"
+      },
+      "WebhookConfigOut": {
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url",
+          "secret",
+          "events"
+        ],
+        "title": "WebhookConfigOut"
+      }
+    }
+  }
+}
