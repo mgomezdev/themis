@@ -18,7 +18,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install backend dependencies
-        run: pip install -r backend/requirements.txt
+        run: pip install -e backend/
 
       - name: Regenerate openapi.json
         run: python scripts/export_openapi.py
