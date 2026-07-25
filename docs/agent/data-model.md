@@ -5,7 +5,7 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (14)
+## Tables (16)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id
@@ -20,8 +20,12 @@ gcode_files
 queue_config        (singleton-ish: check_interval_minutes, operator_name)
 spoolman_config     (enabled, url, api_key)
 webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
-projects            ← project_items.project_id, jobs.project_id
+projects            ← project_items.project_id, project_links.project_id, project_parts.project_id,
+                       jobs.project_id
 project_items       ← job_item_failures.project_item_id
+project_links       (junction-free child: project_id CASCADE, url, label?, sort_order, created_at)
+project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,
+                       created_at — non-3D-printed hardware for the assembly, e.g. magnets/screws)
 job_item_failures
 ```
 
@@ -119,6 +123,21 @@ source_user?, source_layout_id?, created_at, updated_at`.
 filament_profile_uuid, color_hex, sort_order`.
 - One row per STL file in the project. `quantity` = how many copies to pack.
 - `quantity_completed`/`quantity_failed` are updated as jobs for this project complete.
+
+### project_links
+`id, project_id FK (CASCADE), url, label?, sort_order, created_at`.
+- User-defined URLs attached to a project (e.g. a spec doc or reference link). Full CRUD at
+  `/api/v1/projects/{project_id}/links`. Rendered read-only on `ProjectDetailScreen`.
+
+### project_parts
+`id, project_id FK (CASCADE), name, quantity, allocated: bool, sort_order, created_at`.
+- Non-3D-printed parts needed to complete the project's assembly (e.g. "3mm magnet" ×5, "M3 screw" ×2)
+  — lets a project encapsulate a full BOM, not just the printed pieces. `allocated` is a manual
+  yes/no flag the user sets to record that stock has been set aside for this project (no automatic
+  inventory tracking). Full CRUD at `/api/v1/projects/{project_id}/parts`
+  (`GET`/`POST` list+create, `PUT`/`DELETE /{part_id}`). Editable on `ProjectBuilderScreen`; the
+  `allocated` checkbox is also toggleable directly from `ProjectDetailScreen` (optimistic update via
+  `PUT .../parts/{id}`).
 
 ### job_item_failures
 `id, job_id FK (CASCADE), project_item_id FK (CASCADE), quantity_failed, quantity_on_plate`.

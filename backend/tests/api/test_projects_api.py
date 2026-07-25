@@ -277,3 +277,98 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
     assert detail["estimate_filament_grams_total"] == pytest.approx(10.0)
     assert detail["estimate_filament_grams_remaining"] is None  # all jobs terminal
     assert detail["actual_filament_grams"] is None
+
+
+# ---------------------------------------------------------------------------
+# Project parts (non-3D-printed hardware, e.g. magnets/screws)
+# ---------------------------------------------------------------------------
+
+async def _make_project(client) -> int:
+    resp = await client.post("/api/v1/projects", json={"name": "Assembly"})
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+async def test_add_part_defaults_and_appears_in_project(client):
+    proj_id = await _make_project(client)
+
+    resp = await client.post(
+        f"/api/v1/projects/{proj_id}/parts",
+        json={"name": "3mm magnet", "quantity": 5},
+    )
+    assert resp.status_code == 201
+    part = resp.json()
+    assert part["name"] == "3mm magnet"
+    assert part["quantity"] == 5
+    assert part["allocated"] is False
+    assert part["project_id"] == proj_id
+
+    detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
+    assert len(detail["parts"]) == 1
+    assert detail["parts"][0]["name"] == "3mm magnet"
+
+
+async def test_add_part_rejects_nonpositive_quantity(client):
+    proj_id = await _make_project(client)
+    resp = await client.post(
+        f"/api/v1/projects/{proj_id}/parts",
+        json={"name": "M3 screw", "quantity": 0},
+    )
+    assert resp.status_code == 422
+
+
+async def test_add_part_404_for_missing_project(client):
+    resp = await client.post(
+        "/api/v1/projects/999999/parts",
+        json={"name": "M3 screw", "quantity": 2},
+    )
+    assert resp.status_code == 404
+
+
+async def test_update_part_toggles_allocated_flag(client):
+    proj_id = await _make_project(client)
+    part = (await client.post(
+        f"/api/v1/projects/{proj_id}/parts",
+        json={"name": "M3 screw", "quantity": 2},
+    )).json()
+
+    resp = await client.put(
+        f"/api/v1/projects/{proj_id}/parts/{part['id']}",
+        json={"allocated": True},
+    )
+    assert resp.status_code == 200
+    updated = resp.json()
+    assert updated["allocated"] is True
+    # Untouched fields stay as-is
+    assert updated["name"] == "M3 screw"
+    assert updated["quantity"] == 2
+
+
+async def test_update_part_404_for_wrong_project(client):
+    proj_a = await _make_project(client)
+    proj_b = await _make_project(client)
+    part = (await client.post(
+        f"/api/v1/projects/{proj_a}/parts",
+        json={"name": "M3 screw", "quantity": 2},
+    )).json()
+
+    resp = await client.put(
+        f"/api/v1/projects/{proj_b}/parts/{part['id']}",
+        json={"allocated": True},
+    )
+    assert resp.status_code == 404
+
+
+async def test_delete_part(client):
+    proj_id = await _make_project(client)
+    part = (await client.post(
+        f"/api/v1/projects/{proj_id}/parts",
+        json={"name": "M3 screw", "quantity": 2},
+    )).json()
+
+    resp = await client.delete(f"/api/v1/projects/{proj_id}/parts/{part['id']}")
+    assert resp.status_code == 200
+    assert resp.json() == {"deleted": part["id"]}
+
+    detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
+    assert detail["parts"] == []

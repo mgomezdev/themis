@@ -37,6 +37,16 @@ export interface ProjectLink {
   created_at: string;
 }
 
+export interface ProjectPart {
+  id: number;
+  project_id: number;
+  name: string;
+  quantity: number;
+  allocated: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Project {
   id: number;
   name: string;
@@ -53,6 +63,7 @@ export interface Project {
   updated_at: string;
   items: ProjectItem[];
   links: ProjectLink[];
+  parts: ProjectPart[];
   jobs_total: number;
   jobs_complete: number;
   estimate_filament_grams_total: number | null;
@@ -159,6 +170,22 @@ export const updateProjectLink = (projectId: number, linkId: number, body: Parti
   request<ProjectLink>(`/api/v1/projects/${projectId}/links/${linkId}`, json('PUT', body));
 export const deleteProjectLink = (projectId: number, linkId: number) =>
   request<{ deleted: number }>(`/api/v1/projects/${projectId}/links/${linkId}`, { method: 'DELETE' });
+
+export interface ProjectPartCreate {
+  name: string;
+  quantity: number;
+  allocated?: boolean;
+  sort_order?: number;
+}
+
+export const getProjectParts = (projectId: number) =>
+  request<ProjectPart[]>(`/api/v1/projects/${projectId}/parts`);
+export const addProjectPart = (projectId: number, body: ProjectPartCreate) =>
+  request<ProjectPart>(`/api/v1/projects/${projectId}/parts`, json('POST', body));
+export const updateProjectPart = (projectId: number, partId: number, body: Partial<ProjectPartCreate>) =>
+  request<ProjectPart>(`/api/v1/projects/${projectId}/parts/${partId}`, json('PUT', body));
+export const deleteProjectPart = (projectId: number, partId: number) =>
+  request<{ deleted: number }>(`/api/v1/projects/${projectId}/parts/${partId}`, { method: 'DELETE' });
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

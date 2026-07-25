@@ -4,7 +4,7 @@ import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import {
-  getProject, getProjectJobs, generateProject,
+  getProject, getProjectJobs, generateProject, updateProjectPart,
   type Project, type ProjectJob,
 } from '../api/projects';
 
@@ -51,6 +51,20 @@ export function ProjectDetailScreen() {
   }, [projectId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  async function toggleAllocated(partId: number, allocated: boolean) {
+    if (!projectId) return;
+    setProject(prev => prev && {
+      ...prev,
+      parts: prev.parts.map(p => p.id === partId ? { ...p, allocated } : p),
+    });
+    try {
+      await updateProjectPart(projectId, partId, { allocated });
+    } catch (e) {
+      console.error(e);
+      reload();
+    }
+  }
 
   async function handleGenerate() {
     if (!projectId) return;
@@ -314,6 +328,54 @@ export function ProjectDetailScreen() {
                 </div>
               );
             })}
+          </div>
+        )}
+      </div>
+
+      {/* ── Non-printed parts ──────────────────────────────────────────── */}
+      <div className="card" style={{ padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
+          Non-printed parts ({project.parts.length})
+        </div>
+        {project.parts.length === 0 ? (
+          <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
+            No non-printed parts — edit the project to add hardware (magnets, screws, etc).
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 60px 90px',
+              gap: 8, padding: '0 4px 6px',
+              fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
+              textTransform: 'uppercase', letterSpacing: '0.05em',
+            }}>
+              <span>Part</span><span>Qty</span><span>Allocated</span>
+            </div>
+            {project.parts.map(part => (
+              <div key={part.id} style={{
+                display: 'grid', gridTemplateColumns: '1fr 60px 90px',
+                gap: 8, alignItems: 'center', padding: '7px 4px',
+                borderTop: '1px solid var(--border)',
+              }}>
+                <span style={{
+                  fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', color: 'var(--text-1)',
+                }} title={part.name}>
+                  {part.name}
+                </span>
+                <span style={{ fontSize: 13, color: 'var(--text-2)' }}>×{part.quantity}</span>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={part.allocated}
+                    onChange={e => toggleAllocated(part.id, e.target.checked)}
+                  />
+                  <span style={{ fontSize: 12, color: part.allocated ? 'var(--ok)' : 'var(--text-4)' }}>
+                    {part.allocated ? 'Yes' : 'No'}
+                  </span>
+                </label>
+              </div>
+            ))}
           </div>
         )}
       </div>

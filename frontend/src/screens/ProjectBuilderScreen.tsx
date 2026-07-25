@@ -11,6 +11,7 @@ import {
   getProject, createProject, patchProject,
   addProjectItem, updateProjectItem,
   addProjectLink, updateProjectLink, deleteProjectLink,
+  addProjectPart, updateProjectPart, deleteProjectPart,
   generateProject,
   type ProjectItem,
 } from '../api/projects';
@@ -108,6 +109,14 @@ interface LocalLink {
   label: string;
 }
 
+interface LocalPart {
+  localId: string;
+  serverId?: number;
+  name: string;
+  quantity: number;
+  allocated: boolean;
+}
+
 let _lid = 0;
 const newLocalId = () => String(++_lid);
 
@@ -156,6 +165,9 @@ export function ProjectBuilderScreen() {
   // Links
   const [links, setLinks] = useState<LocalLink[]>([]);
   const [deletedLinkIds, setDeletedLinkIds] = useState<number[]>([]);
+  // Non-printed parts (hardware, e.g. magnets/screws)
+  const [parts, setParts] = useState<LocalPart[]>([]);
+  const [deletedPartIds, setDeletedPartIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
@@ -169,7 +181,7 @@ export function ProjectBuilderScreen() {
 
   function computeSnap(
     n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
-    its: LocalItem[], lks: LocalLink[],
+    its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
   ) {
     return JSON.stringify({
       name: n, customer: ot === 'customer' ? c : '', orderType: ot,
@@ -179,6 +191,7 @@ export function ProjectBuilderScreen() {
         ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
       })),
       links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
+      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, sid: p.serverId })),
     });
   }
 
@@ -221,11 +234,19 @@ export function ProjectBuilderScreen() {
         url: l.url,
         label: l.label ?? '',
       }));
+      const prts: LocalPart[] = (p.parts ?? []).map(pt => ({
+        localId: newLocalId(),
+        serverId: pt.id,
+        name: pt.name,
+        quantity: pt.quantity,
+        allocated: pt.allocated,
+      }));
       setName(n); setCustomer(c); setOrderType(ot); setOnHold(oh);
-      setDueDate(dd); setNotes(no); setItems(its); setLinks(lks);
+      setDueDate(dd); setNotes(no); setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
+      setDeletedPartIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks));
+      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts));
     }).catch(console.error);
   }, [projectId]);
 
@@ -304,6 +325,20 @@ export function ProjectBuilderScreen() {
           await addProjectLink(projectId, { url: lk.url, label: lk.label || null });
         }
       }
+      for (const id of deletedPartIds) {
+        await deleteProjectPart(projectId, id);
+      }
+      for (const pt of parts) {
+        if (pt.serverId) {
+          await updateProjectPart(projectId, pt.serverId, {
+            name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
+          });
+        } else {
+          await addProjectPart(projectId, {
+            name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
+          });
+        }
+      }
       return projectId;
     } else {
       const proj = await createProject(projectFields);
@@ -321,6 +356,9 @@ export function ProjectBuilderScreen() {
       for (const lk of links) {
         await addProjectLink(proj.id, { url: lk.url, label: lk.label || null });
       }
+      for (const pt of parts) {
+        await addProjectPart(proj.id, { name: pt.name, quantity: pt.quantity, allocated: pt.allocated });
+      }
       return proj.id;
     }
   }
@@ -331,7 +369,8 @@ export function ProjectBuilderScreen() {
     try {
       const pid = await saveProject();
       setDeletedLinkIds([]);
-      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links));
+      setDeletedPartIds([]);
+      setCleanSnap(computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts));
       setSaveOk(true);
       setTimeout(() => setSaveOk(false), 2000);
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
@@ -362,7 +401,7 @@ export function ProjectBuilderScreen() {
     }
   }
 
-  const currentSnap = computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links);
+  const currentSnap = computeSnap(name, customer, orderType, onHold, dueDate, notes, items, links, parts);
   const isDirty = projectId ? (cleanSnap !== '' && currentSnap !== cleanSnap) : true;
   const canSave = name.trim().length > 0 && !saving && !generating;
   const showSave = isDirty && canSave;
@@ -531,6 +570,61 @@ export function ProjectBuilderScreen() {
                   setLinks(prev => prev.filter(l => l.localId !== lk.localId));
                 }}
                 title="Remove link"
+              >
+                {Icons.x}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Non-printed parts editor (hardware, e.g. magnets/screws) */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+              Non-printed parts ({parts.length})
+            </span>
+            <button
+              className="btn ghost sm"
+              onClick={() => setParts(prev => [
+                ...prev, { localId: newLocalId(), name: '', quantity: 1, allocated: false },
+              ])}
+            >
+              + Add part
+            </button>
+          </div>
+          {parts.map(pt => (
+            <div key={pt.localId} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              <input
+                className="input"
+                placeholder="e.g. 3mm magnet"
+                value={pt.name}
+                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, name: e.target.value } : p))}
+                style={{ flex: 2 }}
+              />
+              <input
+                type="number"
+                className="input"
+                min={1}
+                value={pt.quantity}
+                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) } : p))}
+                style={{ width: 64, textAlign: 'center' }}
+              />
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                              fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>
+                <input
+                  type="checkbox"
+                  checked={pt.allocated}
+                  onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, allocated: e.target.checked } : p))}
+                />
+                Allocated
+              </label>
+              <button
+                className="btn ghost icon sm"
+                onClick={() => {
+                  if (pt.serverId) setDeletedPartIds(prev => [...prev, pt.serverId!]);
+                  setParts(prev => prev.filter(p => p.localId !== pt.localId));
+                }}
+                title="Remove part"
               >
                 {Icons.x}
               </button>
