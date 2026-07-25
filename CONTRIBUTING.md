@@ -212,6 +212,8 @@ All routes are under `/api/v1`. Route files are in `backend/app/api/routes/`.
 ### projects.py — `/api/v1/projects`
 - `GET /` / `POST /` / `PATCH /{id}` / `DELETE /{id}` — project CRUD
 - `GET /{project_id}/items` / `POST /{project_id}/items` / `PUT /{project_id}/items/{item_id}` / `DELETE` — item management
+- `GET /{project_id}/links` / `POST /{project_id}/links` / `PUT /{project_id}/links/{link_id}` / `DELETE` — user-defined URL links
+- `GET /{project_id}/parts` / `POST /{project_id}/parts` / `PUT /{project_id}/parts/{part_id}` / `DELETE` — non-3D-printed parts (hardware BOM, e.g. magnets/screws) with a manual `allocated` flag
 - `POST /{project_id}/generate` — pack STLs via Laminus, create 3MFs, enqueue print jobs per plate
 
 ### laminus.py — `/api/v1/laminus`
@@ -245,6 +247,8 @@ All models live in `backend/app/models.py`. Timestamps are stored as `VARCHAR(32
 | `SpoolmanConfig` | `spoolman_config` | singleton (id=1) |
 | `Project` | `projects` | source_app, source_user, source_layout_id for Ordinus integration |
 | `ProjectItem` | `project_items` | quantity, filament_profile_uuid, color_hex |
+| `ProjectLink` | `project_links` | user-defined URL links attached to a project |
+| `ProjectPart` | `project_parts` | non-3D-printed hardware parts (name, quantity) with manual `allocated` flag |
 | `Order` | `orders` | parts JSON, derived status computed at API layer |
 | `Tag` / `FileTag` | `tags` / `file_tags` | many-to-many file tagging |
 

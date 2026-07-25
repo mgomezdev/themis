@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, QueueConfig, UploadedFile
+from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
@@ -108,6 +108,34 @@ class ProjectLinkUpdate(BaseModel):
     sort_order: Optional[int] = None
 
 
+class ProjectPartCreate(BaseModel):
+    name: str
+    quantity: int = 1
+    allocated: bool = False
+    sort_order: int = 0
+
+    @field_validator("quantity")
+    @classmethod
+    def qty_positive(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("quantity must be at least 1")
+        return v
+
+
+class ProjectPartUpdate(BaseModel):
+    name: Optional[str] = None
+    quantity: Optional[int] = None
+    allocated: Optional[bool] = None
+    sort_order: Optional[int] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def qty_positive(cls, v: int | None) -> int | None:
+        if v is not None and v < 1:
+            raise ValueError("quantity must be at least 1")
+        return v
+
+
 class GenerateRequest(BaseModel):
     eligible_printer_ids: list[int] = []
 
@@ -154,6 +182,29 @@ async def _load_links(session: AsyncSession, project_id: int) -> list[dict]:
     return [_link_dict(lnk) for lnk in rows]
 
 
+def _part_dict(part: ProjectPart) -> dict:
+    return {
+        "id": part.id,
+        "project_id": part.project_id,
+        "name": part.name,
+        "quantity": part.quantity,
+        "allocated": part.allocated,
+        "sort_order": part.sort_order,
+        "created_at": part.created_at,
+    }
+
+
+async def _load_parts(session: AsyncSession, project_id: int) -> list[dict]:
+    rows = (
+        await session.execute(
+            select(ProjectPart)
+            .where(ProjectPart.project_id == project_id)
+            .order_by(ProjectPart.sort_order, ProjectPart.id)
+        )
+    ).scalars().all()
+    return [_part_dict(p) for p in rows]
+
+
 async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
     rows = (
         await session.execute(
@@ -173,6 +224,7 @@ async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
 async def _project_dict(project: Project, session: AsyncSession) -> dict:
     items = await _load_items(session, project.id)
     links = await _load_links(session, project.id)
+    parts = await _load_parts(session, project.id)
 
     job_rows = (await session.execute(
         select(Job).where(Job.project_id == project.id)
@@ -224,6 +276,7 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "updated_at": project.updated_at,
         "items": items,
         "links": links,
+        "parts": parts,
         "jobs_total": jobs_total,
         "jobs_complete": jobs_complete,
         "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
@@ -627,6 +680,104 @@ async def delete_link(
     await session.delete(link)
     await session.commit()
     return {"deleted": link_id}
+
+
+# ---------------------------------------------------------------------------
+# Project Part CRUD (non-3D-printed parts — hardware needed for the assembly)
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{project_id}/parts",
+    summary="List project parts",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
+async def list_parts(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    await _get_project_or_404(project_id, session)
+    return await _load_parts(session, project_id)
+
+
+@router.post(
+    "/{project_id}/parts",
+    status_code=201,
+    summary="Add non-printed part to project",
+    responses={
+        404: {"description": "Project not found"},
+    },
+)
+async def add_part(
+    project_id: int,
+    body: ProjectPartCreate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    part = ProjectPart(
+        project_id=project_id,
+        name=body.name,
+        quantity=body.quantity,
+        allocated=body.allocated,
+        sort_order=body.sort_order,
+        created_at=_now_iso(),
+    )
+    session.add(part)
+    await session.commit()
+    await session.refresh(part)
+    return _part_dict(part)
+
+
+@router.put(
+    "/{project_id}/parts/{part_id}",
+    summary="Update project part",
+    responses={
+        404: {"description": "Project or part not found"},
+    },
+)
+async def update_part(
+    project_id: int,
+    part_id: int,
+    body: ProjectPartUpdate,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    part = await session.get(ProjectPart, part_id)
+    if part is None or part.project_id != project_id:
+        raise HTTPException(404, f"Part {part_id} not found in project {project_id}")
+    if body.name is not None:
+        part.name = body.name
+    if body.quantity is not None:
+        part.quantity = body.quantity
+    if body.allocated is not None:
+        part.allocated = body.allocated
+    if body.sort_order is not None:
+        part.sort_order = body.sort_order
+    await session.commit()
+    await session.refresh(part)
+    return _part_dict(part)
+
+
+@router.delete(
+    "/{project_id}/parts/{part_id}",
+    summary="Remove part from project",
+    responses={
+        404: {"description": "Project or part not found"},
+    },
+)
+async def delete_part(
+    project_id: int,
+    part_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    await _get_project_or_404(project_id, session)
+    part = await session.get(ProjectPart, part_id)
+    if part is None or part.project_id != project_id:
+        raise HTTPException(404, f"Part {part_id} not found in project {project_id}")
+    await session.delete(part)
+    await session.commit()
+    return {"deleted": part_id}
 
 
 # ---------------------------------------------------------------------------

@@ -221,6 +221,20 @@ class ProjectLink(Base):
     created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
+class ProjectPart(Base):
+    """A non-3D-printed part (bought/off-the-shelf hardware) needed to complete a project's
+    assembly, e.g. "3mm magnet" x5. `allocated` is a manual yes/no flag set by the user."""
+    __tablename__ = "project_parts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(255))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    allocated: Mapped[bool] = mapped_column(Boolean, default=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
 class JobItemFailure(Base):
     __tablename__ = "job_item_failures"
 
