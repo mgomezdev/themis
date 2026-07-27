@@ -1,9 +1,9 @@
 services:
   orca:
-    build: ../orca
+    build: ../laminus
     volumes:
-      - ../orca/config:/config
-      - ../orca/data:/data
+      - ../laminus/config:/config
+      - ../laminus/data:/data
       - "${APPDATA}/OrcaSlicer/system:/profiles/system:ro"
       - "${APPDATA}/OrcaSlicer/user:/profiles/user:ro"
     shm_size: "1gb"
