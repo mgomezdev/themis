@@ -728,9 +728,10 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item_name}</div>
                       <button
                         className="btn sm"
-                        onClick={async () => {
-                          await completeMaintenanceItem(Number(p.id), row.item_id);
-                          refetchMaintenance();
+                        onClick={() => {
+                          completeMaintenanceItem(Number(p.id), row.item_id)
+                            .then(refetchMaintenance)
+                            .catch(console.error);
                         }}
                       >
                         Acknowledge
