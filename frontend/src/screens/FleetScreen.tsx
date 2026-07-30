@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
@@ -427,6 +427,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   );
 }
 
+// ── Quick-add maintenance modal ───────────────────────────────────────────────
 function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
   printer: Printer;
   fleetModels: FleetVendorModel[];
@@ -435,12 +436,17 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
 }) {
   const [draft, setDraft] = useState<ItemDraft>(emptyDraft());
   const [error, setError] = useState<string | null>(null);
+  // Tracks whether the user has already touched the form before the printer's
+  // vendor/model resolves, so the async pre-fill below never clobbers an
+  // in-flight manual edit (e.g. typing a name or picking "General" before the
+  // fetch/catalog round-trip completes).
+  const userEditedRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
     Promise.all([fetchPrinter(Number(printer.id)), fetchMachineCatalog()])
       .then(([apiPrinter, catalog]) => {
-        if (!alive) return;
+        if (!alive || userEditedRef.current) return;
         const resolved = resolveVendorModelForProfile(apiPrinter.current_orca_printer_profile, catalog);
         if (resolved) {
           setDraft(d => ({ ...d, scope: 'model', machine_vendor: resolved.vendor, machine_model: resolved.printer_model }));
@@ -449,6 +455,11 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
       .catch(console.error);
     return () => { alive = false; };
   }, [printer.id]);
+
+  function handleDraftChange(next: ItemDraft) {
+    userEditedRef.current = true;
+    setDraft(next);
+  }
 
   async function handleSave() {
     setError(null);
@@ -492,7 +503,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
               {error}
             </div>
           )}
-          <MaintenanceItemForm draft={draft} catalog={fleetModels} onChange={setDraft} onSave={handleSave} onCancel={onClose} />
+          <MaintenanceItemForm draft={draft} catalog={fleetModels} onChange={handleDraftChange} onSave={handleSave} onCancel={onClose} />
         </div>
       </div>
     </div>
