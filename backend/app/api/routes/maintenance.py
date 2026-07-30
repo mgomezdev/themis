@@ -7,7 +7,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...database import get_session
-from ...models import MaintenanceItem, MaintenanceTrigger, PrinterMaintenanceState
+from ...models import MaintenanceItem, MaintenanceTrigger, Printer, PrinterMaintenanceState
+from ...services import maintenance_service
+from ...services.maintenance_service import COMMON_MAINTENANCE_TEMPLATES
+from .printers import orca_machine_catalog
 
 router = APIRouter(prefix="/api/v1/maintenance", tags=["maintenance"])
 
@@ -29,6 +32,10 @@ class MaintenanceItemCreate(BaseModel):
     triggers: list[TriggerIn] = []
 
 
+class TriggersReplace(BaseModel):
+    triggers: list[TriggerIn]
+
+
 class MaintenanceItemPatch(BaseModel):
     name: str | None = None
     scope: str | None = None
@@ -46,6 +53,14 @@ async def _triggers_for(session: AsyncSession, item_id: int) -> list[Maintenance
     return list((await session.execute(
         select(MaintenanceTrigger).where(MaintenanceTrigger.maintenance_item_id == item_id)
     )).scalars().all())
+
+
+def _validate_trigger_types(triggers: list[TriggerIn]) -> None:
+    for t in triggers:
+        if t.trigger_type not in VALID_TRIGGER_TYPES:
+            raise HTTPException(
+                422, f"Invalid trigger_type: {t.trigger_type!r}. Valid: calendar, job_time, job_count"
+            )
 
 
 def _trigger_dict(t: MaintenanceTrigger) -> dict:
@@ -77,11 +92,7 @@ async def create_item(body: MaintenanceItemCreate, session: AsyncSession = Depen
         raise HTTPException(422, "scope must be 'general' or 'model'")
     if body.scope == "model" and not (body.machine_vendor and body.machine_model):
         raise HTTPException(422, "machine_vendor and machine_model are required when scope='model'")
-    for t in body.triggers:
-        if t.trigger_type not in VALID_TRIGGER_TYPES:
-            raise HTTPException(
-                422, f"Invalid trigger_type: {t.trigger_type!r}. Valid: calendar, job_time, job_count"
-            )
+    _validate_trigger_types(body.triggers)
     now = _now()
     item = MaintenanceItem(
         name=body.name, scope=body.scope,
@@ -163,3 +174,61 @@ async def delete_item(item_id: int, session: AsyncSession = Depends(get_session)
     await session.delete(item)
     await session.commit()
     return {"deleted": item_id}
+
+
+@router.put(
+    "/items/{item_id}/triggers", summary="Replace an item's triggers",
+    responses={404: {"description": "Maintenance item not found"}},
+)
+async def replace_triggers(item_id: int, body: TriggersReplace, session: AsyncSession = Depends(get_session)) -> dict:
+    item = await session.get(MaintenanceItem, item_id)
+    if item is None:
+        raise HTTPException(404, f"Maintenance item {item_id} not found")
+    _validate_trigger_types(body.triggers)
+    for existing in await _triggers_for(session, item_id):
+        await session.delete(existing)
+    await session.flush()
+    for t in body.triggers:
+        session.add(MaintenanceTrigger(
+            maintenance_item_id=item_id, trigger_type=t.trigger_type, amount=t.amount, unit=t.unit,
+        ))
+    item.updated_at = _now()
+    await session.commit()
+    return await _item_dict(session, item)
+
+
+@router.get("/templates", summary="Suggested common maintenance items")
+async def list_templates() -> list[dict]:
+    return COMMON_MAINTENANCE_TEMPLATES
+
+
+# N+1 by design: one query per (printer, applicable item) pair inside
+# compute_due_status. Fine at the expected scale (<20 printers, <30 items);
+# revisit with a batch fetch if that scale assumption changes.
+@router.get("/status", summary="Due status for every printer x applicable maintenance item")
+async def maintenance_status(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    printers = list((await session.execute(select(Printer))).scalars().all())
+    items = list((await session.execute(
+        select(MaintenanceItem).where(MaintenanceItem.enabled.is_(True))
+    )).scalars().all())
+    triggers_by_item: dict[int, list[MaintenanceTrigger]] = {}
+    for item in items:
+        triggers_by_item[item.id] = await _triggers_for(session, item.id)
+    catalog = await orca_machine_catalog()
+    return await maintenance_service.compute_due_status(session, printers, items, triggers_by_item, catalog)
+
+
+@router.post(
+    "/printers/{printer_id}/items/{item_id}/complete",
+    summary="Mark a maintenance item done for a printer",
+    responses={404: {"description": "Printer or maintenance item not found"}},
+)
+async def complete_item(printer_id: int, item_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    printer = await session.get(Printer, printer_id)
+    if printer is None:
+        raise HTTPException(404, f"Printer {printer_id} not found")
+    item = await session.get(MaintenanceItem, item_id)
+    if item is None:
+        raise HTTPException(404, f"Maintenance item {item_id} not found")
+    state = await maintenance_service.mark_done(session, printer, item)
+    return {"printer_id": printer_id, "item_id": item_id, "last_done_at": state.last_done_at}
