@@ -10,6 +10,12 @@ import { RemapModal } from '../components/RemapModal';
 import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
+import {
+  useMaintenanceItems, createMaintenanceItem, updateMaintenanceItem, setMaintenanceTriggers,
+  deleteMaintenanceItem, getMaintenanceTemplates,
+  type MaintenanceItem, type MaintenanceTrigger, type MaintenanceTemplate,
+} from '../api/maintenance';
+import { fetchMachineCatalog, type MachinePreset } from '../api/printers';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -21,6 +27,7 @@ const SettingsIcons = {
   info:     <Icon paths={["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z","M12 16v-4","M12 8h.01"]} />,
   spoolman: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
   webhook:  <Icon paths={["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6","M15 3h6v6","M10 14L21 3"]} />,
+  maintenance: <Icon paths={["M14.7 6.3a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L13.1 3.3a1 1 0 0 0 0 1.4z","M9.6 11.4 4 17a2 2 0 0 0-.6 1.4V21h2.6a2 2 0 0 0 1.4-.6l5.6-5.6"]} />,
 };
 
 // =========================================================================
@@ -1180,10 +1187,292 @@ function WebhookPage() {
 }
 
 // =========================================================================
+// Maintenance page
+// =========================================================================
+
+const TRIGGER_LABEL: Record<MaintenanceTrigger['trigger_type'], string> = {
+  calendar: 'Calendar', job_time: 'Print time', job_count: 'Job count',
+};
+
+function triggerChipText(t: MaintenanceTrigger): string {
+  if (t.trigger_type === 'job_count') return `${t.amount} jobs`;
+  if (t.trigger_type === 'job_time') return `${t.amount}h operating`;
+  return `${t.amount} ${t.unit ?? 'months'}`;
+}
+
+interface ItemDraft {
+  name: string;
+  scope: 'general' | 'model';
+  machine_vendor: string;
+  machine_model: string;
+  triggers: MaintenanceTrigger[];
+}
+
+function emptyDraft(): ItemDraft {
+  return { name: '', scope: 'general', machine_vendor: '', machine_model: '', triggers: [] };
+}
+
+function draftFromTemplate(t: MaintenanceTemplate): ItemDraft {
+  return { name: t.name, scope: 'general', machine_vendor: '', machine_model: '', triggers: t.triggers };
+}
+
+function TriggerRow({ trigger, onChange, onRemove }: {
+  trigger: MaintenanceTrigger; onChange: (t: MaintenanceTrigger) => void; onRemove: () => void;
+}) {
+  return (
+    <div className="row gap-2" style={{ alignItems: 'center' }}>
+      <select className="select sm" value={trigger.trigger_type}
+              onChange={e => onChange({ ...trigger, trigger_type: e.target.value as MaintenanceTrigger['trigger_type'], unit: e.target.value === 'calendar' ? 'months' : null })}>
+        <option value="calendar">Calendar</option>
+        <option value="job_time">Print time (hours)</option>
+        <option value="job_count">Job count</option>
+      </select>
+      <input type="number" min={0} className="input sm" style={{ width: 80 }}
+             value={trigger.amount}
+             onChange={e => onChange({ ...trigger, amount: Number(e.target.value) })} />
+      {trigger.trigger_type === 'calendar' && (
+        <select className="select sm" value={trigger.unit ?? 'months'}
+                onChange={e => onChange({ ...trigger, unit: e.target.value as MaintenanceTrigger['unit'] })}>
+          <option value="hours">hours</option>
+          <option value="days">days</option>
+          <option value="weeks">weeks</option>
+          <option value="months">months</option>
+        </select>
+      )}
+      <button type="button" className="btn ghost icon sm" onClick={onRemove}>{Icons.x}</button>
+    </div>
+  );
+}
+
+function MaintenanceItemForm({ draft, catalog, onChange, onSave, onCancel }: {
+  draft: ItemDraft; catalog: MachinePreset[];
+  onChange: (d: ItemDraft) => void; onSave: () => void; onCancel: () => void;
+}) {
+  const vendors = Array.from(new Set(catalog.map(c => c.vendor))).sort();
+  const models = Array.from(new Set(catalog.filter(c => c.vendor === draft.machine_vendor).map(c => c.printer_model))).sort();
+
+  return (
+    <div className="col gap-2" style={{ padding: 16, border: '1px solid var(--border-2)', borderRadius: 8, background: 'var(--bg-2)' }}>
+      <input className="input" placeholder="Maintenance item name" value={draft.name}
+             onChange={e => onChange({ ...draft, name: e.target.value })} />
+
+      <div className="row gap-2">
+        <label className="row gap-1" style={{ alignItems: 'center' }}>
+          <input type="radio" checked={draft.scope === 'general'}
+                 onChange={() => onChange({ ...draft, scope: 'general' })} />
+          General (any printer)
+        </label>
+        <label className="row gap-1" style={{ alignItems: 'center' }}>
+          <input type="radio" checked={draft.scope === 'model'}
+                 onChange={() => onChange({ ...draft, scope: 'model' })} />
+          Model-specific
+        </label>
+      </div>
+
+      {draft.scope === 'model' && (
+        <div className="row gap-2">
+          <select className="select" value={draft.machine_vendor}
+                  onChange={e => onChange({ ...draft, machine_vendor: e.target.value, machine_model: '' })}>
+            <option value="">Vendor…</option>
+            {vendors.map(v => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <select className="select" value={draft.machine_model} disabled={!draft.machine_vendor}
+                  onChange={e => onChange({ ...draft, machine_model: e.target.value })}>
+            <option value="">Model…</option>
+            {models.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      )}
+
+      <div className="col gap-1">
+        <div className="tiny muted">Triggers (due on whichever fires first)</div>
+        {draft.triggers.map((t, i) => (
+          <TriggerRow key={i} trigger={t}
+                      onChange={next => onChange({ ...draft, triggers: draft.triggers.map((x, j) => j === i ? next : x) })}
+                      onRemove={() => onChange({ ...draft, triggers: draft.triggers.filter((_, j) => j !== i) })} />
+        ))}
+        <button type="button" className="btn ghost sm" style={{ alignSelf: 'flex-start' }}
+                onClick={() => onChange({ ...draft, triggers: [...draft.triggers, { trigger_type: 'job_count', amount: 10, unit: null }] })}>
+          {Icons.plus} Add trigger
+        </button>
+      </div>
+
+      <div className="row gap-2">
+        <button className="btn primary sm" onClick={onSave}>Save</button>
+        <button className="btn sm" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
+  item: MaintenanceItem; onEdit: () => void; onDelete: () => void; onToggle: (v: boolean) => void;
+}) {
+  return (
+    <div className="row gap-3" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border-1)', alignItems: 'center' }}>
+      <div style={{ flex: 1 }}>
+        <div style={{ fontWeight: 500 }}>{item.name}</div>
+        <div className="tiny muted">
+          {item.scope === 'general' ? 'General' : `${item.machine_vendor} ${item.machine_model}`}
+        </div>
+      </div>
+      <div className="row gap-1" style={{ flex: 1, flexWrap: 'wrap' }}>
+        {item.triggers.map(t => (
+          <span key={t.id} className="chip sm" title={TRIGGER_LABEL[t.trigger_type]}>{triggerChipText(t)}</span>
+        ))}
+      </div>
+      <Toggle checked={item.enabled} onChange={onToggle} />
+      <button className="btn ghost sm" onClick={onEdit}>Edit</button>
+      <button className="btn ghost sm" onClick={onDelete}>Delete</button>
+    </div>
+  );
+}
+
+function MaintenancePage() {
+  const { items, refetch } = useMaintenanceItems();
+  const [templates, setTemplates] = useState<MaintenanceTemplate[]>([]);
+  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [draft, setDraft] = useState<ItemDraft>(emptyDraft());
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    getMaintenanceTemplates().then(setTemplates).catch(console.error);
+    fetchMachineCatalog().then(setCatalog).catch(console.error);
+  }, []);
+
+  function startCreate(fromTemplate?: MaintenanceTemplate) {
+    setDraft(fromTemplate ? draftFromTemplate(fromTemplate) : emptyDraft());
+    setEditingId(null);
+    setCreating(true);
+  }
+
+  function startEdit(item: MaintenanceItem) {
+    setDraft({
+      name: item.name, scope: item.scope,
+      machine_vendor: item.machine_vendor ?? '', machine_model: item.machine_model ?? '',
+      triggers: item.triggers,
+    });
+    setCreating(false);
+    setEditingId(item.id);
+  }
+
+  async function handleSave() {
+    setError(null);
+    try {
+      if (editingId != null) {
+        await updateMaintenanceItem(editingId, {
+          name: draft.name, scope: draft.scope,
+          machine_vendor: draft.scope === 'model' ? draft.machine_vendor : null,
+          machine_model: draft.scope === 'model' ? draft.machine_model : null,
+        });
+        await setMaintenanceTriggers(editingId, draft.triggers);
+      } else {
+        await createMaintenanceItem({
+          name: draft.name, scope: draft.scope,
+          machine_vendor: draft.scope === 'model' ? draft.machine_vendor : null,
+          machine_model: draft.scope === 'model' ? draft.machine_model : null,
+          triggers: draft.triggers,
+        });
+      }
+      setCreating(false);
+      setEditingId(null);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleDelete(id: number) {
+    setError(null);
+    try {
+      await deleteMaintenanceItem(id);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleToggle(item: MaintenanceItem, enabled: boolean) {
+    setError(null);
+    try {
+      await updateMaintenanceItem(item.id, { enabled });
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const generalItems = items.filter(i => i.scope === 'general');
+  const modelItems = items.filter(i => i.scope === 'model');
+
+  return (
+    <div className="col gap-3">
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader
+          title="Maintenance"
+          sub="Track recurring maintenance for your fleet. Each item can have multiple triggers — calendar time, print hours, or job count — and is due the moment any one of them fires."
+          actions={<button className="btn primary sm" onClick={() => startCreate()}>{Icons.plus} New item</button>}
+        />
+
+        {error && (
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
+        {templates.length > 0 && (
+          <div className="col gap-2" style={{ marginBottom: 20 }}>
+            <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em' }}>Suggested items</div>
+            <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+              {templates.map(t => (
+                <button key={t.name} className="btn sm" title={t.description} onClick={() => startCreate(t)}>
+                  {Icons.plus} Add {t.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(creating || editingId != null) && (
+          <div style={{ marginBottom: 16 }}>
+            <MaintenanceItemForm draft={draft} catalog={catalog} onChange={setDraft}
+                                  onSave={handleSave} onCancel={() => { setCreating(false); setEditingId(null); }} />
+          </div>
+        )}
+
+        <div className="col gap-1">
+          <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 8 }}>General</div>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+            {generalItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No general maintenance items yet.</div>}
+            {generalItems.map(item => (
+              <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}
+                                  onDelete={() => handleDelete(item.id)}
+                                  onToggle={v => handleToggle(item, v)} />
+            ))}
+          </div>
+
+          <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 16 }}>Model-specific</div>
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, background: 'var(--bg-1)' }}>
+            {modelItems.length === 0 && <div className="small muted" style={{ padding: 16 }}>No model-specific items yet.</div>}
+            {modelItems.map(item => (
+              <MaintenanceItemRow key={item.id} item={item} onEdit={() => startEdit(item)}
+                                  onDelete={() => handleDelete(item.id)}
+                                  onToggle={v => handleToggle(item, v)} />
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'about';
+type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1197,7 +1486,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1218,6 +1507,7 @@ export function SettingsScreen() {
       items: [
         { id: 'tags',          label: 'Tags',           icon: SettingsIcons.tag,     sub: 'Manage labels across files & jobs' },
         { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Queue interval & profile rescan' },
+        { id: 'maintenance',   label: 'Maintenance',    icon: SettingsIcons.maintenance, sub: 'Recurring printer upkeep & schedules' },
       ],
     },
     {
@@ -1259,6 +1549,7 @@ export function SettingsScreen() {
       {/* page content */}
       {activePage === 'tags'              && <TagsPage />}
       {activePage === 'print'             && <PrintDefaultsPage />}
+      {activePage === 'maintenance'        && <MaintenancePage />}
       {activePage === 'spoolman'          && <SpoolmanPage />}
       {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
       {activePage === 'webhook'           && <WebhookPage />}
