@@ -122,3 +122,69 @@ async def mark_done(session: AsyncSession, printer: Printer, item: MaintenanceIt
     state.baseline_print_seconds = printer.lifetime_print_seconds
     await session.commit()
     return state
+
+
+COMMON_MAINTENANCE_TEMPLATES: list[dict] = [
+    {
+        "name": "Wash build plate",
+        "description": "Wash with warm water and dish soap (or an IPA wipe for PEI) to keep first-layer adhesion consistent.",
+        "triggers": [{"trigger_type": "job_count", "amount": 10, "unit": None}],
+    },
+    {
+        "name": "Clean nozzle / hotend",
+        "description": "Cold-pull or brass-brush the nozzle tip to clear carbon buildup.",
+        "triggers": [
+            {"trigger_type": "job_count", "amount": 25, "unit": None},
+            {"trigger_type": "calendar", "amount": 1, "unit": "months"},
+        ],
+    },
+    {
+        "name": "Lubricate linear rails / rods",
+        "description": "Apply a thin coat of PTFE or lithium grease to all linear motion rails/rods.",
+        "triggers": [
+            {"trigger_type": "job_time", "amount": 100, "unit": None},
+            {"trigger_type": "calendar", "amount": 3, "unit": "months"},
+        ],
+    },
+    {
+        "name": "Check belt tension",
+        "description": "Pluck each belt and listen for a consistent, taut tone; re-tension as needed.",
+        "triggers": [{"trigger_type": "calendar", "amount": 2, "unit": "months"}],
+    },
+    {
+        "name": "Inspect / replace PTFE tube",
+        "description": "Check the PTFE tube for scoring or a burnt/darkened end; replace if worn.",
+        "triggers": [
+            {"trigger_type": "job_time", "amount": 250, "unit": None},
+            {"trigger_type": "calendar", "amount": 6, "unit": "months"},
+        ],
+    },
+    {
+        "name": "Clean cooling fans",
+        "description": "Blow out dust from the part-cooling, hotend, and chamber fans.",
+        "triggers": [{"trigger_type": "calendar", "amount": 3, "unit": "months"}],
+    },
+    {
+        "name": "Inspect nozzle for wear",
+        "description": "Check nozzle orifice roundness, especially after printing abrasive (CF/GF) filament.",
+        "triggers": [
+            {"trigger_type": "job_time", "amount": 150, "unit": None},
+            {"trigger_type": "job_count", "amount": 50, "unit": None},
+        ],
+    },
+    {
+        "name": "Check for firmware / software updates",
+        "description": "Check the vendor app or Themis printer settings for a pending firmware update.",
+        "triggers": [{"trigger_type": "calendar", "amount": 1, "unit": "months"}],
+    },
+    {
+        "name": "Calibrate bed level / flow",
+        "description": "Run the printer's bed-leveling and flow-calibration routine.",
+        "triggers": [{"trigger_type": "job_count", "amount": 20, "unit": None}],
+    },
+    {
+        "name": "Clean chamber filter / activated carbon",
+        "description": "Replace or rinse the enclosure's carbon/HEPA filter (enclosed or AMS-equipped printers).",
+        "triggers": [{"trigger_type": "calendar", "amount": 2, "unit": "months"}],
+    },
+]

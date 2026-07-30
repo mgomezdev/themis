@@ -180,3 +180,18 @@ async def test_compute_due_status_calendar_trigger_not_yet_due(db):
         rows = await ms.compute_due_status(session, [printer], [item], {item_id: [trigger]}, CATALOG)
 
     assert rows[0]["due"] is False  # 10 days elapsed < 3 months (90 days)
+
+
+def test_common_maintenance_templates_are_well_formed():
+    templates = ms.COMMON_MAINTENANCE_TEMPLATES
+    assert len(templates) >= 8
+    for t in templates:
+        assert t["name"] and t["description"]
+        assert len(t["triggers"]) >= 1
+        for trig in t["triggers"]:
+            assert trig["trigger_type"] in ("calendar", "job_time", "job_count")
+            assert trig["amount"] > 0
+            if trig["trigger_type"] == "calendar":
+                assert trig["unit"] in ("hours", "days", "weeks", "months")
+            else:
+                assert trig["unit"] is None
