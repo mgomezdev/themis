@@ -956,3 +956,50 @@ async def test_startup_resets_pending_estimates(db):
     async with db() as session:
         job = await session.get(Job, job_id)
         assert job.estimate_status is None
+
+
+@pytest.mark.asyncio
+async def test_handle_print_complete_accrues_lifetime_counters(db):
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.lifetime_job_count = 4
+        printer.lifetime_print_seconds = 7200
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        job.actual_seconds = 3600
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([])
+    qe = QueueEngine(db, mgr, MagicMock())
+    await qe.handle_print_complete(printer_id)
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        assert printer.lifetime_job_count == 5
+        assert printer.lifetime_print_seconds == 10800
+
+
+@pytest.mark.asyncio
+async def test_handle_print_complete_accrues_job_count_even_without_actual_seconds(db):
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        job.actual_seconds = None
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([])
+    qe = QueueEngine(db, mgr, MagicMock())
+    await qe.handle_print_complete(printer_id)
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        assert printer.lifetime_job_count == 1
+        assert printer.lifetime_print_seconds == 0
