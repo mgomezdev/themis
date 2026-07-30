@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   getMaintenanceItems, createMaintenanceItem, deleteMaintenanceItem,
   getMaintenanceTemplates, getMaintenanceStatus, completeMaintenanceItem,
+  resolveVendorModelForProfile, resolveFleetVendorModels,
 } from './maintenance';
 
 beforeEach(() => vi.restoreAllMocks());
@@ -64,5 +65,47 @@ describe('maintenance api', () => {
     const result = await completeMaintenanceItem(1, 2);
     expect(result.last_done_at).toBe('2026-01-01T00:00:00');
     expect(f).toHaveBeenCalledWith('/api/v1/maintenance/printers/1/items/2/complete', expect.objectContaining({ method: 'POST' }));
+  });
+});
+
+describe('resolveVendorModelForProfile', () => {
+  const catalog = [
+    { name: 'Elegoo Centauri Carbon 0.4 nozzle', vendor: 'Elegoo', printer_model: 'Centauri Carbon', nozzle: '0.4', source: 'system' as const },
+    { name: 'Bambu Lab X1 Carbon 0.4 nozzle', vendor: 'Bambu Lab', printer_model: 'X1 Carbon', nozzle: '0.4', source: 'system' as const },
+  ];
+
+  it('resolves a matching profile name to its vendor/model', () => {
+    expect(resolveVendorModelForProfile('Elegoo Centauri Carbon 0.4 nozzle', catalog))
+      .toEqual({ vendor: 'Elegoo', printer_model: 'Centauri Carbon' });
+  });
+
+  it('returns null for an unset or unmatched profile', () => {
+    expect(resolveVendorModelForProfile(null, catalog)).toBeNull();
+    expect(resolveVendorModelForProfile('Unknown Preset', catalog)).toBeNull();
+  });
+});
+
+describe('resolveFleetVendorModels', () => {
+  const catalog = [
+    { name: 'Elegoo Centauri Carbon 0.4 nozzle', vendor: 'Elegoo', printer_model: 'Centauri Carbon', nozzle: '0.4', source: 'system' as const },
+    { name: 'Bambu Lab X1 Carbon 0.4 nozzle', vendor: 'Bambu Lab', printer_model: 'X1 Carbon', nozzle: '0.4', source: 'system' as const },
+  ];
+
+  it('dedupes fleet printers to a sorted, unique vendor/model list', () => {
+    const printers = [
+      { current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+      { current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' }, // duplicate printer, same model
+      { current_orca_printer_profile: 'Bambu Lab X1 Carbon 0.4 nozzle' },
+      { current_orca_printer_profile: null }, // unset profile, ignored
+      { current_orca_printer_profile: 'Totally Unknown Printer' }, // unresolvable, ignored
+    ];
+    expect(resolveFleetVendorModels(printers, catalog)).toEqual([
+      { vendor: 'Bambu Lab', printer_model: 'X1 Carbon' },
+      { vendor: 'Elegoo', printer_model: 'Centauri Carbon' },
+    ]);
+  });
+
+  it('returns an empty list when the fleet has no resolvable profiles', () => {
+    expect(resolveFleetVendorModels([{ current_orca_printer_profile: null }], catalog)).toEqual([]);
   });
 });

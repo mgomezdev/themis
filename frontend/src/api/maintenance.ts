@@ -1,5 +1,6 @@
 // frontend/src/api/maintenance.ts
 import { useCallback, useEffect, useState } from 'react';
+import { fetchPrinters, fetchMachineCatalog, type ApiPrinter, type MachinePreset } from './printers';
 
 export type TriggerType = 'calendar' | 'job_time' | 'job_count';
 export type CalendarUnit = 'hours' | 'days' | 'weeks' | 'months';
@@ -35,6 +36,50 @@ export interface MaintenanceStatusRow {
   item_name: string;
   due: boolean;
   last_done_at: string;
+}
+
+export interface FleetVendorModel {
+  vendor: string;
+  printer_model: string;
+}
+
+export function resolveVendorModelForProfile(
+  profile: string | null,
+  catalog: Pick<MachinePreset, 'name' | 'vendor' | 'printer_model'>[],
+): FleetVendorModel | null {
+  if (!profile) return null;
+  const match = catalog.find(c => c.name === profile);
+  return match ? { vendor: match.vendor, printer_model: match.printer_model } : null;
+}
+
+export function resolveFleetVendorModels(
+  printers: Pick<ApiPrinter, 'current_orca_printer_profile'>[],
+  catalog: Pick<MachinePreset, 'name' | 'vendor' | 'printer_model'>[],
+): FleetVendorModel[] {
+  const seen = new Set<string>();
+  const result: FleetVendorModel[] = [];
+  for (const p of printers) {
+    const resolved = resolveVendorModelForProfile(p.current_orca_printer_profile, catalog);
+    if (!resolved) continue;
+    const key = `${resolved.vendor} ${resolved.printer_model}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(resolved);
+  }
+  return result.sort((a, b) =>
+    a.vendor.localeCompare(b.vendor) || a.printer_model.localeCompare(b.printer_model));
+}
+
+export function useFleetVendorModels(): FleetVendorModel[] {
+  const [models, setModels] = useState<FleetVendorModel[]>([]);
+  useEffect(() => {
+    let alive = true;
+    Promise.all([fetchPrinters(), fetchMachineCatalog()])
+      .then(([printers, catalog]) => { if (alive) setModels(resolveFleetVendorModels(printers, catalog)); })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, []);
+  return models;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
