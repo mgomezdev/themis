@@ -10,6 +10,8 @@ import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useMaintenanceStatus } from '../api/maintenance';
+import { MaintenanceDueBadge } from '../components/MaintenanceDueBadge';
 
 type Layout = 'cards' | 'rows';
 
@@ -421,12 +423,13 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
 }
 
 // ── PrinterExpandedCard ───────────────────────────────────────────────────────
-function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollapse, snapshotIntervalMs }: {
+function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollapse, snapshotIntervalMs, dueCountByPrinter }: {
   printer: Printer;
   printerTypes: PrinterType[];
   refetchFleet: () => void;
   onCollapse: () => void;
   snapshotIntervalMs?: number;
+  dueCountByPrinter: Record<string, number>;
 }) {
   const isPrinting = p.status === 'printing';
   const isPaused = p.status === 'paused';
@@ -481,6 +484,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           </div>
           <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
             <StatusPill status={p.status} />
+            <MaintenanceDueBadge count={dueCountByPrinter[p.id] ?? 0} />
             {isOffline && (
               <button
                 className="btn sm"
@@ -681,7 +685,7 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
-function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number }) {
+function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueCountByPrinter }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueCountByPrinter: Record<string, number> }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease', ...cardCueStyle(p) }}>
@@ -693,6 +697,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: 
         <div className="row gap-2" style={{ alignItems: 'center' }}>
           {!p.queueOn && <QueueOffBadge />}
           <StatusPill status={p.status} />
+          <MaintenanceDueBadge count={dueCountByPrinter[p.id] ?? 0} />
         </div>
       </div>
       <div style={{ padding: '0 14px' }}>
@@ -745,7 +750,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: 
 }
 
 // ── PrinterRow (rows layout — no video feed) ──────────────────────────────────
-function PrinterRow({ printer: p, expanded, onClick, refetchFleet }: { printer: Printer; expanded: boolean; onClick: () => void; refetchFleet: () => void }) {
+function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueCountByPrinter }: { printer: Printer; expanded: boolean; onClick: () => void; refetchFleet: () => void; dueCountByPrinter: Record<string, number> }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{
@@ -772,6 +777,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet }: { printer: 
       </div>
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
         <StatusPill status={p.status} />
+        <MaintenanceDueBadge count={dueCountByPrinter[p.id] ?? 0} />
         {!p.queueOn && <QueueOffBadge />}
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>
@@ -886,9 +892,10 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
 }
 
 // ── FleetGrid (cards layout) ──────────────────────────────────────────────────
-function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs }: {
+function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueCountByPrinter }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
   printerTypes: PrinterType[]; refetchFleet: () => void; snapshotIntervalMs?: number;
+  dueCountByPrinter: Record<string, number>;
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
@@ -897,8 +904,8 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
         return (
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
-              ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} />
-              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />}
+              ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} dueCountByPrinter={dueCountByPrinter} />
+              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueCountByPrinter={dueCountByPrinter} />}
           </div>
         );
       })}
@@ -908,9 +915,10 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
 }
 
 // ── FleetRows (rows layout) ───────────────────────────────────────────────────
-function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs }: {
+function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueCountByPrinter }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
   printerTypes: PrinterType[]; refetchFleet: () => void; snapshotIntervalMs?: number;
+  dueCountByPrinter: Record<string, number>;
 }) {
   return (
     <div className="col gap-2">
@@ -918,10 +926,10 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
         const expanded = expandedId === p.id;
         return (
           <div key={p.id}>
-            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} />
+            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} dueCountByPrinter={dueCountByPrinter} />
             {expanded && (
               <div style={{ marginTop: 8 }}>
-                <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} />
+                <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} dueCountByPrinter={dueCountByPrinter} />
               </div>
             )}
           </div>
@@ -940,6 +948,11 @@ export function FleetScreen() {
   const [adding, setAdding] = useState(false);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
+  const { rows: maintenanceRows } = useMaintenanceStatus();
+  const dueCountByPrinter = (Array.isArray(maintenanceRows) ? maintenanceRows : []).reduce<Record<string, number>>((acc, r) => {
+    if (r.due) acc[String(r.printer_id)] = (acc[String(r.printer_id)] ?? 0) + 1;
+    return acc;
+  }, {});
 
   useEffect(() => {
     fetchPrinterTypes().then(setPrinterTypes).catch(console.error);
@@ -997,10 +1010,10 @@ export function FleetScreen() {
       </div>
 
       {layout === 'cards' && (
-        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />
+        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueCountByPrinter={dueCountByPrinter} />
       )}
       {layout === 'rows' && (
-        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />
+        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueCountByPrinter={dueCountByPrinter} />
       )}
     </div>
   );

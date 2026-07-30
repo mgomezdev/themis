@@ -2,6 +2,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FleetScreen } from './FleetScreen';
 import type { FleetPrinter } from '../api/fleet';
+import type { MaintenanceStatusRow } from '../api/maintenance';
 import * as printersApi from '../api/printers';
 
 // ── Mock WebSocket ──────────────────────────────────────────────────────────
@@ -66,10 +67,13 @@ const PRINTER_CONTROLS: FleetPrinter = {
   fan_box: 40,
 };
 
-function mockFetch(data: FleetPrinter[]) {
-  vi.stubGlobal('fetch', vi.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve(data) }),
-  ));
+function mockFetch(data: FleetPrinter[], maintenanceRows: MaintenanceStatusRow[] = []) {
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    if (url === '/api/v1/maintenance/status') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(maintenanceRows) });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
+  }));
 }
 
 describe('FleetScreen', () => {
@@ -159,6 +163,15 @@ describe('FleetScreen', () => {
     fireEvent.click(await screen.findByText('Stop'));
     expect(spy).toHaveBeenCalledWith(String(PRINTER_CONTROLS.id));
     spy.mockRestore();
+  });
+
+  it('shows the due-maintenance badge on the matching printer card', async () => {
+    mockFetch([PRINTER_1], [
+      { printer_id: PRINTER_1.id, printer_name: PRINTER_1.name, item_id: 1, item_name: 'Wash plate', due: true, last_done_at: '2026-01-01T00:00:00' },
+    ]);
+    render(<FleetScreen />);
+    await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText(/1 due/i)).toBeInTheDocument());
   });
 
 });
