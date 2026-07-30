@@ -23,6 +23,7 @@ from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
 from .api.routes.laminus import router as laminus_router
+from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
 from .api.routes.queue import router as queue_router
@@ -137,6 +138,7 @@ app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
 app.include_router(laminus_router)
+app.include_router(maintenance_router)
 app.include_router(projects_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
