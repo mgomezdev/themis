@@ -1318,7 +1318,12 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
       </div>
       <div className="row gap-1" style={{ flex: 1, flexWrap: 'wrap' }}>
         {item.triggers.map(t => (
-          <span key={t.id} className="chip sm" title={TRIGGER_LABEL[t.trigger_type]}>{triggerChipText(t)}</span>
+          <span key={t.id} title={TRIGGER_LABEL[t.trigger_type]} style={{
+            display: 'inline-flex', alignItems: 'center',
+            fontSize: 11.5, padding: '3px 9px', borderRadius: 0,
+            background: 'var(--bg-3)', color: 'var(--text-3)', border: '1px solid var(--border-2)',
+            whiteSpace: 'nowrap',
+          }}>{triggerChipText(t)}</span>
         ))}
       </div>
       <Toggle checked={item.enabled} onChange={onToggle} />
