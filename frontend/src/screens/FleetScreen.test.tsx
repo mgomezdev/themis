@@ -165,13 +165,14 @@ describe('FleetScreen', () => {
     spy.mockRestore();
   });
 
-  it('shows the due-maintenance badge on the matching printer card', async () => {
+  it('shows the due-maintenance hat with a tooltip on the matching printer card', async () => {
     mockFetch([PRINTER_1], [
       { printer_id: PRINTER_1.id, printer_name: PRINTER_1.name, item_id: 1, item_name: 'Wash plate', due: true, last_done_at: '2026-01-01T00:00:00' },
     ]);
     render(<FleetScreen />);
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
-    await waitFor(() => expect(screen.getByText(/1 due/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle('Wash plate')).toBeInTheDocument());
+    expect(screen.queryByText(/1 due/i)).toBeNull(); // the old count-pill badge no longer renders
   });
 
 });
