@@ -60,6 +60,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
   const settingsSubItems = [
     { to: '/settings/tags',             label: 'Tags' },
     { to: '/settings/print',            label: 'Print defaults' },
+    { to: '/settings/maintenance',       label: 'Maintenance' },
     { to: '/settings/spoolman',         label: 'Spoolman' },
     ...(spoolmanEnabled ? [{ to: '/settings/spoolman-mappings', label: 'Filament Mappings' }] : []),
     { to: '/settings/webhook',          label: 'Webhooks' },
