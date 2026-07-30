@@ -5,10 +5,11 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (16)
+## Tables (19)
 
 ```
-printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id
+printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
+                       printer_maintenance_state.printer_id
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -27,12 +28,18 @@ project_links       (junction-free child: project_id CASCADE, url, label?, sort_
 project_parts       (junction-free child: project_id CASCADE, name, quantity, allocated, sort_order,
                        created_at — non-3D-printed hardware for the assembly, e.g. magnets/screws)
 job_item_failures
+maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_maintenance_state.maintenance_item_id
+maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
+printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))
 ```
 
 ### printers
 `id, name, printer_type` (factory key: `bambu`|`elegoo_centauri`|`snapmaker_extended`), `connection_config: JSON`,
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
-`enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`.
+`enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `lifetime_job_count: int` (accrued in
+`queue_engine.handle_print_complete`, +1 per successful completion), `lifetime_print_seconds: int`
+(accrued from `job.actual_seconds` in the same handler) — both feed `job_count`/`job_time` maintenance
+trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
   keys passed to the client ctor). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
@@ -143,16 +150,49 @@ filament_profile_uuid, color_hex, sort_order`.
 `id, job_id FK (CASCADE), project_item_id FK (CASCADE), quantity_failed, quantity_on_plate`.
 - Written when a job fails to record how many of each project item were on that plate.
 
+### maintenance_items
+`id, name, scope` (`"general"` | `"model"`), `machine_vendor: str?, machine_model: str?` (set only when
+`scope="model"`, matched against `GET /printers/orca-machine-catalog`'s `vendor`/`printer_model` —
+**not** `printers.printer_type`, which is too coarse), `enabled: bool, notes: str?, created_at, updated_at`.
+- Full CRUD at `/api/v1/maintenance/items`. A `"general"` item applies to every printer; a `"model"` item
+  applies only to printers whose resolved `(vendor, printer_model)` matches exactly.
+
+### maintenance_triggers
+`id, maintenance_item_id FK (CASCADE), trigger_type` (`"calendar"` | `"job_time"` | `"job_count"`),
+`amount: float, unit: str?` (`"hours"|"days"|"weeks"|"months"`, calendar-only — `null` otherwise).
+- One item has 0+ triggers; due-ness is `any()` across them (`maintenance_service._trigger_due`) — the
+  item is due the moment the *first* trigger crosses its threshold, not all of them. Replaced wholesale
+  (delete-all/recreate-all) via `PUT /api/v1/maintenance/items/{id}/triggers`, not diffed in place.
+
+### printer_maintenance_state
+`id, printer_id FK (CASCADE), maintenance_item_id FK (CASCADE)` with `UNIQUE(printer_id,
+maintenance_item_id)`, `last_done_at: str, baseline_job_count: int, baseline_print_seconds: int`.
+- Lazily created on first `compute_due_status` evaluation for a (printer, item) pair, or explicitly on
+  `POST /api/v1/maintenance/printers/{printer_id}/items/{item_id}/complete` ("mark done"). Baselines
+  default to `0`/`0` for job_count/job_time triggers (so a newly-added item reflects the printer's full
+  lifetime wear, not a clock that silently starts at "whenever someone first checked"); `last_done_at`
+  defaults to *now* (so a newly-added calendar trigger doesn't appear instantly overdue) — this asymmetry
+  is intentional, see the comment at `maintenance_service.py::_get_or_init_state`.
+- `printers.lifetime_job_count`/`lifetime_print_seconds` (see the `printers` entry above) are the only
+  counters these baselines are diffed against; `mark_done` resets both baselines to the printer's current
+  lifetime counters.
+
 ## Migrations
 
 See `backend/app/migrations/` for versioned migration files. `runner.py` applies pending migrations
-at startup. To add a column:
+at startup — **not** `Base.metadata.create_all()`, which is never called in production (only in test
+fixtures). To add a column or table:
 
 1. Create `backend/app/migrations/v00N_your_name.py`:
    ```python
    version = N
    name = "your_name"
-   async def up(conn): await conn.execute(text("ALTER TABLE foo ADD COLUMN bar TEXT"))
+   async def up(conn):
+       # new column: idempotent guard first
+       cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(foo)"))).fetchall()}
+       if "bar" not in cols:
+           await conn.execute(text("ALTER TABLE foo ADD COLUMN bar TEXT"))
+       # new table: CREATE TABLE IF NOT EXISTS ...
    async def down(conn): ...
    ```
 2. Register it in `runner.py`: `from . import ..., v00N_your_name`; add to `_MIGRATIONS`.
