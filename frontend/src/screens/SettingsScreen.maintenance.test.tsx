@@ -26,7 +26,15 @@ function stubFetch() {
       ]), { status: 200 });
     }
     if (url === '/api/v1/printers/orca-machine-catalog') {
-      return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify([
+        { name: 'Elegoo Centauri Carbon 0.4 nozzle', vendor: 'Elegoo', printer_model: 'Centauri Carbon', nozzle: '0.4', source: 'system' },
+        { name: 'Bambu Lab X1 Carbon 0.4 nozzle', vendor: 'Bambu Lab', printer_model: 'X1 Carbon', nozzle: '0.4', source: 'system' },
+      ]), { status: 200 });
+    }
+    if (url === '/api/v1/printers') {
+      return new Response(JSON.stringify([
+        { id: 1, name: 'P1', current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+      ]), { status: 200 });
     }
     // Other settings sub-pages' unrelated calls (spoolman config, queue config, etc.)
     return new Response(JSON.stringify({}), { status: 200 });
@@ -54,5 +62,16 @@ describe('Settings → Maintenance page', () => {
         (c: unknown[]) => c[0] === '/api/v1/maintenance/items' && (c[1] as RequestInit)?.method === 'POST'
       )
     ).toBe(true));
+  });
+
+  it('limits model-specific vendor/model choices to the current fleet', async () => {
+    render(<MemoryRouter initialEntries={['/settings/maintenance']}><SettingsScreen /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText('Wash build plate')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: /new item/i }));
+    fireEvent.click(screen.getByLabelText(/model-specific/i));
+
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Elegoo' })).toBeInTheDocument());
+    expect(screen.queryByRole('option', { name: 'Bambu Lab' })).toBeNull(); // no Bambu printer in the fleet fixture
   });
 });

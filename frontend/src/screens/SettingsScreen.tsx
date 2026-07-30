@@ -16,10 +16,9 @@ import {
 } from '../components/MaintenanceItemForm';
 import {
   useMaintenanceItems, createMaintenanceItem, updateMaintenanceItem, setMaintenanceTriggers,
-  deleteMaintenanceItem, getMaintenanceTemplates,
+  deleteMaintenanceItem, getMaintenanceTemplates, useFleetVendorModels,
   type MaintenanceItem, type MaintenanceTemplate,
 } from '../api/maintenance';
-import { fetchMachineCatalog, type MachinePreset } from '../api/printers';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -1225,7 +1224,7 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
 function MaintenancePage() {
   const { items, refetch } = useMaintenanceItems();
   const [templates, setTemplates] = useState<MaintenanceTemplate[]>([]);
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
+  const catalog = useFleetVendorModels();
   const [editingId, setEditingId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState<ItemDraft>(emptyDraft());
@@ -1233,7 +1232,6 @@ function MaintenancePage() {
 
   useEffect(() => {
     getMaintenanceTemplates().then(setTemplates).catch(console.error);
-    fetchMachineCatalog().then(setCatalog).catch(console.error);
   }, []);
 
   function startCreate(fromTemplate?: MaintenanceTemplate) {
