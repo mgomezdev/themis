@@ -175,6 +175,22 @@ describe('FleetScreen', () => {
     expect(screen.queryByText(/1 due/i)).toBeNull(); // the old count-pill badge no longer renders
   });
 
+  it('adds a maintenance item from the expanded printer card', async () => {
+    mockFetch([PRINTER_1]);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge')); // expand the card
+
+    fireEvent.click(await screen.findByTitle('Add maintenance item'));
+    fireEvent.change(screen.getByPlaceholderText('Maintenance item name'), { target: { value: 'Check belts' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c: unknown[]) => c[0] === '/api/v1/maintenance/items' && (c[1] as RequestInit)?.method === 'POST'
+      )
+    ).toBe(true));
+  });
+
 });
 
 // ── Integration: FilamentPicker + SlotSpoolPicker spool selection ─────────────
