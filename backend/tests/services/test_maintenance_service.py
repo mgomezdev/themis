@@ -195,3 +195,74 @@ def test_common_maintenance_templates_are_well_formed():
                 assert trig["unit"] in ("hours", "days", "weeks", "months")
             else:
                 assert trig["unit"] is None
+
+
+@pytest.mark.asyncio
+async def test_mark_done_resets_every_trigger_baseline_not_just_the_one_that_fired(db):
+    """An item with a job_count trigger AND a calendar trigger, where BOTH are
+    independently in violation before mark_done (job_count over threshold, calendar
+    long overdue) — mark_done must reset both baselines together, not just whichever
+    one a caller might think "fired". Verified two ways, not just a before/after
+    `due` bool: (1) due flips True->False across the reset, and (2) a small bump to
+    lifetime_job_count afterward proves baseline_job_count was actually moved to the
+    printer's current count (not left at its old value, which would make the item
+    incorrectly due again almost immediately)."""
+    old_last_done = (datetime.now(timezone.utc) - timedelta(days=200)).isoformat()
+
+    async with db() as session:
+        printer = Printer(name="P1", printer_type="elegoo_centauri", connection_config={},
+                           current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
+                           lifetime_job_count=10, lifetime_print_seconds=0)
+        session.add(printer)
+        item = MaintenanceItem(name="Multi-trigger item", scope="general",
+                                created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        session.add(item)
+        await session.flush()
+        job_count_trigger = MaintenanceTrigger(maintenance_item_id=item.id, trigger_type="job_count",
+                                                amount=5, unit=None)
+        calendar_trigger = MaintenanceTrigger(maintenance_item_id=item.id, trigger_type="calendar",
+                                               amount=1, unit="months")
+        session.add(job_count_trigger)
+        session.add(calendar_trigger)
+        # Baseline job_count=0 (so lifetime 10 >= threshold 5 -> job_count IS due) and
+        # last_done_at 200 days ago (so calendar, threshold 30 days, IS ALSO due) —
+        # both triggers are independently in violation before the reset.
+        state = PrinterMaintenanceState(printer_id=printer.id, maintenance_item_id=item.id,
+                                         last_done_at=old_last_done, baseline_job_count=0,
+                                         baseline_print_seconds=0)
+        session.add(state)
+        await session.commit()
+        printer_id, item_id = printer.id, item.id
+        triggers = [job_count_trigger, calendar_trigger]
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        item = await session.get(MaintenanceItem, item_id)
+        rows = await ms.compute_due_status(session, [printer], [item], {item_id: triggers}, CATALOG)
+    assert rows[0]["due"] is True  # both triggers agree it's due, before any reset
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        item = await session.get(MaintenanceItem, item_id)
+        await ms.mark_done(session, printer, item)
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        item = await session.get(MaintenanceItem, item_id)
+        rows = await ms.compute_due_status(session, [printer], [item], {item_id: triggers}, CATALOG)
+    assert rows[0]["due"] is False  # reset cleared both triggers, not just one
+
+    # Isolate that baseline_job_count specifically moved to 10 (not left at 0):
+    # a small bump that stays under the job_count threshold (5) relative to the
+    # NEW baseline must still read as not-due. If baseline_job_count had been left
+    # at 0, 12 - 0 = 12 >= 5 would incorrectly flip due back to True.
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.lifetime_job_count = 12
+        await session.commit()
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        item = await session.get(MaintenanceItem, item_id)
+        rows = await ms.compute_due_status(session, [printer], [item], {item_id: triggers}, CATALOG)
+    assert rows[0]["due"] is False  # 12 - baseline(10) = 2 < 5 -> confirms baseline_job_count was reset
