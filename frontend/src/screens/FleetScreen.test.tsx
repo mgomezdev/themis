@@ -249,6 +249,24 @@ describe('FleetScreen', () => {
     await waitFor(() => expect(screen.getByRole('option', { name: 'Elegoo', selected: true } as never)).toBeInTheDocument());
   });
 
+  it('lists due maintenance items in the expanded card and acknowledges one', async () => {
+    mockFetch([PRINTER_1], [
+      { printer_id: PRINTER_1.id, printer_name: PRINTER_1.name, item_id: 1, item_name: 'Wash plate', due: true, last_done_at: '2026-01-01T00:00:00' },
+    ]);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge')); // expand the card
+
+    expect(await screen.findByText('Wash plate')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /acknowledge/i }));
+
+    await waitFor(() => expect(
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string) === `/api/v1/maintenance/printers/${PRINTER_1.id}/items/1/complete`
+          && (c[1] as RequestInit)?.method === 'POST'
+      )
+    ).toBe(true));
+  });
+
 });
 
 // ── Integration: FilamentPicker + SlotSpoolPicker spool selection ─────────────

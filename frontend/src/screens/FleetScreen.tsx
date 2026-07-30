@@ -14,7 +14,7 @@ import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintena
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
 import {
-  useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem,
+  useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem, completeMaintenanceItem,
   type FleetVendorModel,
 } from '../api/maintenance';
 
@@ -718,6 +718,28 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
                 <FanTelem label="Box" pct={p.fanBox} maxRpm={5400} />
               </div>
             </div>
+
+            {(dueRowsByPrinter[p.id] ?? []).length > 0 && (
+              <div className="card" style={{ padding: 14, background: 'var(--bg-1)', borderColor: 'var(--warn)' }}>
+                <div className="tag-key" style={{ marginBottom: 10 }}>👷 Maintenance due</div>
+                <div className="col gap-2">
+                  {(dueRowsByPrinter[p.id] ?? []).map(row => (
+                    <div key={row.item_id} className="row between" style={{ alignItems: 'center' }}>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item_name}</div>
+                      <button
+                        className="btn sm"
+                        onClick={async () => {
+                          await completeMaintenanceItem(Number(p.id), row.item_id);
+                          refetchMaintenance();
+                        }}
+                      >
+                        Acknowledge
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
