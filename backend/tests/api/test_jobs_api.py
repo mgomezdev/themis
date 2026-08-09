@@ -236,12 +236,18 @@ async def test_verify_slice_success(client, tmp_path):
         })
     job_id = create.json()["id"]
 
-    gcode_file = tmp_path / "out.gcode"
-    gcode_file.write_text("G28")
-
     mock_qe = MagicMock()
     mock_qe._executor = None  # use default thread pool so run_in_executor works
-    mock_qe._slicer.slice.return_value = str(gcode_file)
+    mock_qe._slicer._data_dir = tmp_path
+    expected_output_dir = tmp_path / "gcode_verify" / str(job_id)
+
+    def fake_slice(req, output_dir=None):
+        output_dir.mkdir(parents=True, exist_ok=True)
+        gcode_file = output_dir / "out.gcode"
+        gcode_file.write_text("G28")
+        return str(gcode_file)
+
+    mock_qe._slicer.slice.side_effect = fake_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
@@ -251,7 +257,7 @@ async def test_verify_slice_success(client, tmp_path):
     data = resp.json()
     assert data["ok"] is True
     assert data["error"] is None
-    assert not gcode_file.exists()  # cleaned up after test run
+    assert not expected_output_dir.exists()  # scratch dir cleaned up after test run
 
 
 async def test_verify_slice_slice_error(client, tmp_path):
@@ -295,6 +301,53 @@ async def test_verify_slice_missing_printer_config(client, tmp_path):
     resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
                               json={"printer_id": 9999})
     assert resp.status_code == 404
+
+
+async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path):
+    """Test-slicing a job must not delete its already-produced production gcode.
+    slice() unlinks *.gcode/*.gcode.3mf in whatever output dir it's given before
+    writing, and the production dir defaults to <data_dir>/gcode/<job_id> — the
+    exact directory a parked job's real artifact lives in. verify-slice must pass
+    its own scratch dir instead."""
+    from unittest.mock import MagicMock
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+        })
+    job_id = create.json()["id"]
+
+    # Simulate the already-produced production artifact for this job.
+    prod_dir = tmp_path / "gcode" / str(job_id)
+    prod_dir.mkdir(parents=True)
+    prod_gcode = prod_dir / "model.gcode"
+    prod_gcode.write_text("G28 ; production")
+
+    mock_qe = MagicMock()
+    mock_qe._executor = None
+    mock_qe._slicer._data_dir = tmp_path
+    expected_output_dir = tmp_path / "gcode_verify" / str(job_id)
+
+    def fake_slice(req, output_dir=None):
+        assert output_dir == expected_output_dir, "verify-slice must not slice into the production gcode dir"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out = output_dir / "test.gcode"
+        out.write_text("G28 ; test")
+        return str(out)
+
+    mock_qe._slicer.slice.side_effect = fake_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
+                                  json={"printer_id": printer_id})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    assert prod_gcode.exists()  # production artifact survives the test-slice
+    assert not expected_output_dir.exists()  # scratch dir cleaned up
 
 
 async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):

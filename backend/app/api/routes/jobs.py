@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -773,21 +774,23 @@ async def verify_slice(
         extra_config=plate_config,
     )
 
+    # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
+    # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
+    # otherwise destroy a parked job's already-produced production artifact.
+    output_dir = queue_engine._slicer._data_dir / "gcode_verify" / str(job_id)
     loop = asyncio.get_running_loop()
     try:
-        gcode_path: str = await loop.run_in_executor(
-            queue_engine._executor, queue_engine._slicer.slice, req
+        await loop.run_in_executor(
+            queue_engine._executor, queue_engine._slicer.slice, req, output_dir
         )
-        try:
-            Path(gcode_path).unlink(missing_ok=True)
-        except OSError:
-            pass
         return {"ok": True, "error": None}
     except SliceError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         logger.exception("Unexpected error in verify-slice for job %s", job_id)
         return {"ok": False, "error": f"Unexpected error: {exc}"}
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
 @router.get(
