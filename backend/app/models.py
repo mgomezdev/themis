@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -21,6 +21,8 @@ class Printer(Base):
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
     bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
     bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    lifetime_job_count: Mapped[int] = mapped_column(Integer, default=0)
+    lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class UploadedFile(Base):
@@ -243,3 +245,43 @@ class JobItemFailure(Base):
     project_item_id: Mapped[int] = mapped_column(ForeignKey("project_items.id", ondelete="CASCADE"))
     quantity_failed: Mapped[int] = mapped_column(Integer)
     quantity_on_plate: Mapped[int] = mapped_column(Integer)
+
+
+class MaintenanceItem(Base):
+    __tablename__ = "maintenance_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    scope: Mapped[str] = mapped_column(String(20), default="general")  # "general" | "model"
+    machine_vendor: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    machine_model: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+
+
+class MaintenanceTrigger(Base):
+    __tablename__ = "maintenance_triggers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    maintenance_item_id: Mapped[int] = mapped_column(
+        ForeignKey("maintenance_items.id", ondelete="CASCADE")
+    )
+    trigger_type: Mapped[str] = mapped_column(String(20))  # "calendar" | "job_time" | "job_count"
+    amount: Mapped[float] = mapped_column(Float)
+    unit: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)  # calendar only
+
+
+class PrinterMaintenanceState(Base):
+    __tablename__ = "printer_maintenance_state"
+    __table_args__ = (UniqueConstraint("printer_id", "maintenance_item_id"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"))
+    maintenance_item_id: Mapped[int] = mapped_column(
+        ForeignKey("maintenance_items.id", ondelete="CASCADE")
+    )
+    last_done_at: Mapped[str] = mapped_column(String(32))
+    baseline_job_count: Mapped[int] = mapped_column(Integer, default=0)
+    baseline_print_seconds: Mapped[int] = mapped_column(Integer, default=0)

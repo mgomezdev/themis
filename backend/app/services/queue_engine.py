@@ -1042,6 +1042,13 @@ class QueueEngine:
             job.completed_at = _now()
             job.updated_at = _now()
 
+            # Accrue lifetime wear counters for maintenance tracking — every
+            # successfully completed job, regardless of Spoolman config.
+            printer = await session.get(Printer, printer_id)
+            if printer is not None:
+                printer.lifetime_job_count += 1
+                printer.lifetime_print_seconds += job.actual_seconds or 0
+
             # Collect Spoolman deduction data before session closes
             actual_grams = job.actual_filament_grams
             if actual_grams is not None:
@@ -1049,7 +1056,6 @@ class QueueEngine:
                 if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
                     spoolman_url = spoolman_cfg.url
                     spoolman_key = spoolman_cfg.api_key
-                    printer = await session.get(Printer, printer_id)
                     loaded = (printer.loaded_filaments if printer else None) or []
                     cfg_result = await session.execute(
                         select(JobPrinterConfig).where(

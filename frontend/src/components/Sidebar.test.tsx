@@ -190,6 +190,7 @@ describe('Settings sub-nav items', () => {
     renderOnSettings(false);
     expect(screen.getByText('Tags')).toBeTruthy();
     expect(screen.getByText('Print defaults')).toBeTruthy();
+    expect(screen.getByText('Maintenance')).toBeTruthy();
     expect(screen.getByText('Webhooks')).toBeTruthy();
     expect(screen.queryByText('Filament Mappings')).toBeNull(); // spoolman disabled
   });

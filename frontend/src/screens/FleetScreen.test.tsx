@@ -2,6 +2,7 @@ import { render, screen, waitFor, act, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FleetScreen } from './FleetScreen';
 import type { FleetPrinter } from '../api/fleet';
+import type { MaintenanceStatusRow } from '../api/maintenance';
 import * as printersApi from '../api/printers';
 
 // ── Mock WebSocket ──────────────────────────────────────────────────────────
@@ -66,10 +67,13 @@ const PRINTER_CONTROLS: FleetPrinter = {
   fan_box: 40,
 };
 
-function mockFetch(data: FleetPrinter[]) {
-  vi.stubGlobal('fetch', vi.fn(() =>
-    Promise.resolve({ ok: true, json: () => Promise.resolve(data) }),
-  ));
+function mockFetch(data: FleetPrinter[], maintenanceRows: MaintenanceStatusRow[] = []) {
+  vi.stubGlobal('fetch', vi.fn((url: string) => {
+    if (url === '/api/v1/maintenance/status') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(maintenanceRows) });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve(data) });
+  }));
 }
 
 describe('FleetScreen', () => {
@@ -159,6 +163,108 @@ describe('FleetScreen', () => {
     fireEvent.click(await screen.findByText('Stop'));
     expect(spy).toHaveBeenCalledWith(String(PRINTER_CONTROLS.id));
     spy.mockRestore();
+  });
+
+  it('shows the due-maintenance hat with a tooltip on the matching printer card', async () => {
+    mockFetch([PRINTER_1], [
+      { printer_id: PRINTER_1.id, printer_name: PRINTER_1.name, item_id: 1, item_name: 'Wash plate', due: true, last_done_at: '2026-01-01T00:00:00' },
+    ]);
+    render(<FleetScreen />);
+    await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByTitle('Wash plate')).toBeInTheDocument());
+    expect(screen.queryByText(/1 due/i)).toBeNull(); // the old count-pill badge no longer renders
+  });
+
+  it('adds a maintenance item from the expanded printer card', async () => {
+    mockFetch([PRINTER_1]);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge')); // expand the card
+
+    fireEvent.click(await screen.findByTitle('Add maintenance item'));
+    fireEvent.change(screen.getByPlaceholderText('Maintenance item name'), { target: { value: 'Check belts' } });
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+
+    await waitFor(() => expect(
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c: unknown[]) => c[0] === '/api/v1/maintenance/items' && (c[1] as RequestInit)?.method === 'POST'
+      )
+    ).toBe(true));
+  });
+
+  it('pre-fills the quick-add modal with the printer\'s own resolved vendor/model', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url === '/api/v1/fleet') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([PRINTER_1]) });
+      }
+      if (url === '/api/v1/maintenance/status') {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      }
+      if (url.includes('orca-machine-catalog')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { name: 'Elegoo Centauri Carbon 0.4 nozzle', vendor: 'Elegoo', printer_model: 'Centauri Carbon', nozzle: '0.4', source: 'system' },
+          ]),
+        });
+      }
+      // Plural fleet-printers list (GET /api/v1/printers) — feeds useFleetVendorModels(),
+      // which populates the form's own vendor/model dropdown options. This is a
+      // SEPARATE call from the singular per-printer fetch below (used directly by
+      // the modal to resolve THIS printer's pre-fill) — both must be stubbed with
+      // real current_orca_printer_profile data, or the dropdown has no options
+      // even once pre-fill resolves.
+      if (url === '/api/v1/printers') {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve([
+            { id: PRINTER_1.id, current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+          ]),
+        });
+      }
+      // Individual printer fetch (GET /api/v1/printers/:id) — includes the field
+      // resolveVendorModelForProfile needs, unlike the blanket mockFetch() helper
+      // used by the sibling test above (which can't exercise this pre-fill path).
+      if (url.match(/\/api\/v1\/printers\/\d+$/)) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            id: PRINTER_1.id, name: PRINTER_1.name, printer_type: PRINTER_1.printer_type,
+            enabled: true, no_snapshots_while_idle: false,
+            current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle',
+            orca_printer_profiles: [], connection_config: {},
+            loaded_filaments: [],
+          }),
+        });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+    }));
+
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge')); // expand the card
+    fireEvent.click(await screen.findByTitle('Add maintenance item'));
+
+    // "Model-specific" becomes checked and the vendor/model resolve automatically,
+    // proving the pre-fill actually ran (not just that the form renders blank).
+    await waitFor(() => expect((screen.getByLabelText(/model-specific/i) as HTMLInputElement).checked).toBe(true));
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Elegoo', selected: true } as never)).toBeInTheDocument());
+  });
+
+  it('lists due maintenance items in the expanded card and acknowledges one', async () => {
+    mockFetch([PRINTER_1], [
+      { printer_id: PRINTER_1.id, printer_name: PRINTER_1.name, item_id: 1, item_name: 'Wash plate', due: true, last_done_at: '2026-01-01T00:00:00' },
+    ]);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge')); // expand the card
+
+    expect(await screen.findByText('Wash plate')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /acknowledge/i }));
+
+    await waitFor(() => expect(
+      (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+        (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string) === `/api/v1/maintenance/printers/${PRINTER_1.id}/items/1/complete`
+          && (c[1] as RequestInit)?.method === 'POST'
+      )
+    ).toBe(true));
   });
 
 });

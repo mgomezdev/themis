@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
@@ -10,6 +10,13 @@ import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
+import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
+import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
+import {
+  useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem, completeMaintenanceItem,
+  type FleetVendorModel,
+} from '../api/maintenance';
 
 type Layout = 'cards' | 'rows';
 
@@ -420,13 +427,99 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   );
 }
 
+// ── Quick-add maintenance modal ───────────────────────────────────────────────
+function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
+  printer: Printer;
+  fleetModels: FleetVendorModel[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState<ItemDraft>(emptyDraft());
+  const [error, setError] = useState<string | null>(null);
+  // Tracks whether the user has already touched the form before the printer's
+  // vendor/model resolves, so the async pre-fill below never clobbers an
+  // in-flight manual edit (e.g. typing a name or picking "General" before the
+  // fetch/catalog round-trip completes).
+  const userEditedRef = useRef(false);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([fetchPrinter(Number(printer.id)), fetchMachineCatalog()])
+      .then(([apiPrinter, catalog]) => {
+        if (!alive || userEditedRef.current) return;
+        const resolved = resolveVendorModelForProfile(apiPrinter.current_orca_printer_profile, catalog);
+        if (resolved) {
+          setDraft(d => ({ ...d, scope: 'model', machine_vendor: resolved.vendor, machine_model: resolved.printer_model }));
+        }
+      })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, [printer.id]);
+
+  function handleDraftChange(next: ItemDraft) {
+    userEditedRef.current = true;
+    setDraft(next);
+  }
+
+  async function handleSave() {
+    setError(null);
+    try {
+      await createMaintenanceItem({
+        name: draft.name, scope: draft.scope,
+        machine_vendor: draft.scope === 'model' ? draft.machine_vendor : null,
+        machine_model: draft.scope === 'model' ? draft.machine_model : null,
+        triggers: draft.triggers,
+      });
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{
+      position: 'fixed', inset: 0,
+      background: 'rgba(2,6,16,0.65)', backdropFilter: 'blur(4px)',
+      zIndex: 100, display: 'grid', placeItems: 'center', padding: 24,
+    }}>
+      <div onClick={e => e.stopPropagation()} className="card" style={{
+        width: 'min(480px, 100%)', maxHeight: '90vh', overflowY: 'auto',
+        padding: 0, borderColor: 'var(--border-3)',
+        boxShadow: '0 20px 60px -20px rgba(0,0,0,0.7), 0 0 0 1px var(--accent-glow)',
+      }}>
+        <div className="row between" style={{
+          padding: '16px 20px', borderBottom: '1px solid var(--border-1)',
+          alignItems: 'center', background: 'var(--bg-3)',
+        }}>
+          <div className="col">
+            <div className="tag-key">Add maintenance item</div>
+            <div style={{ fontSize: 16, fontWeight: 600, letterSpacing: '-0.01em' }}>{printer.nickname}</div>
+          </div>
+          <button className="btn ghost icon sm" onClick={onClose}>{Icons.x}</button>
+        </div>
+        <div style={{ padding: 20 }}>
+          {error && (
+            <div style={{ marginBottom: 12, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+              {error}
+            </div>
+          )}
+          <MaintenanceItemForm draft={draft} catalog={fleetModels} onChange={handleDraftChange} onSave={handleSave} onCancel={onClose} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── PrinterExpandedCard ───────────────────────────────────────────────────────
-function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollapse, snapshotIntervalMs }: {
+function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollapse, snapshotIntervalMs, dueRowsByPrinter, refetchMaintenance, fleetModels }: {
   printer: Printer;
   printerTypes: PrinterType[];
   refetchFleet: () => void;
   onCollapse: () => void;
   snapshotIntervalMs?: number;
+  dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>;
+  refetchMaintenance: () => void;
+  fleetModels: FleetVendorModel[];
 }) {
   const isPrinting = p.status === 'printing';
   const isPaused = p.status === 'paused';
@@ -436,6 +529,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
   const [editingPrinter, setEditingPrinter] = useState(false);
   const [pickingFilament, setPickingFilament] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
+  const [addingMaintenance, setAddingMaintenance] = useState(false);
 
   useEffect(() => { setNickname(p.nickname); }, [p.nickname]);
 
@@ -456,6 +550,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         }}>
           <div className="col" style={{ minWidth: 0, flex: 1 }}>
             <div className="row gap-2" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+              <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
               {editingName ? (
                 <input autoFocus className="input" value={nickname}
                        onChange={e => setNickname(e.target.value)}
@@ -509,6 +604,9 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               {p.queueOn ? <>{Icons.queue} Queue on</> : <>{Icons.queue} Queue off</>}
             </button>
             <button className="btn sm">{Icons.camera} Snapshot</button>
+            <button className="btn icon sm" title="Add maintenance item" onClick={() => setAddingMaintenance(true)}>
+              👷
+            </button>
             <button className="btn icon sm" title="Edit printer" onClick={() => setEditingPrinter(true)}>
               {Icons.wrench}
             </button>
@@ -620,6 +718,29 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
                 <FanTelem label="Box" pct={p.fanBox} maxRpm={5400} />
               </div>
             </div>
+
+            {(dueRowsByPrinter[p.id] ?? []).length > 0 && (
+              <div className="card" style={{ padding: 14, background: 'var(--bg-1)', borderColor: 'var(--warn)' }}>
+                <div className="tag-key" style={{ marginBottom: 10 }}>👷 Maintenance due</div>
+                <div className="col gap-2">
+                  {(dueRowsByPrinter[p.id] ?? []).map(row => (
+                    <div key={row.item_id} className="row between" style={{ alignItems: 'center' }}>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item_name}</div>
+                      <button
+                        className="btn sm"
+                        onClick={() => {
+                          completeMaintenanceItem(Number(p.id), row.item_id)
+                            .then(refetchMaintenance)
+                            .catch(console.error);
+                        }}
+                      >
+                        Acknowledge
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -630,6 +751,15 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
           onSaved={() => { setEditingPrinter(false); refetchFleet(); }}
           onDeleted={() => { setEditingPrinter(false); refetchFleet(); onCollapse(); }}
           onClose={() => setEditingPrinter(false)}
+        />
+      )}
+
+      {addingMaintenance && (
+        <QuickAddMaintenanceModal
+          printer={p}
+          fleetModels={fleetModels}
+          onClose={() => setAddingMaintenance(false)}
+          onSaved={() => { setAddingMaintenance(false); refetchMaintenance(); }}
         />
       )}
     </>
@@ -681,12 +811,13 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
-function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number }) {
+function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueRowsByPrinter }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]> }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{ cursor: 'pointer', padding: 0, overflow: 'hidden', transition: 'border-color 120ms ease', ...cardCueStyle(p) }}>
       <div className="row between" style={{ padding: '12px 14px 8px' }}>
         <div className="row gap-2" style={{ alignItems: 'baseline' }}>
+          <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
           <span style={{ fontSize: 14, fontWeight: 600 }}>{p.nickname}</span>
           <span className="tiny muted">{p.badge}</span>
         </div>
@@ -745,7 +876,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs }: 
 }
 
 // ── PrinterRow (rows layout — no video feed) ──────────────────────────────────
-function PrinterRow({ printer: p, expanded, onClick, refetchFleet }: { printer: Printer; expanded: boolean; onClick: () => void; refetchFleet: () => void }) {
+function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrinter }: { printer: Printer; expanded: boolean; onClick: () => void; refetchFleet: () => void; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]> }) {
   const isPrinting = p.status === 'printing';
   return (
     <div className="card" onClick={onClick} style={{
@@ -767,7 +898,10 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet }: { printer: 
         <span className="mono tiny" style={{ color: p.accent }}>{p.badge}</span>
       </div>
       <div className="col" style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nickname}</div>
+        <div className="row gap-1" style={{ alignItems: 'center' }}>
+          <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
+          <div style={{ fontWeight: 600, fontSize: 14 }}>{p.nickname}</div>
+        </div>
         <div className="tiny muted" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.name}</div>
       </div>
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
@@ -886,9 +1020,11 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
 }
 
 // ── FleetGrid (cards layout) ──────────────────────────────────────────────────
-function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs }: {
+function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueRowsByPrinter, refetchMaintenance, fleetModels }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
   printerTypes: PrinterType[]; refetchFleet: () => void; snapshotIntervalMs?: number;
+  dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>; refetchMaintenance: () => void;
+  fleetModels: FleetVendorModel[];
 }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 16 }}>
@@ -897,8 +1033,8 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
         return (
           <div key={p.id} style={{ gridColumn: expanded ? '1 / -1' : 'auto' }}>
             {expanded
-              ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} />
-              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />}
+              ? <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
+              : <PrinterTile printer={p} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} />}
           </div>
         );
       })}
@@ -908,9 +1044,11 @@ function FleetGrid({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
 }
 
 // ── FleetRows (rows layout) ───────────────────────────────────────────────────
-function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs }: {
+function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetchFleet, snapshotIntervalMs, dueRowsByPrinter, refetchMaintenance, fleetModels }: {
   printers: Printer[]; expandedId: string | null; onToggle: (id: string) => void; onAdd: () => void;
   printerTypes: PrinterType[]; refetchFleet: () => void; snapshotIntervalMs?: number;
+  dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>; refetchMaintenance: () => void;
+  fleetModels: FleetVendorModel[];
 }) {
   return (
     <div className="col gap-2">
@@ -918,10 +1056,10 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
         const expanded = expandedId === p.id;
         return (
           <div key={p.id}>
-            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} />
+            <PrinterRow printer={p} expanded={expanded} onClick={() => onToggle(p.id)} refetchFleet={refetchFleet} dueRowsByPrinter={dueRowsByPrinter} />
             {expanded && (
               <div style={{ marginTop: 8 }}>
-                <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} />
+                <PrinterExpandedCard printer={p} printerTypes={printerTypes} refetchFleet={refetchFleet} onCollapse={() => onToggle(p.id)} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
               </div>
             )}
           </div>
@@ -940,6 +1078,15 @@ export function FleetScreen() {
   const [adding, setAdding] = useState(false);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
+  const { rows: maintenanceRows, refetch: refetchMaintenance } = useMaintenanceStatus();
+  const fleetModels = useFleetVendorModels();
+  const dueRowsByPrinter = (Array.isArray(maintenanceRows) ? maintenanceRows : []).reduce<Record<string, MaintenanceStatusRow[]>>((acc, r) => {
+    if (r.due) {
+      const key = String(r.printer_id);
+      (acc[key] ??= []).push(r);
+    }
+    return acc;
+  }, {});
 
   useEffect(() => {
     fetchPrinterTypes().then(setPrinterTypes).catch(console.error);
@@ -997,10 +1144,10 @@ export function FleetScreen() {
       </div>
 
       {layout === 'cards' && (
-        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />
+        <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
       {layout === 'rows' && (
-        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} />
+        <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
     </div>
   );

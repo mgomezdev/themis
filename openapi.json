@@ -2831,6 +2831,326 @@
         }
       }
     },
+    "/api/v1/maintenance/items": {
+      "get": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "List maintenance items",
+        "operationId": "list_items_api_v1_maintenance_items_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Items Api V1 Maintenance Items Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Create maintenance item",
+        "operationId": "create_item_api_v1_maintenance_items_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceItemCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Item Api V1 Maintenance Items Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "scope='model' requires machine_vendor and machine_model"
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance/items/{item_id}": {
+      "patch": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Update maintenance item",
+        "operationId": "update_item_api_v1_maintenance_items__item_id__patch",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaintenanceItemPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Item Api V1 Maintenance Items  Item Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Maintenance item not found"
+          },
+          "422": {
+            "description": "scope='model' requires machine_vendor and machine_model"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Delete maintenance item",
+        "operationId": "delete_item_api_v1_maintenance_items__item_id__delete",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Item Api V1 Maintenance Items  Item Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Maintenance item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance/items/{item_id}/triggers": {
+      "put": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Replace an item's triggers",
+        "operationId": "replace_triggers_api_v1_maintenance_items__item_id__triggers_put",
+        "parameters": [
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TriggersReplace"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Replace Triggers Api V1 Maintenance Items  Item Id  Triggers Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Maintenance item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance/templates": {
+      "get": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Suggested common maintenance items",
+        "operationId": "list_templates_api_v1_maintenance_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Templates Api V1 Maintenance Templates Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance/status": {
+      "get": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Due status for every printer x applicable maintenance item",
+        "operationId": "maintenance_status_api_v1_maintenance_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Maintenance Status Api V1 Maintenance Status Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/maintenance/printers/{printer_id}/items/{item_id}/complete": {
+      "post": {
+        "tags": [
+          "maintenance"
+        ],
+        "summary": "Mark a maintenance item done for a printer",
+        "operationId": "complete_item_api_v1_maintenance_printers__printer_id__items__item_id__complete_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "item_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Item Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Complete Item Api V1 Maintenance Printers  Printer Id  Items  Item Id  Complete Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer or maintenance item not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects": {
       "get": {
         "tags": [
@@ -4859,6 +5179,137 @@
         ],
         "title": "LightBody"
       },
+      "MaintenanceItemCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "scope": {
+            "type": "string",
+            "title": "Scope",
+            "default": "general"
+          },
+          "machine_vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Vendor"
+          },
+          "machine_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Model"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          },
+          "triggers": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerIn"
+            },
+            "type": "array",
+            "title": "Triggers",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MaintenanceItemCreate"
+      },
+      "MaintenanceItemPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope"
+          },
+          "machine_vendor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Vendor"
+          },
+          "machine_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Model"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "title": "MaintenanceItemPatch"
+      },
       "OrderCreate": {
         "properties": {
           "order_type": {
@@ -6159,6 +6610,51 @@
           "connection_config"
         ],
         "title": "TestConnectionRequest"
+      },
+      "TriggerIn": {
+        "properties": {
+          "trigger_type": {
+            "type": "string",
+            "title": "Trigger Type"
+          },
+          "amount": {
+            "type": "number",
+            "title": "Amount"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "trigger_type",
+          "amount"
+        ],
+        "title": "TriggerIn"
+      },
+      "TriggersReplace": {
+        "properties": {
+          "triggers": {
+            "items": {
+              "$ref": "#/components/schemas/TriggerIn"
+            },
+            "type": "array",
+            "title": "Triggers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "triggers"
+        ],
+        "title": "TriggersReplace"
       },
       "ValidationError": {
         "properties": {

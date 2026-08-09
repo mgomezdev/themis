@@ -50,11 +50,24 @@ Verify symbols against current code before relying on them ("code wins").
 
 ## Add a table or column
 
-- **New table**: define the model in `backend/app/models.py` (inherit `Base`). `create_all` makes it
-  on startup. No `_migrate` needed.
-- **New column on an existing table**: add to the model **and** add an idempotent guard in
-  `database._migrate()` (`PRAGMA table_info` check → `ALTER TABLE … ADD COLUMN`), or existing dev DBs
+**Corrected 2026-07-29** — the previous version of this recipe was wrong: `database.py::init_db()`
+never calls `Base.metadata.create_all()` in production. Every table, new or existing, is created by an
+explicit versioned migration file (`backend/app/migrations/v00N_name.py`, applied by
+`migrations/runner.py` at startup) — there is no `database._migrate()` function. `create_all` IS used,
+but only inside test fixtures (`backend/tests/conftest.py`'s `client` fixture and the various `db`
+fixtures in `backend/tests/services/`), which build schema straight from `models.py` and never run
+migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) must be declared in
+`models.py` itself, not only in the migration's raw SQL, or tests silently run without it.
+
+- **New table**: define the model in `backend/app/models.py` (inherit `Base`), **and** add a migration
+  file with `CREATE TABLE IF NOT EXISTS ...` DDL (see `backend/app/migrations/v010_project_parts.py` or
+  `v011_maintenance_tracking.py` for reference), registered in `runner.py`'s import + `_MIGRATIONS` list.
+- **New column on an existing table**: add to the model **and** add an idempotent guard in the
+  migration's `up(conn)` (`PRAGMA table_info` check → `ALTER TABLE … ADD COLUMN`), or existing dev DBs
   won't get it. Update the route's `_to_dict` and the frontend type if it crosses the API.
+- **Constraints beyond a bare column** (unique, FK `ondelete`): declare them on the model via
+  `__table_args__`/`ForeignKey(..., ondelete=...)` in addition to the migration's SQL — both must agree,
+  since the model is what test fixtures actually build from.
 - JSON column: store a list/dict; document its shape in `data-model.md`.
 
 ## Change queue / print behavior

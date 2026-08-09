@@ -58,3 +58,19 @@ async def test_v008_adds_estimate_columns():
     assert expected_job <= job_cols
     assert "estimates_enabled" in qc_cols
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v011_adds_maintenance_tables_and_printer_counters():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await run_migrations(conn)  # idempotent second run
+        printer_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+    assert {"lifetime_job_count", "lifetime_print_seconds"} <= printer_cols
+    assert {"maintenance_items", "maintenance_triggers", "printer_maintenance_state"} <= tables
+    await engine.dispose()
