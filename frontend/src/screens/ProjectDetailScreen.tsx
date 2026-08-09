@@ -217,8 +217,14 @@ export function ProjectDetailScreen() {
             <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
-              <button className="btn primary sm" onClick={handleGenerate}>
-                Generate
+              <button
+                className={eligiblePrinterIds.length === 0 ? 'btn sm' : 'btn primary sm'}
+                onClick={handleGenerate}
+                title={eligiblePrinterIds.length === 0
+                  ? 'No printers selected — jobs will be created but not dispatched'
+                  : undefined}
+              >
+                {eligiblePrinterIds.length === 0 ? 'Generate without dispatch' : 'Generate'}
               </button>
             </div>
           </div>
