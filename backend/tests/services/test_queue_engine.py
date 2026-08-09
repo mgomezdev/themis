@@ -895,6 +895,76 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
 
 
 @pytest.mark.asyncio
+async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
+    """The vendor client's completion callback and _reconcile_printing_jobs can both
+    observe status=='printing' for the same job before either commits. Only the
+    caller that wins the conditional-UPDATE claim should deduct the Spoolman spool
+    and bump lifetime counters; the loser must be a no-op."""
+    from unittest.mock import patch, MagicMock
+    from app.models import Job, GcodeFile, SpoolmanConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
+                                      "spoolman_spool_id": 42}]
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        job.actual_filament_grams = 17.5
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
+        session.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key=None))
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    engine = QueueEngine(db, mgr, slicer)
+
+    deduction_calls = []
+
+    async def fake_deduct(url, api_key, spool_id, grams):
+        deduction_calls.append({"spool_id": spool_id, "grams": grams})
+
+    # Force the interleave that the old code let happen implicitly: right after the
+    # OUTER call's initial read finds the job "printing", run a full SECOND
+    # handle_print_complete call to completion (the real winner) before the outer
+    # call reaches its own claim UPDATE.
+    orig_factory = db
+    state = {"patched": False, "second_ran": False}
+
+    def wrapped_factory():
+        session = orig_factory()
+        if not state["patched"]:
+            state["patched"] = True
+            orig_execute = session.execute
+
+            async def spy_execute(stmt, *a, **kw):
+                result = await orig_execute(stmt, *a, **kw)
+                if not state["second_ran"]:
+                    state["second_ran"] = True
+                    await engine.handle_print_complete(printer_id)
+                return result
+
+            session.execute = spy_execute
+        return session
+
+    engine._factory = wrapped_factory
+
+    with patch("app.services.queue_engine._deduct_spool", fake_deduct):
+        await engine.handle_print_complete(printer_id)
+
+    assert len(deduction_calls) == 1
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        assert printer.lifetime_job_count == 1
+
+
+@pytest.mark.asyncio
 async def test_slice_worker_continues_after_exception(db):
     """_slice_worker logs the error and calls task_done; the next coro still runs."""
     mgr = _make_mock_printer_manager([])

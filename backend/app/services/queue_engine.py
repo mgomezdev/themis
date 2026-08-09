@@ -1056,9 +1056,20 @@ class QueueEngine:
             if job is None:
                 return
             job_id = job.id
-            job.status = "complete"
-            job.completed_at = _now()
-            job.updated_at = _now()
+
+            # Conditional UPDATE claims the completion atomically. The vendor client's
+            # completion callback and _reconcile_printing_jobs can both observe
+            # status=="printing" for the same job (several awaits separate this read
+            # from the commit below); without this guard both would proceed and
+            # double the Spoolman deduction, lifetime counters, and job.complete
+            # webhook. Only the caller that flips the row wins.
+            claim = await session.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == "printing")
+                .values(status="complete", completed_at=_now(), updated_at=_now())
+            )
+            if claim.rowcount == 0:
+                return  # already claimed by a concurrent completion path
 
             # Accrue lifetime wear counters for maintenance tracking — every
             # successfully completed job, regardless of Spoolman config.
