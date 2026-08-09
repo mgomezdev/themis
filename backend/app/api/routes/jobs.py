@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,6 +42,14 @@ router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 _CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", "printing", "paused", "failed"}
 
 
+class FilamentMapEntry(BaseModel):
+    model_filament: int | None = None
+    tool_index: int | None = None
+    filament_id: int | None = None
+    filament_type: str | None = None
+    filament_color: str | None = None
+
+
 class PrinterConfigInput(BaseModel):
     printer_id: int
     print_profile: str
@@ -50,7 +58,16 @@ class PrinterConfigInput(BaseModel):
     filament_type: str | None = None
     filament_color: str | None = None
     tool_index: int | None = None
-    filament_map: list | None = None
+    filament_map: list[dict] | None = None
+
+    @field_validator("filament_map")
+    @classmethod
+    def _validate_filament_map(cls, v: list[dict] | None) -> list[dict] | None:
+        """Reject malformed entries (e.g. non-dict items, non-numeric tool_index)
+        at creation time instead of letting them poison the queue engine later."""
+        if v is None:
+            return None
+        return [FilamentMapEntry.model_validate(e).model_dump() for e in v]
 
 
 class OverrideCheckRequest(BaseModel):

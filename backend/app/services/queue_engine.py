@@ -520,15 +520,23 @@ class QueueEngine:
         all_ids = sorted(self._mgr.get_all_printer_ids())
         ready_set = {pid for pid in all_ids if self._mgr.is_printer_ready(pid)}
         # Ready printers: resume pre-sliced gcode if available, else claim and slice.
+        # Each printer is isolated in its own try/except — a poisoned job (e.g.
+        # malformed stored data) must not stall printers processed after it.
         for printer_id in sorted(ready_set):
-            async with self._factory() as session:
-                if not await self._try_resume_sliced_job(session, printer_id):
-                    await self._try_claim_for_printer(session, printer_id)
+            try:
+                async with self._factory() as session:
+                    if not await self._try_resume_sliced_job(session, printer_id):
+                        await self._try_claim_for_printer(session, printer_id)
+            except Exception:
+                logger.exception("Queue engine error processing printer %s", printer_id)
         # Offline printers: run the slice step now so gcode is ready when they come online.
         for printer_id in sorted(pid for pid in all_ids if pid not in ready_set):
-            async with self._factory() as session:
-                if not await self._has_pending_sliced_job(session, printer_id):
-                    await self._try_claim_for_printer(session, printer_id, slice_only=True)
+            try:
+                async with self._factory() as session:
+                    if not await self._has_pending_sliced_job(session, printer_id):
+                        await self._try_claim_for_printer(session, printer_id, slice_only=True)
+            except Exception:
+                logger.exception("Queue engine error processing printer %s", printer_id)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.

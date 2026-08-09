@@ -1,4 +1,6 @@
 import inspect
+import pytest
+from pydantic import ValidationError
 from app.services.slicer_service import SliceRequest
 from app.api.routes import jobs
 from app.api.routes.jobs import PrinterConfigInput
@@ -15,6 +17,26 @@ def test_printer_config_input_accepts_filament_map():
                            filament_map=[{"model_filament": 1, "tool_index": 2}])
     assert c.filament_map[0]["tool_index"] == 2
     assert PrinterConfigInput(printer_id=1, print_profile="p").filament_map is None
+
+
+def test_printer_config_input_rejects_non_dict_entry():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_map=["oops"])
+
+
+def test_printer_config_input_coerces_numeric_string_tool_index():
+    # Pydantic's lax int coercion turns "0" into 0 so downstream int comparisons
+    # (e.g. `0 <= tool_index < len(loaded)`) never see a str.
+    c = PrinterConfigInput(printer_id=1, print_profile="p",
+                           filament_map=[{"tool_index": "0"}])
+    assert c.filament_map[0]["tool_index"] == 0
+    assert isinstance(c.filament_map[0]["tool_index"], int)
+
+
+def test_printer_config_input_rejects_non_numeric_tool_index():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p",
+                           filament_map=[{"tool_index": "not-a-number"}])
 
 
 def test_job_routes_round_trip_filament_map():
