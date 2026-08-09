@@ -670,6 +670,59 @@ async def test_actual_values_captured_at_slice_time(db):
 
 
 @pytest.mark.asyncio
+async def test_run_slice_and_print_removes_gcode_when_cancelled_during_slice(db):
+    """A cancel that lands while the slice is in flight is caught by the
+    post-slice status check, which returns before creating a GcodeFile row.
+    The already-downloaded artifact must not be silently orphaned on disk —
+    nothing else ever cleans it up since no GcodeFile row references it."""
+    import tempfile, os
+    from pathlib import Path
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "Test Machine"
+        printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 15.50\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, mgr, slicer)
+    _install_fake_put(engine)
+
+    loop = asyncio.get_running_loop()
+
+    def fake_slice(req, *a, **kw):
+        # Runs off-thread via asyncio.to_thread — simulates a user cancel that
+        # commits while the (already in-flight) slice is producing its artifact.
+        async def _cancel():
+            async with db() as s:
+                j = await s.get(Job, job_id)
+                j.status = "cancelled"
+                await s.commit()
+        fut = asyncio.run_coroutine_threadsafe(_cancel(), loop)
+        fut.result(timeout=5)
+        return fake_gcode
+
+    with patch.object(slicer, "slice", side_effect=fake_slice), \
+         patch.object(engine, "_do_upload_and_print", new_callable=AsyncMock):
+        await engine._run_slice_and_print(job_id, printer_id, 1)
+
+    assert not os.path.exists(fake_gcode)
+
+
+@pytest.mark.asyncio
 async def test_run_estimate_sets_done_with_fields(db):
     """run_estimate writes estimate fields when slice succeeds."""
     import tempfile, os

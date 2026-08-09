@@ -839,6 +839,12 @@ class QueueEngine:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job is None or job.status == "cancelled":
+                # No GcodeFile row will exist to reference this artifact — nothing
+                # else will ever clean it up, so remove it here.
+                try:
+                    os.remove(gcode_path)
+                except OSError:
+                    pass
                 return
             grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
             gcode_rec = GcodeFile(
