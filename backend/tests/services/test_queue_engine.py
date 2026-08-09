@@ -1299,6 +1299,44 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
 
 
 @pytest.mark.asyncio
+async def test_block_job_conditional_update_guards_against_cancel_during_health_probe(db):
+    """Same race, but for the unreachable-Laminus block path: a user cancel that
+    commits while the health probe is in flight must not be silently
+    overwritten with status='blocked'."""
+    from unittest.mock import patch, MagicMock
+
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+
+    loop = asyncio.get_running_loop()
+
+    def fake_httpx_get(url, timeout=None):
+        # Runs in the to_thread executor, simulating a user cancel that commits
+        # while the health probe is in flight.
+        async def _cancel():
+            async with db() as session:
+                job = await session.get(Job, job_id)
+                job.status = "cancelled"
+                await session.commit()
+        fut = asyncio.run_coroutine_threadsafe(_cancel(), loop)
+        fut.result(timeout=5)
+        raise ConnectionError("simulated Laminus unreachable")
+
+    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
+         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+        await qe._process_queue()
+        await asyncio.sleep(0.1)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        # Must stay cancelled, not resurrected to "blocked".
+        assert job.status == "cancelled"
+        assert job.block_reason is None
+
+
+@pytest.mark.asyncio
 async def test_resume_sliced_job_conditional_update_guards_against_cancel(db, tmp_path):
     """Same race for the pre-sliced resume path: a cancel that commits between the
     row lookup and the claim UPDATE must not be overwritten with status='uploading'."""

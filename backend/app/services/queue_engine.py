@@ -729,10 +729,17 @@ class QueueEngine:
     async def _block_job(self, session: AsyncSession, job: Job, reason: str) -> None:
         job_id = job.id
         already = job.status == "blocked" and job.block_reason == reason
-        job.status = "blocked"
-        job.block_reason = reason
-        job.assigned_printer_id = None
-        job.updated_at = _now()
+        # Conditional UPDATE, mirroring the claim guard above: some call sites reach
+        # here after an await (the Laminus health probe), so a concurrent status
+        # change (e.g. a user cancel) may have committed in the gap. Only overwrite
+        # if the job is still in a blockable state.
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
+            .values(status="blocked", block_reason=reason, assigned_printer_id=None, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return  # no longer blockable — don't resurrect a cancelled job
         await session.commit()
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
