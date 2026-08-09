@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import config
 from ...database import get_session
-from ...models import UploadedFile, Tag, FileTag, Job
+from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
 from ...services.library_scanner import (
     LibraryScanner, folder_of, sha256_file, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
@@ -341,7 +341,7 @@ async def update_file(file_id: int, body: FilePatch,
     summary="Delete file",
     responses={
         404: {"description": "File not found"},
-        409: {"description": "File is referenced by an active job"},
+        409: {"description": "File is referenced by an active job or a project item"},
     },
 )
 async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
@@ -354,17 +354,28 @@ async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)
     )).first()
     if active:
         raise HTTPException(409, "File is referenced by an active job")
-    p = Path(f.stored_path)
+    referenced = (await session.execute(
+        select(ProjectItem.id).where(ProjectItem.file_id == file_id).limit(1)
+    )).first()
+    if referenced:
+        raise HTTPException(409, "File is referenced by a project item")
+
+    stored_path = f.stored_path
+    for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
+        await session.delete(link)
+    await session.delete(f)
+    await session.commit()
+
+    # Only touch the filesystem after the DB row is actually gone — otherwise a
+    # commit failure (e.g. an unanticipated FK reference) leaves the file deleted
+    # but the row still pointing at it.
+    p = Path(stored_path)
     if p.exists():
         p.unlink()
     cache = config.get_filecache_dir() / str(file_id)
     if cache.exists():
         import shutil
         shutil.rmtree(cache, ignore_errors=True)
-    for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
-        await session.delete(link)
-    await session.delete(f)
-    await session.commit()
     return {"deleted": file_id}
 
 
