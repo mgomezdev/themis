@@ -8,6 +8,7 @@ import shutil
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 import httpx
@@ -418,6 +419,28 @@ class QueueEngine:
                 await session.commit()
         logger.warning("Estimate failed for job %s: %s", job_id, reason)
         await self._broadcast_job(job_id)
+
+    async def run_verify_slice(self, req: SliceRequest, output_dir: Path) -> str:
+        """Test-slice through the same serialized _slice_queue as production and
+        estimate slices, at the lowest priority. Routing it through self._executor
+        directly (the old behaviour) let a debug-only test-slice — which can block
+        for up to poll_status's ~620s timeout — hold one of only 4 threads that
+        _do_upload_and_print also depends on for upload_file/start_print, so
+        finished jobs could sit in "uploading" for minutes behind a verify-slice."""
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+
+        async def _do_verify_slice():
+            try:
+                result = await asyncio.to_thread(self._slicer.slice, req, output_dir)
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception as exc:
+                if not fut.done():
+                    fut.set_exception(exc)
+
+        await self._slice_queue.put((2, next(self._slice_seq), _do_verify_slice()))
+        return await fut
 
     def wake(self) -> None:
         self._event.set()

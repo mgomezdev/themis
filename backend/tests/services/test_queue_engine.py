@@ -559,6 +559,63 @@ async def test_equal_priority_no_type_error(db):
 
 
 @pytest.mark.asyncio
+async def test_run_verify_slice_goes_through_slice_queue_not_bare_executor(db, tmp_path):
+    """verify-slice must be enqueued on the shared _slice_queue (consumed by
+    asyncio.to_thread), not dispatched straight to queue_engine._executor — that
+    4-thread pool is also what _do_upload_and_print depends on for
+    upload_file/start_print, and a debug-only test-slice can block for minutes."""
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService, SliceRequest
+
+    mgr = _make_mock_printer_manager([])
+    gp = str(tmp_path / "out.gcode")
+    Path(gp).write_text("G28")
+    slicer = MagicMock(spec=SlicerService)
+    slicer.slice.return_value = gp
+    engine = QueueEngine(db, mgr, slicer)
+    _install_fake_put(engine)
+
+    req = SliceRequest(job_id=1, source_3mf="x.3mf", plate_number=1,
+                        machine_preset="m", process_preset="p", filament_presets=["f"])
+    output_dir = tmp_path / "verify"
+
+    result = await engine.run_verify_slice(req, output_dir)
+
+    assert result == gp
+    slicer.slice.assert_called_once_with(req, output_dir)
+
+
+@pytest.mark.asyncio
+async def test_verify_slice_priority_lower_than_production_and_estimate(db):
+    """verify-slice (priority 2) is dequeued after both production (0) and
+    estimate (1) slices already sitting in the queue."""
+    import itertools
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    mgr = _make_mock_printer_manager([])
+    slicer = MagicMock(spec=SlicerService)
+    engine = QueueEngine(db, mgr, slicer)
+    seq = itertools.count()
+
+    results = []
+
+    async def coro(label):
+        results.append(label)
+
+    await engine._slice_queue.put((2, next(seq), coro("verify")))
+    await engine._slice_queue.put((1, next(seq), coro("estimate")))
+    await engine._slice_queue.put((0, next(seq), coro("production")))
+
+    for _ in range(3):
+        _, _s, c = await engine._slice_queue.get()
+        await c
+        engine._slice_queue.task_done()
+
+    assert results == ["production", "estimate", "verify"]
+
+
+@pytest.mark.asyncio
 async def test_actual_values_captured_at_slice_time(db):
     """After a production slice, actual_filament_grams/actual_seconds/actual_filament_breakdown
     are persisted on the Job row in the same session block as GcodeFile creation."""

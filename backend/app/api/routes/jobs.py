@@ -778,11 +778,12 @@ async def verify_slice(
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
     # otherwise destroy a parked job's already-produced production artifact.
     output_dir = queue_engine._slicer._data_dir / "gcode_verify" / str(job_id)
-    loop = asyncio.get_running_loop()
     try:
-        await loop.run_in_executor(
-            queue_engine._executor, queue_engine._slicer.slice, req, output_dir
-        )
+        # Routed through the same serialized _slice_queue as production/estimate
+        # slices (lowest priority) rather than queue_engine._executor directly —
+        # that pool is also what upload_file/start_print depend on, and a
+        # debug-only test-slice can block for minutes.
+        await queue_engine.run_verify_slice(req, output_dir)
         return {"ok": True, "error": None}
     except SliceError as exc:
         return {"ok": False, "error": str(exc)}

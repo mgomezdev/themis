@@ -237,17 +237,16 @@ async def test_verify_slice_success(client, tmp_path):
     job_id = create.json()["id"]
 
     mock_qe = MagicMock()
-    mock_qe._executor = None  # use default thread pool so run_in_executor works
     mock_qe._slicer._data_dir = tmp_path
     expected_output_dir = tmp_path / "gcode_verify" / str(job_id)
 
-    def fake_slice(req, output_dir=None):
+    async def fake_run_verify_slice(req, output_dir):
         output_dir.mkdir(parents=True, exist_ok=True)
         gcode_file = output_dir / "out.gcode"
         gcode_file.write_text("G28")
         return str(gcode_file)
 
-    mock_qe._slicer.slice.side_effect = fake_slice
+    mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
@@ -274,8 +273,12 @@ async def test_verify_slice_slice_error(client, tmp_path):
     job_id = create.json()["id"]
 
     mock_qe = MagicMock()
-    mock_qe._executor = None
-    mock_qe._slicer.slice.side_effect = SliceError("OrcaSlicer exited with code 1\nboom")
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        raise SliceError("OrcaSlicer exited with code 1\nboom")
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
@@ -327,18 +330,17 @@ async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path
     prod_gcode.write_text("G28 ; production")
 
     mock_qe = MagicMock()
-    mock_qe._executor = None
     mock_qe._slicer._data_dir = tmp_path
     expected_output_dir = tmp_path / "gcode_verify" / str(job_id)
 
-    def fake_slice(req, output_dir=None):
+    async def fake_run_verify_slice(req, output_dir):
         assert output_dir == expected_output_dir, "verify-slice must not slice into the production gcode dir"
         output_dir.mkdir(parents=True, exist_ok=True)
         out = output_dir / "test.gcode"
         out.write_text("G28 ; test")
         return str(out)
 
-    mock_qe._slicer.slice.side_effect = fake_slice
+    mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(f"/api/v1/jobs/{job_id}/verify-slice",
