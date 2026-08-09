@@ -57,6 +57,30 @@ async def test_queue_shows_active_jobs(client, tmp_path):
     assert job_id in ids
 
 
+async def test_queue_shows_sliced_jobs(client, tmp_path):
+    """A parked "sliced" job (production gcode ready, printer not yet ready to
+    receive) must appear in GET /api/v1/queue with its full enriched fields —
+    otherwise the frontend only learns about it via the queue_update websocket
+    broadcast (which sends only id/status/queue_position), synthesizing a
+    mostly-empty job entry ("Plate undefined")."""
+    from app.models import Job
+    from app.main import app
+    from app.database import get_session
+
+    job_id = await _create_job(client, tmp_path)
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.status = "sliced"
+    await session.commit()
+    await agen.aclose()
+
+    response = await client.get("/api/v1/queue")
+    assert response.status_code == 200
+    ids = [j["id"] for j in response.json()]
+    assert job_id in ids
+
+
 async def test_queue_reorder(client, tmp_path):
     job1 = await _create_job(client, tmp_path)
     job2 = await _create_job(client, tmp_path)
