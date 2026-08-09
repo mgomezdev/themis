@@ -71,13 +71,21 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-export function PerPrinterConfig({ printerId, printers, config, onChange, modelFilaments }: {
+export function PerPrinterConfig({ printerId, printers, config: rawConfig, onChange, modelFilaments }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
   onChange: (patch: Partial<PerPrinterCfg>) => void;
   modelFilaments?: ModelFilament[];
 }) {
+  // The API's wire form of "no preference" is "any"; this component's own defer/match
+  // logic still treats that as null. onChange still emits null — NewJobScreen/EditJobScreen
+  // convert null -> "any" at the API boundary.
+  const config: PerPrinterCfg = {
+    ...rawConfig,
+    filamentType: rawConfig.filamentType === 'any' ? null : rawConfig.filamentType,
+    filamentColor: rawConfig.filamentColor === 'any' ? null : rawConfig.filamentColor,
+  };
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
   const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
