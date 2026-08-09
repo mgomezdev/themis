@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
@@ -120,6 +120,13 @@ interface LocalPart {
 let _lid = 0;
 const newLocalId = () => String(++_lid);
 
+type RemovedSnapshot =
+  | { kind: 'item'; label: string; index: number; item: LocalItem }
+  | { kind: 'link'; label: string; index: number; link: LocalLink }
+  | { kind: 'part'; label: string; index: number; part: LocalPart };
+
+const UNDO_TIMEOUT_MS = 6000;
+
 // ---------------------------------------------------------------------------
 // Error banner
 // ---------------------------------------------------------------------------
@@ -175,6 +182,44 @@ export function ProjectBuilderScreen() {
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
 
+  // Undo toast for accidental removals (items, links, non-printed parts)
+  const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
+  const undoTimerRef = useRef<number | null>(null);
+  function scheduleUndoClear() {
+    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = window.setTimeout(() => setLastRemoved(null), UNDO_TIMEOUT_MS);
+  }
+  function undoRemove() {
+    if (!lastRemoved) return;
+    if (undoTimerRef.current) window.clearTimeout(undoTimerRef.current);
+    if (lastRemoved.kind === 'item') {
+      setItems(prev => {
+        const next = [...prev];
+        next.splice(lastRemoved.index, 0, lastRemoved.item);
+        return next;
+      });
+    } else if (lastRemoved.kind === 'link') {
+      setLinks(prev => {
+        const next = [...prev];
+        next.splice(lastRemoved.index, 0, lastRemoved.link);
+        return next;
+      });
+      if (lastRemoved.link.serverId) {
+        setDeletedLinkIds(prev => prev.filter(id => id !== lastRemoved.link.serverId));
+      }
+    } else {
+      setParts(prev => {
+        const next = [...prev];
+        next.splice(lastRemoved.index, 0, lastRemoved.part);
+        return next;
+      });
+      if (lastRemoved.part.serverId) {
+        setDeletedPartIds(prev => prev.filter(id => id !== lastRemoved.part.serverId));
+      }
+    }
+    setLastRemoved(null);
+  }
+
   // Dirty tracking
   const [cleanSnap, setCleanSnap] = useState('');
   const [saveOk, setSaveOk] = useState(false);
@@ -201,11 +246,15 @@ export function ProjectBuilderScreen() {
     f.original_filename.toLowerCase().endsWith('.stl') && !f.missing,
   );
   const [selectedFolder, setSelectedFolder] = useState('');
+  const [search, setSearch] = useState('');
+  const searchLower = search.trim().toLowerCase();
   const folderTree = buildStlTree(stlFiles);
-  const folderFiles = stlFiles.filter(f => {
-    const norm = f.folder.replace(/^\//, '');
-    return selectedFolder === '' ? true : norm === selectedFolder;
-  });
+  const folderFiles = searchLower
+    ? stlFiles.filter(f => f.original_filename.toLowerCase().includes(searchLower))
+    : stlFiles.filter(f => {
+        const norm = f.folder.replace(/^\//, '');
+        return selectedFolder === '' ? true : norm === selectedFolder;
+      });
 
   // Load existing project
   useEffect(() => {
@@ -251,19 +300,27 @@ export function ProjectBuilderScreen() {
   }, [projectId]);
 
   function addFile(f: LibraryFile) {
-    setItems(prev => [
-      ...prev,
-      {
-        localId: newLocalId(),
-        file_id: f.id,
-        file_name: f.original_filename,
-        quantity: 1,
-        filament_type: 'any',
-        filament_color: 'any',
-        filament_id: null,
-        sort_order: prev.length,
-      },
-    ]);
+    setItems(prev => {
+      const existing = prev.find(it => it.file_id === f.id);
+      if (existing) {
+        return prev.map(it =>
+          it.localId === existing.localId ? { ...it, quantity: it.quantity + 1 } : it,
+        );
+      }
+      return [
+        ...prev,
+        {
+          localId: newLocalId(),
+          file_id: f.id,
+          file_name: f.original_filename,
+          quantity: 1,
+          filament_type: 'any',
+          filament_color: 'any',
+          filament_id: null,
+          sort_order: prev.length,
+        },
+      ];
+    });
   }
 
   function updateItem(localId: string, patch: Partial<LocalItem>) {
@@ -271,7 +328,31 @@ export function ProjectBuilderScreen() {
   }
 
   function removeItem(localId: string) {
+    const index = items.findIndex(it => it.localId === localId);
+    if (index === -1) return;
+    setLastRemoved({ kind: 'item', label: items[index].file_name, index, item: items[index] });
     setItems(prev => prev.filter(it => it.localId !== localId));
+    scheduleUndoClear();
+  }
+
+  function removeLink(localId: string) {
+    const index = links.findIndex(l => l.localId === localId);
+    if (index === -1) return;
+    const link = links[index];
+    if (link.serverId) setDeletedLinkIds(prev => [...prev, link.serverId!]);
+    setLastRemoved({ kind: 'link', label: link.label || link.url || 'link', index, link });
+    setLinks(prev => prev.filter(l => l.localId !== localId));
+    scheduleUndoClear();
+  }
+
+  function removePart(localId: string) {
+    const index = parts.findIndex(p => p.localId === localId);
+    if (index === -1) return;
+    const part = parts[index];
+    if (part.serverId) setDeletedPartIds(prev => [...prev, part.serverId!]);
+    setLastRemoved({ kind: 'part', label: part.name || 'part', index, part });
+    setParts(prev => prev.filter(p => p.localId !== localId));
+    scheduleUndoClear();
   }
 
   function setItemFilament(localId: string, req: FilamentRequirement) {
@@ -280,6 +361,15 @@ export function ProjectBuilderScreen() {
       filament_color: req.filament_color,
       filament_id: req.filament_id,
     });
+  }
+
+  function applyFilamentToAll(req: FilamentRequirement) {
+    setItems(prev => prev.map(it => ({
+      ...it,
+      filament_type: req.filament_type,
+      filament_color: req.filament_color,
+      filament_id: req.filament_id,
+    })));
   }
 
   async function saveProject(): Promise<number> {
@@ -414,11 +504,20 @@ export function ProjectBuilderScreen() {
                       color: 'var(--text-3)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           STL Files
         </div>
-        <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
+        <input
+          className="input"
+          placeholder="Search files…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{ marginBottom: 6, fontSize: 12 }}
+        />
+        {!searchLower && (
+          <FolderRow node={folderTree} depth={0} selected={selectedFolder} onSelect={setSelectedFolder} />
+        )}
         <div style={{ borderTop: '1px solid var(--border)', marginTop: 4, paddingTop: 6 }}>
           {folderFiles.length === 0 && (
             <div style={{ padding: '8px 10px', fontSize: 12, color: 'var(--text-4)' }}>
-              No STL files here
+              {searchLower ? 'No matching STL files' : 'No STL files here'}
             </div>
           )}
           {folderFiles.map(f => (
@@ -565,10 +664,7 @@ export function ProjectBuilderScreen() {
               />
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  if (lk.serverId) setDeletedLinkIds(prev => [...prev, lk.serverId!]);
-                  setLinks(prev => prev.filter(l => l.localId !== lk.localId));
-                }}
+                onClick={() => removeLink(lk.localId)}
                 title="Remove link"
               >
                 {Icons.x}
@@ -620,10 +716,7 @@ export function ProjectBuilderScreen() {
               </label>
               <button
                 className="btn ghost icon sm"
-                onClick={() => {
-                  if (pt.serverId) setDeletedPartIds(prev => [...prev, pt.serverId!]);
-                  setParts(prev => prev.filter(p => p.localId !== pt.localId));
-                }}
+                onClick={() => removePart(pt.localId)}
                 title="Remove part"
               >
                 {Icons.x}
@@ -706,14 +799,29 @@ export function ProjectBuilderScreen() {
                     spoolmanEnabled={spoolmanEnabled}
                   />
 
-                  {/* Remove */}
-                  <button
-                    className="btn ghost icon sm"
-                    onClick={() => removeItem(it.localId)}
-                    title="Remove"
-                  >
-                    {Icons.x}
-                  </button>
+                  {/* Apply to all + Remove */}
+                  <span style={{ display: 'flex', gap: 4 }}>
+                    {items.length > 1 && (
+                      <button
+                        className="btn ghost icon sm"
+                        onClick={() => applyFilamentToAll({
+                          filament_type: it.filament_type,
+                          filament_color: it.filament_color,
+                          filament_id: it.filament_id,
+                        })}
+                        title="Apply this filament to every part"
+                      >
+                        {Icons.copy}
+                      </button>
+                    )}
+                    <button
+                      className="btn ghost icon sm"
+                      onClick={() => removeItem(it.localId)}
+                      title="Remove"
+                    >
+                      {Icons.x}
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
@@ -734,11 +842,14 @@ export function ProjectBuilderScreen() {
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button
-                className="btn primary sm"
+                className={eligiblePrinterIds.length === 0 ? 'btn sm' : 'btn primary sm'}
                 onClick={() => handleGenerate(eligiblePrinterIds)}
                 disabled={!canSave || items.length === 0}
+                title={eligiblePrinterIds.length === 0
+                  ? 'No printers selected — jobs will be created but not dispatched'
+                  : undefined}
               >
-                Generate
+                {eligiblePrinterIds.length === 0 ? 'Generate without dispatch' : 'Generate'}
               </button>
             </div>
           </div>
@@ -809,6 +920,20 @@ export function ProjectBuilderScreen() {
           pointerEvents: 'none',
         }}>
           {Icons.check} Saved
+        </div>
+      )}
+
+      {/* Undo-removal toast */}
+      {lastRemoved && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: 24, zIndex: 1000,
+          background: 'var(--bg-2)', border: '1px solid var(--border)', color: 'var(--text-1)',
+          padding: '10px 12px 10px 16px', borderRadius: 8,
+          display: 'flex', alignItems: 'center', gap: 10,
+          fontSize: 13, boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
+        }}>
+          <span>Removed {lastRemoved.label || lastRemoved.kind}</span>
+          <button className="btn sm" onClick={undoRemove}>Undo</button>
         </div>
       )}
     </div>
