@@ -137,10 +137,16 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
 
 
 def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[PlateInfo]:
-    """Parse a 3MF ZIP and return plate metadata. Extracts thumbnails if thumbnail_dir given."""
+    """Parse a 3MF ZIP and return plate metadata. Extracts thumbnails if thumbnail_dir given.
+    Returns [] for a corrupt/unreadable ZIP rather than raising, like its siblings."""
     plates: list[PlateInfo] = []
 
-    with zipfile.ZipFile(file_path, "r") as zf:
+    try:
+        zf = zipfile.ZipFile(file_path, "r")
+    except (zipfile.BadZipFile, OSError):
+        return []
+
+    with zf:
         names = set(zf.namelist())
 
         # Load timing/weight data from slice_info.config if present
