@@ -959,6 +959,90 @@ async def test_startup_resets_pending_estimates(db):
 
 
 @pytest.mark.asyncio
+async def test_claim_conditional_update_guards_against_cancel_during_health_probe(db):
+    """A user cancel that commits while _try_claim_for_printer awaits the Laminus
+    health probe must not be silently overwritten with status='slicing' — that
+    would let the printer start on a job the user believes was cancelled."""
+    from unittest.mock import patch, MagicMock
+
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+
+    loop = asyncio.get_running_loop()
+
+    def fake_httpx_get(url, timeout=None):
+        # Runs in the to_thread executor, simulating a user cancel that commits
+        # while the health probe is in flight.
+        async def _cancel():
+            async with db() as session:
+                job = await session.get(Job, job_id)
+                job.status = "cancelled"
+                await session.commit()
+        fut = asyncio.run_coroutine_threadsafe(_cancel(), loop)
+        fut.result(timeout=5)
+        resp = MagicMock()
+        resp.is_success = True
+        return resp
+
+    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
+         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+        await qe._process_queue()
+        await asyncio.sleep(0.1)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        # Must stay cancelled, not resurrected to "slicing"/"printing".
+        assert job.status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_resume_sliced_job_conditional_update_guards_against_cancel(db, tmp_path):
+    """Same race for the pre-sliced resume path: a cancel that commits between the
+    row lookup and the claim UPDATE must not be overwritten with status='uploading'."""
+    from unittest.mock import MagicMock
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+    gcode_path = str(tmp_path / "output.gcode")
+    Path(gcode_path).write_text("G28\n")
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.status = "sliced"
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path=gcode_path))
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    qe = QueueEngine(db, mgr, MagicMock())
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+
+        orig_get = session.get
+
+        async def spy_get(model, pk, *a, **kw):
+            if model is Printer:
+                # Simulate a concurrent cancel committing between our config/printer
+                # lookups and the claim UPDATE below.
+                async with db() as s2:
+                    j = await s2.get(Job, job_id)
+                    j.status = "cancelled"
+                    await s2.commit()
+            return await orig_get(model, pk, *a, **kw)
+
+        session.get = spy_get
+
+        claimed = await qe._try_resume_sliced_job(session, printer_id)
+        assert claimed is False
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_handle_print_complete_accrues_lifetime_counters(db):
     printer_id = 1
     job_id = await _seed_job(db, printer_id, status="printing")

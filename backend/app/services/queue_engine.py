@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Callable
 
 import httpx
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import get_laminus_sidecar_url
@@ -669,12 +669,16 @@ class QueueEngine:
             await self._block_job(session, job, "Laminus is unreachable — slicing paused")
             return
 
-        # Claim → slice.
-        job.status = "slicing"
-        job.assigned_printer_id = printer_id
-        job.block_reason = None
-        job.updated_at = _now()
+        # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
+        # user cancel) that committed while we awaited the Laminus health probe above.
         plate_number = job.plate_number
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
+            .values(status="slicing", assigned_printer_id=printer_id, block_reason=None, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return  # no longer claimable — bail without starting the slice/print
         await session.commit()
 
         asyncio.create_task(
@@ -947,9 +951,15 @@ class QueueEngine:
         gcode_path = gcode.path
         plate_number = job.plate_number
 
-        job.status = "uploading"
-        job.assigned_printer_id = printer_id
-        job.updated_at = _now()
+        # Conditional UPDATE guards against a status change (e.g. a user cancel) that
+        # committed during the DB round-trips above (config/printer lookups).
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status == "sliced")
+            .values(status="uploading", assigned_printer_id=printer_id, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return False  # no longer claimable
         await session.commit()
         asyncio.create_task(
             self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
