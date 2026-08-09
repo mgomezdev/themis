@@ -123,7 +123,7 @@ async def _create_job(client, tmp_path, printer_id):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     return create.json()["id"]
 

@@ -56,8 +56,8 @@ class PrinterConfigInput(BaseModel):
     print_profile: str
     filament_profile: str | None = None
     filament_id: int | None = None
-    filament_type: str | None = None
-    filament_color: str | None = None
+    filament_type: str
+    filament_color: str
     tool_index: int | None = None
     filament_map: list[dict] | None = None
 
@@ -69,6 +69,15 @@ class PrinterConfigInput(BaseModel):
         if v is None:
             return None
         return [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+
+    @field_validator("filament_type", "filament_color")
+    @classmethod
+    def _validate_filament_ask(cls, v: str) -> str:
+        """"any" is the only way to express "no preference" — null/blank is no
+        longer accepted here (filament_map entries are unaffected by this rule)."""
+        if not v or not v.strip():
+            raise ValueError('must be "any" or a specific value, not null/blank')
+        return v
 
 
 class OverrideCheckRequest(BaseModel):

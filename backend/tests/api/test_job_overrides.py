@@ -53,6 +53,8 @@ async def test_create_job_stores_overrides(client: AsyncClient, tmp_path):
             "printer_configs": [{
                 "printer_id": printer_id,
                 "print_profile": "0.16mm Profile",
+                "filament_type": "any",
+                "filament_color": "any",
             }],
         })
     assert resp.status_code == 201
@@ -73,7 +75,7 @@ async def test_create_job_strips_non_curated_override_keys(client: AsyncClient, 
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "overrides": {"layer_height": "0.15", "post_process": "rm -rf /", "unknown_key": "x"},
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P", "filament_type": "any", "filament_color": "any"}],
         })
     assert resp.status_code == 201
     detail = await client.get(f"/api/v1/jobs/{resp.json()['id']}/details")
@@ -88,7 +90,7 @@ async def test_create_job_without_overrides_is_null(client: AsyncClient, tmp_pat
         resp = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
             "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "Profile"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "Profile", "filament_type": "any", "filament_color": "any"}],
         })
     assert resp.status_code == 201
     job_id = resp.json()["id"]
@@ -107,14 +109,14 @@ async def test_update_job_configs_clears_overrides_when_omitted(client: AsyncCli
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "overrides": {"layer_height": "0.15"},
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = resp.json()["id"]
 
     # PATCH without overrides field → overrides cleared
     with patch("app.api.routes.jobs.queue_engine"):
         await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "P"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "P", "filament_type": "any", "filament_color": "any"}],
         })
 
     detail = await client.get(f"/api/v1/jobs/{job_id}/details")

@@ -47,7 +47,7 @@ async def test_create_job(client, tmp_path):
         "plate_number": 1,
         "order_id": None,
         "printer_configs": [
-            {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+            {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
         ],
     }
     with patch("app.api.routes.jobs.queue_engine") as mock_qe:
@@ -81,7 +81,7 @@ async def test_get_job(client, tmp_path):
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
             ],
         })
     job_id = create.json()["id"]
@@ -98,7 +98,7 @@ async def test_cancel_job(client, tmp_path):
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
             ],
         })
     job_id = create.json()["id"]
@@ -115,7 +115,7 @@ async def test_cancel_complete_job_fails(client, tmp_path):
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
             ],
         })
     job_id = create.json()["id"]
@@ -132,7 +132,7 @@ async def test_get_slice_failures(client, tmp_path):
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
             ],
         })
     job_id = create.json()["id"]
@@ -152,7 +152,7 @@ async def test_unblock_clears_slice_failure_and_requeues(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -195,7 +195,7 @@ async def test_cancel_running_job_stops_printer(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -232,7 +232,7 @@ async def test_verify_slice_success(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -268,7 +268,7 @@ async def test_verify_slice_slice_error(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -296,7 +296,7 @@ async def test_verify_slice_missing_printer_config(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -319,7 +319,7 @@ async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -362,7 +362,7 @@ async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}],
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
         })
     job_id = create.json()["id"]
 
@@ -386,7 +386,7 @@ async def test_job_response_includes_estimate_fields(client, tmp_path):
     payload = {
         "uploaded_file_id": file_id,
         "plate_number": 1,
-        "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}],
+        "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}],
     }
     with patch("app.api.routes.jobs.queue_engine") as mock_qe:
         mock_qe.spawn_estimate = MagicMock()
@@ -414,7 +414,7 @@ async def test_cancel_job_clears_estimate_status(client, tmp_path):
         mock_qe.wake = MagicMock()
         resp = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}]
         })
     job_id = resp.json()["id"]
 
@@ -484,7 +484,7 @@ async def test_job_details_returns_live_fields(client, tmp_path):
         mock_qe.wake = MagicMock()
         resp = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}]
         })
     job_id = resp.json()["id"]
 

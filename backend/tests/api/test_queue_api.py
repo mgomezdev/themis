@@ -37,7 +37,7 @@ async def _create_job(client, tmp_path) -> int:
             "uploaded_file_id": file_id,
             "plate_number": 1,
             "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
             ],
         })
     return create.json()["id"]

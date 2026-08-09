@@ -260,7 +260,7 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
         mock_qe.wake = MagicMock()
         j1 = (await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}]
         })).json()
 
     # Set project_id and estimates on job via DB override
