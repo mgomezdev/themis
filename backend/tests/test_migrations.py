@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import Base
+from app.migrations import v012_filament_any_keyword
 from app.migrations.runner import run_migrations
 
 
@@ -73,4 +74,49 @@ async def test_v011_adds_maintenance_tables_and_printer_counters():
         )).fetchall()}
     assert {"lifetime_job_count", "lifetime_print_seconds"} <= printer_cols
     assert {"maintenance_items", "maintenance_triggers", "printer_maintenance_state"} <= tables
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v012_backfills_and_locks_filament_any_keyword():
+    """Legacy NULL/blank filament_type/filament_color get backfilled to 'any', and
+    the columns become NOT NULL. Built against a hand-rolled pre-v012 (nullable)
+    table since Base.metadata already reflects the post-migration schema."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE job_printer_configs (
+                id INTEGER PRIMARY KEY,
+                job_id INTEGER NOT NULL,
+                printer_id INTEGER NOT NULL,
+                print_profile VARCHAR(512) NOT NULL,
+                filament_profile VARCHAR(512),
+                filament_id INTEGER,
+                filament_type VARCHAR(100),
+                filament_color VARCHAR(20),
+                tool_index INTEGER,
+                filament_map JSON,
+                slice_failed BOOLEAN NOT NULL DEFAULT 0,
+                slice_error TEXT
+            )
+        """))
+        await conn.execute(text("""
+            INSERT INTO job_printer_configs
+                (id, job_id, printer_id, print_profile, filament_type, filament_color)
+            VALUES
+                (1, 1, 1, 'p1', NULL, NULL),
+                (2, 1, 1, 'p1', '', 'blue'),
+                (3, 1, 1, 'p1', 'PLA', 'any')
+        """))
+
+        await v012_filament_any_keyword.up(conn)
+
+        rows = (await conn.execute(text(
+            "SELECT id, filament_type, filament_color FROM job_printer_configs ORDER BY id"
+        ))).fetchall()
+        info = (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()
+    notnull = {r[1]: r[3] for r in info}
+    assert notnull["filament_type"] == 1
+    assert notnull["filament_color"] == 1
+    assert [tuple(r[1:]) for r in rows] == [("any", "any"), ("any", "blue"), ("PLA", "any")]
     await engine.dispose()
