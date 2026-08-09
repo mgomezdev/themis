@@ -248,7 +248,23 @@ class QueueEngine:
         task.add_done_callback(self._estimate_tasks.discard)
 
     async def run_estimate(self, job_id: int) -> None:
-        """Background test slice to populate estimate_* fields on the Job row."""
+        """Background test slice to populate estimate_* fields on the Job row.
+
+        Wraps _do_run_estimate so an unexpected exception anywhere in the estimate
+        pipeline still marks the estimate failed instead of leaving it "pending"
+        forever — spawn_estimate's done-callback only discards the task and never
+        retrieves the exception, so without this the UI spinner would never resolve.
+        """
+        try:
+            await self._do_run_estimate(job_id)
+        except Exception as exc:
+            logger.exception("Unexpected error in run_estimate for job %s", job_id)
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+                token = job.estimate_token if job else None
+            await self._fail_estimate(job_id, token, f"Unexpected error: {exc}")
+
+    async def _do_run_estimate(self, job_id: int) -> None:
         import json as _json
 
         # Step 1 — Load job and resolve config
@@ -276,23 +292,23 @@ class QueueEngine:
                 .limit(1)
             )
             config = cfg_result.scalar_one_or_none()
-            if config is None:
-                return
-
-            printer = await session.get(Printer, config.printer_id)
-            if printer is None:
-                return
+            # No config or no matching printer: fall through to Step 2 below, which
+            # already fails the estimate — machine_preset/filament_profiles stay at
+            # their empty defaults so that check catches it. (Previously this
+            # returned here directly, skipping _fail_estimate and leaving the
+            # estimate stuck on "pending" forever.)
+            printer = await session.get(Printer, config.printer_id) if config is not None else None
             uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
 
             # Capture all scalars before session closes
-            machine_preset = printer.current_orca_printer_profile or ""
-            print_profile = config.print_profile or ""
+            machine_preset = (printer.current_orca_printer_profile or "") if printer else ""
+            print_profile = (config.print_profile or "") if config else ""
             stored_path = uploaded_file.stored_path if uploaded_file else None
-            printer_name = printer.name
-            loaded = printer.loaded_filaments or []
+            printer_name = printer.name if printer else None
+            loaded = (printer.loaded_filaments or []) if printer else []
 
             # Resolve filament profiles
-            fmap = config.filament_map
+            fmap = config.filament_map if config else None
             if fmap:
                 for entry in sorted(fmap, key=lambda e: e.get("tool_index", 0) or 0):
                     ti = entry.get("tool_index")
@@ -301,7 +317,7 @@ class QueueEngine:
                         filament_profiles.append(ep)
                     elif ti is not None and ti < len(loaded):
                         filament_profiles.append(loaded[ti].get("filament_profile", ""))
-            else:
+            elif config is not None:
                 slot = _slot_for_config(config, loaded)
                 fp = config.filament_profile or (slot.get("filament_profile") if slot else None)
                 if fp:

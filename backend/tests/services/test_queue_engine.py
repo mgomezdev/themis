@@ -776,6 +776,72 @@ async def test_run_estimate_sets_done_with_fields(db):
 
 
 @pytest.mark.asyncio
+async def test_run_estimate_fails_when_no_printer_config(db):
+    """A job with no JobPrinterConfig row must fail the estimate rather than
+    return silently — leaving estimate_status stuck on 'pending' means the UI
+    spinner never resolves."""
+    from app.models import Job, JobPrinterConfig
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+    from unittest.mock import MagicMock
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        cfgs = (await session.execute(
+            select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
+        )).scalars().all()
+        for cfg in cfgs:
+            await session.delete(cfg)
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    engine = QueueEngine(db, mgr, slicer)
+
+    await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_fails_when_printer_missing(db):
+    """A JobPrinterConfig pointing at a printer that no longer exists must fail
+    the estimate rather than return silently, leaving it stuck on 'pending'."""
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+    from unittest.mock import MagicMock
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        printer = await session.get(Printer, printer_id)
+        await session.delete(printer)
+        await session.commit()
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    engine = QueueEngine(db, mgr, slicer)
+
+    await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status == "failed"
+
+
+@pytest.mark.asyncio
 async def test_run_estimate_conditional_update_guards_against_cancel(db):
     """If estimate_status is cleared (cancellation) before write, results are discarded."""
     import tempfile, os
@@ -870,6 +936,61 @@ async def test_run_estimate_failure_sets_failed(db):
         assert job.estimate_status == "failed"
         assert job.status == "queued"  # job.status must not be touched
         assert job.block_reason is None
+
+
+@pytest.mark.asyncio
+async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
+    """An unexpected exception anywhere in the estimate pipeline (not just the
+    slice-failure path already handled) must still fail the estimate.
+    spawn_estimate's done-callback only discards the task and never retrieves
+    the exception, so without run_estimate's own safety net this would leave
+    estimate_status stuck on 'pending' forever."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        await session.commit()
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "M"
+        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n")
+        fake_gcode = f.name
+
+    mgr = _make_mock_printer_manager([printer_id])
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, mgr, slicer)
+
+    async def fake_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = fake_put
+
+    # Simulate an unexpected error in a step that has no existing try/except of
+    # its own (Step 4 gcode parsing), rather than the already-handled slice
+    # failure path.
+    with patch.object(slicer, "slice", return_value=fake_gcode), \
+         patch("app.services.queue_engine._parse_gcode_estimates", side_effect=RuntimeError("boom")):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert job.estimate_status == "failed"
+
+    os.unlink(fake_gcode)
 
 
 @pytest.mark.asyncio
