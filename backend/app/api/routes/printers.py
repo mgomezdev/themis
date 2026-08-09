@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import socket
 import time as _time
 
@@ -381,13 +382,42 @@ async def update_printer(
     summary="Delete printer",
     responses={
         404: {"description": "Printer not found"},
+        409: {"description": "Printer has an active job"},
     },
 )
 async def delete_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> None:
+    from datetime import datetime, timezone
+
     printer = await _get_or_404(printer_id, session)
+
+    # Refuse while the printer is physically working on a job — deleting the row
+    # can't stop the machine, and it would strand the job with no way to resolve it.
+    active = (await session.execute(
+        select(Job.id).where(
+            Job.assigned_printer_id == printer_id,
+            Job.status.in_(["printing", "paused", "uploading"]),
+        ).limit(1)
+    )).first()
+    if active is not None:
+        raise HTTPException(409, "Printer has an active job — stop or cancel it first")
+
+    # Jobs that use this printer's config, captured before we delete it, so we can
+    # detect any left with zero remaining configs (otherwise invisible to the queue).
+    affected_job_ids = (await session.execute(
+        select(JobPrinterConfig.job_id).where(JobPrinterConfig.printer_id == printer_id).distinct()
+    )).scalars().all()
+
+    gcode_rows = (await session.execute(
+        select(GcodeFile).where(GcodeFile.printer_id == printer_id)
+    )).scalars().all()
+    for gcode in gcode_rows:
+        try:
+            os.remove(gcode.path)
+        except OSError:
+            pass
     await session.execute(delete(GcodeFile).where(GcodeFile.printer_id == printer_id))
     await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.printer_id == printer_id))
     await session.execute(
@@ -395,8 +425,26 @@ async def delete_printer(
         .where(Job.assigned_printer_id == printer_id)
         .values(assigned_printer_id=None)
     )
+
+    if affected_job_ids:
+        remaining = set((await session.execute(
+            select(JobPrinterConfig.job_id).where(JobPrinterConfig.job_id.in_(affected_job_ids)).distinct()
+        )).scalars().all())
+        orphaned_ids = [jid for jid in affected_job_ids if jid not in remaining]
+        if orphaned_ids:
+            await session.execute(
+                update(Job)
+                .where(Job.id.in_(orphaned_ids), Job.status.in_(["queued", "blocked"]))
+                .values(
+                    status="blocked",
+                    block_reason="No printer configured for this job",
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
+            )
+
     await session.delete(printer)
     await session.commit()
+    printer_manager.disconnect_printer(printer_id)
 
 
 @router.post(
