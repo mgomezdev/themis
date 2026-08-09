@@ -95,15 +95,24 @@ def _norm_color(value) -> str:
     return str(value or "").strip().lstrip("#").lower()
 
 
+def _is_any_filament_ask(value) -> bool:
+    """True if a JobPrinterConfig.filament_type/filament_color value expresses 'no
+    constraint on this field' — blank, or the canonical "any" keyword (case-insensitive).
+    Scoped to JobPrinterConfig's own type/color fields only; filament_map entries have
+    their own, unrelated NULL semantics and must not go through this."""
+    return str(value or "").strip().lower() in ("", "any")
+
+
 def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:
     """The printer's loaded filament slot that satisfies the job's ask (type AND
-    color), or None. A job with no declared requirement matches the first slot.
+    color), or None. A job with no declared requirement (blank or "any") matches
+    the first slot.
 
     The OrcaSlicer filament *profile* used for slicing is a printer-level setting
     that lives on the matched slot (the "provide"); the job only declares the
     desired type/color (the "ask")."""
-    req_type = (config.filament_type or "").strip().lower()
-    req_color = _norm_color(config.filament_color)
+    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
+    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
     if not req_type and not req_color:
         return (loaded[0] if loaded else None)
     for f in loaded or []:
@@ -198,8 +207,8 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
         if _slot_for_config(config, loaded) is None:
             return f"tool T{config.tool_index} has no loaded filament"
         return None
-    req_type = (config.filament_type or "").strip().lower()
-    req_color = _norm_color(config.filament_color)
+    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
+    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
     if not req_type and not req_color:
         return None
     if _matching_loaded_filament(config, loaded) is not None:
