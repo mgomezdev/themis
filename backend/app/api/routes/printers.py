@@ -207,10 +207,10 @@ async def orca_machine_catalog() -> list[dict]:
         502: {"description": "Laminus sidecar unreachable"},
     },
 )
-async def rescan_profiles() -> dict:
+async def rescan_profiles(session: AsyncSession = Depends(get_session)) -> dict:
     """Trigger a catalog refresh from Orca and report the machine preset count."""
     from .laminus import refresh_catalog as _laminus_refresh
-    await _laminus_refresh()
+    await _laminus_refresh(session)
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"machine_presets": 0}
