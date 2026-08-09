@@ -4,6 +4,7 @@ import { Icons } from '../components/icons';
 import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
 import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
+import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { useFiles } from '../api/files';
 import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
 import type { LibraryFile, FolderNode } from '../data/types';
@@ -181,6 +182,7 @@ export function ProjectBuilderScreen() {
   const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
+  const [processPreset, setProcessPreset] = useState<string | null>(null);
 
   // Undo toast for accidental removals (items, links, non-printed parts)
   const [lastRemoved, setLastRemoved] = useState<RemovedSnapshot | null>(null);
@@ -481,7 +483,7 @@ export function ProjectBuilderScreen() {
       const pid = await saveProject();
       if (!projectId) navigate(`/projects/${pid}`, { replace: true });
       setGenerating(true);
-      const result = await generateProject(pid, printerIds);
+      const result = await generateProject(pid, printerIds, processPreset);
       setGenerateResult({ jobCount: result.jobs.length });
     } catch (e) {
       setGenerateError(parseGenerateError(e instanceof Error ? e.message : String(e)));
@@ -839,6 +841,9 @@ export function ProjectBuilderScreen() {
               Eligible printers
             </div>
             <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
+            <div style={{ marginTop: 12 }}>
+              <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button

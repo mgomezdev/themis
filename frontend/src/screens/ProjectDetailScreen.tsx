@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
+import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart,
   type Project, type ProjectJob,
@@ -43,6 +44,7 @@ export function ProjectDetailScreen() {
   const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
+  const [processPreset, setProcessPreset] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     if (!projectId) return;
@@ -73,7 +75,7 @@ export function ProjectDetailScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const result = await generateProject(projectId, eligiblePrinterIds);
+      const result = await generateProject(projectId, eligiblePrinterIds, processPreset);
       setGenerateResult({ jobCount: result.jobs.length });
       reload();
     } catch (e) {
@@ -215,6 +217,9 @@ export function ProjectDetailScreen() {
               Eligible printers
             </div>
             <PrinterEligibilityPicker selected={eligiblePrinterIds} onChange={setEligiblePrinterIds} />
+            <div style={{ marginTop: 12 }}>
+              <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button
