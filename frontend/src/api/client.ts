@@ -24,3 +24,11 @@ export function withKeyParam(url: string): string {
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}key=${encodeURIComponent(key)}`;
 }
+
+/** Opens an authenticated /ws connection (key carried as ?key=, the one endpoint that can't take
+ *  a header). Shared by every hook that opens its own /ws socket (queue/orders/fleet). */
+export function openAuthedWebSocket(): WebSocket {
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const key = getApiKey();
+  return new WebSocket(`${proto}//${window.location.host}/ws?key=${encodeURIComponent(key ?? '')}`);
+}

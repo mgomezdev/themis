@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiFetch, withKeyParam } from './client';
-import { getApiKey } from '../auth/apiKeyStore';
+import { apiFetch, withKeyParam, openAuthedWebSocket } from './client';
 
 export interface ApiPlate {
   plate_number: number;
@@ -306,8 +305,7 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
   }, [tick]);
 
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws?key=${encodeURIComponent(getApiKey() ?? '')}`);
+    const ws = openAuthedWebSocket();
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: unknown };

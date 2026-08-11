@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { StatusKey } from '../data/types';
-import { apiFetch } from './client';
-import { getApiKey } from '../auth/apiKeyStore';
+import { apiFetch, openAuthedWebSocket } from './client';
 
 export type OrderType = 'customer' | 'internal';
 
@@ -115,8 +114,7 @@ export function useOrders(): { orders: ApiOrder[]; refetch: () => void } {
 
   useEffect(() => {
     let alive = true;
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws?key=${encodeURIComponent(getApiKey() ?? '')}`);
+    const ws = openAuthedWebSocket();
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string };

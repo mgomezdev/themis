@@ -1,5 +1,6 @@
 from __future__ import annotations
 from datetime import datetime, timezone
+from weakref import WeakSet
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,9 +30,22 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
+# Engines observed to have a non-empty api_keys table. The app never lets the table go from
+# non-empty back to empty via the API (deleting/revoking the last apikeys:write key is blocked),
+# so once true this is true for the lifetime of the engine — skips a COUNT(*) on every request.
+# Keyed by engine (not a single flag) so per-test in-memory DBs in the test suite stay isolated.
+_bootstrapped_engines: "WeakSet" = WeakSet()
+
+
 async def _table_is_empty(session: AsyncSession) -> bool:
+    engine = session.bind
+    if engine in _bootstrapped_engines:
+        return False
     count = (await session.execute(select(func.count()).select_from(ApiKey))).scalar_one()
-    return count == 0
+    if count > 0:
+        _bootstrapped_engines.add(engine)
+        return False
+    return True
 
 
 async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | None:

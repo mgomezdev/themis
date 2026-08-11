@@ -1,8 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
-import { apiFetch } from './client';
-import { getApiKey } from '../auth/apiKeyStore';
+import { apiFetch, openAuthedWebSocket } from './client';
 
 export interface FleetPrinter {
   id: number;
@@ -112,8 +111,7 @@ export function useFleetData(): [Printer[], () => void] {
   }, [fetchTick]);
 
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws?key=${encodeURIComponent(getApiKey() ?? '')}`);
+    const ws = openAuthedWebSocket();
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
