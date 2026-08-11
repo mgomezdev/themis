@@ -74,3 +74,19 @@ async def test_v011_adds_maintenance_tables_and_printer_counters():
     assert {"lifetime_job_count", "lifetime_print_seconds"} <= printer_cols
     assert {"maintenance_items", "maintenance_triggers", "printer_maintenance_state"} <= tables
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v012_adds_api_keys_table():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await run_migrations(conn)  # idempotent second run
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(api_keys)"))).fetchall()}
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+    assert "api_keys" in tables
+    assert {"name", "key_prefix", "key_hash", "scopes", "enabled", "created_at", "last_used_at"} <= cols
+    await engine.dispose()

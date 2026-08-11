@@ -73,7 +73,7 @@ Fixed, hardcoded (not user-extensible) — one `read`/`write` pair per route mod
 - Modify: `backend/app/migrations/runner.py`
 - Test: `backend/tests/test_migrations.py`
 
-- [ ] **Step 1: Write the failing migration test**
+- [x] **Step 1: Write the failing migration test**
 
 Append to `backend/tests/test_migrations.py`:
 
@@ -96,7 +96,7 @@ async def test_v012_adds_api_keys_table():
 
 Run it, confirm it FAILs (table doesn't exist yet).
 
-- [ ] **Step 2: Add the model to `backend/app/models.py`**
+- [x] **Step 2: Add the model to `backend/app/models.py`**
 
 ```python
 class ApiKey(Base):
@@ -116,7 +116,7 @@ class ApiKey(Base):
 
 Import `UniqueConstraint` if not already imported at the top of `models.py`. Follow the existing `JSON` column convention (matches `webhook_config.events`).
 
-- [ ] **Step 3: Write the migration**
+- [x] **Step 3: Write the migration**
 
 Create `backend/app/migrations/v012_api_keys.py`:
 
@@ -152,11 +152,11 @@ async def down(conn) -> None:
     await conn.execute(text("DROP TABLE IF EXISTS api_keys"))
 ```
 
-- [ ] **Step 4: Register in `runner.py`**
+- [x] **Step 4: Register in `runner.py`**
 
 Add `v012_api_keys` to the import line and `_MIGRATIONS` list (append at the end, matching the existing pattern).
 
-- [ ] **Step 5: Run the migration test, confirm it PASSes**
+- [x] **Step 5: Run the migration test, confirm it PASSes**
 
 `cd backend && pytest tests/test_migrations.py::test_v012_adds_api_keys_table -v`
 
