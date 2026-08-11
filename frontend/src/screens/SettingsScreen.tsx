@@ -20,7 +20,7 @@ import {
   type MaintenanceItem, type MaintenanceTemplate,
 } from '../api/maintenance';
 import {
-  getApiKeys, createApiKey, revokeApiKey, deleteApiKey, SCOPES,
+  getApiKeys, createApiKey, revokeApiKey, deleteApiKey, SCOPES, ALL_SCOPES,
   type ApiKeyOut, type ApiKeyCreated,
 } from '../api/apiKeys';
 import { StatusPill, Empty } from '../components/ui';
@@ -1371,6 +1371,8 @@ function MaintenancePage() {
 // API Keys page
 // =========================================================================
 
+const SCOPE_PILL_LIMIT = 4;
+
 function ScopePill({ scope }: { scope: string }) {
   return (
     <span className="pill idle" style={{ fontSize: 10.5, padding: '2px 8px' }}>
@@ -1388,9 +1390,22 @@ function ApiKeyRow({ item, onRevoke, onDelete }: {
       <td><span className="mono small">{item.key_prefix}…</span></td>
       <td>
         <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
-          {item.scopes.length === 0
-            ? <span className="tiny muted">none</span>
-            : item.scopes.map(s => <ScopePill key={s} scope={s} />)}
+          {item.scopes.length === 0 ? (
+            <span className="tiny muted">none</span>
+          ) : item.scopes.length === ALL_SCOPES.length ? (
+            <span className="pill accent" style={{ fontSize: 10.5, padding: '2px 8px' }} title={item.scopes.join(', ')}>
+              All access
+            </span>
+          ) : item.scopes.length > SCOPE_PILL_LIMIT ? (
+            <>
+              {item.scopes.slice(0, SCOPE_PILL_LIMIT).map(s => <ScopePill key={s} scope={s} />)}
+              <span className="tiny muted" title={item.scopes.slice(SCOPE_PILL_LIMIT).join(', ')}>
+                +{item.scopes.length - SCOPE_PILL_LIMIT} more
+              </span>
+            </>
+          ) : (
+            item.scopes.map(s => <ScopePill key={s} scope={s} />)
+          )}
         </div>
       </td>
       <td className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{new Date(item.created_at).toLocaleString()}</td>
