@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { apiFetch } from './client';
 
 export interface OrcaMachine {
   uuid: string;
@@ -35,7 +36,7 @@ export interface OrcaCatalog {
 }
 
 export const getOrcaCatalog = (): Promise<OrcaCatalog> =>
-  fetch('/api/v1/laminus/catalog').then(r => {
+  apiFetch('/api/v1/laminus/catalog').then(r => {
     if (!r.ok) throw new Error(`${r.status}`);
     return r.json();
   });
@@ -55,7 +56,7 @@ export interface OrcaCatalogStatus {
 }
 
 export const getOrcaCatalogStatus = (): Promise<OrcaCatalogStatus> =>
-  fetch('/api/v1/laminus/catalog/status').then(r => r.json());
+  apiFetch('/api/v1/laminus/catalog/status').then(r => r.json());
 
 export function useOrcaCatalog() {
   const [catalog, setCatalog] = useState<OrcaCatalog | null>(null);

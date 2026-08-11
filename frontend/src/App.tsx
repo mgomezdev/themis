@@ -6,6 +6,7 @@ import { Icons } from './components/icons';
 import { useQueue, useQueueConfig } from './api/queue';
 import { useFleetData } from './api/fleet';
 import { AuthGate } from './auth/AuthGate';
+import { apiFetch } from './api/client';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -39,7 +40,7 @@ function useServicesHealth() {
   useEffect(() => {
     let alive = true;
     function poll() {
-      fetch('/api/v1/laminus/catalog/status')
+      apiFetch('/api/v1/laminus/catalog/status')
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((d: { laminus_configured: boolean; laminus: unknown }) => {
           if (!alive) return;

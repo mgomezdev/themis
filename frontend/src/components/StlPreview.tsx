@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { apiFetch } from '../api/client';
 
 interface Props {
   fileId: number;
@@ -10,7 +11,7 @@ export function StlPreview({ fileId, size = 80 }: Props) {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/v1/files/${fileId}/download`)
+    apiFetch(`/api/v1/files/${fileId}/download`)
       .then(r => r.arrayBuffer())
       .then(buf => { if (alive && ref.current) renderStl(ref.current, buf, size); })
       .catch(() => {});

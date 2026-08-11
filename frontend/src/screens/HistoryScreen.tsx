@@ -5,6 +5,7 @@ import { Empty } from '../components/ui';
 import { StatusPill } from '../components/ui';
 import { OutcomeModal } from '../components/OutcomeModal';
 import type { StatusKey } from '../data/types';
+import { apiFetch } from '../api/client';
 
 interface HistoryJob {
   id: number;
@@ -53,7 +54,7 @@ export function HistoryScreen() {
   const [outcomingJob, setOutcomingJob] = useState<HistoryJob | null>(null);
 
   function fetchJobs(alive: { v: boolean }) {
-    fetch('/api/v1/jobs/history')
+    apiFetch('/api/v1/jobs/history')
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`${r.status} ${r.statusText}`)))
       .then(data => { if (alive.v) { setJobs(data); setLoading(false); } })
       .catch(e => { if (alive.v) { setError(String(e)); setLoading(false); } });

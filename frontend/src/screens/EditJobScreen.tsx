@@ -6,6 +6,7 @@ import type { ApiPrinter } from '../api/printers';
 import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
+import { apiFetch } from '../api/client';
 
 // ---- hooks ----
 
@@ -13,7 +14,7 @@ function usePrinterList(): ApiPrinter[] {
   const [printers, setPrinters] = useState<ApiPrinter[]>([]);
   useEffect(() => {
     let alive = true;
-    fetch('/api/v1/printers').then(r => r.json()).then(d => { if (alive) setPrinters(d); }).catch(console.error);
+    apiFetch('/api/v1/printers').then(r => r.json()).then(d => { if (alive) setPrinters(d); }).catch(console.error);
     return () => { alive = false; };
   }, []);
   return printers;
