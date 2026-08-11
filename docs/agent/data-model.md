@@ -5,11 +5,12 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (19)
+## Tables (20)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
                        printer_maintenance_state.printer_id
+api_keys            (standalone — no FKs)
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -176,6 +177,15 @@ maintenance_item_id)`, `last_done_at: str, baseline_job_count: int, baseline_pri
 - `printers.lifetime_job_count`/`lifetime_print_seconds` (see the `printers` entry above) are the only
   counters these baselines are diffed against; `mark_done` resets both baselines to the printer's current
   lifetime counters.
+
+### api_keys
+`id, name, key_prefix` (unique, indexed — first `PREFIX_LEN`=12 chars of the raw key, e.g. `thm_ab12cd34`,
+unhashed, used for fast lookup before the hash compare), `key_hash` (sha256 hex of the full raw key),
+`scopes: JSON[str]`, `enabled: bool, created_at, last_used_at?, revoked_at?`.
+- The raw key itself is never stored — only `key_prefix` (for lookup) + `key_hash` (for verification).
+  Shown to the user exactly once, in the `POST /api/v1/api-keys` response.
+- `scopes` is a subset of the fixed `SCOPES` registry in `app/auth.py` (see `backend.md`'s Auth section).
+- No FKs — standalone credential table, not linked to any other resource.
 
 ## Migrations
 

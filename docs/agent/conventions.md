@@ -25,6 +25,12 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   reconciles its running job → `cancelled`. Keep both directions wired when touching either.
 - **Head-of-line queue**: a job that can't run blocks; the engine does **not** skip to a runnable job
   behind it. Intentional (predictable order). Change only in `_try_claim_for_printer` with intent.
+- **Auth is mandatory, not opt-in**: every `/api/v1/*` route (new or existing) must carry
+  `Depends(require_scope("<scope>"))`, and the scope must exist in the hardcoded `SCOPES` registry in
+  `app/auth.py` — there's no auto-derivation, forgetting either half means an unprotected route or a
+  crash on an unknown scope. The bootstrap hatch (open access while `api_keys` is empty) is the only
+  built-in exception; don't hand-roll another one. Frontend: every `api/*.ts` call goes through
+  `apiFetch`/`withKeyParam` (`api/client.ts`), never raw `fetch`, or it silently 401s once a key exists.
 
 ## Dev-environment traps
 
