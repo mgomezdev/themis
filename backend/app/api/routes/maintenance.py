@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import MaintenanceItem, MaintenanceTrigger, Printer, PrinterMaintenanceState
 from ...services import maintenance_service
@@ -77,7 +78,8 @@ async def _item_dict(session: AsyncSession, item: MaintenanceItem) -> dict:
     }
 
 
-@router.get("/items", summary="List maintenance items")
+@router.get("/items", summary="List maintenance items",
+           dependencies=[Depends(require_scope("maintenance:read"))])
 async def list_items(session: AsyncSession = Depends(get_session)) -> list[dict]:
     items = (await session.execute(select(MaintenanceItem).order_by(MaintenanceItem.name))).scalars().all()
     return [await _item_dict(session, i) for i in items]
@@ -86,6 +88,7 @@ async def list_items(session: AsyncSession = Depends(get_session)) -> list[dict]
 @router.post(
     "/items", status_code=201, summary="Create maintenance item",
     responses={422: {"description": "scope='model' requires machine_vendor and machine_model"}},
+    dependencies=[Depends(require_scope("maintenance:write"))],
 )
 async def create_item(body: MaintenanceItemCreate, session: AsyncSession = Depends(get_session)) -> dict:
     if body.scope not in ("general", "model"):
@@ -117,6 +120,7 @@ async def create_item(body: MaintenanceItemCreate, session: AsyncSession = Depen
         404: {"description": "Maintenance item not found"},
         422: {"description": "scope='model' requires machine_vendor and machine_model"},
     },
+    dependencies=[Depends(require_scope("maintenance:write"))],
 )
 async def update_item(item_id: int, body: MaintenanceItemPatch, session: AsyncSession = Depends(get_session)) -> dict:
     item = await session.get(MaintenanceItem, item_id)
@@ -159,6 +163,7 @@ async def update_item(item_id: int, body: MaintenanceItemPatch, session: AsyncSe
 @router.delete(
     "/items/{item_id}", summary="Delete maintenance item",
     responses={404: {"description": "Maintenance item not found"}},
+    dependencies=[Depends(require_scope("maintenance:write"))],
 )
 async def delete_item(item_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     item = await session.get(MaintenanceItem, item_id)
@@ -179,6 +184,7 @@ async def delete_item(item_id: int, session: AsyncSession = Depends(get_session)
 @router.put(
     "/items/{item_id}/triggers", summary="Replace an item's triggers",
     responses={404: {"description": "Maintenance item not found"}},
+    dependencies=[Depends(require_scope("maintenance:write"))],
 )
 async def replace_triggers(item_id: int, body: TriggersReplace, session: AsyncSession = Depends(get_session)) -> dict:
     item = await session.get(MaintenanceItem, item_id)
@@ -197,7 +203,8 @@ async def replace_triggers(item_id: int, body: TriggersReplace, session: AsyncSe
     return await _item_dict(session, item)
 
 
-@router.get("/templates", summary="Suggested common maintenance items")
+@router.get("/templates", summary="Suggested common maintenance items",
+           dependencies=[Depends(require_scope("maintenance:read"))])
 async def list_templates() -> list[dict]:
     return COMMON_MAINTENANCE_TEMPLATES
 
@@ -205,7 +212,8 @@ async def list_templates() -> list[dict]:
 # N+1 by design: one query per (printer, applicable item) pair inside
 # compute_due_status. Fine at the expected scale (<20 printers, <30 items);
 # revisit with a batch fetch if that scale assumption changes.
-@router.get("/status", summary="Due status for every printer x applicable maintenance item")
+@router.get("/status", summary="Due status for every printer x applicable maintenance item",
+           dependencies=[Depends(require_scope("maintenance:read"))])
 async def maintenance_status(session: AsyncSession = Depends(get_session)) -> list[dict]:
     printers = list((await session.execute(select(Printer))).scalars().all())
     items = list((await session.execute(
@@ -222,6 +230,7 @@ async def maintenance_status(session: AsyncSession = Depends(get_session)) -> li
     "/printers/{printer_id}/items/{item_id}/complete",
     summary="Mark a maintenance item done for a printer",
     responses={404: {"description": "Printer or maintenance item not found"}},
+    dependencies=[Depends(require_scope("maintenance:write"))],
 )
 async def complete_item(printer_id: int, item_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     printer = await session.get(Printer, printer_id)

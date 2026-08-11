@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Order
 
@@ -117,7 +118,7 @@ async def _get_or_404(order_id: int, session: AsyncSession) -> Order:
     return o
 
 
-@router.get("", summary="List orders")
+@router.get("", summary="List orders", dependencies=[Depends(require_scope("orders:read"))])
 async def list_orders(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All orders ordered by creation date descending. Each order includes derived
     status (queued / in_progress / complete / hold) and progress fraction."""
@@ -125,7 +126,8 @@ async def list_orders(session: AsyncSession = Depends(get_session)) -> list[dict
     return [await _to_dict(session, o) for o in result.scalars().all()]
 
 
-@router.post("", status_code=201, summary="Create order")
+@router.post("", status_code=201, summary="Create order",
+            dependencies=[Depends(require_scope("orders:write"))])
 async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_session)) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     order = Order(
@@ -151,6 +153,7 @@ async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_se
     responses={
         404: {"description": "Order not found"},
     },
+    dependencies=[Depends(require_scope("orders:read"))],
 )
 async def get_order(order_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     """Order detail including all non-cancelled jobs."""
@@ -163,6 +166,7 @@ async def get_order(order_id: int, session: AsyncSession = Depends(get_session))
     responses={
         404: {"description": "Order not found"},
     },
+    dependencies=[Depends(require_scope("orders:write"))],
 )
 async def patch_order(order_id: int, body: OrderPatch,
                       session: AsyncSession = Depends(get_session)) -> dict:
@@ -187,6 +191,7 @@ async def patch_order(order_id: int, body: OrderPatch,
     responses={
         404: {"description": "Order not found"},
     },
+    dependencies=[Depends(require_scope("orders:write"))],
 )
 async def delete_order(order_id: int, session: AsyncSession = Depends(get_session)) -> None:
     order = await _get_or_404(order_id, session)

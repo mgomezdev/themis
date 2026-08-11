@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer
 
@@ -54,7 +55,7 @@ async def _enrich(j: Job, session: AsyncSession) -> dict:
     return d
 
 
-@router.get("", summary="Get active queue")
+@router.get("", summary="Get active queue", dependencies=[Depends(require_scope("queue:read"))])
 async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs in an active status (queued, slicing, uploading, printing, paused, blocked, failed)
     ordered by queue position ascending."""
@@ -73,6 +74,7 @@ async def get_queue(session: AsyncSession = Depends(get_session)) -> list[dict]:
         404: {"description": "Job not found"},
         422: {"description": "Job is not in an active status and cannot be reordered"},
     },
+    dependencies=[Depends(require_scope("queue:write"))],
 )
 async def reorder_queue(
     body: ReorderRequest,
