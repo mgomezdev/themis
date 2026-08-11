@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
@@ -43,13 +44,15 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     return row
 
 
-@router.get("/queue", response_model=QueueConfigOut, summary="Get queue config")
+@router.get("/queue", response_model=QueueConfigOut, summary="Get queue config",
+           dependencies=[Depends(require_scope("settings:read"))])
 async def get_queue_config(session: AsyncSession = Depends(get_session)):
     """Queue engine settings: poll interval, operator name, and snapshot interval."""
     return await _get_or_create_queue(session)
 
 
-@router.put("/queue", response_model=QueueConfigOut, summary="Update queue config")
+@router.put("/queue", response_model=QueueConfigOut, summary="Update queue config",
+           dependencies=[Depends(require_scope("settings:write"))])
 async def update_queue_config(
     body: QueueConfigIn,
     session: AsyncSession = Depends(get_session),
@@ -95,13 +98,15 @@ async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
     return row
 
 
-@router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config")
+@router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config",
+           dependencies=[Depends(require_scope("settings:read"))])
 async def get_spoolman_config(session: AsyncSession = Depends(get_session)):
     """Spoolman integration settings: enabled flag, base URL, and API key."""
     return await _get_or_create(session)
 
 
-@router.put("/spoolman", response_model=SpoolmanConfigOut, summary="Update Spoolman config")
+@router.put("/spoolman", response_model=SpoolmanConfigOut, summary="Update Spoolman config",
+           dependencies=[Depends(require_scope("settings:write"))])
 async def update_spoolman_config(
     body: SpoolmanConfigIn,
     session: AsyncSession = Depends(get_session),
@@ -119,7 +124,8 @@ async def update_spoolman_config(
     return row
 
 
-@router.post("/spoolman/test", summary="Test Spoolman connection")
+@router.post("/spoolman/test", summary="Test Spoolman connection",
+            dependencies=[Depends(require_scope("settings:write"))])
 async def test_spoolman_connection(
     body: SpoolmanConfigIn,
     session: AsyncSession = Depends(get_session),
@@ -241,13 +247,15 @@ async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
     return row
 
 
-@router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config")
+@router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config",
+           dependencies=[Depends(require_scope("settings:read"))])
 async def get_webhook_config(session: AsyncSession = Depends(get_session)):
     """Outbound webhook settings: endpoint URL, HMAC secret, and subscribed event types."""
     return await _get_or_create_webhook(session)
 
 
-@router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config")
+@router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config",
+           dependencies=[Depends(require_scope("settings:write"))])
 async def update_webhook_config(
     body: WebhookConfigIn,
     session: AsyncSession = Depends(get_session),
@@ -273,6 +281,7 @@ async def update_webhook_config(
     "/fleet-backup",
     summary="Download fleet backup",
     responses={},
+    dependencies=[Depends(require_scope("settings:read"))],
 )
 async def fleet_backup(session: AsyncSession = Depends(get_session)) -> Response:
     """Export all printer configs as a downloadable JSON file.
@@ -322,6 +331,7 @@ class FleetImportReport(BaseModel):
     responses={
         400: {"description": "Invalid or unsupported backup file"},
     },
+    dependencies=[Depends(require_scope("settings:write"))],
 )
 async def fleet_import(
     file: UploadFile = File(...),

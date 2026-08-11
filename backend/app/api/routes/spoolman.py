@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import SpoolmanConfig
 from ...services import spoolman_service
@@ -25,6 +26,7 @@ async def _config_or_503(session: AsyncSession) -> SpoolmanConfig:
     responses={
         503: {"description": "Spoolman not configured, disabled, or unreachable"},
     },
+    dependencies=[Depends(require_scope("spoolman:read"))],
 )
 async def get_filaments(session: AsyncSession = Depends(get_session)):
     """Fetch all filament definitions from the configured Spoolman instance."""
@@ -41,6 +43,7 @@ async def get_filaments(session: AsyncSession = Depends(get_session)):
     responses={
         503: {"description": "Spoolman not configured, disabled, or unreachable"},
     },
+    dependencies=[Depends(require_scope("spoolman:read"))],
 )
 async def get_spools(session: AsyncSession = Depends(get_session)):
     """Fetch all spool inventory from the configured Spoolman instance."""
@@ -61,6 +64,7 @@ class FilamentPatchBody(BaseModel):
     responses={
         503: {"description": "Spoolman not configured, disabled, or unreachable"},
     },
+    dependencies=[Depends(require_scope("spoolman:write"))],
 )
 async def patch_filament(
     filament_id: int,
