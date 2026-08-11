@@ -5,6 +5,7 @@ import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
 import { useQueue, useQueueConfig } from './api/queue';
 import { useFleetData } from './api/fleet';
+import { AuthGate } from './auth/AuthGate';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -189,7 +190,9 @@ function AppShell() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AppShell />
+      <AuthGate>
+        <AppShell />
+      </AuthGate>
     </BrowserRouter>
   );
 }

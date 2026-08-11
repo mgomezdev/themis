@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools, useSpoolmanConfig } from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
@@ -19,6 +19,12 @@ import {
   deleteMaintenanceItem, getMaintenanceTemplates, useFleetVendorModels,
   type MaintenanceItem, type MaintenanceTemplate,
 } from '../api/maintenance';
+import {
+  getApiKeys, createApiKey, revokeApiKey, deleteApiKey, SCOPES,
+  type ApiKeyOut, type ApiKeyCreated,
+} from '../api/apiKeys';
+import { StatusPill, Empty } from '../components/ui';
+import type { StatusKey } from '../data/types';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -31,6 +37,7 @@ const SettingsIcons = {
   spoolman: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
   webhook:  <Icon paths={["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6","M15 3h6v6","M10 14L21 3"]} />,
   maintenance: <Icon paths={["M14.7 6.3a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L13.1 3.3a1 1 0 0 0 0 1.4z","M9.6 11.4 4 17a2 2 0 0 0-.6 1.4V21h2.6a2 2 0 0 0 1.4-.6l5.6-5.6"]} />,
+  apikey: <Icon d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />,
 };
 
 // =========================================================================
@@ -1361,10 +1368,281 @@ function MaintenancePage() {
 }
 
 // =========================================================================
+// API Keys page
+// =========================================================================
+
+function ScopePill({ scope }: { scope: string }) {
+  return (
+    <span className="pill idle" style={{ fontSize: 10.5, padding: '2px 8px' }}>
+      {scope}
+    </span>
+  );
+}
+
+function ApiKeyRow({ item, onRevoke, onDelete }: {
+  item: ApiKeyOut; onRevoke: () => void; onDelete: () => void;
+}) {
+  return (
+    <tr style={{ opacity: item.enabled ? 1 : 0.55 }}>
+      <td style={{ fontWeight: 500 }}>{item.name}</td>
+      <td><span className="mono small">{item.key_prefix}…</span></td>
+      <td>
+        <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
+          {item.scopes.length === 0
+            ? <span className="tiny muted">none</span>
+            : item.scopes.map(s => <ScopePill key={s} scope={s} />)}
+        </div>
+      </td>
+      <td className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{new Date(item.created_at).toLocaleString()}</td>
+      <td className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
+        {item.last_used_at ? new Date(item.last_used_at).toLocaleString() : 'Never'}
+      </td>
+      <td>
+        {item.enabled
+          ? <StatusPill status={'idle' as StatusKey} label="Active" />
+          : <StatusPill status={'offline' as StatusKey} label="Revoked" />}
+      </td>
+      <td style={{ textAlign: 'right' }}>
+        <div className="row gap-1" style={{ justifyContent: 'flex-end' }}>
+          {item.enabled && (
+            <button className="btn ghost sm" onClick={onRevoke}>Revoke</button>
+          )}
+          {!item.enabled && (
+            <button className="btn ghost sm" onClick={onDelete} style={{ color: 'var(--err)' }}>Delete</button>
+          )}
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function CreateKeyModal({ onClose, onCreated }: {
+  onClose: () => void; onCreated: (k: ApiKeyCreated) => void;
+}) {
+  const [name, setName] = useState('');
+  const [scopes, setScopes] = useState<Set<string>>(new Set());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function toggleScope(s: string) {
+    setScopes(prev => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s); else next.add(s);
+      return next;
+    });
+  }
+
+  async function submit() {
+    if (!name.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const created = await createApiKey(name.trim(), Array.from(scopes));
+      onCreated(created);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div className="card" style={{
+        width: 640, maxWidth: '95vw', maxHeight: '85vh',
+        display: 'flex', flexDirection: 'column', padding: 0,
+      }}>
+        <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-1)' }}>
+          <h2 style={{ margin: 0, fontSize: 17, fontWeight: 600 }}>Create API key</h2>
+        </div>
+        <div style={{ padding: '20px 24px', overflowY: 'auto', flex: 1 }}>
+          <label className="label">Name</label>
+          <input className="input" autoFocus value={name}
+                 onChange={e => setName(e.target.value)}
+                 placeholder="e.g. Ordinus integration"
+                 style={{ width: '100%', marginBottom: 20 }} />
+
+          <label className="label">Scopes</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 20px', marginTop: 8 }}>
+            {SCOPES.map(group => (
+              <div key={group.resource}>
+                <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                  {group.label}
+                </div>
+                <div className="col gap-1">
+                  {group.scopes.map(s => (
+                    <label key={s.scope} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                      <input type="checkbox" checked={scopes.has(s.scope)} onChange={() => toggleScope(s.scope)} />
+                      {s.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {error && <div className="small" style={{ color: 'var(--err)', marginTop: 16 }}>{error}</div>}
+        </div>
+        <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-1)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+          <button className="btn sm" onClick={onClose} disabled={saving}>Cancel</button>
+          <button className="btn primary sm" onClick={submit} disabled={saving || !name.trim()}>
+            {saving ? 'Creating…' : 'Create key'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RevealKeyDialog({ apiKey, onClose }: { apiKey: ApiKeyCreated; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(apiKey.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable — the field is still selectable/copyable by hand
+    }
+  }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1001,
+      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+    }}>
+      <div className="card" style={{ width: 520, maxWidth: '95vw', padding: 28 }}>
+        <h2 style={{ margin: '0 0 8px', fontSize: 17, fontWeight: 600 }}>Key created — “{apiKey.name}”</h2>
+        <p className="muted small" style={{ marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
+          Copy this key now — for security, it will not be shown again. Only the prefix
+          (<span className="mono">{apiKey.key_prefix}…</span>) stays visible afterward.
+        </p>
+        <div className="row gap-2" style={{ marginBottom: 16 }}>
+          <input
+            className="input mono"
+            readOnly
+            value={apiKey.key}
+            onFocus={e => e.currentTarget.select()}
+            style={{ flex: 1, fontSize: 12.5 }}
+          />
+          <button className="btn sm" onClick={copy}>
+            {copied ? Icons.check : Icons.copy} {copied ? 'Copied' : 'Copy'}
+          </button>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn primary sm" onClick={onClose}>Done — I've saved it</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ApiKeysPage() {
+  const [keys, setKeys] = useState<ApiKeyOut[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [revealKey, setRevealKey] = useState<ApiKeyCreated | null>(null);
+
+  const refetch = useCallback(() => {
+    setLoading(true);
+    getApiKeys()
+      .then(setKeys)
+      .catch(e => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { refetch(); }, [refetch]);
+
+  async function handleRevoke(id: number) {
+    setError(null);
+    try {
+      await revokeApiKey(id);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function handleDelete(id: number, name: string) {
+    if (!window.confirm(`Permanently delete the key "${name}"? This can't be undone.`)) return;
+    setError(null);
+    try {
+      await deleteApiKey(id);
+      refetch();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  function handleCreated(created: ApiKeyCreated) {
+    setCreating(false);
+    setRevealKey(created);
+    refetch();
+  }
+
+  return (
+    <div className="col gap-3">
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader
+          title="API Keys"
+          sub="Every request to Themis's API needs a key. This browser holds its own device key — mint additional scoped keys for external apps and integrations."
+          actions={<button className="btn primary sm" onClick={() => setCreating(true)}>{Icons.plus} Create key</button>}
+        />
+
+        {error && (
+          <div style={{ marginBottom: 14, padding: '10px 14px', background: 'var(--bg-1)', border: '1px solid var(--err)', borderRadius: 8, color: 'var(--err)', fontSize: 13 }}>
+            {error}
+          </div>
+        )}
+
+        {!loading && keys.length === 0 && (
+          <Empty title="No API keys yet" sub="Create one to let an external app or script talk to Themis." icon={SettingsIcons.apikey} />
+        )}
+
+        {(loading || keys.length > 0) && (
+          <div style={{ border: '1px solid var(--border-1)', borderRadius: 8, overflowX: 'auto', background: 'var(--bg-1)' }}>
+            <table className="tbl" style={{ minWidth: 760 }}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Prefix</th>
+                  <th>Scopes</th>
+                  <th>Created</th>
+                  <th>Last used</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {keys.map(k => (
+                  <ApiKeyRow
+                    key={k.id}
+                    item={k}
+                    onRevoke={() => handleRevoke(k.id)}
+                    onDelete={() => handleDelete(k.id, k.name)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {creating && <CreateKeyModal onClose={() => setCreating(false)} onCreated={handleCreated} />}
+      {revealKey && <RevealKeyDialog apiKey={revealKey} onClose={() => setRevealKey(null)} />}
+    </div>
+  );
+}
+
+// =========================================================================
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'about';
+type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'api-keys' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1378,7 +1656,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'api-keys', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1417,6 +1695,12 @@ export function SettingsScreen() {
       ],
     },
     {
+      label: 'Security',
+      items: [
+        { id: 'api-keys',      label: 'API Keys',       icon: SettingsIcons.apikey,  sub: 'Manage app access & scopes' },
+      ],
+    },
+    {
       label: 'System',
       items: [
         { id: 'about',         label: 'About',          icon: SettingsIcons.info,    sub: 'Version' },
@@ -1446,6 +1730,7 @@ export function SettingsScreen() {
       {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
       {activePage === 'webhook'           && <WebhookPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}
+      {activePage === 'api-keys'          && <ApiKeysPage />}
       {activePage === 'about'             && <AboutPage />}
     </div>
   );

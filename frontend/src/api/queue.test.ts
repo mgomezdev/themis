@@ -52,7 +52,7 @@ describe('getFilePlates', () => {
     const plates = [{ plate_number: 1, estimated_time: 100, filament_g: 10, thumbnail_path: null }];
     mockOk({ filename: 'model.3mf', plates });
     const result = await getFilePlates(5);
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/5/plates');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/5/plates', expect.any(Object));
     expect(result).toEqual(plates);
   });
 });
@@ -61,7 +61,7 @@ describe('getPrinterProfiles', () => {
   it('fetches print and filament profiles', async () => {
     mockOk({ print_profiles: ['0.20mm Standard'], filament_profiles: ['Bambu PLA'] });
     const result = await getPrinterProfiles(1);
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/printers/1/profiles');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/printers/1/profiles', expect.any(Object));
     expect(result.print_profiles).toContain('0.20mm Standard');
   });
 });
@@ -84,7 +84,7 @@ describe('getQueue', () => {
   it('fetches active queue', async () => {
     mockOk([]);
     const result = await getQueue();
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/queue');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/queue', expect.any(Object));
     expect(Array.isArray(result)).toBe(true);
   });
 });
@@ -112,7 +112,7 @@ describe('getEmbeddedSettings', () => {
     const settings = [{ key: 'fill_pattern', label: 'Fill pattern', value: 'grid' }];
     mockOk(settings);
     const result = await getEmbeddedSettings(7);
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/7/embedded-settings');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/files/7/embedded-settings', expect.any(Object));
     expect(result).toEqual(settings);
   });
 });

@@ -18,14 +18,14 @@ describe('orders api', () => {
   it('getOrders fetches the list', async () => {
     mockOk([]);
     const r = await getOrders();
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/orders');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/orders', expect.any(Object));
     expect(Array.isArray(r)).toBe(true);
   });
 
   it('getOrder fetches one', async () => {
     mockOk({ id: 7, jobs: [] });
     const r = await getOrder(7);
-    expect(mockFetch).toHaveBeenCalledWith('/api/v1/orders/7');
+    expect(mockFetch).toHaveBeenCalledWith('/api/v1/orders/7', expect.any(Object));
     expect(r.id).toBe(7);
   });
 

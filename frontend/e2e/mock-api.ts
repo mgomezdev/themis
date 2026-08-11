@@ -40,11 +40,16 @@ export async function mockApi(page: Page, over: Partial<{
   const plates = over.plates ?? PLATES;
   const modelFilaments = over.modelFilaments ?? MODEL_FILAMENTS;
   const mocks: Mocks = { captured: [] };
+  const FAKE_KEY = 'thm_e2e_fake_key';
 
   // Mock WebSocket for real-time updates (prevents hanging on ws connection).
   // Must use addInitScript so the mock is installed before the page scripts run
   // after navigation — evaluateHandle only runs in the pre-navigation context.
-  await page.addInitScript(() => {
+  // Also seed localStorage with a fake API key BEFORE the app loads, so AuthGate
+  // finds a stored key on mount and renders children immediately instead of racing
+  // its bootstrap POST — keeps every existing spec working with no bootstrap step.
+  await page.addInitScript((key) => {
+    window.localStorage.setItem('themis.apiKey', key);
     (window as any).WebSocket = class MockWebSocket {
       onmessage: ((e: MessageEvent) => void) | null = null;
       onopen: (() => void) | null = null;
@@ -55,13 +60,23 @@ export async function mockApi(page: Page, over: Partial<{
       send() {}
       close() {}
     };
-  });
+  }, FAKE_KEY);
 
   await page.route('**/api/v1/**', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     const path = url.pathname.replace(/^\/api\/v1/, '');
     const method = req.method();
+
+    // In case AuthGate races the localStorage seed anyway (e.g. a test navigates
+    // before addInitScript settles), answer its bootstrap POST directly.
+    if (method === 'POST' && path === '/api-keys') {
+      return ok(route, {
+        id: 1, name: 'Browser', key_prefix: FAKE_KEY.slice(0, 12),
+        scopes: [], enabled: true, created_at: new Date().toISOString(),
+        last_used_at: null, revoked_at: null, key: FAKE_KEY,
+      });
+    }
 
     if (method !== 'GET') {
       let body: any = null;
