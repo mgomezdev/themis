@@ -168,7 +168,7 @@ Add `v012_api_keys` to the import line and `_MIGRATIONS` list (append at the end
 - Create: `backend/app/services/api_key_service.py`
 - Test: `backend/tests/services/test_api_key_service.py`
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 from app.services.api_key_service import generate_key, hash_key, PREFIX_LEN
@@ -191,7 +191,7 @@ def test_hash_key_deterministic_and_not_reversible_looking():
     assert len(hash_key(raw)) == 64  # sha256 hex
 ```
 
-- [ ] **Step 2: Implement**
+- [x] **Step 2: Implement**
 
 ```python
 """Key generation/hashing for API-key auth. sha256 is sufficient here — these are
@@ -214,7 +214,7 @@ def hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 ```
 
-- [ ] **Step 3: Run tests, confirm PASS**
+- [x] **Step 3: Run tests, confirm PASS**
 
 ---
 
@@ -226,9 +226,9 @@ def hash_key(raw: str) -> str:
 
 `app/auth.py` owns: the scope registry (as a flat `set[str]`, for validation when creating keys), the `X-Api-Key`/`?key=` extraction, prefix→hash lookup, the bootstrap-empty-table hatch, `last_used_at` touch (throttled), and the `require_scope(scope)` dependency factory.
 
-- [ ] **Step 1: Write failing tests** covering: no key + empty table → passes (bootstrap); no key + non-empty table → 401; bad key → 401; valid key missing the required scope → 403; valid key with scope → 200; disabled/revoked key → 401; key accepted via `?key=` query param as well as header.
+- [x] **Step 1: Write failing tests** covering: no key + empty table → passes (bootstrap); no key + non-empty table → 401; bad key → 401; valid key missing the required scope → 403; valid key with scope → 200; disabled/revoked key → 401; key accepted via `?key=` query param as well as header.
 
-- [ ] **Step 2: Implement `app/auth.py`**
+- [x] **Step 2: Implement `app/auth.py`**
 
 ```python
 from __future__ import annotations
@@ -310,7 +310,7 @@ async def require_any_key(request: Request, session: AsyncSession = Depends(get_
     return key
 ```
 
-- [ ] **Step 3: Run tests, confirm PASS**
+- [x] **Step 3: Run tests, confirm PASS**
 
 *Note on the `last_used_at` throttle:* the sketch above compares minute-granularity strings as a cheap throttle so a hot-polling client doesn't write every request; tune/replace with whatever's simplest to get right (e.g. an in-process `dict[int, float]` last-write-time cache keyed by key id) — the requirement is just "don't `commit()` on every single authenticated request," not a specific mechanism.
 
@@ -323,9 +323,9 @@ async def require_any_key(request: Request, session: AsyncSession = Depends(get_
 - Modify: `backend/app/main.py` (register router)
 - Test: `backend/tests/test_api_keys.py`
 
-- [ ] **Step 1: Write failing tests** covering: `POST` with no existing keys ignores requested scopes and grants all of `SCOPES`; `POST` with an existing full-access key and an explicit scope list grants exactly that list (rejecting unknown scope strings with 422); response includes the raw key **only** on create, never on list; `GET` list never includes `key_hash` or the raw key; `DELETE`/revoke on the last enabled key holding `apikeys:write` → 400; revoke sets `enabled=False`+`revoked_at` (soft) vs delete removing the row (hard) — decide which the UI exposes (see Step 3).
+- [x] **Step 1: Write failing tests** covering: `POST` with no existing keys ignores requested scopes and grants all of `SCOPES`; `POST` with an existing full-access key and an explicit scope list grants exactly that list (rejecting unknown scope strings with 422); response includes the raw key **only** on create, never on list; `GET` list never includes `key_hash` or the raw key; `DELETE`/revoke on the last enabled key holding `apikeys:write` → 400; revoke sets `enabled=False`+`revoked_at` (soft) vs delete removing the row (hard) — decide which the UI exposes (see Step 3).
 
-- [ ] **Step 2: Implement**, following the existing route-module pattern (Pydantic `*Create`/`*Patch`, `_to_dict`, `_get_or_404`, positional `HTTPException` detail):
+- [x] **Step 2: Implement**, following the existing route-module pattern (Pydantic `*Create`/`*Patch`, `_to_dict`, `_get_or_404`, positional `HTTPException` detail):
 
 ```python
 from __future__ import annotations
@@ -419,11 +419,11 @@ async def delete_key(key_id: int, session: AsyncSession = Depends(get_session)):
     return {"ok": True}
 ```
 
-- [ ] **Step 3: Decide revoke vs delete in the UI** — expose both: "Revoke" (soft, keeps history/audit row visible greyed-out) as the primary action, "Delete" (hard remove) as a secondary confirm-guarded action on already-revoked keys. This mirrors no existing Themis pattern exactly, but is the safer default for a credential-management surface (accidental delete of an in-use key is unrecoverable and unauditable).
+- [x] **Step 3: Decide revoke vs delete in the UI** — expose both: "Revoke" (soft, keeps history/audit row visible greyed-out) as the primary action, "Delete" (hard remove) as a secondary confirm-guarded action on already-revoked keys. This mirrors no existing Themis pattern exactly, but is the safer default for a credential-management surface (accidental delete of an in-use key is unrecoverable and unauditable).
 
-- [ ] **Step 4: Register router in `main.py`** — add the import and `app.include_router(api_keys_router)` alongside the others.
+- [x] **Step 4: Register router in `main.py`** — add the import and `app.include_router(api_keys_router)` alongside the others.
 
-- [ ] **Step 5: Run tests, confirm PASS**
+- [x] **Step 5: Run tests, confirm PASS**
 
 ---
 
@@ -434,19 +434,19 @@ async def delete_key(key_id: int, session: AsyncSession = Depends(get_session)):
 
 Mechanical, per-route application using the Scope registry table above — for each route function, add `dependencies=[Depends(require_scope("<scope>"))]` to the `@router.<method>(...)` decorator (or set it once at `APIRouter(..., dependencies=[...])` level for a router/sub-path that's uniformly one scope, e.g. `queue.py`'s single write route can stay per-route since the module mixes read+write). Import `require_scope` from `...auth` in each file.
 
-- [ ] **Step 1:** `files.py` — GETs get `files:read`; upload/folders/patch/delete/tags/rescan get `files:write`.
-- [ ] **Step 2:** `jobs.py` — list/get/details/slice-failures/check-overrides get `jobs:read`; create/configs/unblock/cancel/verify-slice/outcome get `jobs:write`.
-- [ ] **Step 3:** `printers.py` — types/profiles/orca-machine-catalog/camera/snapshot/test-connection get `printers:read`; create/patch/delete/rescan-profiles get `printers:write`; plate-cleared/pause/resume/stop/light/jog-z/fan/bed-temp/reconnect get `printers:control`.
-- [ ] **Step 4:** `queue.py` — `GET` gets `queue:read`; `PATCH /reorder` gets `queue:write`.
-- [ ] **Step 5:** `fleet.py` — `GET` gets `fleet:read`.
-- [ ] **Step 6:** `orders.py` — GETs get `orders:read`; create/patch/delete get `orders:write`.
-- [ ] **Step 7:** `projects.py` — GETs (incl. items/links/parts) get `projects:read`; all mutations (incl. `generate`) get `projects:write`.
-- [ ] **Step 8:** `laminus.py` — `catalog`/`catalog/status` get `laminus:read`; `catalog/refresh`/`catalog/rescan` get `laminus:write`.
-- [ ] **Step 9:** `settings.py` — GETs (queue/spoolman/webhook/fleet-backup) get `settings:read`; PUTs + `spoolman/test` + `fleet-import` get `settings:write`.
-- [ ] **Step 10:** `spoolman.py` — GETs get `spoolman:read`; `PATCH` gets `spoolman:write`.
-- [ ] **Step 11:** `tags.py` — `GET` gets `tags:read`; create/patch/delete/assign/unassign get `tags:write`.
-- [ ] **Step 12:** `maintenance.py` — GETs get `maintenance:read`; CRUD/triggers/complete get `maintenance:write`.
-- [ ] **Step 13:** For each module, run its existing test file and fix failures by adding the seeded test key's header (Task 13 makes this automatic via the fixture — if any test constructs its own `AsyncClient` instead of using the `client` fixture, fix it up individually).
+- [x] **Step 1:** `files.py` — GETs get `files:read`; upload/folders/patch/delete/tags/rescan get `files:write`.
+- [x] **Step 2:** `jobs.py` — list/get/details/slice-failures/check-overrides get `jobs:read`; create/configs/unblock/cancel/verify-slice/outcome get `jobs:write`.
+- [x] **Step 3:** `printers.py` — types/profiles/orca-machine-catalog/camera/snapshot/test-connection get `printers:read`; create/patch/delete/rescan-profiles get `printers:write`; plate-cleared/pause/resume/stop/light/jog-z/fan/bed-temp/reconnect get `printers:control`.
+- [x] **Step 4:** `queue.py` — `GET` gets `queue:read`; `PATCH /reorder` gets `queue:write`.
+- [x] **Step 5:** `fleet.py` — `GET` gets `fleet:read`.
+- [x] **Step 6:** `orders.py` — GETs get `orders:read`; create/patch/delete get `orders:write`.
+- [x] **Step 7:** `projects.py` — GETs (incl. items/links/parts) get `projects:read`; all mutations (incl. `generate`) get `projects:write`.
+- [x] **Step 8:** `laminus.py` — `catalog`/`catalog/status` get `laminus:read`; `catalog/refresh`/`catalog/rescan` get `laminus:write`.
+- [x] **Step 9:** `settings.py` — GETs (queue/spoolman/webhook/fleet-backup) get `settings:read`; PUTs + `spoolman/test` + `fleet-import` get `settings:write`.
+- [x] **Step 10:** `spoolman.py` — GETs get `spoolman:read`; `PATCH` gets `spoolman:write`.
+- [x] **Step 11:** `tags.py` — `GET` gets `tags:read`; create/patch/delete/assign/unassign get `tags:write`.
+- [x] **Step 12:** `maintenance.py` — GETs get `maintenance:read`; CRUD/triggers/complete get `maintenance:write`.
+- [x] **Step 13:** For each module, run its existing test file and fix failures by adding the seeded test key's header (Task 13 makes this automatic via the fixture — if any test constructs its own `AsyncClient` instead of using the `client` fixture, fix it up individually).
 
 ---
 
@@ -454,8 +454,8 @@ Mechanical, per-route application using the Scope registry table above — for e
 
 **Files:** Modify `backend/app/api/websocket.py`, `backend/app/main.py` (route signature).
 
-- [ ] **Step 1:** Change `websocket_endpoint` to accept a `key: str | None = None` query param, resolve it via `auth.require_any_key`-equivalent logic run manually before `await websocket.accept()` (can't use a normal `Depends` chain the same way for websockets — call the resolution helper directly), and `await websocket.close(code=4401)` + `return` if invalid (and the table isn't empty).
-- [ ] **Step 2:** Test: connect without `key` when a key exists → connection closed with 4401; connect with a valid key → connection accepted and receives broadcasts as before.
+- [x] **Step 1:** Change `websocket_endpoint` to accept a `key: str | None = None` query param, resolve it via `auth.require_any_key`-equivalent logic run manually before `await websocket.accept()` (can't use a normal `Depends` chain the same way for websockets — call the resolution helper directly), and `await websocket.close(code=4401)` + `return` if invalid (and the table isn't empty).
+- [x] **Step 2:** Test: connect without `key` when a key exists → connection closed with 4401; connect with a valid key → connection accepted and receives broadcasts as before.
 
 ---
 
@@ -463,7 +463,7 @@ Mechanical, per-route application using the Scope registry table above — for e
 
 **Files:** Modify `backend/app/main.py`.
 
-- [ ] Add an `APIKeyHeader(name="X-Api-Key")` security scheme to the FastAPI app so Swagger UI's Authorize button lets a developer paste a key and exercise real authenticated calls from `/docs`. This is documentation ergonomics, not enforcement — enforcement is entirely `require_scope`.
+- [x] Add an `APIKeyHeader(name="X-Api-Key")` security scheme to the FastAPI app so Swagger UI's Authorize button lets a developer paste a key and exercise real authenticated calls from `/docs`. This is documentation ergonomics, not enforcement — enforcement is entirely `require_scope`.
 
 ---
 
@@ -473,7 +473,7 @@ Mechanical, per-route application using the Scope registry table above — for e
 - Create: `frontend/src/api/client.ts`
 - Modify: `frontend/src/api/{files,queue,orders,printers,spoolman,projects,maintenance,tags}.ts` (8 files — each has its own local `request<T>`)
 
-- [ ] **Step 1:** Create `frontend/src/api/client.ts`:
+- [x] **Step 1:** Create `frontend/src/api/client.ts`:
 
 ```typescript
 import { getApiKey } from '../auth/apiKeyStore';
@@ -493,7 +493,7 @@ export function withKeyParam(url: string): string {
 }
 ```
 
-- [ ] **Step 2:** In each of the 8 `api/*.ts` files, change the local `request<T>` to call `apiFetch` instead of `fetch` directly — one-line change per file, signature/exports unchanged:
+- [x] **Step 2:** In each of the 8 `api/*.ts` files, change the local `request<T>` to call `apiFetch` instead of `fetch` directly — one-line change per file, signature/exports unchanged:
 
 ```typescript
 // before: const resp = await fetch(url, init);
@@ -503,7 +503,7 @@ import { apiFetch } from './client';
 const resp = await apiFetch(url, init);
 ```
 
-- [ ] **Step 3:** `npm run build` (`tsc -b`) to confirm no unused-import/type breaks across the 8 files.
+- [x] **Step 3:** `npm run build` (`tsc -b`) to confirm no unused-import/type breaks across the 8 files.
 
 ---
 
@@ -514,13 +514,13 @@ const resp = await apiFetch(url, init);
 - Create: `frontend/src/auth/AuthGate.tsx`
 - Modify: `frontend/src/App.tsx` (or `main.tsx`) — wrap the app in `AuthGate`
 
-- [ ] **Step 1:** `apiKeyStore.ts` — thin localStorage wrapper: `getApiKey()`, `setApiKey(key: string)`, `clearApiKey()`, namespaced key `themis.apiKey`.
+- [x] **Step 1:** `apiKeyStore.ts` — thin localStorage wrapper: `getApiKey()`, `setApiKey(key: string)`, `clearApiKey()`, namespaced key `themis.apiKey`.
 
-- [ ] **Step 2:** `AuthGate.tsx` — on mount: if no stored key, `POST /api/v1/api-keys` (via plain `fetch`, not `apiFetch`, since there's nothing to inject yet) with `{name: "Browser"}`; store the returned `key`; render children. If the create call 401/403s (table already non-empty — someone else bootstrapped first, e.g. two browser tabs racing, or a stale install), fall back to a manual "Enter your API key" form instead of auto-bootstrapping. Also handle the steady-state case: any `apiFetch` response that comes back `401` (e.g. this browser's key was revoked from elsewhere) should clear the stored key and re-render the gate's manual-entry form — wire this as a small event/callback from `client.ts` (e.g. a module-level `onUnauthorized` callback the gate registers) rather than duplicating the check at every call site.
+- [x] **Step 2:** `AuthGate.tsx` — on mount: if no stored key, `POST /api/v1/api-keys` (via plain `fetch`, not `apiFetch`, since there's nothing to inject yet) with `{name: "Browser"}`; store the returned `key`; render children. If the create call 401/403s (table already non-empty — someone else bootstrapped first, e.g. two browser tabs racing, or a stale install), fall back to a manual "Enter your API key" form instead of auto-bootstrapping. Also handle the steady-state case: any `apiFetch` response that comes back `401` (e.g. this browser's key was revoked from elsewhere) should clear the stored key and re-render the gate's manual-entry form — wire this as a small event/callback from `client.ts` (e.g. a module-level `onUnauthorized` callback the gate registers) rather than duplicating the check at every call site.
 
-- [ ] **Step 3:** Wrap `<AppShell>` (or the top of `App.tsx`'s tree) in `<AuthGate>`.
+- [x] **Step 3:** Wrap `<AppShell>` (or the top of `App.tsx`'s tree) in `<AuthGate>`.
 
-- [ ] **Step 4:** Manual Vitest coverage: gate renders children immediately when a key is already stored; gate calls bootstrap POST and stores the result when none is stored; gate shows manual-entry form when bootstrap 401s.
+- [x] **Step 4:** Manual Vitest coverage: gate renders children immediately when a key is already stored; gate calls bootstrap POST and stores the result when none is stored; gate shows manual-entry form when bootstrap 401s.
 
 ---
 
@@ -531,10 +531,10 @@ const resp = await apiFetch(url, init);
 - Modify: `frontend/src/components/ui.tsx` (printer snapshot `<img src>`, camera `VideoTile`)
 - Modify: `frontend/src/api/queue.ts` (`plateThumbnailUrl`)
 
-- [ ] **Step 1:** In each of the 3 WS call sites, append the key: `` `${proto}//${window.location.host}/ws?key=${encodeURIComponent(getApiKey() ?? '')}` ``.
-- [ ] **Step 2:** In `ui.tsx`, wrap the snapshot `src` and the camera MJPEG `src` with `withKeyParam(...)` from `api/client.ts`.
-- [ ] **Step 3:** In `plateThumbnailUrl` (`queue.ts`), return `withKeyParam(...)` instead of the bare URL.
-- [ ] **Step 4:** Manually verify in a running dev server: Fleet camera tiles and snapshots load; plate thumbnails render in Queue/Job Detail; `/ws` connects (check Network tab, no 4401 close).
+- [x] **Step 1:** In each of the 3 WS call sites, append the key: `` `${proto}//${window.location.host}/ws?key=${encodeURIComponent(getApiKey() ?? '')}` ``.
+- [x] **Step 2:** In `ui.tsx`, wrap the snapshot `src` and the camera MJPEG `src` with `withKeyParam(...)` from `api/client.ts`.
+- [x] **Step 3:** In `plateThumbnailUrl` (`queue.ts`), return `withKeyParam(...)` instead of the bare URL.
+- [x] **Step 4:** Manually verify in a running dev server: Fleet camera tiles and snapshots load; plate thumbnails render in Queue/Job Detail; `/ws` connects (check Network tab, no 4401 close).
 
 ---
 
@@ -545,19 +545,19 @@ const resp = await apiFetch(url, init);
 - Modify: `frontend/src/screens/SettingsScreen.tsx`
 - Modify: `frontend/src/components/Sidebar.tsx` (`settingsSubItems` — kept in sync per the existing note in `frontend.md`)
 
-- [ ] **Step 1:** `api/apiKeys.ts` — types `ApiKeyOut { id, name, key_prefix, scopes: string[], enabled, created_at, last_used_at, revoked_at }`, `ApiKeyCreated extends ApiKeyOut { key: string }`; `getApiKeys()`, `createApiKey(name, scopes)`, `revokeApiKey(id)`, `deleteApiKey(id)`; also export the `SCOPES` list grouped by resource (mirrors the backend registry — hand-write it here too, there's no shared-types codegen in this repo) for the checkbox UI.
+- [x] **Step 1:** `api/apiKeys.ts` — types `ApiKeyOut { id, name, key_prefix, scopes: string[], enabled, created_at, last_used_at, revoked_at }`, `ApiKeyCreated extends ApiKeyOut { key: string }`; `getApiKeys()`, `createApiKey(name, scopes)`, `revokeApiKey(id)`, `deleteApiKey(id)`; also export the `SCOPES` list grouped by resource (mirrors the backend registry — hand-write it here too, there's no shared-types codegen in this repo) for the checkbox UI.
 
-- [ ] **Step 2:** In `SettingsScreen.tsx`: add `'api-keys'` to the `PageId` union; add a nav item (new "Security" section, or under "System") `{ id: 'api-keys', label: 'API Keys', icon: SettingsIcons.<pick or add one>, sub: 'Manage app access & scopes' }`; add `activePage === 'api-keys' && <ApiKeysPage />`.
+- [x] **Step 2:** In `SettingsScreen.tsx`: add `'api-keys'` to the `PageId` union; add a nav item (new "Security" section, or under "System") `{ id: 'api-keys', label: 'API Keys', icon: SettingsIcons.<pick or add one>, sub: 'Manage app access & scopes' }`; add `activePage === 'api-keys' && <ApiKeysPage />`.
 
-- [ ] **Step 3:** Implement `ApiKeysPage()` in `SettingsScreen.tsx` (co-located with the other `*Page` components, matching the file's existing pattern):
+- [x] **Step 3:** Implement `ApiKeysPage()` in `SettingsScreen.tsx` (co-located with the other `*Page` components, matching the file's existing pattern):
   - Table (`.tbl`, matching `styling.md` vocabulary) of keys: name, prefix (`thm_ab12cd34…`), scope pills, created/last-used, enabled/revoked `<StatusPill>`, row actions (Revoke / Delete).
   - "Create key" button opens a modal: name input (`.input`) + scope checkboxes grouped by resource (two/three columns per resource for read/write/control, using `SCOPES` from `apiKeys.ts`).
   - On successful create, show a one-time reveal dialog: the raw key in a monospace, selectable field + a copy-to-clipboard button + explicit "this will not be shown again" warning. Closing the dialog clears the raw key from component state (never re-fetchable).
   - Empty state via `<Empty>` when no keys exist yet (shouldn't normally happen post-bootstrap, but the "Browser" key could theoretically be deleted).
 
-- [ ] **Step 4:** `Sidebar.tsx` — add the matching `{ to: '/settings/api-keys', label: 'API Keys' }` entry to `settingsSubItems`.
+- [x] **Step 4:** `Sidebar.tsx` — add the matching `{ to: '/settings/api-keys', label: 'API Keys' }` entry to `settingsSubItems`.
 
-- [ ] **Step 5:** `npm run build`, then manually exercise the page in a running dev server: create a scoped key, copy it, `curl` a protected endpoint with it (should 200/403 correctly per its scopes), revoke it (subsequent `curl` → 401), confirm the last-`apikeys:write`-key guard blocks self-lockout.
+- [x] **Step 5:** `npm run build`, then manually exercise the page in a running dev server: create a scoped key, copy it, `curl` a protected endpoint with it (should 200/403 correctly per its scopes), revoke it (subsequent `curl` → 401), confirm the last-`apikeys:write`-key guard blocks self-lockout.
 
 ---
 
@@ -565,7 +565,7 @@ const resp = await apiFetch(url, init);
 
 **Files:** Modify `backend/tests/conftest.py`.
 
-- [ ] **Step 1:** After creating the schema and before yielding the client, seed one full-scope `ApiKey` row directly via the session, and construct the `AsyncClient` with `headers={"X-Api-Key": raw_key}` as a default:
+- [x] **Step 1:** After creating the schema and before yielding the client, seed one full-scope `ApiKey` row directly via the session, and construct the `AsyncClient` with `headers={"X-Api-Key": raw_key}` as a default:
 
 ```python
 from app.auth import SCOPES
@@ -588,8 +588,8 @@ async with AsyncClient(
     yield c
 ```
 
-- [ ] **Step 2:** Run the full existing suite (`pytest -v`) — everything should pass unmodified, since the fixture now authenticates every call by default. Individual tests that want to assert 401/403 behavior override per-call: `await client.get(url, headers={"X-Api-Key": ""})`.
-- [ ] **Step 3:** Add `backend/tests/test_api_keys.py` (drafted in Task 4) and `backend/tests/test_auth.py` (drafted in Task 3) if not already written inline with those tasks.
+- [x] **Step 2:** Run the full existing suite (`pytest -v`) — everything should pass unmodified, since the fixture now authenticates every call by default. Individual tests that want to assert 401/403 behavior override per-call: `await client.get(url, headers={"X-Api-Key": ""})`.
+- [x] **Step 3:** Add `backend/tests/test_api_keys.py` (drafted in Task 4) and `backend/tests/test_auth.py` (drafted in Task 3) if not already written inline with those tasks.
 
 ---
 
@@ -599,9 +599,9 @@ async with AsyncClient(
 - Modify: `frontend/e2e/mock-api.ts`
 - Check: any Vitest spec that stubs `fetch`/`WebSocket` directly (`QueueScreen.test.tsx`, `ui.test.tsx`, others per `frontend.md`'s test list)
 
-- [ ] **Step 1:** In `mock-api.ts`'s `mockApi(page, over?)`, seed `localStorage` with a fake key (e.g. `thm_e2e_fake_key`) via `page.addInitScript` (or equivalent Playwright pre-navigation hook) **before** the app loads, and route-mock `POST **/api/v1/api-keys` in case the gate races anyway. This keeps every existing Playwright spec working without inserting a bootstrap-click step into each one.
-- [ ] **Step 2:** Run `npm run test:e2e` — fix any spec that now sees the `AuthGate`'s loading/gate flash before the mocked key resolves (likely needs `page.waitForSelector` on real content instead of assuming immediate render, if not already the pattern).
-- [ ] **Step 3:** Run `npx vitest run` — any spec that stubs `fetch` via `vi.stubGlobal` and asserts exact call args may need the `X-Api-Key` header accounted for (or `apiFetch` mocked instead of global `fetch`, per-file, whichever is less invasive).
+- [x] **Step 1:** In `mock-api.ts`'s `mockApi(page, over?)`, seed `localStorage` with a fake key (e.g. `thm_e2e_fake_key`) via `page.addInitScript` (or equivalent Playwright pre-navigation hook) **before** the app loads, and route-mock `POST **/api/v1/api-keys` in case the gate races anyway. This keeps every existing Playwright spec working without inserting a bootstrap-click step into each one.
+- [x] **Step 2:** Run `npm run test:e2e` — fix any spec that now sees the `AuthGate`'s loading/gate flash before the mocked key resolves (likely needs `page.waitForSelector` on real content instead of assuming immediate render, if not already the pattern).
+- [x] **Step 3:** Run `npx vitest run` — any spec that stubs `fetch` via `vi.stubGlobal` and asserts exact call args may need the `X-Api-Key` header accounted for (or `apiFetch` mocked instead of global `fetch`, per-file, whichever is less invasive).
 
 ---
 
@@ -618,11 +618,11 @@ async with AsyncClient(
 
 **Files:** `CONTRIBUTING.md`, `docs/agent/backend.md`, `docs/agent/conventions.md`, `docs/agent/data-model.md`, `docs/agent/frontend.md`.
 
-- [ ] Replace the "No auth" gotcha in `CONTRIBUTING.md` and `conventions.md` with a description of the new scheme (mandatory `X-Api-Key`/`?key=`, bootstrap-when-empty, scope registry location).
-- [ ] Add `api_keys` to `data-model.md`'s table list and column reference.
-- [ ] Add `api_keys.py` to `backend.md`'s routes table and `app/auth.py` to the services/key-flows section.
-- [ ] Add the API Keys screen + `api/apiKeys.ts` + `auth/` dir to `frontend.md`'s screens/components tables.
-- [ ] Or, simpler: run the `themis-docs-sync` skill after implementation instead of hand-editing each doc.
+- [x] Replace the "No auth" gotcha in `CONTRIBUTING.md` and `conventions.md` with a description of the new scheme (mandatory `X-Api-Key`/`?key=`, bootstrap-when-empty, scope registry location).
+- [x] Add `api_keys` to `data-model.md`'s table list and column reference.
+- [x] Add `api_keys.py` to `backend.md`'s routes table and `app/auth.py` to the services/key-flows section.
+- [x] Add the API Keys screen + `api/apiKeys.ts` + `auth/` dir to `frontend.md`'s screens/components tables.
+- [x] Or, simpler: run the `themis-docs-sync` skill after implementation instead of hand-editing each doc.
 
 ---
 
