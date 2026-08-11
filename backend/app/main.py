@@ -14,10 +14,12 @@ logging.basicConfig(
 )
 logging.getLogger("app").setLevel(logging.INFO)
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse
+from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
+from .api.routes.api_keys import router as api_keys_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
@@ -120,6 +122,18 @@ async def lifespan(app: FastAPI):
         printer_manager.disconnect_printer(pid)
 
 
+# Registers the X-Api-Key security scheme in the OpenAPI schema so /docs shows
+# an "Authorize" button. Documentation ergonomics only — auto_error=False means
+# this never rejects a request itself; actual enforcement is entirely
+# app.auth.require_scope, applied per-route. Attached to the /health route
+# below rather than app-level: FastAPI's `dependencies=` on the FastAPI()
+# constructor also applies to add_api_websocket_route's DI-wrapped /ws route,
+# and that combination breaks under app.dependency_overrides (which every
+# test sets) with a TypeError inside FastAPI's dependency resolution —
+# registering it on one ordinary HTTP route avoids that entirely while still
+# adding the scheme to the OpenAPI schema exactly once.
+_api_key_header = APIKeyHeader(name="X-Api-Key", auto_error=False)
+
 app = FastAPI(
     title="Themis",
     description=(
@@ -132,6 +146,7 @@ app = FastAPI(
 )
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
+app.include_router(api_keys_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(fleet_router)
@@ -146,7 +161,7 @@ app.include_router(spoolman_router)
 app.include_router(tags_router)
 
 
-@app.get("/api/v1/health")
+@app.get("/api/v1/health", dependencies=[Depends(_api_key_header)])
 async def health() -> dict:
     return {"status": "ok"}
 
