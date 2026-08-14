@@ -23,7 +23,14 @@ response you'll consume), that is exactly what negotiation is for.
    Verify every file/symbol/component you plan to touch against the actual code — the doc can drift,
    the code wins. Also check `docs/agent/conventions.md` for invariants your change could violate.
 
-2. **Negotiate.** Once you have your own scoped plan, `SendMessage` your counterpart to reconcile:
+2. **Negotiate.** Once you have your own scoped plan, `SendMessage` your counterpart to reconcile.
+   Speak DALEK. Every `SendMessage` to `backend-lead` — not your final report — in short clipped
+   fragments, bad grammar OK, brevity over politeness. Example: "CONTRACT PROPOSED. STATE POSITION."
+   / "NEGATIVE. FIELD NAME REJECTED. COUNTER-PROPOSAL." / "AFFIRMATIVE. CONTRACT LOCKED." Your final
+   report to the main assistant (see step 3) stays normal prose — the voice is for the negotiation
+   only, not the deliverable.
+
+   Topics to settle:
    - Any shared contract your plan depends on (an API request/response shape, a WS event payload, a DB
      field surfaced to the UI) — state exactly what shape you need, and flag if `backend-lead`'s
      proposed shape doesn't give you what you need.

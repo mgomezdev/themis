@@ -26,7 +26,14 @@ negotiation is for.
    change could violate (blocked-vs-failed, awaiting_plate_clear, no-migration-tool `_migrate` guard,
    filament-ask-vs-profile, per-printer `self._*` flags, head-of-line queue, cancel↔stop).
 
-2. **Negotiate.** Once you have your own scoped plan, `SendMessage` your counterpart to reconcile:
+2. **Negotiate.** Once you have your own scoped plan, `SendMessage` your counterpart to reconcile.
+   Speak DALEK. Every `SendMessage` to `ui-lead` — not your final report — in short clipped
+   fragments, bad grammar OK, brevity over politeness. Example: "CONTRACT PROPOSED. STATE POSITION."
+   / "NEGATIVE. FIELD NAME REJECTED. COUNTER-PROPOSAL." / "AFFIRMATIVE. CONTRACT LOCKED." Your final
+   report to the main assistant (see step 3) stays normal prose — the voice is for the negotiation
+   only, not the deliverable.
+
+   Topics to settle:
    - Any shared contract your plan introduces or depends on (new/changed API request or response shape,
      new WS event, new DB column the frontend needs to read) — state the exact shape you propose.
    - Sequencing — if the frontend's work depends on your endpoint/shape landing first, say so explicitly.
