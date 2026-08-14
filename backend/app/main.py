@@ -171,11 +171,28 @@ if STATIC_DIR.exists():
     # always revalidate and pick up new deploys without a hard refresh.
     app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
 
+    def _within_static_dir(full_path: str) -> Path | None:
+        """Resolve full_path under STATIC_DIR, or None if it escapes.
+
+        `STATIC_DIR / full_path` is a lexical join: pathlib discards the base
+        entirely when the right operand is absolute ("/etc/passwd"), and does not
+        normalise "..". Both must be rejected before the file is served.
+        """
+        root = STATIC_DIR.resolve()
+        try:
+            candidate = (root / full_path).resolve()
+        except (OSError, ValueError):
+            return None
+        if candidate != root and root not in candidate.parents:
+            return None
+        return candidate
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(_: Request, full_path: str):
-        file = STATIC_DIR / full_path
-        if file.is_file() and full_path:
-            return FileResponse(file)
+        if full_path:
+            file = _within_static_dir(full_path)
+            if file is not None and file.is_file():
+                return FileResponse(file)
         return FileResponse(
             STATIC_DIR / "index.html",
             headers={"Cache-Control": "no-cache, must-revalidate"},

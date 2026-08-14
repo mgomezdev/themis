@@ -136,8 +136,12 @@ export const deleteProjectItem = (projectId: number, itemId: number) =>
 export const reorderProjectItems = (
   projectId: number, items: { id: number; sort_order: number }[],
 ) => request<ProjectItem[]>(`/api/v1/projects/${projectId}/items/reorder`, json('PUT', items));
-export const generateProject = (projectId: number, eligiblePrinterIds: number[] = []) =>
-  request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', { eligible_printer_ids: eligiblePrinterIds }));
+export const generateProject = (
+  projectId: number, eligiblePrinterIds: number[] = [], processPreset: string | null = null,
+) => request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', {
+  eligible_printer_ids: eligiblePrinterIds,
+  process_preset: processPreset,
+}));
 
 export interface ProjectJob {
   id: number;

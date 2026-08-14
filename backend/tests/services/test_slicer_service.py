@@ -73,6 +73,72 @@ def test_raises_when_filament_not_in_catalog(tmp_path):
             svc.slice(_req(tmp_path))
 
 
+# ── actionable resolution errors ─────────────────────────────────────────────
+
+def test_error_names_the_specific_unresolved_preset_and_kind(tmp_path):
+    """The user must be told WHICH preset failed and its kind, not just that
+    something among three presets didn't resolve."""
+    svc = _make_service(tmp_path)
+    catalog = {
+        "machine": [],
+        "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
+        "filament": [{"name": "Generic PLA", "uuid": "f1"}],
+    }
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError) as exc_info:
+            svc.slice(_req(tmp_path))
+    msg = str(exc_info.value)
+    assert "machine preset" in msg
+    assert "Elegoo Centauri Carbon" in msg
+    # the other two presets DID resolve — must not be named as failures
+    assert "process preset" not in msg
+    assert "filament preset" not in msg
+
+
+def test_error_names_multiple_unresolved_presets(tmp_path):
+    svc = _make_service(tmp_path)
+    catalog = {"machine": [], "process": [], "filament": []}
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError) as exc_info:
+            svc.slice(_req(tmp_path))
+    msg = str(exc_info.value)
+    assert "machine preset" in msg and "Elegoo Centauri Carbon" in msg
+    assert "process preset" in msg and "0.20mm Standard" in msg
+    assert "filament preset" in msg and "Generic PLA" in msg
+
+
+def test_error_advises_refreshing_the_profile_sync(tmp_path):
+    svc = _make_service(tmp_path)
+    catalog = {"machine": [], "process": [], "filament": []}
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError, match="[Rr]efresh the profile sync"):
+            svc.slice(_req(tmp_path))
+
+
+def test_error_reports_missing_filament_when_none_supplied(tmp_path):
+    """process_preset omitted entirely (Part 2's 'no invented default') — the
+    filament list ends up empty, which must read as a real, named failure."""
+    svc = _make_service(tmp_path)
+    catalog = {
+        "machine": [{"name": "Elegoo Centauri Carbon", "uuid": "m1"}],
+        "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
+        "filament": [{"name": "Generic PLA", "uuid": "f1"}],
+    }
+    import app.api.routes.laminus as _laminus
+    _laminus._catalog_dict = catalog
+    req = _req(tmp_path)
+    req.filament_presets = []
+    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+        with pytest.raises(SliceError, match="no filament preset was supplied"):
+            svc.slice(req)
+
+
 def test_raises_with_clear_message_when_sidecar_unreachable(tmp_path):
     """Catalog fetch failure surfaces 'unreachable', not a misleading profile-not-found message."""
     svc = _make_service(tmp_path)

@@ -930,8 +930,9 @@ export function NewJobScreen() {
             print_profile: cfg.perPrinter[pid].printProfile!,
             filament_profile: cfg.perPrinter[pid].filamentProfile ?? null,
             filament_id: cfg.perPrinter[pid].filamentId ?? null,
-            filament_type: cfg.perPrinter[pid].filamentType,
-            filament_color: cfg.perPrinter[pid].filamentColor,
+            // "any" is the wire form of "no preference" — the backend rejects null/blank here.
+            filament_type: cfg.perPrinter[pid].filamentType ?? 'any',
+            filament_color: cfg.perPrinter[pid].filamentColor ?? 'any',
             tool_index: cfg.perPrinter[pid].toolIndex ?? null,
             filament_map: cfg.perPrinter[pid].filamentMap ?? null,
           })),

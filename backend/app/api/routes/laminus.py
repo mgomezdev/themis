@@ -19,9 +19,27 @@ from ...models import SpoolmanConfig
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 
 
+class RemapResolutionEntry(BaseModel):
+    field: str
+    stale_value: str
+    new_value: str | None = None
+
+
+class SpoolmanResolutionEntry(BaseModel):
+    printer_preset: str
+    stale_name: str
+    new_name: str | None = None
+
+
+class RemapResolutions(BaseModel):
+    printers: list[RemapResolutionEntry] = []
+    jobs: list[RemapResolutionEntry] = []
+    spoolman_filaments: list[SpoolmanResolutionEntry] = []
+
+
 class ConfirmRemapBody(BaseModel):
     sync_id: str
-    resolutions: dict  # {printers: [...], jobs: [...], spoolman_filaments: [...]}
+    resolutions: RemapResolutions
 
 logger = logging.getLogger("app.laminus")
 
@@ -313,17 +331,14 @@ async def confirm_remap(
 
     # Build resolution lookup maps keyed by (field, stale_value)
     printer_res_map: dict[tuple[str, str], str | None] = {
-        (r["field"], r["stale_value"]): r.get("new_value")
-        for r in resolutions.get("printers", [])
+        (r.field, r.stale_value): r.new_value for r in resolutions.printers
     }
     job_res_map: dict[tuple[str, str], str | None] = {
-        (r["field"], r["stale_value"]): r.get("new_value")
-        for r in resolutions.get("jobs", [])
+        (r.field, r.stale_value): r.new_value for r in resolutions.jobs
     }
     # Spoolman resolutions keyed by (printer_preset, stale_name) → new_name | None
     spoolman_res_map: dict[tuple[str, str], str | None] = {
-        (r["printer_preset"], r["stale_name"]): r.get("new_name")
-        for r in resolutions.get("spoolman_filaments", [])
+        (r.printer_preset, r.stale_name): r.new_name for r in resolutions.spoolman_filaments
     }
 
     # Validate all required printer entries have valid resolutions
@@ -337,6 +352,14 @@ async def confirm_remap(
             valid_set = new_machines if entry.get("options_kind") == "machine" else new_filaments
             if new_val not in valid_set:
                 unresolved.append(f"Invalid value '{new_val}' for {entry['field']}")
+
+    for entry in pending.get("jobs", []):
+        key = (entry["field"], entry["stale_value"])
+        new_val = job_res_map.get(key)
+        if new_val:
+            valid_set = new_processes if entry.get("options_kind") == "process" else new_filaments
+            if new_val not in valid_set:
+                unresolved.append(f"Invalid value '{new_val}' for job {entry['field']}")
 
     if unresolved:
         raise HTTPException(422, {"detail": "Unresolved required remaps", "unresolved": unresolved})

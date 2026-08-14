@@ -12,7 +12,7 @@ from ...models import Job, JobPrinterConfig, Printer
 
 router = APIRouter(prefix="/api/v1/queue", tags=["queue"])
 
-_ACTIVE_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "blocked", "failed"}
+_ACTIVE_STATUSES = {"queued", "slicing", "sliced", "uploading", "printing", "paused", "blocked", "failed"}
 
 
 class PositionUpdate(BaseModel):

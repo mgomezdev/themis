@@ -1,6 +1,8 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
+import shutil
+import tempfile
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
@@ -12,13 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import UploadedFile, Tag, FileTag, Job
+from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
 from ...services.library_scanner import (
-    LibraryScanner, folder_of, sha256_file, ACTIVE_JOB_STATUSES, MODEL_EXTS,
+    LibraryScanner, folder_of, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
+
+_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
 # ---------- helpers ----------
@@ -183,9 +187,6 @@ async def upload_file(
     if ext not in MODEL_EXTS:
         raise HTTPException(422, "Only .3mf and .stl files are accepted")
 
-    raw = await file.read()
-    incoming_hash = hashlib.sha256(raw).hexdigest()
-
     library = config.get_library_dir()
     folder_abs = _safe_subpath(library, folder)
     folder_abs.mkdir(parents=True, exist_ok=True)
@@ -193,29 +194,47 @@ async def upload_file(
     # folder_of() prepends "/" and uses the parent — mirror that for the root case too
     target_folder = "/" if rel_dir == "." else "/" + rel_dir
 
-    # Dedup: return existing record if same content is already in this folder.
-    existing = (await session.execute(
-        select(UploadedFile)
-        .where(UploadedFile.content_hash == incoming_hash)
-        .where(UploadedFile.folder == target_folder)
-        .limit(1)
-    )).scalar_one_or_none()
-    if existing:
-        if not Path(existing.stored_path).exists():
-            # Orphaned record: file was deleted from disk but the DB row was not cleaned up.
-            # Restore the file from the incoming bytes so the record stays valid.
-            Path(existing.stored_path).write_bytes(raw)
-        return _to_dict(existing, [])
+    # Stream to disk in chunks, hashing as we go — the incoming file (multi-hundred-MB
+    # packed plates are routine) is never materialized whole in memory. Written to a
+    # temp file in the target folder first since the content hash (which decides the
+    # final path, or whether this is a dedup no-op) isn't known until the body is fully
+    # read.
+    hasher = hashlib.sha256()
+    tmp = tempfile.NamedTemporaryFile(dir=folder_abs, delete=False, suffix=".part")
+    tmp_path = Path(tmp.name)
+    try:
+        with tmp:
+            while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
+                hasher.update(chunk)
+                tmp.write(chunk)
+        incoming_hash = hasher.hexdigest()
 
-    dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
-    dest.write_bytes(raw)
+        # Dedup: return existing record if same content is already in this folder.
+        existing = (await session.execute(
+            select(UploadedFile)
+            .where(UploadedFile.content_hash == incoming_hash)
+            .where(UploadedFile.folder == target_folder)
+            .limit(1)
+        )).scalar_one_or_none()
+        if existing:
+            if not Path(existing.stored_path).exists():
+                # Orphaned record: file was deleted from disk but the DB row was not
+                # cleaned up. Restore it from the just-uploaded bytes so the record
+                # stays valid.
+                shutil.move(str(tmp_path), existing.stored_path)
+            return _to_dict(existing, [])
+
+        dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
+        shutil.move(str(tmp_path), str(dest))
+    finally:
+        tmp_path.unlink(missing_ok=True)  # no-op once moved
 
     rel = dest.relative_to(library).as_posix()
     stat = dest.stat()
     scanner = LibraryScanner(session, library, config.get_filecache_dir())
     record = UploadedFile(
         original_filename=dest.name, stored_path=str(dest), relative_path=rel,
-        folder=folder_of(rel), size_bytes=stat.st_size, content_hash=sha256_file(dest),
+        folder=folder_of(rel), size_bytes=stat.st_size, content_hash=incoming_hash,
         mtime=stat.st_mtime, plates=[], missing=False,
         uploaded_at=datetime.now(timezone.utc).isoformat(),
     )
@@ -346,7 +365,7 @@ async def update_file(file_id: int, body: FilePatch,
     summary="Delete file",
     responses={
         404: {"description": "File not found"},
-        409: {"description": "File is referenced by an active job"},
+        409: {"description": "File is referenced by an active job or a project item"},
     },
     dependencies=[Depends(require_scope("files:write"))],
 )
@@ -360,17 +379,28 @@ async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)
     )).first()
     if active:
         raise HTTPException(409, "File is referenced by an active job")
-    p = Path(f.stored_path)
+    referenced = (await session.execute(
+        select(ProjectItem.id).where(ProjectItem.file_id == file_id).limit(1)
+    )).first()
+    if referenced:
+        raise HTTPException(409, "File is referenced by a project item")
+
+    stored_path = f.stored_path
+    for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
+        await session.delete(link)
+    await session.delete(f)
+    await session.commit()
+
+    # Only touch the filesystem after the DB row is actually gone — otherwise a
+    # commit failure (e.g. an unanticipated FK reference) leaves the file deleted
+    # but the row still pointing at it.
+    p = Path(stored_path)
     if p.exists():
         p.unlink()
     cache = config.get_filecache_dir() / str(file_id)
     if cache.exists():
         import shutil
         shutil.rmtree(cache, ignore_errors=True)
-    for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
-        await session.delete(link)
-    await session.delete(f)
-    await session.commit()
     return {"deleted": file_id}
 
 

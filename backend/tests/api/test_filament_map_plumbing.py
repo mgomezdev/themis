@@ -1,4 +1,6 @@
 import inspect
+import pytest
+from pydantic import ValidationError
 from app.services.slicer_service import SliceRequest
 from app.api.routes import jobs
 from app.api.routes.jobs import PrinterConfigInput
@@ -11,10 +13,53 @@ def test_slice_request_has_prepare_hook_default_none():
 
 
 def test_printer_config_input_accepts_filament_map():
-    c = PrinterConfigInput(printer_id=1, print_profile="p",
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
                            filament_map=[{"model_filament": 1, "tool_index": 2}])
     assert c.filament_map[0]["tool_index"] == 2
-    assert PrinterConfigInput(printer_id=1, print_profile="p").filament_map is None
+    assert PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any").filament_map is None
+
+
+def test_printer_config_input_rejects_non_dict_entry():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+                           filament_map=["oops"])
+
+
+def test_printer_config_input_coerces_numeric_string_tool_index():
+    # Pydantic's lax int coercion turns "0" into 0 so downstream int comparisons
+    # (e.g. `0 <= tool_index < len(loaded)`) never see a str.
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+                           filament_map=[{"tool_index": "0"}])
+    assert c.filament_map[0]["tool_index"] == 0
+    assert isinstance(c.filament_map[0]["tool_index"], int)
+
+
+def test_printer_config_input_rejects_non_numeric_tool_index():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p",
+                           filament_map=[{"tool_index": "not-a-number"}])
+
+
+def test_printer_config_input_requires_filament_type_and_color():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p")
+
+
+def test_printer_config_input_rejects_blank_filament_type():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="  ", filament_color="any")
+
+
+def test_printer_config_input_rejects_null_filament_color():
+    with pytest.raises(ValidationError):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color=None)
+
+
+def test_printer_config_input_accepts_any_or_real_value():
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any")
+    assert (c.filament_type, c.filament_color) == ("any", "any")
+    c2 = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="PLA", filament_color="#FFFFFF")
+    assert (c2.filament_type, c2.filament_color) == ("PLA", "#FFFFFF")
 
 
 def test_job_routes_round_trip_filament_map():

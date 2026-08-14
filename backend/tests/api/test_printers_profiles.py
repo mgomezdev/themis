@@ -1,5 +1,7 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+import app.api.routes.laminus as lmod
 
 _FAKE_CATALOG = {
     "machine": [
@@ -73,3 +75,21 @@ async def test_list_orca_printer_presets_sidecar_unavailable(client):
         response = await client.get("/api/v1/printers/orca-presets")
     assert response.status_code == 200
     assert response.json() == []
+
+
+async def test_rescan_profiles_with_warm_catalog_succeeds(client):
+    """Regression: rescan-profiles used to call refresh_catalog() with no session,
+    so its Depends(get_session) default (a Depends object, never resolved outside
+    the FastAPI framework) hit _apply_drift_gate's `await session.get(...)` once
+    the catalog was warm (drift-gate path only runs when a prior catalog exists)."""
+    lmod._catalog_dict = _FAKE_CATALOG
+    lmod._catalog_bytes = b"{}"
+    lmod._pending_sync = None
+    with patch("app.api.routes.laminus._fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
+         patch("app.services.catalog_utils.compute_drift", new_callable=AsyncMock) as mock_drift, \
+         patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=_FAKE_CATALOG):
+        mock_fetch.return_value = (b"{}", _FAKE_CATALOG)
+        mock_drift.return_value = None  # no drift
+        response = await client.post("/api/v1/printers/rescan-profiles")
+    assert response.status_code == 200, response.text
+    assert response.json() == {"machine_presets": 1}

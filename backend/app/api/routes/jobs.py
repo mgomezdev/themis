@@ -4,12 +4,13 @@ import json
 import logging
 import os
 import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,15 +44,41 @@ router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 _CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", "printing", "paused", "failed"}
 
 
+class FilamentMapEntry(BaseModel):
+    model_filament: int | None = None
+    tool_index: int | None = None
+    filament_id: int | None = None
+    filament_type: str | None = None
+    filament_color: str | None = None
+
+
 class PrinterConfigInput(BaseModel):
     printer_id: int
     print_profile: str
     filament_profile: str | None = None
     filament_id: int | None = None
-    filament_type: str | None = None
-    filament_color: str | None = None
+    filament_type: str
+    filament_color: str
     tool_index: int | None = None
-    filament_map: list | None = None
+    filament_map: list[dict] | None = None
+
+    @field_validator("filament_map")
+    @classmethod
+    def _validate_filament_map(cls, v: list[dict] | None) -> list[dict] | None:
+        """Reject malformed entries (e.g. non-dict items, non-numeric tool_index)
+        at creation time instead of letting them poison the queue engine later."""
+        if v is None:
+            return None
+        return [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+
+    @field_validator("filament_type", "filament_color")
+    @classmethod
+    def _validate_filament_ask(cls, v: str) -> str:
+        """"any" is the only way to express "no preference" — null/blank is no
+        longer accepted here (filament_map entries are unaffected by this rule)."""
+        if not v or not v.strip():
+            raise ValueError('must be "any" or a specific value, not null/blank')
+        return v
 
 
 class OverrideCheckRequest(BaseModel):
@@ -766,21 +793,24 @@ async def verify_slice(
         extra_config=plate_config,
     )
 
-    loop = asyncio.get_running_loop()
+    # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
+    # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
+    # otherwise destroy a parked job's already-produced production artifact.
+    output_dir = queue_engine._slicer._data_dir / "gcode_verify" / str(job_id)
     try:
-        gcode_path: str = await loop.run_in_executor(
-            queue_engine._executor, queue_engine._slicer.slice, req
-        )
-        try:
-            Path(gcode_path).unlink(missing_ok=True)
-        except OSError:
-            pass
+        # Routed through the same serialized _slice_queue as production/estimate
+        # slices (lowest priority) rather than queue_engine._executor directly —
+        # that pool is also what upload_file/start_print depend on, and a
+        # debug-only test-slice can block for minutes.
+        await queue_engine.run_verify_slice(req, output_dir)
         return {"ok": True, "error": None}
     except SliceError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
         logger.exception("Unexpected error in verify-slice for job %s", job_id)
         return {"ok": False, "error": f"Unexpected error: {exc}"}
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
 
 
 @router.get(
