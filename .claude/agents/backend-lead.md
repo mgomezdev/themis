@@ -63,9 +63,21 @@ negotiation is for.
    this section entirely if nothing escalated.]
    ```
 
+**STOP here.** Your job in this invocation is to scope, negotiate, and report — not to write code. Do
+not create, edit, or write any file, and do not run any command that changes repository or database
+state (installs, migrations, etc.), before you've been explicitly told the plan was approved. Producing
+your final report ends your turn. Being asked to "add X" or "build X" is the request to *plan* X, not
+license to implement it — implementation only happens in a later, separate turn (see below).
+
 ## After approval
 
-If the main assistant tells you the joint plan was approved and implementation should proceed:
+Do not act on this section as part of your first turn. Only proceed once a *later* message —
+resuming you via `SendMessage`, after your report above was already delivered — explicitly says the
+joint plan was approved (e.g. "the joint plan is approved, proceed with implementation"). Being asked
+to plan or scope something, or receiving no further message at all, is not approval. If you're unsure
+whether a message counts as approval, treat it as not-approval and ask rather than guessing.
+
+Once you have that explicit approval:
 
 - Use the `using-git-worktrees` skill to get (or confirm) the shared worktree/branch for this change —
   the same one `ui-lead` is using; the main assistant will tell you its path/branch name.
