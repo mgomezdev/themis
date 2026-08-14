@@ -66,6 +66,30 @@ SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `upl
 - `/root/.config/OrcaSlicer` — bind-mounted read-only from `%APPDATA%\OrcaSlicer` on Windows host (set `APPDATA` in `.env`)
 - Static frontend files served from `THEMIS_STATIC_DIR` (default `/frontend/dist` in container)
 
+## Dual-overseer workflow for cross-cutting changes
+
+For feature-sized or cross-cutting requests (plausibly touches both `backend/` and `frontend/`, or the
+shape is ambiguous), spawn two named agents instead of planning solo:
+
+```
+Agent({ subagent_type: "backend-lead", name: "backend-lead", prompt: "<request>. Your counterpart is named ui-lead." })
+Agent({ subagent_type: "ui-lead", name: "ui-lead", prompt: "<request>. Your counterpart is named backend-lead." })
+```
+
+Spawn both in the same message. They negotiate directly with each other via `SendMessage` (shared
+contracts, sequencing, file ownership) and each report back their half of a joint plan, escalating any
+single topic that goes past 5 rounds of back-and-forth instead of resolving it themselves. If either
+report contains an "Escalated items" section, resolve those with the user before presenting the plan.
+
+Trivial, single-file, obviously single-domain changes skip this entirely — plan and implement them
+directly as usual. This is a judgment call each time, not a hard rule.
+
+Present the combined joint plan (both reports) to the user and wait for approval before implementation.
+Once approved, tell both agents to proceed — they each dispatch their own worker subagents into one
+shared worktree/branch (via `using-git-worktrees`) and serialize their commits with each other.
+
+Full design: `docs/superpowers/specs/2026-08-13-dual-overseer-agent-workflow-design.md`.
+
 ## Spec & Plans
 - Design spec: `docs/superpowers/specs/2026-05-20-themis-print-farm-manager-design.md`
 - Implementation plans: `docs/superpowers/plans/`
