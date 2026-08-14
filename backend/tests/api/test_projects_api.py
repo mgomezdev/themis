@@ -201,6 +201,138 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
     assert job_pack_dir.is_dir()
 
 
+async def _create_printer(client, name="P1S"):
+    resp = await client.post("/api/v1/printers", json={
+        "name": name, "printer_type": "bambu",
+        "connection_config": {},
+        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
+        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+    })
+    return resp.json()["id"]
+
+
+async def test_generate_printer_configs_use_process_preset_not_machine_preset(client, tmp_path):
+    """JobPrinterConfig.print_profile must be the user-supplied process_preset —
+    never current_orca_printer_profile (a machine preset, wrong namespace entirely)."""
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    lib = tmp_path / "library"
+    fake_3mf = _make_3mf_bytes(plate_count=1)
+
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
+        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+        patch("app.api.routes.jobs.queue_engine"),
+    ):
+        mock_cls.return_value.pack_stls.return_value = fake_3mf
+
+        resp = await client.post(
+            f"/api/v1/projects/{project_id}/generate",
+            json={"eligible_printer_ids": [printer_id], "process_preset": "0.20mm Standard"},
+        )
+
+    assert resp.status_code == 200
+    job_id = resp.json()["jobs"][0]["id"]
+
+    detail = await client.get(f"/api/v1/jobs/{job_id}/details")
+    cfg = detail.json()["printer_configs"][0]
+    assert cfg["print_profile"] == "0.20mm Standard"
+    assert cfg["print_profile"] != "Bambu Lab P1S 0.4"  # never the machine preset
+
+
+async def test_generate_without_process_preset_does_not_invent_one(client, tmp_path):
+    """Omitting process_preset leaves print_profile unset (empty) — no silent default,
+    no machine-preset fallback. The job fails cleanly at slice time instead."""
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    printer_id = await _create_printer(client)
+
+    lib = tmp_path / "library"
+    fake_3mf = _make_3mf_bytes(plate_count=1)
+
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
+        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+        patch("app.api.routes.jobs.queue_engine"),
+    ):
+        mock_cls.return_value.pack_stls.return_value = fake_3mf
+
+        resp = await client.post(
+            f"/api/v1/projects/{project_id}/generate",
+            json={"eligible_printer_ids": [printer_id]},
+        )
+
+    assert resp.status_code == 200
+    job_id = resp.json()["jobs"][0]["id"]
+
+    detail = await client.get(f"/api/v1/jobs/{job_id}/details")
+    cfg = detail.json()["printer_configs"][0]
+    assert cfg["print_profile"] == ""
+
+
+async def test_generate_carries_filament_requirement_to_printer_config(client, tmp_path):
+    """The project item's filament_type/filament_color/filament_id must reach the
+    generated JobPrinterConfig verbatim — otherwise the mismatch gate no-ops and
+    parts print in whatever is loaded, ignoring the requirement."""
+    lib = tmp_path / "library"
+    lib.mkdir(exist_ok=True)
+    (tmp_path / "filecache").mkdir(exist_ok=True)
+
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+    ):
+        proj_resp = await client.post("/api/v1/projects", json={"name": "Filament Req"})
+        project_id = proj_resp.json()["id"]
+
+        upload_resp = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("part.stl", _make_stl_bytes(), "application/octet-stream")},
+        )
+        file_id = upload_resp.json()["id"]
+
+        item_resp = await client.post(
+            f"/api/v1/projects/{project_id}/items",
+            json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_color": "#FF0000"},
+        )
+        assert item_resp.status_code == 201
+
+    printer_id = await _create_printer(client)
+    fake_3mf = _make_3mf_bytes(plate_count=1)
+
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
+        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+        patch("app.api.routes.jobs.queue_engine"),
+    ):
+        mock_cls.return_value.pack_stls.return_value = fake_3mf
+
+        resp = await client.post(
+            f"/api/v1/projects/{project_id}/generate",
+            json={"eligible_printer_ids": [printer_id], "process_preset": "0.20mm"},
+        )
+
+    assert resp.status_code == 200
+    job_id = resp.json()["jobs"][0]["id"]
+
+    detail = await client.get(f"/api/v1/jobs/{job_id}/details")
+    cfg = detail.json()["printer_configs"][0]
+    assert cfg["filament_type"] == "PETG"
+    assert cfg["filament_color"] == "#FF0000"
+
+
 async def test_project_estimate_rollup_keys(client):
     """GET /projects/{id} response includes new rollup keys and excludes old ones."""
     resp = await client.post("/api/v1/projects", json={
@@ -260,7 +392,7 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
         mock_qe.wake = MagicMock()
         j1 = (await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA"}]
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}]
         })).json()
 
     # Set project_id and estimates on job via DB override

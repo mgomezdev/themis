@@ -68,6 +68,44 @@ async def test_upload_stl_returns_single_plate(client, tmp_path):
     assert data["plate_count"] == 1
 
 
+async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path):
+    """Upload reads in chunks rather than loading the whole body into memory at
+    once. Use a file larger than the chunk size so the streaming loop actually
+    runs multiple iterations, and confirm the content lands intact with the
+    right hash-derived dedup key, and no .part scratch file is left behind."""
+    import hashlib
+    from app.api.routes import files as files_mod
+
+    big = (b"solid model\n" + b"x" * (files_mod._UPLOAD_CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
+    expected_hash = hashlib.sha256(big).hexdigest()
+
+    lib, cache = _patch_dirs(tmp_path)
+    with lib, cache:
+        response = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("big.stl", big, "application/octet-stream")},
+        )
+    assert response.status_code == 201
+    data = response.json()
+
+    stored = tmp_path / "library" / "Job Uploads" / "big.stl"
+    assert stored.is_file()
+    assert stored.stat().st_size == len(big)
+    assert stored.read_bytes() == big
+
+    leftover = list((tmp_path / "library" / "Job Uploads").glob("*.part"))
+    assert leftover == []
+
+    # Re-upload identical content — dedup keyed by the streamed hash must still match.
+    with lib, cache:
+        dup = await client.post(
+            "/api/v1/files/upload",
+            files={"file": ("big.stl", big, "application/octet-stream")},
+        )
+    assert dup.status_code == 201
+    assert dup.json()["id"] == data["id"]
+
+
 async def test_get_plates(client, tmp_path):
     lib, cache = _patch_dirs(tmp_path)
     with lib, cache:

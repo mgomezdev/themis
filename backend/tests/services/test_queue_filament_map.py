@@ -28,6 +28,35 @@ def test_filament_map_none_keeps_existing_behaviour():
     assert _filament_mismatch(_cfg(), LOADED) is None
 
 
+# ── "any" keyword (JobPrinterConfig.filament_type/filament_color only) ────────
+
+def test_any_type_and_color_means_no_constraint():
+    assert _filament_mismatch(_cfg(filament_type="any", filament_color="any"), LOADED) is None
+
+
+def test_any_is_case_insensitive():
+    assert _filament_mismatch(_cfg(filament_type="ANY", filament_color="Any"), LOADED) is None
+
+
+def test_any_type_still_enforces_color():
+    mismatch = _filament_mismatch(_cfg(filament_type="any", filament_color="#000000"), LOADED)
+    assert mismatch is not None  # LOADED is all white PLA, not black
+
+
+def test_any_behaves_like_blank():
+    with_any = _filament_mismatch(_cfg(filament_type="any", filament_color="any"), LOADED)
+    with_blank = _filament_mismatch(_cfg(filament_type="", filament_color=""), LOADED)
+    assert with_any == with_blank is None
+
+
+def test_any_does_not_leak_into_filament_map_semantics():
+    # filament_map entries are untouched by the "any" keyword — a literal "any"
+    # filament_type there is just an (unmatchable) material name, not a wildcard.
+    fm = [{"model_filament": 1, "tool_index": None, "filament_id": None,
+           "filament_type": "any", "filament_color": None}]
+    assert _filament_mismatch(_cfg(filament_map=fm), LOADED) is not None
+
+
 LOADED_MIXED = [
     {"slot": 0, "type": "PLA",  "color": "#5B9BD5", "filament_profile": "PLA @ECC"},
     {"slot": 1, "type": "PETG", "color": "#FFFFFF",  "filament_profile": "PETG @ECC"},

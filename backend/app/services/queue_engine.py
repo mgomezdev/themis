@@ -8,10 +8,11 @@ import shutil
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Callable
 
 import httpx
-from sqlalchemy import and_, select
+from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import get_laminus_sidecar_url
@@ -94,15 +95,24 @@ def _norm_color(value) -> str:
     return str(value or "").strip().lstrip("#").lower()
 
 
+def _is_any_filament_ask(value) -> bool:
+    """True if a JobPrinterConfig.filament_type/filament_color value expresses 'no
+    constraint on this field' — blank, or the canonical "any" keyword (case-insensitive).
+    Scoped to JobPrinterConfig's own type/color fields only; filament_map entries have
+    their own, unrelated NULL semantics and must not go through this."""
+    return str(value or "").strip().lower() in ("", "any")
+
+
 def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:
     """The printer's loaded filament slot that satisfies the job's ask (type AND
-    color), or None. A job with no declared requirement matches the first slot.
+    color), or None. A job with no declared requirement (blank or "any") matches
+    the first slot.
 
     The OrcaSlicer filament *profile* used for slicing is a printer-level setting
     that lives on the matched slot (the "provide"); the job only declares the
     desired type/color (the "ask")."""
-    req_type = (config.filament_type or "").strip().lower()
-    req_color = _norm_color(config.filament_color)
+    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
+    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
     if not req_type and not req_color:
         return (loaded[0] if loaded else None)
     for f in loaded or []:
@@ -197,8 +207,8 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
         if _slot_for_config(config, loaded) is None:
             return f"tool T{config.tool_index} has no loaded filament"
         return None
-    req_type = (config.filament_type or "").strip().lower()
-    req_color = _norm_color(config.filament_color)
+    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
+    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
     if not req_type and not req_color:
         return None
     if _matching_loaded_filament(config, loaded) is not None:
@@ -247,7 +257,23 @@ class QueueEngine:
         task.add_done_callback(self._estimate_tasks.discard)
 
     async def run_estimate(self, job_id: int) -> None:
-        """Background test slice to populate estimate_* fields on the Job row."""
+        """Background test slice to populate estimate_* fields on the Job row.
+
+        Wraps _do_run_estimate so an unexpected exception anywhere in the estimate
+        pipeline still marks the estimate failed instead of leaving it "pending"
+        forever — spawn_estimate's done-callback only discards the task and never
+        retrieves the exception, so without this the UI spinner would never resolve.
+        """
+        try:
+            await self._do_run_estimate(job_id)
+        except Exception as exc:
+            logger.exception("Unexpected error in run_estimate for job %s", job_id)
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+                token = job.estimate_token if job else None
+            await self._fail_estimate(job_id, token, f"Unexpected error: {exc}")
+
+    async def _do_run_estimate(self, job_id: int) -> None:
         import json as _json
 
         # Step 1 — Load job and resolve config
@@ -275,23 +301,23 @@ class QueueEngine:
                 .limit(1)
             )
             config = cfg_result.scalar_one_or_none()
-            if config is None:
-                return
-
-            printer = await session.get(Printer, config.printer_id)
-            if printer is None:
-                return
+            # No config or no matching printer: fall through to Step 2 below, which
+            # already fails the estimate — machine_preset/filament_profiles stay at
+            # their empty defaults so that check catches it. (Previously this
+            # returned here directly, skipping _fail_estimate and leaving the
+            # estimate stuck on "pending" forever.)
+            printer = await session.get(Printer, config.printer_id) if config is not None else None
             uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
 
             # Capture all scalars before session closes
-            machine_preset = printer.current_orca_printer_profile or ""
-            print_profile = config.print_profile or ""
+            machine_preset = (printer.current_orca_printer_profile or "") if printer else ""
+            print_profile = (config.print_profile or "") if config else ""
             stored_path = uploaded_file.stored_path if uploaded_file else None
-            printer_name = printer.name
-            loaded = printer.loaded_filaments or []
+            printer_name = printer.name if printer else None
+            loaded = (printer.loaded_filaments or []) if printer else []
 
             # Resolve filament profiles
-            fmap = config.filament_map
+            fmap = config.filament_map if config else None
             if fmap:
                 for entry in sorted(fmap, key=lambda e: e.get("tool_index", 0) or 0):
                     ti = entry.get("tool_index")
@@ -300,7 +326,7 @@ class QueueEngine:
                         filament_profiles.append(ep)
                     elif ti is not None and ti < len(loaded):
                         filament_profiles.append(loaded[ti].get("filament_profile", ""))
-            else:
+            elif config is not None:
                 slot = _slot_for_config(config, loaded)
                 fp = config.filament_profile or (slot.get("filament_profile") if slot else None)
                 if fp:
@@ -419,6 +445,28 @@ class QueueEngine:
         logger.warning("Estimate failed for job %s: %s", job_id, reason)
         await self._broadcast_job(job_id)
 
+    async def run_verify_slice(self, req: SliceRequest, output_dir: Path) -> str:
+        """Test-slice through the same serialized _slice_queue as production and
+        estimate slices, at the lowest priority. Routing it through self._executor
+        directly (the old behaviour) let a debug-only test-slice — which can block
+        for up to poll_status's ~620s timeout — hold one of only 4 threads that
+        _do_upload_and_print also depends on for upload_file/start_print, so
+        finished jobs could sit in "uploading" for minutes behind a verify-slice."""
+        loop = asyncio.get_running_loop()
+        fut: asyncio.Future = loop.create_future()
+
+        async def _do_verify_slice():
+            try:
+                result = await asyncio.to_thread(self._slicer.slice, req, output_dir)
+                if not fut.done():
+                    fut.set_result(result)
+            except Exception as exc:
+                if not fut.done():
+                    fut.set_exception(exc)
+
+        await self._slice_queue.put((2, next(self._slice_seq), _do_verify_slice()))
+        return await fut
+
     def wake(self) -> None:
         self._event.set()
 
@@ -520,15 +568,23 @@ class QueueEngine:
         all_ids = sorted(self._mgr.get_all_printer_ids())
         ready_set = {pid for pid in all_ids if self._mgr.is_printer_ready(pid)}
         # Ready printers: resume pre-sliced gcode if available, else claim and slice.
+        # Each printer is isolated in its own try/except — a poisoned job (e.g.
+        # malformed stored data) must not stall printers processed after it.
         for printer_id in sorted(ready_set):
-            async with self._factory() as session:
-                if not await self._try_resume_sliced_job(session, printer_id):
-                    await self._try_claim_for_printer(session, printer_id)
+            try:
+                async with self._factory() as session:
+                    if not await self._try_resume_sliced_job(session, printer_id):
+                        await self._try_claim_for_printer(session, printer_id)
+            except Exception:
+                logger.exception("Queue engine error processing printer %s", printer_id)
         # Offline printers: run the slice step now so gcode is ready when they come online.
         for printer_id in sorted(pid for pid in all_ids if pid not in ready_set):
-            async with self._factory() as session:
-                if not await self._has_pending_sliced_job(session, printer_id):
-                    await self._try_claim_for_printer(session, printer_id, slice_only=True)
+            try:
+                async with self._factory() as session:
+                    if not await self._has_pending_sliced_job(session, printer_id):
+                        await self._try_claim_for_printer(session, printer_id, slice_only=True)
+            except Exception:
+                logger.exception("Queue engine error processing printer %s", printer_id)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.
@@ -661,12 +717,16 @@ class QueueEngine:
             await self._block_job(session, job, "Laminus is unreachable — slicing paused")
             return
 
-        # Claim → slice.
-        job.status = "slicing"
-        job.assigned_printer_id = printer_id
-        job.block_reason = None
-        job.updated_at = _now()
+        # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
+        # user cancel) that committed while we awaited the Laminus health probe above.
         plate_number = job.plate_number
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
+            .values(status="slicing", assigned_printer_id=printer_id, block_reason=None, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return  # no longer claimable — bail without starting the slice/print
         await session.commit()
 
         asyncio.create_task(
@@ -678,10 +738,17 @@ class QueueEngine:
     async def _block_job(self, session: AsyncSession, job: Job, reason: str) -> None:
         job_id = job.id
         already = job.status == "blocked" and job.block_reason == reason
-        job.status = "blocked"
-        job.block_reason = reason
-        job.assigned_printer_id = None
-        job.updated_at = _now()
+        # Conditional UPDATE, mirroring the claim guard above: some call sites reach
+        # here after an await (the Laminus health probe), so a concurrent status
+        # change (e.g. a user cancel) may have committed in the gap. Only overwrite
+        # if the job is still in a blockable state.
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
+            .values(status="blocked", block_reason=reason, assigned_printer_id=None, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return  # no longer blockable — don't resurrect a cancelled job
         await session.commit()
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
@@ -804,6 +871,12 @@ class QueueEngine:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job is None or job.status == "cancelled":
+                # No GcodeFile row will exist to reference this artifact — nothing
+                # else will ever clean it up, so remove it here.
+                try:
+                    os.remove(gcode_path)
+                except OSError:
+                    pass
                 return
             grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
             gcode_rec = GcodeFile(
@@ -939,9 +1012,15 @@ class QueueEngine:
         gcode_path = gcode.path
         plate_number = job.plate_number
 
-        job.status = "uploading"
-        job.assigned_printer_id = printer_id
-        job.updated_at = _now()
+        # Conditional UPDATE guards against a status change (e.g. a user cancel) that
+        # committed during the DB round-trips above (config/printer lookups).
+        result = await session.execute(
+            update(Job)
+            .where(Job.id == job.id, Job.status == "sliced")
+            .values(status="uploading", assigned_printer_id=printer_id, updated_at=_now())
+        )
+        if result.rowcount == 0:
+            return False  # no longer claimable
         await session.commit()
         asyncio.create_task(
             self._do_upload_and_print(job.id, printer_id, gcode_path, plate_number, ams_tray_id),
@@ -1038,9 +1117,20 @@ class QueueEngine:
             if job is None:
                 return
             job_id = job.id
-            job.status = "complete"
-            job.completed_at = _now()
-            job.updated_at = _now()
+
+            # Conditional UPDATE claims the completion atomically. The vendor client's
+            # completion callback and _reconcile_printing_jobs can both observe
+            # status=="printing" for the same job (several awaits separate this read
+            # from the commit below); without this guard both would proceed and
+            # double the Spoolman deduction, lifetime counters, and job.complete
+            # webhook. Only the caller that flips the row wins.
+            claim = await session.execute(
+                update(Job)
+                .where(Job.id == job_id, Job.status == "printing")
+                .values(status="complete", completed_at=_now(), updated_at=_now())
+            )
+            if claim.rowcount == 0:
+                return  # already claimed by a concurrent completion path
 
             # Accrue lifetime wear counters for maintenance tracking — every
             # successfully completed job, regardless of Spoolman config.

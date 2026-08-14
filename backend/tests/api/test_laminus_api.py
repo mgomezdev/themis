@@ -222,6 +222,49 @@ async def test_confirm_remap_missing_required_printer_resolution_returns_422(cli
     assert resp.status_code == 422
 
 
+async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient):
+    """A job resolution value not present in the new catalog is rejected, not applied blindly."""
+    lmod._pending_sync = {
+        "sync_id": "sync-job",
+        "raw": b"{}",
+        "catalog": {"machine": [], "process": [], "filament": []},
+        "pending": {
+            "printers": [],
+            "jobs": [{"field": "print_profile", "stale_value": "Old Process",
+                      "options_kind": "process", "required": False,
+                      "affected_config_ids": [1], "affected_file_names": ["job#1"]}],
+            "spoolman_filaments": [],
+        },
+        "created_at": 0,
+    }
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "sync-job",
+        "resolutions": {
+            "printers": [],
+            "jobs": [{"field": "print_profile", "stale_value": "Old Process",
+                      "new_value": "Not In Catalog"}],
+            "spoolman_filaments": [],
+        },
+    })
+    assert resp.status_code == 422
+
+
+async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: AsyncClient):
+    """A malformed resolutions payload is a validation error, not an unhandled 500."""
+    lmod._pending_sync = {
+        "sync_id": "sync-malformed",
+        "raw": b"{}",
+        "catalog": {},
+        "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
+        "created_at": 0,
+    }
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "sync-malformed",
+        "resolutions": {"printers": "not-a-list", "jobs": [], "spoolman_filaments": []},
+    })
+    assert resp.status_code == 422
+
+
 async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncClient):
     """Valid confirm: updates Printer row, commits pending catalog, clears pending slot."""
     # Create a printer via API

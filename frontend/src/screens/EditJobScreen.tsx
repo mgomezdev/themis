@@ -172,8 +172,9 @@ export function EditJobScreen() {
           print_profile: perPrinter[sid].printProfile!,
           filament_profile: perPrinter[sid].filamentProfile ?? null,
           filament_id: perPrinter[sid].filamentId ?? null,
-          filament_type: perPrinter[sid].filamentType,
-          filament_color: perPrinter[sid].filamentColor,
+          // "any" is the wire form of "no preference" — the backend rejects null/blank here.
+          filament_type: perPrinter[sid].filamentType ?? 'any',
+          filament_color: perPrinter[sid].filamentColor ?? 'any',
           tool_index: perPrinter[sid].toolIndex ?? null,
           filament_map: perPrinter[sid].filamentMap ?? null,
         })),

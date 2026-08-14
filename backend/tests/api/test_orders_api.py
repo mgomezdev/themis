@@ -40,7 +40,7 @@ async def _make_job(client, tmp_path, order_id, status="queued"):
     with patch("app.api.routes.jobs.queue_engine"):
         j = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1, "order_id": order_id,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm"}]})
+            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}]})
     return j.json()["id"]
 
 

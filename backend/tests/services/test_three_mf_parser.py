@@ -174,3 +174,12 @@ def test_malformed_slice_info_uses_defaults(tmp_path):
     assert plates[0].plate_number == 1
     assert plates[0].estimated_time == 0
     assert plates[0].filament_g == 0.0
+
+
+def test_corrupt_zip_returns_empty_instead_of_raising(tmp_path):
+    # A truncated/non-ZIP file must not raise — it would otherwise crash
+    # the library scan (and app startup) on a single bad upload.
+    path = tmp_path / "corrupt.3mf"
+    path.write_bytes(b"this is not a zip file")
+    plates = parse_three_mf(str(path))
+    assert plates == []

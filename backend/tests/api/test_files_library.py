@@ -135,6 +135,37 @@ async def test_delete_blocked_by_active_job(client, lib):
 
 
 @pytest.mark.asyncio
+async def test_delete_succeeds_and_removes_file_from_disk(client, lib):
+    up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
+    assert (lib / "Job Uploads" / "a.stl").is_file()
+    r = await client.delete(f"/api/v1/files/{up['id']}")
+    assert r.status_code == 200, r.text
+    assert not (lib / "Job Uploads" / "a.stl").exists()
+
+
+@pytest.mark.asyncio
+async def test_delete_blocked_by_project_item_reference_and_file_survives(client, lib):
+    # A file referenced by a ProjectItem is RESTRICT-protected at the DB level.
+    # The route must reject with 409 up front, and must NOT delete the file off
+    # disk first (that would strand the ProjectItem pointing at nothing).
+    up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
+    from app.main import app
+    from app.database import get_session
+    from app.models import Project, ProjectItem
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    project = Project(name="P", order_type="internal", created_at="t", updated_at="t")
+    session.add(project)
+    await session.flush()
+    session.add(ProjectItem(project_id=project.id, file_id=up["id"], quantity=1))
+    await session.commit()
+
+    r = await client.delete(f"/api/v1/files/{up['id']}")
+    assert r.status_code == 409
+    assert (lib / "Job Uploads" / "a.stl").is_file()
+
+
+@pytest.mark.asyncio
 async def test_create_folder_and_tree(client, lib):
     r = await client.post("/api/v1/files/folders", json={"path": "/Customers/New"})
     assert r.status_code == 201

@@ -138,6 +138,11 @@ class ProjectPartUpdate(BaseModel):
 
 class GenerateRequest(BaseModel):
     eligible_printer_ids: list[int] = []
+    # OrcaSlicer process/print preset name, resolved against each eligible
+    # printer's process catalog. No default is invented when omitted — an
+    # unset print_profile fails cleanly at slice time with an actionable error
+    # (see slicer_service._resolve_uuids) rather than silently misresolving.
+    process_preset: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -1024,13 +1029,20 @@ async def generate_project(
             "plate_count": len(plate_nums),
         })
 
-        # Create printer configs for each eligible printer × job.
+        # Create printer configs for each eligible printer × job. The machine preset
+        # is deliberately NOT set here — queue_engine reads it fresh from the printer
+        # at dispatch time. print_profile is the *process* preset and must come from
+        # the user (body.process_preset); current_orca_printer_profile is a machine
+        # preset name and can never resolve against the process catalog.
         for j in new_jobs:
             for p in eligible_printers:
                 session.add(JobPrinterConfig(
                     job_id=j.id,
                     printer_id=p.id,
-                    print_profile=p.current_orca_printer_profile or "",
+                    print_profile=body.process_preset or "",
+                    filament_type=fil_type,
+                    filament_color=fil_color,
+                    filament_id=fil_id,
                 ))
         await session.commit()
 
