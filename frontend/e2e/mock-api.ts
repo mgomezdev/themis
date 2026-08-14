@@ -91,7 +91,10 @@ export async function mockApi(page: Page, over: Partial<{
     if ((m = path.match(/^\/printers\/(\d+)\/profiles$/))) return ok(route, profiles);
     if ((m = path.match(/^\/printers\/(\d+)$/))) return ok(route, printers.find(p => p.id === +m[1]) ?? {});
     if (path === '/files') return ok(route, files);
-    if ((m = path.match(/^\/files\/(\d+)\/plates$/))) return ok(route, plates);
+    if ((m = path.match(/^\/files\/(\d+)\/plates$/))) {
+      const file = files.find(f => f.id === +m[1]) ?? files[0];
+      return ok(route, { filename: file?.original_filename ?? '', plates });
+    }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
     if (path === '/settings/spoolman') return ok(route, { enabled: false });
     if (path === '/spoolman/filaments' || path === '/spoolman/spools') return ok(route, []);
