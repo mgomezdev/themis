@@ -74,7 +74,8 @@ async def _resolve_key(request: Request, session: AsyncSession) -> ApiKey | None
 
 
 def require_scope(scope: str):
-    assert scope in SCOPES, f"unknown scope {scope!r}"
+    if scope not in SCOPES:
+        raise ValueError(f"unknown scope {scope!r}")
 
     async def _dep(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
         if await _table_is_empty(session):
