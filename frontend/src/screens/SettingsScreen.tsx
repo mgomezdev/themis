@@ -1449,6 +1449,7 @@ function CreateKeyModal({ onClose, onCreated }: {
 
   async function submit() {
     if (!name.trim()) return;
+    if (scopes.size === 0) return;
     setSaving(true);
     setError(null);
     try {
@@ -1502,7 +1503,7 @@ function CreateKeyModal({ onClose, onCreated }: {
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-1)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button className="btn sm" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn primary sm" onClick={submit} disabled={saving || !name.trim()}>
+          <button className="btn primary sm" onClick={submit} disabled={saving || !name.trim() || scopes.size === 0}>
             {saving ? 'Creating…' : 'Create key'}
           </button>
         </div>
