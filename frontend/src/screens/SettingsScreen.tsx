@@ -1572,7 +1572,8 @@ function ApiKeysPage() {
 
   useEffect(() => { refetch(); }, [refetch]);
 
-  async function handleRevoke(id: number) {
+  async function handleRevoke(id: number, name: string) {
+    if (!window.confirm(`Revoke access for the key "${name}"?`)) return;
     setError(null);
     try {
       await revokeApiKey(id);
@@ -1637,7 +1638,7 @@ function ApiKeysPage() {
                   <ApiKeyRow
                     key={k.id}
                     item={k}
-                    onRevoke={() => handleRevoke(k.id)}
+                    onRevoke={() => handleRevoke(k.id, k.name)}
                     onDelete={() => handleDelete(k.id, k.name)}
                   />
                 ))}
