@@ -286,3 +286,18 @@ class PrinterMaintenanceState(Base):
     last_done_at: Mapped[str] = mapped_column(String(32))
     baseline_job_count: Mapped[int] = mapped_column(Integer, default=0)
     baseline_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+    __table_args__ = (UniqueConstraint("key_prefix", name="uq_api_keys_prefix"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    key_prefix: Mapped[str] = mapped_column(String(16), index=True)
+    key_hash: Mapped[str] = mapped_column(String(64))  # sha256 hex digest, 64 chars
+    scopes: Mapped[list] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+    last_used_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    revoked_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)

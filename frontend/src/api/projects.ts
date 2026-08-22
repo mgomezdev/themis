@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryFile } from '../data/types';
+import { apiFetch } from './client';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await (init ? fetch(url, init) : fetch(url));
+  const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -208,7 +209,7 @@ export function useProjectFiles(id: number) {
   useEffect(() => {
     if (!id) return;
     let alive = true;
-    fetch(`/api/v1/files/${id}`)
+    apiFetch(`/api/v1/files/${id}`)
       .then(r => r.ok ? r.json() : null)
       .then(d => { if (alive) setFile(d); })
       .catch(() => {});

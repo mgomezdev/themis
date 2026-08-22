@@ -4,6 +4,8 @@ from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from ..database import get_session
+
 logger = logging.getLogger("app.websocket")
 
 
@@ -38,7 +40,26 @@ class ConnectionManager:
 connection_manager = ConnectionManager()
 
 
-async def websocket_endpoint(websocket: WebSocket) -> None:
+async def websocket_endpoint(websocket: WebSocket, key: str | None = None) -> None:
+    # Auth can't run as a normal Depends() chain for websockets, so resolve the
+    # key manually before accepting — equivalent to auth.require_any_key, but
+    # inlined since there's no request/response cycle to hang a dependency off.
+    # Local import: avoids adding app.auth to this module's import-time surface
+    # for a check that only runs once per connection.
+    from ..auth import _resolve_raw_key, _table_is_empty
+
+    session_dep = websocket.app.dependency_overrides.get(get_session, get_session)
+    session_gen = session_dep()
+    session = await session_gen.__anext__()
+    try:
+        if not await _table_is_empty(session):
+            resolved = await _resolve_raw_key(key, session)
+            if resolved is None:
+                await websocket.close(code=4401)
+                return
+    finally:
+        await session_gen.aclose()
+
     await connection_manager.connect(websocket)
     try:
         while True:

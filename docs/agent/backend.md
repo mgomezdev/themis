@@ -20,10 +20,27 @@ Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the pub
 | `settings.py` | `/api/v1/settings` | `GET/PUT /queue` (check interval, operator name), `GET/PUT /spoolman`, `POST /spoolman/test` |
 | `spoolman.py` | `/api/v1/spoolman` | `GET /filaments`, `GET /spools` (proxy to Spoolman), `PATCH /filaments/{id}` (update `orca_profiles` extra field) |
 | `tags.py` | `/api/v1/tags` | `GET ""`, `POST ""`, `PATCH /{id}`, `DELETE /{id}`, `POST /files/{file_id}/assign`, `POST /files/{file_id}/unassign` |
+| `api_keys.py` | `/api/v1/api-keys` | `GET ""` (list, never returns hash/raw key), `POST ""` (create — raw key in response **once**; while `api_keys` is empty, bootstrap: ignores requested scopes, grants all of `SCOPES`), `POST /{id}/revoke` (soft: `enabled=False`+`revoked_at`), `DELETE /{id}` (hard). Revoking/deleting the last enabled key holding `apikeys:write` → `400`. |
 
 Pattern for a route: define Pydantic `*Create`/`*Patch` models, a `_to_dict(row)` serializer, a
 `_get_or_404`, use `session: AsyncSession = Depends(get_session)`. `HTTPException(404, "msg")` uses
-**positional** detail here (match existing style). Register the router in `main.py`.
+**positional** detail here (match existing style). Register the router in `main.py`. Every route
+(new or existing) needs `dependencies=[Depends(require_scope("<scope>"))]` — see **Auth** below.
+
+## Auth (`app/auth.py`)
+
+`SCOPES: set[str]` — fixed, hardcoded registry, one `read`/`write` pair per route module above (plus
+`printers:control`, `apikeys:{read,write}`). `require_scope(scope)` — FastAPI dependency factory; while
+`api_keys` is empty, every request passes through unauthenticated (bootstrap hatch, closes permanently
+once any key is created); otherwise resolves `X-Api-Key` header or `?key=` query param → prefix lookup
+→ hash compare (`services/api_key_service.py`: `generate_key()`→`(raw, prefix)`, `hash_key(raw)`→sha256
+hex) → 401 if missing/invalid, 403 if the key lacks the required scope. `require_any_key` — same
+resolution, no specific scope check; used by `/ws` (`app/api/websocket.py` resolves it manually before
+`websocket.accept()`, since a normal `Depends` chain doesn't apply to websocket handlers — closes with
+code `4401` on failure). `last_used_at` is touched on successful resolution, throttled to roughly
+once/minute per key (not written on every request). OpenAPI's `/docs` Authorize button is wired via an
+`APIKeyHeader(name="X-Api-Key")` security scheme attached in `main.py` (documentation ergonomics only —
+enforcement is entirely `require_scope`).
 
 ## Services (`app/services/`)
 
@@ -45,6 +62,7 @@ Pattern for a route: define Pydantic `*Create`/`*Patch` models, a `_to_dict(row)
 | `camera_proxy.py` | `grab_jpeg_frame`, `stream_mjpeg`, `stream_rtsp_ffmpeg` (RTSP→MJPEG via ffmpeg). |
 | `spoolman_service.py` | Spoolman HTTP client: `fetch_filaments`, `fetch_spools`, `test_connection`, `patch_filament(url, api_key, filament_id, orca_profiles)` — writes OrcaSlicer profile mappings into the Spoolman filament's `extra.orca_profiles` field (double-JSON-encoded to satisfy Spoolman text-field constraints). |
 | `library_scanner.py` | Scans the uploads directory; updates `uploaded_files` rows (`relative_path`, `folder`, `size_bytes`, `content_hash`, `mtime`, `missing`). Filesystem is source of truth; DB caches the index. |
+| `api_key_service.py` | `generate_key() -> (raw, prefix)` (`raw` = `"thm_" + secrets.token_urlsafe(24)`, shown to the user once), `hash_key(raw) -> str` (sha256 hex — no bcrypt/argon2, these are high-entropy random tokens not human passwords). |
 
 ## Key flows (where to change behavior)
 

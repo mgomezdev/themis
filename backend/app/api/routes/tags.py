@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import Tag, FileTag
 
@@ -36,7 +37,7 @@ def _to_dict(t: Tag, usage: int) -> dict:
             "category": t.category, "usage_count": usage}
 
 
-@router.get("", summary="List tags")
+@router.get("", summary="List tags", dependencies=[Depends(require_scope("tags:read"))])
 async def list_tags(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All tags ordered by category then name, each with a usage_count of how many files carry it."""
     usage = await _usage_counts(session)
@@ -51,6 +52,7 @@ async def list_tags(session: AsyncSession = Depends(get_session)) -> list[dict]:
     responses={
         409: {"description": "A tag with this name already exists"},
     },
+    dependencies=[Depends(require_scope("tags:write"))],
 )
 async def create_tag(body: TagCreate, session: AsyncSession = Depends(get_session)) -> dict:
     existing = (await session.execute(select(Tag).where(Tag.name == body.name))).scalar_one_or_none()
@@ -71,6 +73,7 @@ async def create_tag(body: TagCreate, session: AsyncSession = Depends(get_sessio
         404: {"description": "Tag not found"},
         409: {"description": "A tag with the requested name already exists"},
     },
+    dependencies=[Depends(require_scope("tags:write"))],
 )
 async def update_tag(tag_id: int, body: TagPatch, session: AsyncSession = Depends(get_session)) -> dict:
     tag = await session.get(Tag, tag_id)
@@ -96,6 +99,7 @@ async def update_tag(tag_id: int, body: TagPatch, session: AsyncSession = Depend
     responses={
         404: {"description": "Tag not found"},
     },
+    dependencies=[Depends(require_scope("tags:write"))],
 )
 async def delete_tag(tag_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     tag = await session.get(Tag, tag_id)

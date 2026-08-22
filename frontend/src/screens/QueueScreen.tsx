@@ -9,6 +9,7 @@ import { Icons } from '../components/icons';
 import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
+import { apiFetch } from '../api/client';
 
 // ---- DisplayJob: flattened shape for rendering ----
 interface DisplayJob {
@@ -682,7 +683,7 @@ export function QueueScreen() {
   React.useEffect(() => {
     let alive = true;
     function poll() {
-      fetch('/api/v1/laminus/catalog/status')
+      apiFetch('/api/v1/laminus/catalog/status')
         .then(r => r.ok ? r.json() : Promise.reject())
         .then((d: { laminus: unknown }) => { if (alive) setLaminusDown(d.laminus === null); })
         .catch(() => { if (alive) setLaminusDown(true); });

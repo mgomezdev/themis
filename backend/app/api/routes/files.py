@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import config
+from ...auth import require_scope
 from ...database import get_session
 from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
 from ...services.library_scanner import (
@@ -88,7 +89,7 @@ def _tree_insert(root: dict, folder: str) -> None:
 
 # ---------- list / tree ----------
 
-@router.get("", summary="List files")
+@router.get("", summary="List files", dependencies=[Depends(require_scope("files:read"))])
 async def list_files(
     folder: str | None = None,
     tags: list[str] | None = None,
@@ -118,7 +119,7 @@ async def list_files(
     return [_to_dict(r, tag_map.get(r.id, [])) for r in rows]
 
 
-@router.get("/tree", summary="Folder tree (index-derived)")
+@router.get("/tree", summary="Folder tree (index-derived)", dependencies=[Depends(require_scope("files:read"))])
 async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
     """Hierarchical folder tree derived from the file index. Each node has
     `name`, `path`, `count` (files in this folder and below), and `children`.
@@ -131,7 +132,7 @@ async def folder_tree(session: AsyncSession = Depends(get_session)) -> dict:
     return root
 
 
-@router.get("/dirs", summary="Folder tree with empty dirs")
+@router.get("/dirs", summary="Folder tree with empty dirs", dependencies=[Depends(require_scope("files:read"))])
 async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
     """Folder hierarchy from the actual on-disk library directory — includes
     EMPTY folders (unlike /tree, which is index-derived) — with recursive file
@@ -170,6 +171,7 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
     responses={
         422: {"description": "Unsupported file type (only .3mf and .stl accepted)"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def upload_file(
     file: UploadFile,
@@ -259,6 +261,7 @@ class FolderCreate(BaseModel):
     responses={
         400: {"description": "Path escapes the library root"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def create_folder(body: FolderCreate) -> dict:
     """Create a directory in the library. Parent directories are created as needed."""
@@ -276,6 +279,7 @@ async def create_folder(body: FolderCreate) -> dict:
         404: {"description": "Folder not found"},
         409: {"description": "Folder is not empty"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def delete_folder(path: str) -> dict:
     """Delete an EMPTY folder. Refuses (409) if it contains any files or
@@ -308,6 +312,7 @@ class FilePatch(BaseModel):
         400: {"description": "Invalid filename or path escapes the library root"},
         404: {"description": "File not found"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def update_file(file_id: int, body: FilePatch,
                       session: AsyncSession = Depends(get_session)) -> dict:
@@ -362,6 +367,7 @@ async def update_file(file_id: int, body: FilePatch,
         404: {"description": "File not found"},
         409: {"description": "File is referenced by an active job or a project item"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     f = await session.get(UploadedFile, file_id)
@@ -410,6 +416,7 @@ class TagAssign(BaseModel):
     responses={
         404: {"description": "File or tag not found"},
     },
+    dependencies=[Depends(require_scope("files:write"))],
 )
 async def add_file_tag(file_id: int, body: TagAssign,
                        session: AsyncSession = Depends(get_session)) -> dict:
@@ -427,7 +434,8 @@ async def add_file_tag(file_id: int, body: TagAssign,
     return {"file_id": file_id, "tag_id": body.tag_id}
 
 
-@router.delete("/{file_id}/tags/{tag_id}", summary="Remove tag from file")
+@router.delete("/{file_id}/tags/{tag_id}", summary="Remove tag from file",
+              dependencies=[Depends(require_scope("files:write"))])
 async def remove_file_tag(file_id: int, tag_id: int,
                           session: AsyncSession = Depends(get_session)) -> dict:
     """Remove a tag from a file. Idempotent — no error if the tag is not assigned."""
@@ -442,7 +450,7 @@ async def remove_file_tag(file_id: int, tag_id: int,
 
 # ---------- rescan ----------
 
-@router.post("/rescan", summary="Rescan library")
+@router.post("/rescan", summary="Rescan library", dependencies=[Depends(require_scope("files:write"))])
 async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     """Walk the library directory and sync the file index — adds missing records,
     marks orphaned records as missing, and re-parses plate metadata."""
@@ -458,6 +466,7 @@ async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     responses={
         404: {"description": "File not found"},
     },
+    dependencies=[Depends(require_scope("files:read"))],
 )
 async def get_plates(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
     """Plate metadata extracted from the 3MF (estimated time, filament grams, thumbnail path)."""
@@ -473,6 +482,7 @@ async def get_plates(file_id: int, session: AsyncSession = Depends(get_session))
     responses={
         404: {"description": "File not found"},
     },
+    dependencies=[Depends(require_scope("files:read"))],
 )
 async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
     """Filament definitions embedded in the 3MF model XML (type, colour, vendor)."""
@@ -489,6 +499,7 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
     responses={
         404: {"description": "File not found"},
     },
+    dependencies=[Depends(require_scope("files:read"))],
 )
 async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
     """OrcaSlicer project settings embedded in `Metadata/project_settings.config` inside the 3MF."""
@@ -506,6 +517,7 @@ async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(ge
         400: {"description": "Invalid thumbnail filename"},
         404: {"description": "File or thumbnail not found"},
     },
+    dependencies=[Depends(require_scope("files:read"))],
 )
 async def get_thumbnail(file_id: int, filename: str,
                         session: AsyncSession = Depends(get_session)) -> FileResponse:
@@ -524,7 +536,8 @@ async def get_thumbnail(file_id: int, filename: str,
     return FileResponse(str(thumb_path), media_type="image/png")
 
 
-@router.get("/{file_id}/download", summary="Download raw file")
+@router.get("/{file_id}/download", summary="Download raw file",
+           dependencies=[Depends(require_scope("files:read"))])
 async def download_file(file_id: int, session: AsyncSession = Depends(get_session)) -> FileResponse:
     """Serve the raw uploaded file (STL, 3MF, etc.) for client-side use."""
     f = await session.get(UploadedFile, file_id)

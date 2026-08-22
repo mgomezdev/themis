@@ -1,5 +1,6 @@
 // frontend/src/api/tags.ts
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from './client';
 
 export interface Tag {
   id: number;
@@ -10,7 +11,7 @@ export interface Tag {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await (init ? fetch(url, init) : fetch(url));
+  const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);

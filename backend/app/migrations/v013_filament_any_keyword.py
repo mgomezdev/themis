@@ -5,7 +5,7 @@ filament_map entries keep their own NULL semantics untouched."""
 from __future__ import annotations
 from sqlalchemy import text
 
-version = 12
+version = 13
 name = "filament_any_keyword"
 
 # Explicit column list (not SELECT *) so the copy is correct regardless of the

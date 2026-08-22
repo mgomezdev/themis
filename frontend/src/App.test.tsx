@@ -4,6 +4,9 @@ import App from './App';
 
 beforeEach(() => {
   vi.restoreAllMocks();
+  // Seed a stored API key so AuthGate renders children immediately instead of
+  // waiting on its async bootstrap POST (which this suite doesn't otherwise mock).
+  localStorage.setItem('themis.apiKey', 'thm_test_key');
   vi.stubGlobal('fetch', vi.fn(async () => new Response('[]', { status: 200 })));
   class FakeWS { onmessage = null; onopen = null; onclose = null; close() {} send() {} }
   vi.stubGlobal('WebSocket', FakeWS as unknown as typeof WebSocket);

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { StatusKey } from '../data/types';
+import { apiFetch, openAuthedWebSocket } from './client';
 
 export type OrderType = 'customer' | 'internal';
 
@@ -63,7 +64,7 @@ export interface OrderCreateInput {
 export type OrderPatchInput = Partial<OrderCreateInput & { on_hold: boolean }>;
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await (init ? fetch(url, init) : fetch(url));
+  const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -92,7 +93,7 @@ export async function updateOrder(id: number, patch: OrderPatchInput): Promise<A
 }
 
 export async function deleteOrder(id: number): Promise<void> {
-  const resp = await fetch(`/api/v1/orders/${id}`, { method: 'DELETE' });
+  const resp = await apiFetch(`/api/v1/orders/${id}`, { method: 'DELETE' });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -113,8 +114,7 @@ export function useOrders(): { orders: ApiOrder[]; refetch: () => void } {
 
   useEffect(() => {
     let alive = true;
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    const ws = openAuthedWebSocket();
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string };

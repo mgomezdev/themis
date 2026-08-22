@@ -1,6 +1,7 @@
 // frontend/src/api/maintenance.ts
 import { useCallback, useEffect, useState } from 'react';
 import { fetchPrinters, fetchMachineCatalog, type ApiPrinter, type MachinePreset } from './printers';
+import { apiFetch } from './client';
 
 export type TriggerType = 'calendar' | 'job_time' | 'job_count';
 export type CalendarUnit = 'hours' | 'days' | 'weeks' | 'months';
@@ -83,7 +84,7 @@ export function useFleetVendorModels(): FleetVendorModel[] {
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await (init ? fetch(url, init) : fetch(url));
+  const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);

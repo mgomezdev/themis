@@ -146,12 +146,13 @@ queued
 
 ```
 Browser / API client
-  └─ HTTP request
+  └─ HTTP request (X-Api-Key header or ?key= query param)
        └─ FastAPI (app/main.py)
             └─ router (app/api/routes/<resource>.py)
-                 └─ async route function
-                      └─ AsyncSession (via Depends(get_session))
-                           └─ SQLAlchemy async queries / service calls
+                 └─ Depends(require_scope("<resource>:<read|write|control>"))  (app/auth.py)
+                      └─ async route function
+                           └─ AsyncSession (via Depends(get_session))
+                                └─ SQLAlchemy async queries / service calls
 ```
 
 WebSocket updates push to all connected clients when queue, fleet, or order state changes.
@@ -171,7 +172,17 @@ All internal routes call `get_cached_catalog()` — never fetch from Laminus per
 
 ## Routes Reference
 
-All routes are under `/api/v1`. Route files are in `backend/app/api/routes/`.
+All routes are under `/api/v1`. Route files are in `backend/app/api/routes/`. Every route requires a
+valid API key (see **Auth** below) — each endpoint below is gated by `Depends(require_scope("<scope>"))`
+matching its resource + verb class; that's omitted from the per-route lists below for brevity.
+
+### api_keys.py — `/api/v1/api-keys`
+- `GET /` — list keys (never returns `key_hash` or the raw key) — `apikeys:read`
+- `POST /` — create a key; response includes the raw key **once** — `apikeys:write`. While the table is
+  empty this is the bootstrap route: requested scopes are ignored and the key is granted every scope.
+- `POST /{key_id}/revoke` — soft: `enabled=False` + `revoked_at` — `apikeys:write`
+- `DELETE /{key_id}` — hard delete — `apikeys:write`
+- Revoking/deleting the last enabled key holding `apikeys:write` → `400` (can't lock yourself out).
 
 ### files.py — `/api/v1/files`
 - `GET /` — list files (query: folder, tags, search, sort)
@@ -230,6 +241,22 @@ All routes are under `/api/v1`. Route files are in `backend/app/api/routes/`.
 - `spoolman.py` — filament and spool data from Spoolman
 - `tags.py` — file tag CRUD
 
+### Auth
+
+Every `/api/v1/*` request needs a valid API key: `X-Api-Key: <key>` header, or `?key=<key>` for the
+handful of endpoints that can't set headers (`/ws`, camera/snapshot, file thumbnails). Keys are managed
+via `api_keys.py` and enforced by `app/auth.py`'s `require_scope(scope)` dependency + a fixed,
+hardcoded scope registry (`SCOPES` in `app/auth.py`) — one `read`/`write` pair per route module, plus
+`printers:control` for hardware actions and `apikeys:{read,write}` for key management itself.
+**Bootstrap escape hatch:** while the `api_keys` table is empty, every request passes through
+unauthenticated so the very first key can be created through the normal `POST /api/v1/api-keys`
+endpoint; the instant one key exists, the hatch closes permanently. The React SPA bootstraps its own
+full-access "Browser" key on first load and stores it in `localStorage` (`frontend/src/auth/AuthGate.tsx`)
+— there's no login system, the browser key just functions like a device credential. `/ws` requires *any*
+valid, non-revoked key (no specific scope) and closes with code `4401` if missing/invalid. `/api/v1/health`
+and the static frontend (`/`, `/assets/*`, SPA fallback) stay unauthenticated so the app shell can load
+before any key exists.
+
 ---
 
 ## Data Model
@@ -251,6 +278,7 @@ All models live in `backend/app/models.py`. Timestamps are stored as `VARCHAR(32
 | `ProjectPart` | `project_parts` | non-3D-printed hardware parts (name, quantity) with manual `allocated` flag |
 | `Order` | `orders` | parts JSON, derived status computed at API layer |
 | `Tag` / `FileTag` | `tags` / `file_tags` | many-to-many file tagging |
+| `ApiKey` | `api_keys` | key_prefix (indexed lookup) + key_hash (sha256), scopes JSON, enabled/revoked_at |
 
 ---
 
@@ -336,16 +364,20 @@ from ...database import get_session
 
 router = APIRouter(prefix="/api/v1/widgets", tags=["widgets"])
 
-@router.get("/")
+@router.get("/", dependencies=[Depends(require_scope("widgets:read"))])
 async def list_widgets(session: AsyncSession = Depends(get_session)):
     ...
 ```
-3. Register in `backend/app/main.py`:
+3. Add `widgets:read`/`widgets:write` (or whichever verb classes apply) to `SCOPES` in `app/auth.py` —
+   the registry is fixed/hardcoded, not auto-derived, so a new route module needs its scopes added there
+   explicitly. Import `require_scope` from `...auth`.
+4. Register in `backend/app/main.py`:
 ```python
 from .api.routes.widgets import router as widgets_router
 app.include_router(widgets_router)
 ```
-4. Add frontend API client in `frontend/src/api/widgets.ts`.
+5. Add frontend API client in `frontend/src/api/widgets.ts`, calling `apiFetch` (from `api/client.ts`)
+   instead of raw `fetch` — see **API client pattern** under Frontend Notes.
 
 ---
 
@@ -431,7 +463,12 @@ Resolved in `backend/app/config.py`:
 
 ### API client pattern
 
-All nine API client files in `frontend/src/api/` use raw `fetch`. Imperative async functions for mutations, `useXxx()` React hooks for data that needs polling or WebSocket integration.
+API client files in `frontend/src/api/` call `apiFetch` (from `api/client.ts`), not raw `fetch` —
+`apiFetch` injects the `X-Api-Key` header from `auth/apiKeyStore.ts` and reports 401s to the app-wide
+`AuthGate` via `setUnauthorizedHandler`. `withKeyParam(url)` (same file) appends `?key=` for the few
+endpoints that need it in a URL instead of a header (WS connections, camera/snapshot `<img>` src, plate
+thumbnails). Imperative async functions for mutations, `useXxx()` React hooks for data that needs
+polling or WebSocket integration.
 
 **Important:** `frontend/src/api/orca.ts` calls `/api/v1/orca/...` routes — this is a stale name from before the Laminus rename. The actual backend routes are at `/api/v1/laminus/...`. This mismatch exists and the frontend orca.ts functions are currently broken. When touching profile/catalog code, use `/api/v1/laminus/...` endpoints.
 
@@ -447,7 +484,11 @@ Three independent `/ws` connections are opened (one per hook). All receive the s
 
 ## Known Gotchas
 
-- **No auth.** All API routes are unauthenticated. Do not add auth-dependent logic.
+- **Auth is mandatory everywhere.** Every `/api/v1/*` route requires `Depends(require_scope(...))` — see
+  the **Auth** subsection under Routes Reference. Adding a new route means picking (or adding) a scope in
+  `app/auth.py`'s `SCOPES` registry, not skipping the dependency. The bootstrap hatch (open access while
+  `api_keys` is empty) is the only exception, and it's automatic — never bypass auth manually for "just
+  this one route."
 - **`orca.ts` naming mismatch.** `api/orca.ts` hits `/api/v1/orca/...` which doesn't exist. Use `/api/v1/laminus/...` when adding profile/catalog features.
 - **`awaiting_plate_clear` persisted to DB.** This boolean on each Printer row survives restarts. If a printer is stuck, clear it via `POST /api/v1/printers/{id}/plate-cleared`.
 - **Laminus pre-flight.** `queue_engine.py` checks Laminus health before claiming each job. If Laminus is unreachable, jobs are `blocked` (not failed) and will auto-retry.

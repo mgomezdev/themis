@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch, withKeyParam, openAuthedWebSocket } from './client';
 
 export interface ApiPlate {
   plate_number: number;
@@ -100,11 +101,11 @@ export function plateThumbnailUrl(fileId: number, thumbnailPath: string | null |
   if (!thumbnailPath) return null;
   const filename = thumbnailPath.replace(/\\/g, '/').split('/').pop();
   if (!filename) return null;
-  return `/api/v1/files/${fileId}/thumbnails/${filename}`;
+  return withKeyParam(`/api/v1/files/${fileId}/thumbnails/${filename}`);
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const resp = await (init ? fetch(url, init) : fetch(url));
+  const resp = await apiFetch(url, init);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -116,7 +117,7 @@ export async function uploadFile(file: File, folder?: string): Promise<ApiUpload
   const body = new FormData();
   body.append('file', file);
   if (folder) body.append('folder', folder);
-  const resp = await fetch('/api/v1/files/upload', { method: 'POST', body });
+  const resp = await apiFetch('/api/v1/files/upload', { method: 'POST', body });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -304,8 +305,7 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
   }, [tick]);
 
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    const ws = openAuthedWebSocket();
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: unknown };

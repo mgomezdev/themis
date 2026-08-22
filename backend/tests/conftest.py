@@ -5,6 +5,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 
 from app.main import app
 from app.database import Base, get_session
+from app.auth import SCOPES
+from app.models import ApiKey
+from app.services.api_key_service import generate_key, hash_key
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
@@ -23,7 +26,21 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_session] = override_get_session
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    # Seed a full-scope API key so the bootstrap hatch closes deterministically
+    # and every existing call site keeps working unmodified (auth is enforced
+    # everywhere now — see Task 5).
+    raw, prefix = generate_key()
+    async with factory() as _seed:
+        _seed.add(ApiKey(
+            name="test-fixture", key_prefix=prefix, key_hash=hash_key(raw),
+            scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00",
+        ))
+        await _seed.commit()
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test",
+        headers={"X-Api-Key": raw},
+    ) as c:
         yield c
 
     app.dependency_overrides.clear()

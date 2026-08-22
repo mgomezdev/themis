@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
@@ -304,7 +305,7 @@ async def _get_project_or_404(project_id: int, session: AsyncSession) -> Project
 # Project CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("", summary="List projects")
+@router.get("", summary="List projects", dependencies=[Depends(require_scope("projects:read"))])
 async def list_projects(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All projects ordered by creation date descending, each with items, links,
     job counts, and aggregated filament/time estimates."""
@@ -316,7 +317,8 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[di
     return [await _project_dict(p, session) for p in rows]
 
 
-@router.post("", status_code=201, summary="Create project")
+@router.post("", status_code=201, summary="Create project",
+            dependencies=[Depends(require_scope("projects:write"))])
 async def create_project(
     body: ProjectCreate,
     session: AsyncSession = Depends(get_session),
@@ -348,6 +350,7 @@ async def create_project(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:read"))],
 )
 async def get_project(
     project_id: int,
@@ -363,6 +366,7 @@ async def get_project(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def patch_project(
     project_id: int,
@@ -394,6 +398,7 @@ async def patch_project(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def delete_project(
     project_id: int,
@@ -411,6 +416,7 @@ async def delete_project(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:read"))],
 )
 async def list_project_jobs(
     project_id: int,
@@ -462,6 +468,7 @@ async def list_project_jobs(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:read"))],
 )
 async def list_items(
     project_id: int,
@@ -478,6 +485,7 @@ async def list_items(
     responses={
         404: {"description": "Project or file not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def add_item(
     project_id: int,
@@ -510,6 +518,7 @@ async def add_item(
     responses={
         404: {"description": "Project or item not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def update_item(
     project_id: int,
@@ -544,6 +553,7 @@ async def update_item(
     responses={
         404: {"description": "Project or item not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def delete_item(
     project_id: int,
@@ -566,6 +576,7 @@ async def delete_item(
         404: {"description": "Project not found"},
         422: {"description": "One or more item IDs do not belong to this project"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def reorder_items(
     project_id: int,
@@ -602,6 +613,7 @@ async def reorder_items(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:read"))],
 )
 async def list_links(
     project_id: int,
@@ -618,6 +630,7 @@ async def list_links(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def add_link(
     project_id: int,
@@ -644,6 +657,7 @@ async def add_link(
     responses={
         404: {"description": "Project or link not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def update_link(
     project_id: int,
@@ -672,6 +686,7 @@ async def update_link(
     responses={
         404: {"description": "Project or link not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def delete_link(
     project_id: int,
@@ -697,6 +712,7 @@ async def delete_link(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:read"))],
 )
 async def list_parts(
     project_id: int,
@@ -713,6 +729,7 @@ async def list_parts(
     responses={
         404: {"description": "Project not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def add_part(
     project_id: int,
@@ -740,6 +757,7 @@ async def add_part(
     responses={
         404: {"description": "Project or part not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def update_part(
     project_id: int,
@@ -770,6 +788,7 @@ async def update_part(
     responses={
         404: {"description": "Project or part not found"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def delete_part(
     project_id: int,
@@ -830,6 +849,7 @@ def _filament_label(fil_type: str, fil_color: str, fil_id: int | None) -> str:
         502: {"description": "Orca sidecar error during generation"},
         504: {"description": "Generation timed out"},
     },
+    dependencies=[Depends(require_scope("projects:write"))],
 )
 async def generate_project(
     project_id: int,

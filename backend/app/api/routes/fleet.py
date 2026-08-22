@@ -6,13 +6,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import Printer
 from ...services.printer_manager import printer_manager
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/fleet", tags=["fleet"])
+router = APIRouter(prefix="/api/v1/fleet", tags=["fleet"], dependencies=[Depends(require_scope("fleet:read"))])
 
 _OFFLINE_STATE: dict[str, object] = {
     "connected": False,

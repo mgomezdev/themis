@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import shutil
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobPrinterConfig, Printer
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
@@ -116,13 +117,13 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-@router.get("/types", summary="List printer types")
+@router.get("/types", summary="List printer types", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printer_types() -> list[dict]:
     """Available printer driver types with display name and required connection config fields."""
     return get_printer_types_for_ui()
 
 
-@router.get("", summary="List printers")
+@router.get("", summary="List printers", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printers(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All configured printers with their current connection status."""
     result = await session.execute(select(Printer))
@@ -136,6 +137,7 @@ async def list_printers(session: AsyncSession = Depends(get_session)) -> list[di
     responses={
         422: {"description": "Unknown printer_type"},
     },
+    dependencies=[Depends(require_scope("printers:write"))],
 )
 async def create_printer(
     body: PrinterCreate,
@@ -168,7 +170,8 @@ async def create_printer(
     return _to_dict(printer)
 
 
-@router.get("/orca-presets", summary="List OrcaSlicer machine preset names")
+@router.get("/orca-presets", summary="List OrcaSlicer machine preset names",
+           dependencies=[Depends(require_scope("printers:read"))])
 async def list_orca_printer_presets() -> list[str]:
     """Sorted list of all OrcaSlicer machine preset names available in the sidecar catalog."""
     cat = await _fetch_sidecar_catalog()
@@ -177,7 +180,8 @@ async def list_orca_printer_presets() -> list[str]:
     return sorted({m["name"] for m in cat.get("machine", []) if m.get("name")})
 
 
-@router.get("/orca-machine-catalog", summary="OrcaSlicer machine catalog")
+@router.get("/orca-machine-catalog", summary="OrcaSlicer machine catalog",
+           dependencies=[Depends(require_scope("printers:read"))])
 async def orca_machine_catalog() -> list[dict]:
     """Selectable OrcaSlicer machine presets [{name, vendor, printer_model, nozzle,
     source, uuid}]. Sourced exclusively from the Orca sidecar."""
@@ -207,6 +211,7 @@ async def orca_machine_catalog() -> list[dict]:
     responses={
         502: {"description": "Laminus sidecar unreachable"},
     },
+    dependencies=[Depends(require_scope("printers:write"))],
 )
 async def rescan_profiles(session: AsyncSession = Depends(get_session)) -> dict:
     """Trigger a catalog refresh from Orca and report the machine preset count."""
@@ -260,6 +265,7 @@ async def _connect_failure_hint(client) -> str:
     responses={
         422: {"description": "Unknown printer_type"},
     },
+    dependencies=[Depends(require_scope("printers:read"))],
 )
 async def test_connection(body: TestConnectionRequest) -> dict:
     """Attempt to connect with the given config and return `{ok: true}` or
@@ -292,6 +298,7 @@ async def test_connection(body: TestConnectionRequest) -> dict:
     responses={
         404: {"description": "Printer not found"},
     },
+    dependencies=[Depends(require_scope("printers:read"))],
 )
 async def get_profiles(
     printer_id: int,
@@ -324,6 +331,7 @@ async def get_profiles(
     responses={
         404: {"description": "Printer not found"},
     },
+    dependencies=[Depends(require_scope("printers:read"))],
 )
 async def get_printer(
     printer_id: int,
@@ -338,6 +346,7 @@ async def get_printer(
     responses={
         404: {"description": "Printer not found"},
     },
+    dependencies=[Depends(require_scope("printers:write"))],
 )
 async def update_printer(
     printer_id: int,
@@ -384,6 +393,7 @@ async def update_printer(
         404: {"description": "Printer not found"},
         409: {"description": "Printer has an active job"},
     },
+    dependencies=[Depends(require_scope("printers:write"))],
 )
 async def delete_printer(
     printer_id: int,
@@ -453,6 +463,7 @@ async def delete_printer(
     responses={
         404: {"description": "Printer not found"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def plate_cleared(
     printer_id: int,
@@ -474,6 +485,7 @@ async def plate_cleared(
         404: {"description": "Printer not found"},
         422: {"description": "Preset not in this printer's configured profiles"},
     },
+    dependencies=[Depends(require_scope("printers:write"))],
 )
 async def switch_active_preset(
     printer_id: int,
@@ -498,6 +510,7 @@ async def switch_active_preset(
         404: {"description": "Printer not found"},
         503: {"description": "Connection attempt failed"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def reconnect_printer(
     printer_id: int,
@@ -521,6 +534,7 @@ async def reconnect_printer(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def pause_printer(
     printer_id: int,
@@ -539,6 +553,7 @@ async def pause_printer(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def resume_printer(
     printer_id: int,
@@ -557,6 +572,7 @@ async def resume_printer(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def stop_printer(
     printer_id: int,
@@ -593,6 +609,7 @@ async def stop_printer(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def set_light(
     printer_id: int,
@@ -612,6 +629,7 @@ async def set_light(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def jog_z(
     printer_id: int,
@@ -632,6 +650,7 @@ async def jog_z(
         422: {"description": "Invalid fan name"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def set_fan(
     printer_id: int,
@@ -664,6 +683,7 @@ async def set_fan(
         404: {"description": "Printer not found"},
         503: {"description": "Printer not connected"},
     },
+    dependencies=[Depends(require_scope("printers:control"))],
 )
 async def set_bed_temp(
     printer_id: int,
@@ -690,6 +710,7 @@ async def _activate_camera(client) -> None:
         404: {"description": "Printer not found or has no camera"},
         503: {"description": "Printer not connected or ffmpeg unavailable for RTSP"},
     },
+    dependencies=[Depends(require_scope("printers:read"))],
 )
 async def stream_camera(
     printer_id: int,
@@ -752,6 +773,7 @@ async def stream_camera(
         404: {"description": "Printer not found, has no camera, or no camera source"},
         503: {"description": "Printer not connected or camera unavailable"},
     },
+    dependencies=[Depends(require_scope("printers:read"))],
 )
 async def snapshot_camera(
     printer_id: int,

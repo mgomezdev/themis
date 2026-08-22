@@ -14,6 +14,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, UploadedFile
 from ...services.mesh_3mf_builder import source_has_project_settings
@@ -162,6 +163,7 @@ async def _front_queue_position(session: AsyncSession) -> float:
         404: {"description": "File, printer, or order not found"},
         422: {"description": "printer_configs is empty"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def create_job(
     body: JobCreate,
@@ -239,6 +241,7 @@ async def create_job(
     responses={
         404: {"description": "File or printer not found"},
     },
+    dependencies=[Depends(require_scope("jobs:read"))],
 )
 async def check_overrides(
     body: OverrideCheckRequest,
@@ -309,7 +312,7 @@ async def check_overrides(
     return inspect_overrides(uploaded_file.stored_path, config, slots)
 
 
-@router.get("", summary="List active jobs")
+@router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
 async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All jobs ordered by queue position. Includes jobs in all statuses."""
     result = await session.execute(select(Job).order_by(Job.queue_position))
@@ -334,7 +337,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     return out
 
 
-@router.get("/history", summary="List job history")
+@router.get("/history", summary="List job history", dependencies=[Depends(require_scope("jobs:read"))])
 async def list_history(
     status: str = "complete,cancelled,failed",
     project_id: Optional[int] = None,
@@ -372,6 +375,7 @@ async def list_history(
     responses={
         404: {"description": "Job not found"},
     },
+    dependencies=[Depends(require_scope("jobs:read"))],
 )
 async def get_job(
     job_id: int,
@@ -386,6 +390,7 @@ async def get_job(
     responses={
         404: {"description": "Job not found"},
     },
+    dependencies=[Depends(require_scope("jobs:read"))],
 )
 async def get_job_details(
     job_id: int,
@@ -464,6 +469,7 @@ async def get_job_details(
         404: {"description": "Job not found"},
         422: {"description": "Job is in a non-cancellable status"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def cancel_job(
     job_id: int,
@@ -527,6 +533,7 @@ class JobConfigsUpdate(BaseModel):
         404: {"description": "Job or printer not found"},
         422: {"description": "Job is not in an editable status or printer_configs is empty"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def update_job_configs(
     job_id: int,
@@ -601,6 +608,7 @@ async def update_job_configs(
         404: {"description": "Job not found"},
         422: {"description": "Job is not in blocked status"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def unblock_job(
     job_id: int,
@@ -645,6 +653,7 @@ class ReorderBody(BaseModel):
         404: {"description": "Job not found"},
         422: {"description": "Job is not in a reorderable status or action is invalid"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def reorder_job(
     job_id: int,
@@ -710,6 +719,7 @@ class VerifySliceBody(BaseModel):
     responses={
         404: {"description": "Job, printer, file, or printer config not found"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def verify_slice(
     job_id: int,
@@ -809,6 +819,7 @@ async def verify_slice(
     responses={
         404: {"description": "Job not found"},
     },
+    dependencies=[Depends(require_scope("jobs:read"))],
 )
 async def get_slice_failures(
     job_id: int,
@@ -853,6 +864,7 @@ def _now() -> str:
         400: {"description": "Job has no project items to mark"},
         404: {"description": "Job not found"},
     },
+    dependencies=[Depends(require_scope("jobs:write"))],
 )
 async def mark_job_outcome(
     job_id: int,

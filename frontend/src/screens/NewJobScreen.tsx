@@ -7,6 +7,7 @@ import type { ApiPrinter } from '../api/printers';
 import { uploadFile, createJob, getFilePlates, getModelFilaments, getEmbeddedSettings, plateThumbnailUrl, type ApiPlate, type EmbeddedSetting, type ModelFilament } from '../api/queue';
 import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
+import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
 
@@ -56,7 +57,7 @@ const BADGE: Record<string, string> = {
 function usePrinterList(): ApiPrinter[] {
   const [printers, setPrinters] = useState<ApiPrinter[]>([]);
   useEffect(() => {
-    fetch('/api/v1/printers')
+    apiFetch('/api/v1/printers')
       .then(r => r.json())
       .then(setPrinters)
       .catch(console.error);

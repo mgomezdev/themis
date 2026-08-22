@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { OrcaCatalogStatus } from '../api/orca';
+import { apiFetch } from '../api/client';
 
 const DOT_COLORS: Record<string, string> = {
   online: 'var(--ok, #22c55e)',
@@ -21,7 +22,7 @@ export function LaminusStatusChip() {
   const [expanded, setExpanded] = useState(false);
 
   const load = () => {
-    fetch('/api/v1/laminus/catalog/status')
+    apiFetch('/api/v1/laminus/catalog/status')
       .then(r => r.json())
       .then(setData)
       .catch(() => {});

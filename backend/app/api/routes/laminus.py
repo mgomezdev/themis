@@ -12,6 +12,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...auth import require_scope
 from ...config import get_laminus_sidecar_url
 from ...database import get_session
 from ...models import SpoolmanConfig
@@ -141,6 +142,7 @@ async def warm_catalog_cache() -> None:
         502: {"description": "Laminus sidecar unreachable"},
         503: {"description": "Laminus sidecar not configured"},
     },
+    dependencies=[Depends(require_scope("laminus:read"))],
 )
 async def get_laminus_catalog():
     """Return the full machine/process/filament catalog as JSON (served from the
@@ -152,7 +154,8 @@ async def get_laminus_catalog():
     return Response(content=data, media_type="application/json")
 
 
-@router.get("/catalog/status", summary="Catalog cache status")
+@router.get("/catalog/status", summary="Catalog cache status",
+           dependencies=[Depends(require_scope("laminus:read"))])
 async def get_catalog_status() -> dict:
     """Whether the Themis catalog cache is populated and Laminus's build state.
     Includes `laminus` sub-object with `catalog_loaded`, `catalog_building`, and
@@ -255,6 +258,7 @@ async def _apply_drift_gate(raw: bytes, new_catalog: dict, session: AsyncSession
         502: {"description": "Laminus sidecar unreachable"},
         503: {"description": "Laminus sidecar not configured"},
     },
+    dependencies=[Depends(require_scope("laminus:write"))],
 )
 async def refresh_catalog(session: AsyncSession = Depends(get_session)) -> dict:
     """Re-fetch the catalog from Laminus. If removed profiles are referenced by live data,
@@ -271,6 +275,7 @@ async def refresh_catalog(session: AsyncSession = Depends(get_session)) -> dict:
         503: {"description": "Laminus sidecar not configured"},
         504: {"description": "Laminus catalog rebuild did not complete within 120 s"},
     },
+    dependencies=[Depends(require_scope("laminus:write"))],
 )
 async def rescan_and_refresh_catalog(session: AsyncSession = Depends(get_session)) -> dict:
     """Tell Laminus to rebuild its catalog from disk, then update the Themis cache.
@@ -306,7 +311,8 @@ async def rescan_and_refresh_catalog(session: AsyncSession = Depends(get_session
     return await _apply_drift_gate(raw, new_catalog, session)
 
 
-@router.post("/catalog/confirm-remap", summary="Confirm pending profile remap and commit catalog")
+@router.post("/catalog/confirm-remap", summary="Confirm pending profile remap and commit catalog",
+            dependencies=[Depends(require_scope("laminus:write"))])
 async def confirm_remap(
     body: ConfirmRemapBody,
     session: AsyncSession = Depends(get_session),

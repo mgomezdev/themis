@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import Base
-from app.migrations import v012_filament_any_keyword
+from app.migrations import v013_filament_any_keyword
 from app.migrations.runner import run_migrations
 
 
@@ -78,7 +78,23 @@ async def test_v011_adds_maintenance_tables_and_printer_counters():
 
 
 @pytest.mark.asyncio
-async def test_v012_backfills_and_locks_filament_any_keyword():
+async def test_v012_adds_api_keys_table():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await run_migrations(conn)  # idempotent second run
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(api_keys)"))).fetchall()}
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+    assert "api_keys" in tables
+    assert {"name", "key_prefix", "key_hash", "scopes", "enabled", "created_at", "last_used_at"} <= cols
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v013_backfills_and_locks_filament_any_keyword():
     """Legacy NULL/blank filament_type/filament_color get backfilled to 'any', and
     the columns become NOT NULL. Built against a hand-rolled pre-v012 (nullable)
     table since Base.metadata already reflects the post-migration schema."""
@@ -109,7 +125,7 @@ async def test_v012_backfills_and_locks_filament_any_keyword():
                 (3, 1, 1, 'p1', 'PLA', 'any')
         """))
 
-        await v012_filament_any_keyword.up(conn)
+        await v013_filament_any_keyword.up(conn)
 
         rows = (await conn.execute(text(
             "SELECT id, filament_type, filament_color FROM job_printer_configs ORDER BY id"

@@ -2,6 +2,7 @@ import React from 'react';
 import { Icons } from './icons';
 import type { StatusKey } from '../data/types';
 import { fmtClock } from '../data/helpers';
+import { withKeyParam } from '../api/client';
 
 const STATUS_MAP: Record<string, [string, string]> = {
   printing:    ['info',   'Printing'],
@@ -91,7 +92,7 @@ export function VideoTile({
       {showCamera ? (
         <img
           key={snapTick}
-          src={`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`}
+          src={withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`)}
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           onError={() => setImgError(true)}
           alt=""

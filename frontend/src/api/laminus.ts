@@ -1,3 +1,5 @@
+import { apiFetch } from './client';
+
 export interface SyncOk {
   status: 'ok';
   bytes: number;
@@ -74,19 +76,19 @@ export interface ConfirmResult {
 }
 
 export async function refreshCatalog(): Promise<SyncResponse> {
-  const r = await fetch('/api/v1/laminus/catalog/refresh', { method: 'POST' });
+  const r = await apiFetch('/api/v1/laminus/catalog/refresh', { method: 'POST' });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
 export async function rescanCatalog(): Promise<SyncResponse> {
-  const r = await fetch('/api/v1/laminus/catalog/rescan', { method: 'POST' });
+  const r = await apiFetch('/api/v1/laminus/catalog/rescan', { method: 'POST' });
   if (!r.ok) throw new Error(`${r.status}`);
   return r.json();
 }
 
 export async function confirmRemap(syncId: string, resolutions: Resolutions): Promise<ConfirmResult> {
-  const r = await fetch('/api/v1/laminus/catalog/confirm-remap', {
+  const r = await apiFetch('/api/v1/laminus/catalog/confirm-remap', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sync_id: syncId, resolutions }),

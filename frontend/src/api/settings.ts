@@ -1,3 +1,5 @@
+import { apiFetch } from './client';
+
 const BASE = '/api/v1/settings';
 
 export interface WebhookConfig {
@@ -7,13 +9,13 @@ export interface WebhookConfig {
 }
 
 export async function getWebhookConfig(): Promise<WebhookConfig> {
-  const resp = await fetch(`${BASE}/webhook`);
+  const resp = await apiFetch(`${BASE}/webhook`);
   if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
   return resp.json();
 }
 
 export async function saveWebhookConfig(cfg: Partial<WebhookConfig>): Promise<WebhookConfig> {
-  const resp = await fetch(`${BASE}/webhook`, {
+  const resp = await apiFetch(`${BASE}/webhook`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(cfg),
@@ -29,7 +31,7 @@ export interface FleetImportReport {
 }
 
 export async function downloadFleetBackup(): Promise<void> {
-  const resp = await fetch(`${BASE}/fleet-backup`);
+  const resp = await apiFetch(`${BASE}/fleet-backup`);
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);
@@ -48,7 +50,7 @@ export async function downloadFleetBackup(): Promise<void> {
 export async function importFleetBackup(file: File): Promise<FleetImportReport> {
   const form = new FormData();
   form.append('file', file);
-  const resp = await fetch(`${BASE}/fleet-import`, { method: 'POST', body: form });
+  const resp = await apiFetch(`${BASE}/fleet-import`, { method: 'POST', body: form });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     throw new Error(`${resp.status} ${text}`);

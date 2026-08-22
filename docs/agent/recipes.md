@@ -21,17 +21,22 @@ Verify symbols against current code before relying on them ("code wins").
 
 1. `backend/app/api/routes/<x>.py` — `router = APIRouter(prefix="/api/v1/<x>")`. Pydantic
    `*Create`/`*Patch`, a `_to_dict(row)`, a `_get_or_404`, `Depends(get_session)`. `HTTPException(404,
-   "msg")` positional.
+   "msg")` positional. Every route needs `dependencies=[Depends(require_scope("<x>:<read|write>"))]`
+   (import from `...auth`) — add the scope(s) to `SCOPES` in `app/auth.py` if new. See `backend.md`'s
+   Auth section.
 2. `backend/app/main.py` — `app.include_router(<x>.router)`.
-3. `backend/tests/` — use the `client` fixture (httpx + in-memory SQLite).
-4. Frontend client: add to the matching `frontend/src/api/*.ts` (typed `request<T>` wrapper).
+3. `backend/tests/` — use the `client` fixture (httpx + in-memory SQLite; already sends a full-scope
+   `X-Api-Key` by default).
+4. Frontend client: add to the matching `frontend/src/api/*.ts` (typed `request<T>` wrapper, calling
+   `apiFetch` from `api/client.ts` — never raw `fetch`).
 
 ## Add a frontend screen
 
 1. `frontend/src/screens/<X>Screen.tsx`.
 2. `frontend/src/App.tsx` — add `<Route>`; add a `screenConfig` entry (title/crumbs/actions); if it's a
    detail route (`:id`), add a path-normalization case; add a Sidebar link if top-level.
-3. `frontend/src/api/<x>.ts` — typed client + hook (fetch on mount, merge `/ws` if live).
+3. `frontend/src/api/<x>.ts` — typed client + hook (`apiFetch` on mount via `api/client.ts`, merge `/ws`
+   with `?key=` from `withKeyParam` if live).
 4. If adding a required field to a shared `data/types.ts` type used by mocks, update `data/mock.ts`.
 5. Style with token-driven classes from `app.css` + shared `components/ui.tsx` — no new CSS framework.
    See `styling.md`.

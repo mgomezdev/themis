@@ -7,6 +7,23 @@ uses hooks that fetch on mount and merge live `/ws` events. Entry: `main.tsx` �
 > `app.css`, no Tailwind), the shared `components/ui.tsx` set, and the `StatusKey`→pill-tone mapping.
 > Load it for any visual/CSS work; it's referenced inline below where it matters.
 
+## Auth (`src/auth/*.tsx`, `src/api/client.ts`)
+
+`App.tsx` wraps `<AppShell>` in `<AuthGate>` (`auth/AuthGate.tsx`). On mount: if no key is stored
+(`auth/apiKeyStore.ts`'s `getApiKey()`, namespaced localStorage key `themis.apiKey`), `AuthGate` POSTs
+`/api/v1/api-keys` with `{name: "Browser"}` via plain `fetch` (nothing to inject yet), stores the
+returned raw key, and renders children — this is the browser's own device-credential-style key, there's
+no login system. If that bootstrap call 401/403s (table already non-empty — e.g. two tabs racing), it
+falls back to a manual "enter your API key" form instead. A live 401 from any `apiFetch` call (e.g. this
+browser's key got revoked elsewhere) clears the stored key and re-shows the manual form, wired via
+`client.ts`'s `setUnauthorizedHandler` callback rather than a per-call-site check.
+
+Every `api/*.ts` file calls `apiFetch(url, init)` (`api/client.ts`) instead of raw `fetch` — it injects
+`X-Api-Key` from the stored key. `withKeyParam(url)` (same file) appends `?key=` for the handful of
+things that can't set a header: the 3 `/ws` connections (`queue.ts`/`orders.ts`/`fleet.ts`), the printer
+snapshot/camera `<img>` src in `ui.tsx`, and `plateThumbnailUrl` in `queue.ts`. Manage keys at
+Settings → API Keys (`SettingsScreen.tsx`'s `ApiKeysPage`, backed by `api/apiKeys.ts`).
+
 ## App shell & routing (`App.tsx`)
 
 `AppShell` renders `Sidebar` + `Topbar` + `<Routes>`. Topbar title/crumbs/actions come from a
@@ -30,7 +47,7 @@ Routes: `/queue`, `/queue/new`, `/fleet`, `/orders`, `/orders/new`, `/orders/:id
 | `NewOrderScreen` | Create **and** edit (`/orders/:id/edit` via `useParams`). Parts table with Spoolman-aware filament picker; `createOrder`/`updateOrder`. |
 | `FleetScreen` | Printer cards (tile/row/expanded). Live telemetry/camera. Queue-off cue (orange border + badge), **Ready for new work** button (`markPlateCleared`), AMS/loaded filament, edit-printer modal (`EditForm`), `FilamentPicker` (writes `spoolman_spool_id`, sets `filament_id: null`). Maintenance: `useMaintenanceStatus()` builds `dueRowsByPrinter: Record<string, MaintenanceStatusRow[]>`, threaded through `FleetGrid`/`FleetRows` into all three density components — `DueMaintenanceHat` renders next to the printer name on all three; `PrinterExpandedCard` additionally gets a 👷 "Add maintenance item" button (`QuickAddMaintenanceModal`, pre-fills scope/vendor/model from the printer's own resolved profile via `resolveVendorModelForProfile`, guards against clobbering an in-progress edit with a `userEditedRef`) and a conditional "Maintenance due" card listing due rows with per-item "Acknowledge" buttons (`completeMaintenanceItem`, then `refetchMaintenance()`). |
 | `PrintersScreen` | `PrinterAddForm` (4-step wizard: Type → Connect → **Profile** → Review; step 3 uses `MachinePicker`, sets `current_orca_printer_profile` on create). `EditForm` (exported; make/model picker via `MachinePicker` + per-slot filament-profile `<select>` from `GET /printers/{id}/profiles` + optional Spoolman spool `<select>` writing `spoolman_spool_id`). Not a top-level route. |
-| `FilesScreen`, `FilamentsScreen`, `SettingsScreen` | Model library; filament library; settings sub-nav (general/tags/print-defaults/**maintenance**/notifications/data/about/spoolman). `SettingsScreen`'s `MaintenancePage` lists items grouped General/Model-specific, with a "Suggested items" row from `GET /maintenance/templates`; model-specific scope options come from `useFleetVendorModels()` (fleet-scoped), not the raw OrcaSlicer catalog. The Maintenance link also appears in the main `Sidebar.tsx`'s separate `settingsSubItems` list (a duplicate of this screen's own nav, rendered in the persistent left sidebar — keep both in sync when adding settings sub-pages). |
+| `FilesScreen`, `FilamentsScreen`, `SettingsScreen` | Model library; filament library; settings sub-nav (general/tags/print-defaults/**maintenance**/**api-keys**/notifications/data/about/spoolman). `SettingsScreen`'s `MaintenancePage` lists items grouped General/Model-specific, with a "Suggested items" row from `GET /maintenance/templates`; model-specific scope options come from `useFleetVendorModels()` (fleet-scoped), not the raw OrcaSlicer catalog. `SettingsScreen`'s `ApiKeysPage` (new "Security" nav section): table of keys (name/prefix/scope pills/status), "Create key" modal (name + scope checkboxes grouped by resource, from `apiKeys.ts`'s `SCOPES`), one-time raw-key reveal dialog on create (cleared from state on close, never re-fetchable), Revoke (soft, primary) / Delete (hard, secondary, confirm-guarded, only on already-revoked keys). The Maintenance and API Keys links also appear in the main `Sidebar.tsx`'s separate `settingsSubItems` list (a duplicate of this screen's own nav, rendered in the persistent left sidebar — keep both in sync when adding settings sub-pages). |
 
 ## Shared components (`src/components/*.tsx`)
 
@@ -45,7 +62,8 @@ Routes: `/queue`, `/queue/new`, `/fleet`, `/orders`, `/orders/new`, `/orders/:id
 
 ## API clients & hooks (`src/api/*.ts`)
 
-Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on non-ok. Mutations use
+Typed fetch wrappers + React hooks. Each file's local `request<T>(url, init?)` throws on non-ok and
+calls `apiFetch` (not raw `fetch`) internally — see **Auth** above. Mutations use
 `{ method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(...) }`.
 
 | File | Exports |
@@ -58,6 +76,8 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 | `tags.ts` | Tag CRUD + assign/unassign to files. |
 | `files.ts` | File library: upload, list (with folder/tag/search filters), tree, rename, move, delete, download URL, thumbnail URL. |
 | `maintenance.ts` | Types `MaintenanceTrigger`, `MaintenanceItem`, `MaintenanceTemplate`, `MaintenanceStatusRow`, `FleetVendorModel`. CRUD (`getMaintenanceItems`, `createMaintenanceItem`, `updateMaintenanceItem`, `setMaintenanceTriggers`, `deleteMaintenanceItem`), `getMaintenanceTemplates`, `getMaintenanceStatus`/`useMaintenanceStatus()`, `completeMaintenanceItem(printerId, itemId)`. `useMaintenanceItems()` hook. `resolveVendorModelForProfile(profile, catalog)` / `resolveFleetVendorModels(printers, catalog)` / `useFleetVendorModels()` — matches a printer's `current_orca_printer_profile` against the OrcaSlicer catalog (from `printers.ts`) to scope the maintenance vendor/model picker to what the fleet actually has, deduped + sorted. |
+| `apiKeys.ts` | Types `ApiKeyOut`, `ApiKeyCreated extends ApiKeyOut` (+ raw `key`, create-response only). `getApiKeys`, `createApiKey(name, scopes)`, `revokeApiKey(id)`, `deleteApiKey(id)`. Exports `SCOPES` grouped by resource — hand-written mirror of the backend's `app/auth.py` registry (no shared codegen), used to render the scope-checkbox UI. |
+| `client.ts` | Not a resource client — shared plumbing. `apiFetch(url, init)` (injects `X-Api-Key`, reports 401s via `setUnauthorizedHandler`), `withKeyParam(url)` (appends `?key=` for header-incapable consumers). See **Auth** above. |
 
 ## Conventions (enforced)
 
@@ -67,7 +87,7 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 - `StatusKey` (`data/types.ts`) lists styled statuses. Order statuses are all in it; job statuses can exceed it → cast `as never`/`as StatusKey` at `StatusPill` call sites for job status. The key→pill-tone map is in `components/ui.tsx`; adding a styled status means editing both. See `styling.md`.
 - **Styling**: no CSS framework — compose token-driven utility/component classes from `app.css` and the shared `components/ui.tsx` (`Card`/`StatusPill`/`Progress`/…). Full vocabulary + tokens in `styling.md`.
 - Live updates: hooks open a `/ws` WebSocket; message `{type, data}`; types `job_update`, `queue_update`, `printer_state`, `plate_clear_required`. Guard async setState after unmount with an `alive` flag (see `useOrders`).
-- Tests: Vitest + Testing Library. Stub `fetch` via `vi.stubGlobal`; stub `WebSocket` with a `FakeWS` class when a screen uses a `/ws` hook.
+- Tests: Vitest + Testing Library. Stub `fetch` via `vi.stubGlobal`; stub `WebSocket` with a `FakeWS` class when a screen uses a `/ws` hook. Since `api/*.ts` calls go through `apiFetch`, assertions on exact `fetch` call args should expect the injected `X-Api-Key` header (or mock `apiFetch` itself, per-file, where that's less invasive).
 
 ## Build/run
 
@@ -77,7 +97,7 @@ Typed fetch wrappers + React hooks. Shared `request<T>(url, init?)` throws on no
 
 Suite under `frontend/e2e/`. Config: `frontend/playwright.config.ts` (Chromium, baseURL `:5173`, `webServer: npm run dev` with `reuseExistingServer`).
 
-**Deterministic / no backend:** `e2e/mock-api.ts` exports `mockApi(page, over?)` which route-mocks `**/api/v1/**` with canned data and captures mutating request bodies into `mocks.captured` for payload assertions. Also mocks `/ws`. No backend process, no printers, zero print risk.
+**Deterministic / no backend:** `e2e/mock-api.ts` exports `mockApi(page, over?)` which route-mocks `**/api/v1/**` with canned data and captures mutating request bodies into `mocks.captured` for payload assertions. Also mocks `/ws`. Seeds `localStorage` with a fake API key via `page.addInitScript` before the app loads (and route-mocks `POST **/api/v1/api-keys` as a fallback in case `AuthGate`'s bootstrap races anyway), so specs never see the auth gate. No backend process, no printers, zero print risk.
 
 Canned data includes: a 4-slot U1 printer + a single-tool printer; a multi-material file with 2 model filaments + 2 plates; Spoolman disabled; list endpoints → `[]`.
 
