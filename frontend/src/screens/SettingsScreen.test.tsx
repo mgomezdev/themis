@@ -104,4 +104,45 @@ describe('SettingsScreen', () => {
       expect(screen.getByText(/enable estimate generation/i)).toBeInTheDocument();
     });
   });
+
+  it('ApiKeysPage: revoke requires confirm, API call not made if cancelled', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    let revokeCalled = false;
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys') && url.includes('revoke')) {
+        revokeCalled = true;
+        return new Response('{}', { status: 200 });
+      }
+      if (url.includes('/api/v1/api-keys')) {
+        return new Response(JSON.stringify([{
+          id: 1,
+          name: 'Test Key',
+          key_prefix: 'test_',
+          scopes: ['jobs:read'],
+          created_at: '2026-01-01T00:00:00Z',
+          last_used_at: null,
+          enabled: true,
+        }]), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+
+    await waitFor(() => expect(screen.getByText('Test Key')).toBeInTheDocument());
+
+    const revokeButton = screen.getByRole('button', { name: /revoke/i });
+    await user.click(revokeButton);
+
+    expect(confirmSpy).toHaveBeenCalledWith('Revoke access for the key "Test Key"?');
+    expect(revokeCalled).toBe(false);
+
+    confirmSpy.mockRestore();
+  });
 });
