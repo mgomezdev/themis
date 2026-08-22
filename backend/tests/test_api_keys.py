@@ -135,3 +135,23 @@ async def test_cannot_delete_last_apikeys_write_key(client: AsyncClient):
 
     resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
     assert resp.status_code == 400
+
+
+async def test_cannot_revoke_own_api_key(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    list_resp = await client.get("/api/v1/api-keys", headers=headers)
+    key_id = list_resp.json()[0]["id"]
+
+    resp = await client.post(f"/api/v1/api-keys/{key_id}/revoke", headers=headers)
+    assert resp.status_code == 400
+    assert "own" in resp.json().get("detail", "").lower()
+
+
+async def test_cannot_delete_own_api_key(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    list_resp = await client.get("/api/v1/api-keys", headers=headers)
+    key_id = list_resp.json()[0]["id"]
+
+    resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
+    assert resp.status_code == 400
+    assert "own" in resp.json().get("detail", "").lower()

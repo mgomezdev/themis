@@ -68,8 +68,10 @@ async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_ses
     return {**_to_dict(row), "key": raw}  # raw key: this response only, ever
 
 
-@router.post("/{key_id}/revoke", dependencies=[Depends(require_scope("apikeys:write"))])
-async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session)):
+@router.post("/{key_id}/revoke")
+async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session), current_key: ApiKey | None = Depends(require_scope("apikeys:write"))):
+    if current_key and current_key.id == key_id:
+        raise HTTPException(400, "Cannot revoke your own API key")
     row = await _get_or_404(session, key_id)
     if "apikeys:write" in (row.scopes or []) and await _enabled_apikeys_write_count(session, exclude_id=key_id) == 0:
         raise HTTPException(400, "Cannot revoke the last key with API-key management access")
@@ -79,8 +81,10 @@ async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session)):
     return _to_dict(row)
 
 
-@router.delete("/{key_id}", dependencies=[Depends(require_scope("apikeys:write"))])
-async def delete_key(key_id: int, session: AsyncSession = Depends(get_session)):
+@router.delete("/{key_id}")
+async def delete_key(key_id: int, session: AsyncSession = Depends(get_session), current_key: ApiKey | None = Depends(require_scope("apikeys:write"))):
+    if current_key and current_key.id == key_id:
+        raise HTTPException(400, "Cannot delete your own API key")
     row = await _get_or_404(session, key_id)
     if row.enabled and "apikeys:write" in (row.scopes or []) and await _enabled_apikeys_write_count(session, exclude_id=key_id) == 0:
         raise HTTPException(400, "Cannot delete the last key with API-key management access")
