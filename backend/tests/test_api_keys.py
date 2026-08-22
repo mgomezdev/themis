@@ -155,3 +155,13 @@ async def test_cannot_delete_own_api_key(client: AsyncClient):
     resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
     assert resp.status_code == 400
     assert "own" in resp.json().get("detail", "").lower()
+
+
+async def test_create_second_key_with_zero_scopes_rejects_400(client: AsyncClient):
+    _raw, headers = await _bootstrap(client)
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"name": "ZeroScope", "scopes": []},
+        headers=headers,
+    )
+    assert resp.status_code == 400

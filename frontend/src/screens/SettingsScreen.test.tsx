@@ -145,4 +145,38 @@ describe('SettingsScreen', () => {
 
     confirmSpy.mockRestore();
   });
+
+  it('ApiKeysPage: Create key button disabled until scopes selected', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+
+    // Click the Create key button in the header
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+
+    // Fill in the name field
+    const nameInput = screen.getByPlaceholderText(/e\.g\. Ordinus/i) as HTMLInputElement;
+    await user.type(nameInput, 'Test Key');
+
+    // Get the modal Create button (should still be disabled - no scopes)
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    expect(modalCreateButton.disabled).toBe(true);
+
+    // Select a scope to enable the button
+    const firstCheckbox = screen.getAllByRole('checkbox')[0];
+    await user.click(firstCheckbox);
+
+    // Button should now be enabled
+    expect(modalCreateButton.disabled).toBe(false);
+  });
 });

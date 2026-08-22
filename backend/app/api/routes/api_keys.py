@@ -53,6 +53,8 @@ async def list_keys(session: AsyncSession = Depends(get_session)):
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
     bootstrap = await _table_is_empty(session)
     scopes = sorted(SCOPES) if bootstrap else body.scopes
+    if not bootstrap and not scopes:
+        raise HTTPException(400, "At least one scope is required")
     unknown = set(scopes) - SCOPES
     if unknown:
         raise HTTPException(422, f"Unknown scope(s): {', '.join(sorted(unknown))}")
