@@ -177,3 +177,64 @@ async def test_null_expiry_key_still_valid_200(env):
     # expires_at is None by default; key should still authenticate
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 200
+
+
+async def test_last_used_at_set_on_first_call(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Before the call, verify last_used_at is None
+    from sqlalchemy import select
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at is None
+    # First authenticated call should set last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    # Verify last_used_at is now set
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at is not None
+
+
+async def test_last_used_at_not_updated_within_same_minute(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # First call sets last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    from sqlalchemy import select
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        first_used_at = key.last_used_at
+        assert first_used_at is not None
+    # Second call within same minute should not update last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at == first_used_at
+
+
+async def test_last_used_at_updated_from_past_minute(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Manually set last_used_at to a past minute
+    from sqlalchemy import update, select
+    past_minute = "2020-01-01T12:00:00"
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(last_used_at=past_minute)
+        )
+        await s.commit()
+    # Verify it was set
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at == past_minute
+    # Make an authenticated call
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    # Verify last_used_at was updated (and is no longer the past value)
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at != past_minute
+        assert key.last_used_at is not None
