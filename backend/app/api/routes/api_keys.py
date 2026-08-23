@@ -22,7 +22,7 @@ def _to_dict(row: ApiKey) -> dict:
         "id": row.id, "name": row.name, "key_prefix": row.key_prefix,
         "scopes": row.scopes or [], "enabled": row.enabled,
         "created_at": row.created_at, "last_used_at": row.last_used_at,
-        "revoked_at": row.revoked_at,
+        "revoked_at": row.revoked_at, "expires_at": row.expires_at,
     }
 
 
@@ -41,6 +41,7 @@ async def _enabled_apikeys_write_count(session: AsyncSession, exclude_id: int | 
 class ApiKeyCreate(BaseModel):
     name: str
     scopes: list[str] = []
+    expires_at: str | None = None
 
 
 @router.get("", dependencies=[Depends(require_scope("apikeys:read"))])
@@ -49,10 +50,17 @@ async def list_keys(session: AsyncSession = Depends(get_session)):
     return [_to_dict(r) for r in rows]
 
 
+@router.get("/scopes", dependencies=[Depends(require_scope("apikeys:read"))])
+async def get_scopes():
+    return sorted(SCOPES)
+
+
 @router.post("", dependencies=[Depends(require_scope("apikeys:write"))])
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
     bootstrap = await _table_is_empty(session)
     scopes = sorted(SCOPES) if bootstrap else body.scopes
+    if not bootstrap and not scopes:
+        raise HTTPException(400, "At least one scope is required")
     unknown = set(scopes) - SCOPES
     if unknown:
         raise HTTPException(422, f"Unknown scope(s): {', '.join(sorted(unknown))}")
@@ -60,7 +68,7 @@ async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_ses
     raw, prefix = generate_key()
     row = ApiKey(
         name=body.name, key_prefix=prefix, key_hash=hash_key(raw),
-        scopes=scopes, enabled=True, created_at=_now(),
+        scopes=scopes, enabled=True, created_at=_now(), expires_at=body.expires_at,
     )
     session.add(row)
     await session.commit()
@@ -68,8 +76,10 @@ async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_ses
     return {**_to_dict(row), "key": raw}  # raw key: this response only, ever
 
 
-@router.post("/{key_id}/revoke", dependencies=[Depends(require_scope("apikeys:write"))])
-async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session)):
+@router.post("/{key_id}/revoke")
+async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session), current_key: ApiKey | None = Depends(require_scope("apikeys:write"))):
+    if current_key and current_key.id == key_id:
+        raise HTTPException(400, "Cannot revoke your own API key")
     row = await _get_or_404(session, key_id)
     if "apikeys:write" in (row.scopes or []) and await _enabled_apikeys_write_count(session, exclude_id=key_id) == 0:
         raise HTTPException(400, "Cannot revoke the last key with API-key management access")
@@ -79,8 +89,10 @@ async def revoke_key(key_id: int, session: AsyncSession = Depends(get_session)):
     return _to_dict(row)
 
 
-@router.delete("/{key_id}", dependencies=[Depends(require_scope("apikeys:write"))])
-async def delete_key(key_id: int, session: AsyncSession = Depends(get_session)):
+@router.delete("/{key_id}")
+async def delete_key(key_id: int, session: AsyncSession = Depends(get_session), current_key: ApiKey | None = Depends(require_scope("apikeys:write"))):
+    if current_key and current_key.id == key_id:
+        raise HTTPException(400, "Cannot delete your own API key")
     row = await _get_or_404(session, key_id)
     if row.enabled and "apikeys:write" in (row.scopes or []) and await _enabled_apikeys_write_count(session, exclude_id=key_id) == 0:
         raise HTTPException(400, "Cannot delete the last key with API-key management access")

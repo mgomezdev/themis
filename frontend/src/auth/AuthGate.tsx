@@ -1,28 +1,62 @@
 import React, { useEffect, useState } from 'react';
 import { getApiKey, setApiKey, clearApiKey } from './apiKeyStore';
-import { setUnauthorizedHandler } from '../api/client';
+import { setUnauthorizedHandler, setForbiddenHandler } from '../api/client';
 
 type GateState = 'checking' | 'ready' | 'manual';
+type BootstrapResult = { key: string } | { key: null; reason: 'already-bootstrapped' | 'error' };
+
+function ForbiddenToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 16,
+        right: 16,
+        background: 'var(--error)',
+        color: 'white',
+        padding: '12px 16px',
+        borderRadius: 4,
+        fontSize: 14,
+        zIndex: 9999,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
 
 // Module-level (not component-level) so React StrictMode's dev-only double-invoke of
 // effects — mount, cleanup, mount — shares a single in-flight bootstrap POST instead of
 // firing two, which would otherwise mint two "Browser" keys during the open bootstrap
 // window (the table is still empty for both concurrent requests).
-let bootstrapPromise: Promise<string | null> | null = null;
+let bootstrapPromise: Promise<BootstrapResult> | null = null;
 
-function bootstrapKey(): Promise<string | null> {
+function bootstrapKey(): Promise<BootstrapResult> {
   if (!bootstrapPromise) {
     bootstrapPromise = fetch('/api/v1/api-keys', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: 'Browser' }),
     })
-      .then(async (resp) => {
-        if (!resp.ok) return null;
+      .then(async (resp): Promise<BootstrapResult> => {
+        if (!resp.ok) {
+          if (resp.status === 400) {
+            return { key: null, reason: 'already-bootstrapped' } as const;
+          }
+          return { key: null, reason: 'error' } as const;
+        }
         const data = await resp.json();
-        return typeof data?.key === 'string' ? data.key : null;
+        if (typeof data?.key === 'string') {
+          return { key: data.key };
+        }
+        return { key: null, reason: 'error' } as const;
       })
-      .catch(() => null);
+      .catch((): BootstrapResult => ({ key: null, reason: 'error' }));
   }
   return bootstrapPromise;
 }
@@ -34,13 +68,22 @@ function bootstrapKey(): Promise<string | null> {
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<GateState>(() => (getApiKey() ? 'ready' : 'checking'));
   const [manualKey, setManualKey] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [bootstrapReason, setBootstrapReason] = useState<'already-bootstrapped' | 'error' | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const [forbiddenMessage, setForbiddenMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
       clearApiKey();
       setState('manual');
     });
-    return () => setUnauthorizedHandler(null);
+    setForbiddenHandler((msg) => setForbiddenMessage(msg));
+    return () => {
+      setUnauthorizedHandler(null);
+      setForbiddenHandler(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -49,28 +92,66 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       return;
     }
     let alive = true;
-    bootstrapKey().then((key) => {
+    bootstrapKey().then((result) => {
       if (!alive) return;
-      if (key) {
-        setApiKey(key);
+      if (result.key) {
+        setApiKey(result.key);
         setState('ready');
       } else {
+        setBootstrapReason((result as { key: null; reason: 'already-bootstrapped' | 'error' }).reason);
         setState('manual');
       }
     });
     return () => { alive = false; };
-  }, []);
+  }, [retryCount]);
+
+  async function validateKey(key: string) {
+    setValidationError(null);
+    setIsValidating(true);
+    try {
+      const response = await fetch('/api/v1/api-keys', {
+        headers: { 'Authorization': `Bearer ${key}` },
+      });
+
+      if (response.ok || response.status === 403) {
+        // 200: valid key with apikeys:read scope
+        // 403: valid key (authenticated), but lacks apikeys:read scope (fine—scope enforced per-action)
+        setApiKey(key);
+        setManualKey('');
+        setState('ready');
+      } else if (response.status === 401) {
+        setValidationError('API key not recognized');
+      } else {
+        setValidationError('Server unreachable');
+      }
+    } catch {
+      setValidationError('Server unreachable');
+    } finally {
+      setIsValidating(false);
+    }
+  }
 
   function submitManualKey(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = manualKey.trim();
     if (!trimmed) return;
-    setApiKey(trimmed);
-    setManualKey('');
-    setState('ready');
+    validateKey(trimmed);
   }
 
-  if (state === 'ready') return <>{children}</>;
+  function handleRetry() {
+    bootstrapPromise = null;
+    setBootstrapReason(null);
+    setRetryCount((c) => c + 1);
+  }
+
+  if (state === 'ready') {
+    return (
+      <>
+        {children}
+        {forbiddenMessage && <ForbiddenToast message={forbiddenMessage} onDismiss={() => setForbiddenMessage(null)} />}
+      </>
+    );
+  }
 
   if (state === 'checking') {
     return (
@@ -88,10 +169,26 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     }}>
       <form onSubmit={submitManualKey} className="card" style={{ padding: 28, width: 360, maxWidth: '90vw' }}>
         <h2 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600 }}>Enter your API key</h2>
-        <p className="muted small" style={{ marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
-          Themis couldn't automatically set up access for this browser. Paste an existing API key
-          (Settings → API Keys) to continue.
-        </p>
+        {bootstrapReason === 'error' ? (
+          <>
+            <p className="muted small" style={{ color: 'var(--error)', marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
+              Couldn't reach the Themis server. Check your connection and try again.
+            </p>
+            <button
+              type="button"
+              className="btn primary"
+              onClick={handleRetry}
+              style={{ width: '100%', marginBottom: 12 }}
+            >
+              Retry
+            </button>
+          </>
+        ) : (
+          <p className="muted small" style={{ marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
+            Themis couldn't automatically set up access for this browser. Paste an existing API key
+            (Settings → API Keys) to continue.
+          </p>
+        )}
         <input
           className="input"
           type="password"
@@ -99,10 +196,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           value={manualKey}
           onChange={(e) => setManualKey(e.target.value)}
           placeholder="thm_..."
-          style={{ width: '100%', marginBottom: 12 }}
+          style={{ width: '100%', marginBottom: validationError ? 6 : 12 }}
         />
-        <button type="submit" className="btn primary" disabled={!manualKey.trim()} style={{ width: '100%' }}>
-          Continue
+        {validationError && (
+          <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px', lineHeight: 1.5 }}>
+            {validationError}
+          </p>
+        )}
+        <button
+          type="submit"
+          className="btn primary"
+          disabled={!manualKey.trim() || isValidating}
+          style={{ width: '100%' }}
+        >
+          {isValidating ? 'Validating…' : 'Continue'}
         </button>
       </form>
     </div>

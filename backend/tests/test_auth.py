@@ -27,6 +27,10 @@ def _make_app() -> FastAPI:
     async def protected() -> dict:
         return {"ok": True}
 
+    @app.get("/printers/{id}/snapshot", dependencies=[Depends(require_scope("printers:read"))])
+    async def printer_snapshot(id: str) -> dict:
+        return {"ok": True}
+
     return app
 
 
@@ -58,41 +62,41 @@ async def env():
         return raw
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client, seed_key
+        yield client, seed_key, factory
 
     await engine.dispose()
 
 
 async def test_no_key_empty_table_passes_through(env):
-    client, _seed_key = env
+    client, _seed_key, _factory = env
     resp = await client.get("/protected")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
 async def test_no_key_nonempty_table_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     await seed_key(["jobs:read"])  # some unrelated key exists, table non-empty
     resp = await client.get("/protected")
     assert resp.status_code == 401
 
 
 async def test_bad_key_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     await seed_key(["files:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": "thm_not-a-real-key"})
     assert resp.status_code == 401
 
 
 async def test_valid_key_missing_scope_403(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["jobs:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 403
 
 
 async def test_valid_key_with_scope_200(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["files:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 200
@@ -100,14 +104,137 @@ async def test_valid_key_with_scope_200(env):
 
 
 async def test_disabled_key_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["files:read"], enabled=False)
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 401
 
 
 async def test_key_via_query_param(env):
-    client, seed_key = env
-    raw = await seed_key(["files:read"])
-    resp = await client.get(f"/protected?key={raw}")
+    client, seed_key, _factory = env
+    raw = await seed_key(["printers:read"])
+    # ?key= works on allowlisted routes (ending in /snapshot)
+    resp = await client.get(f"/printers/printer1/snapshot?key={raw}")
     assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+async def test_key_via_query_param_not_allowed_on_generic_route(env):
+    client, seed_key, _factory = env
+    raw = await seed_key(["files:read"])
+    # ?key= is blocked on non-allowlisted routes
+    resp = await client.get(f"/protected?key={raw}")
+    assert resp.status_code == 401
+
+
+async def test_revoked_at_set_without_disabled_flag_401(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Directly set revoked_at on the key via the session, without flipping enabled.
+    # This tests the regression case: revoked_at alone should block the key.
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(revoked_at=_now())
+        )
+        await s.commit()
+    # Key should now be rejected even though enabled is still True
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 401
+
+
+async def test_expired_key_401(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Set expires_at to a past timestamp
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(expires_at="2020-01-01T00:00:00")
+        )
+        await s.commit()
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 401
+
+
+async def test_future_expiry_key_200(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Set expires_at to a far future timestamp
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(expires_at="2099-12-31T23:59:59")
+        )
+        await s.commit()
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+
+
+async def test_null_expiry_key_still_valid_200(env):
+    client, seed_key, _factory = env
+    raw = await seed_key(["files:read"])
+    # expires_at is None by default; key should still authenticate
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+
+
+async def test_last_used_at_set_on_first_call(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Before the call, verify last_used_at is None
+    from sqlalchemy import select
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at is None
+    # First authenticated call should set last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    # Verify last_used_at is now set
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at is not None
+
+
+async def test_last_used_at_not_updated_within_same_minute(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # First call sets last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    from sqlalchemy import select
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        first_used_at = key.last_used_at
+        assert first_used_at is not None
+    # Second call within same minute should not update last_used_at
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at == first_used_at
+
+
+async def test_last_used_at_updated_from_past_minute(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Manually set last_used_at to a past minute
+    from sqlalchemy import update, select
+    past_minute = "2020-01-01T12:00:00"
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(last_used_at=past_minute)
+        )
+        await s.commit()
+    # Verify it was set
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at == past_minute
+    # Make an authenticated call
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+    # Verify last_used_at was updated (and is no longer the past value)
+    async with factory() as s:
+        key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
+        assert key.last_used_at != past_minute
+        assert key.last_used_at is not None

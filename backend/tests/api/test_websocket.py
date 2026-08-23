@@ -175,3 +175,30 @@ async def test_broadcast_reap_does_not_raise_when_two_broadcasts_race():
         mgr.broadcast("printer_state", {}),
     )
     assert mgr.active_connections == []
+
+
+def test_ws_narrow_scope_key_receives_out_of_scope_event(tmp_path):
+    """Test that /ws currently enforces NO scope checking — a key with
+    narrow scopes can still receive all event types. This documents the current
+    overpermissive behavior as a known gap (BIZ-75). Once BIZ-75 is fixed,
+    this test should be updated to assert DENIAL instead of acceptance."""
+    db_path = tmp_path / "ws_scope_narrow.db"
+    # Create key with only fleet:read scope (narrow, not a catch-all)
+    raw = _seed_db(db_path, scopes=["fleet:read"])
+    assert raw
+    _wire_app_to_db(db_path)
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws?key={raw}") as ws:
+        assert len(connection_manager.active_connections) == 1
+
+        # Broadcast a job_update event (outside fleet:read scope)
+        asyncio.run(connection_manager.broadcast(
+            "job_update",
+            {"id": 1, "status": "PRINTING"}
+        ))
+
+        # Assert the client CAN currently receive the out-of-scope event
+        data = ws.receive_json()
+        assert data["type"] == "job_update"
+        assert data["data"]["id"] == 1

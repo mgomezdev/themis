@@ -511,6 +511,7 @@ async def cancel_job(
     if stop_printer_id is not None:
         client = printer_manager._clients.get(stop_printer_id)
         if client is not None and client.connected:
+            # Cancelling a running job stops the printer — jobs:write alone grants hardware stop.
             # stop_print blocks on the websocket ack; don't stall the event loop.
             try:
                 await asyncio.to_thread(client.stop_print)

@@ -135,3 +135,56 @@ async def test_cannot_delete_last_apikeys_write_key(client: AsyncClient):
 
     resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
     assert resp.status_code == 400
+
+
+async def test_cannot_revoke_own_api_key(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    list_resp = await client.get("/api/v1/api-keys", headers=headers)
+    key_id = list_resp.json()[0]["id"]
+
+    resp = await client.post(f"/api/v1/api-keys/{key_id}/revoke", headers=headers)
+    assert resp.status_code == 400
+    assert "own" in resp.json().get("detail", "").lower()
+
+
+async def test_cannot_delete_own_api_key(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    list_resp = await client.get("/api/v1/api-keys", headers=headers)
+    key_id = list_resp.json()[0]["id"]
+
+    resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
+    assert resp.status_code == 400
+    assert "own" in resp.json().get("detail", "").lower()
+
+
+async def test_create_second_key_with_zero_scopes_rejects_400(client: AsyncClient):
+    _raw, headers = await _bootstrap(client)
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"name": "ZeroScope", "scopes": []},
+        headers=headers,
+    )
+    assert resp.status_code == 400
+
+
+async def test_get_scopes_returns_sorted_list_matching_auth_scopes(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    resp = await client.get("/api/v1/api-keys/scopes", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert set(data) == SCOPES
+
+
+async def test_create_key_with_expires_at(client: AsyncClient):
+    _raw, headers = await _bootstrap(client)
+    expires_at = "2099-12-31T23:59:59"
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"name": "ExpireTest", "scopes": ["files:read"], "expires_at": expires_at},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["expires_at"] == expires_at
+    assert data["name"] == "ExpireTest"

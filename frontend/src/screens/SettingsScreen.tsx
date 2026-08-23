@@ -20,7 +20,7 @@ import {
   type MaintenanceItem, type MaintenanceTemplate,
 } from '../api/maintenance';
 import {
-  getApiKeys, createApiKey, revokeApiKey, deleteApiKey, SCOPES, ALL_SCOPES,
+  getApiKeys, getApiKeyScopes, createApiKey, revokeApiKey, deleteApiKey, SCOPES,
   type ApiKeyOut, type ApiKeyCreated,
 } from '../api/apiKeys';
 import { StatusPill, Empty } from '../components/ui';
@@ -1381,8 +1381,8 @@ function ScopePill({ scope }: { scope: string }) {
   );
 }
 
-function ApiKeyRow({ item, onRevoke, onDelete }: {
-  item: ApiKeyOut; onRevoke: () => void; onDelete: () => void;
+function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
+  item: ApiKeyOut; allScopesLength: number; onRevoke: () => void; onDelete: () => void;
 }) {
   return (
     <tr style={{ opacity: item.enabled ? 1 : 0.55 }}>
@@ -1392,7 +1392,7 @@ function ApiKeyRow({ item, onRevoke, onDelete }: {
         <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
           {item.scopes.length === 0 ? (
             <span className="tiny muted">none</span>
-          ) : item.scopes.length === ALL_SCOPES.length ? (
+          ) : item.scopes.length === allScopesLength ? (
             <span className="pill accent" style={{ fontSize: 10.5, padding: '2px 8px' }} title={item.scopes.join(', ')}>
               All access
             </span>
@@ -1431,8 +1431,8 @@ function ApiKeyRow({ item, onRevoke, onDelete }: {
   );
 }
 
-function CreateKeyModal({ onClose, onCreated }: {
-  onClose: () => void; onCreated: (k: ApiKeyCreated) => void;
+function CreateKeyModal({ onClose, onCreated, allScopes }: {
+  onClose: () => void; onCreated: (k: ApiKeyCreated) => void; allScopes: string[];
 }) {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<Set<string>>(new Set());
@@ -1447,8 +1447,20 @@ function CreateKeyModal({ onClose, onCreated }: {
     });
   }
 
+  function selectAllScopes() {
+    setScopes(new Set(allScopes));
+  }
+
+  function selectReadOnly() {
+    const readOnlyScopes = SCOPES.flatMap(g =>
+      g.scopes.filter(s => s.label === 'Read').map(s => s.scope)
+    );
+    setScopes(new Set(readOnlyScopes));
+  }
+
   async function submit() {
     if (!name.trim()) return;
+    if (scopes.size === 0) return;
     setSaving(true);
     setError(null);
     try {
@@ -1480,7 +1492,11 @@ function CreateKeyModal({ onClose, onCreated }: {
                  style={{ width: '100%', marginBottom: 20 }} />
 
           <label className="label">Scopes</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 20px', marginTop: 8 }}>
+          <div className="row gap-2" style={{ marginBottom: 14 }}>
+            <button className="btn sm" onClick={selectAllScopes} type="button">All scopes</button>
+            <button className="btn sm" onClick={selectReadOnly} type="button">Read-only</button>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '14px 20px', marginTop: 8 }}>
             {SCOPES.map(group => (
               <div key={group.resource}>
                 <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
@@ -1502,7 +1518,7 @@ function CreateKeyModal({ onClose, onCreated }: {
         </div>
         <div style={{ padding: '14px 24px', borderTop: '1px solid var(--border-1)', display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
           <button className="btn sm" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn primary sm" onClick={submit} disabled={saving || !name.trim()}>
+          <button className="btn primary sm" onClick={submit} disabled={saving || !name.trim() || scopes.size === 0}>
             {saving ? 'Creating…' : 'Create key'}
           </button>
         </div>
@@ -1557,6 +1573,7 @@ function RevealKeyDialog({ apiKey, onClose }: { apiKey: ApiKeyCreated; onClose: 
 
 function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKeyOut[]>([]);
+  const [allScopes, setAllScopes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1564,15 +1581,19 @@ function ApiKeysPage() {
 
   const refetch = useCallback(() => {
     setLoading(true);
-    getApiKeys()
-      .then(setKeys)
+    Promise.all([getApiKeys(), getApiKeyScopes()])
+      .then(([keys, scopes]) => {
+        setKeys(keys);
+        setAllScopes(scopes);
+      })
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => { refetch(); }, [refetch]);
 
-  async function handleRevoke(id: number) {
+  async function handleRevoke(id: number, name: string) {
+    if (!window.confirm(`Revoke access for the key "${name}"?`)) return;
     setError(null);
     try {
       await revokeApiKey(id);
@@ -1637,7 +1658,8 @@ function ApiKeysPage() {
                   <ApiKeyRow
                     key={k.id}
                     item={k}
-                    onRevoke={() => handleRevoke(k.id)}
+                    allScopesLength={allScopes.length}
+                    onRevoke={() => handleRevoke(k.id, k.name)}
                     onDelete={() => handleDelete(k.id, k.name)}
                   />
                 ))}
@@ -1647,7 +1669,7 @@ function ApiKeysPage() {
         )}
       </div>
 
-      {creating && <CreateKeyModal onClose={() => setCreating(false)} onCreated={handleCreated} />}
+      {creating && <CreateKeyModal onClose={() => setCreating(false)} onCreated={handleCreated} allScopes={allScopes} />}
       {revealKey && <RevealKeyDialog apiKey={revealKey} onClose={() => setRevealKey(null)} />}
     </div>
   );

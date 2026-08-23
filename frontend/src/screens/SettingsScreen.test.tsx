@@ -104,4 +104,131 @@ describe('SettingsScreen', () => {
       expect(screen.getByText(/enable estimate generation/i)).toBeInTheDocument();
     });
   });
+
+  it('ApiKeysPage: revoke requires confirm, API call not made if cancelled', async () => {
+    const user = userEvent.setup();
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    let revokeCalled = false;
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys') && url.includes('revoke')) {
+        revokeCalled = true;
+        return new Response('{}', { status: 200 });
+      }
+      if (url.includes('/api/v1/api-keys')) {
+        return new Response(JSON.stringify([{
+          id: 1,
+          name: 'Test Key',
+          key_prefix: 'test_',
+          scopes: ['jobs:read'],
+          created_at: '2026-01-01T00:00:00Z',
+          last_used_at: null,
+          enabled: true,
+        }]), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+
+    await waitFor(() => expect(screen.getByText('Test Key')).toBeInTheDocument());
+
+    const revokeButton = screen.getByRole('button', { name: /revoke/i });
+    await user.click(revokeButton);
+
+    expect(confirmSpy).toHaveBeenCalledWith('Revoke access for the key "Test Key"?');
+    expect(revokeCalled).toBe(false);
+
+    confirmSpy.mockRestore();
+  });
+
+  it('ApiKeysPage: Create key button disabled until scopes selected', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+
+    // Click the Create key button in the header
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+
+    // Fill in the name field
+    const nameInput = screen.getByPlaceholderText(/e\.g\. Ordinus/i) as HTMLInputElement;
+    await user.type(nameInput, 'Test Key');
+
+    // Get the modal Create button (should still be disabled - no scopes)
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    expect(modalCreateButton.disabled).toBe(true);
+
+    // Select a scope to enable the button
+    const firstCheckbox = screen.getAllByRole('checkbox')[0];
+    await user.click(firstCheckbox);
+
+    // Button should now be enabled
+    expect(modalCreateButton.disabled).toBe(false);
+  });
+
+  it('ApiKeysPage: "All scopes" preset enables Create button', async () => {
+    const user = userEvent.setup();
+    const allScopes = ['files:read', 'files:write', 'jobs:read', 'jobs:write', 'printers:read', 'printers:write', 'printers:control', 'queue:read', 'queue:write', 'fleet:read'];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+    await user.type(screen.getByPlaceholderText(/e\.g\. Ordinus/i), 'Test Key');
+
+    const allScopesButton = screen.getByRole('button', { name: /all scopes/i });
+    await user.click(allScopesButton);
+
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    await waitFor(() => expect(modalCreateButton.disabled).toBe(false));
+  });
+
+  it('ApiKeysPage: "Read-only" preset enables Create button with subset of scopes', async () => {
+    const user = userEvent.setup();
+    const allScopes = ['files:read', 'files:write', 'jobs:read', 'jobs:write', 'printers:read', 'printers:write', 'printers:control', 'queue:read', 'queue:write', 'fleet:read'];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+    await user.type(screen.getByPlaceholderText(/e\.g\. Ordinus/i), 'Test Key');
+
+    const readOnlyButton = screen.getByRole('button', { name: /read-only/i });
+    await user.click(readOnlyButton);
+
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    await waitFor(() => expect(modalCreateButton.disabled).toBe(false));
+  });
 });

@@ -1,8 +1,9 @@
 from __future__ import annotations
+import secrets
 from datetime import datetime, timezone
 from weakref import WeakSet
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_session
@@ -11,7 +12,7 @@ from .services.api_key_service import hash_key
 
 SCOPES: set[str] = {
     "files:read", "files:write",
-    "jobs:read", "jobs:write",
+    "jobs:read", "jobs:write",  # jobs:write includes ability to stop printers (via job cancel)
     "printers:read", "printers:write", "printers:control",
     "queue:read", "queue:write",
     "fleet:read",
@@ -57,9 +58,14 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
         return None
     prefix = raw[:12]
     row = (await session.execute(
-        select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.enabled == True)  # noqa: E712
+        select(ApiKey).where(
+            ApiKey.key_prefix == prefix,
+            ApiKey.enabled == True,  # noqa: E712
+            ApiKey.revoked_at.is_(None),
+            or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > _now()),
+        )
     )).scalar_one_or_none()
-    if row is None or row.key_hash != hash_key(raw):
+    if row is None or not secrets.compare_digest(row.key_hash, hash_key(raw)):
         return None
     # Throttled last_used_at touch — don't write on every single request.
     if row.last_used_at is None or row.last_used_at[:16] < _now()[:16]:
@@ -68,13 +74,21 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
     return row
 
 
+def _path_allows_query_param(path: str) -> bool:
+    """Check if a path is allowed to use ?key= query param for auth."""
+    return "/thumbnails/" in path or path.endswith("/snapshot")
+
+
 async def _resolve_key(request: Request, session: AsyncSession) -> ApiKey | None:
-    raw = request.headers.get("X-Api-Key") or request.query_params.get("key")
+    raw = request.headers.get("X-Api-Key")
+    if raw is None and _path_allows_query_param(request.url.path):
+        raw = request.query_params.get("key")
     return await _resolve_raw_key(raw, session)
 
 
 def require_scope(scope: str):
-    assert scope in SCOPES, f"unknown scope {scope!r}"
+    if scope not in SCOPES:
+        raise ValueError(f"unknown scope {scope!r}")
 
     async def _dep(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
         if await _table_is_empty(session):
