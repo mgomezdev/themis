@@ -257,6 +257,10 @@ valid, non-revoked key (no specific scope) and closes with code `4401` if missin
 and the static frontend (`/`, `/assets/*`, SPA fallback) stay unauthenticated so the app shell can load
 before any key exists.
 
+**Scope notes:**
+- `jobs:write` grants the ability to cancel a running job, which stops the printer (see `cancel_job` route in `jobs.py` line 514).
+- Other `write` scopes are update-only; only `jobs:write` and `printers:control` control hardware.
+
 ---
 
 ## Data Model

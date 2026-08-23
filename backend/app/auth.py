@@ -11,7 +11,7 @@ from .services.api_key_service import hash_key
 
 SCOPES: set[str] = {
     "files:read", "files:write",
-    "jobs:read", "jobs:write",
+    "jobs:read", "jobs:write",  # jobs:write includes ability to stop printers (via job cancel)
     "printers:read", "printers:write", "printers:control",
     "queue:read", "queue:write",
     "fleet:read",
