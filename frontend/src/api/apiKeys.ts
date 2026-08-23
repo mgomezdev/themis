@@ -31,6 +31,8 @@ const jsonInit = (method: string, body: unknown): RequestInit => ({
 
 export const getApiKeys = () => request<ApiKeyOut[]>('/api/v1/api-keys');
 
+export const getApiKeyScopes = () => request<string[]>('/api/v1/api-keys/scopes');
+
 export const createApiKey = (name: string, scopes: string[]) =>
   request<ApiKeyCreated>('/api/v1/api-keys', jsonInit('POST', { name, scopes }));
 

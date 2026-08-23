@@ -49,6 +49,11 @@ async def list_keys(session: AsyncSession = Depends(get_session)):
     return [_to_dict(r) for r in rows]
 
 
+@router.get("/scopes", dependencies=[Depends(require_scope("apikeys:read"))])
+async def get_scopes():
+    return sorted(SCOPES)
+
+
 @router.post("", dependencies=[Depends(require_scope("apikeys:write"))])
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
     bootstrap = await _table_is_empty(session)
