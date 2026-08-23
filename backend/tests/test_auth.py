@@ -62,41 +62,41 @@ async def env():
         return raw
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client, seed_key
+        yield client, seed_key, factory
 
     await engine.dispose()
 
 
 async def test_no_key_empty_table_passes_through(env):
-    client, _seed_key = env
+    client, _seed_key, _factory = env
     resp = await client.get("/protected")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
 
 
 async def test_no_key_nonempty_table_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     await seed_key(["jobs:read"])  # some unrelated key exists, table non-empty
     resp = await client.get("/protected")
     assert resp.status_code == 401
 
 
 async def test_bad_key_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     await seed_key(["files:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": "thm_not-a-real-key"})
     assert resp.status_code == 401
 
 
 async def test_valid_key_missing_scope_403(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["jobs:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 403
 
 
 async def test_valid_key_with_scope_200(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["files:read"])
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 200
@@ -104,14 +104,14 @@ async def test_valid_key_with_scope_200(env):
 
 
 async def test_disabled_key_401(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["files:read"], enabled=False)
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 401
 
 
 async def test_key_via_query_param(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["printers:read"])
     # ?key= works on allowlisted routes (ending in /snapshot)
     resp = await client.get(f"/printers/printer1/snapshot?key={raw}")
@@ -120,8 +120,24 @@ async def test_key_via_query_param(env):
 
 
 async def test_key_via_query_param_not_allowed_on_generic_route(env):
-    client, seed_key = env
+    client, seed_key, _factory = env
     raw = await seed_key(["files:read"])
     # ?key= is blocked on non-allowlisted routes
     resp = await client.get(f"/protected?key={raw}")
+    assert resp.status_code == 401
+
+
+async def test_revoked_at_set_without_disabled_flag_401(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Directly set revoked_at on the key via the session, without flipping enabled.
+    # This tests the regression case: revoked_at alone should block the key.
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(revoked_at=_now())
+        )
+        await s.commit()
+    # Key should now be rejected even though enabled is still True
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 401
