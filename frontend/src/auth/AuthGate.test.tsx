@@ -163,4 +163,73 @@ describe('AuthGate', () => {
     expect(screen.queryByText('protected content')).toBeNull();
     expect(getApiKey()).toBeNull();
   });
+
+  it('bootstrap 400 shows neutral message, no error or retry button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ detail: 'Table not empty' }), { status: 400 })));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    await waitFor(() => expect(screen.getByText(/Enter your API key/i)).toBeTruthy());
+    expect(screen.getByText(/Themis couldn't automatically set up access/i)).toBeTruthy();
+    expect(screen.queryByText(/Couldn't reach the Themis server/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+  });
+
+  it('bootstrap 500 shows error message and retry button', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ detail: 'Internal error' }), { status: 500 })));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    await waitFor(() => expect(screen.getByText(/Couldn't reach the Themis server/i)).toBeTruthy());
+    expect(screen.getByRole('button', { name: /retry/i })).toBeTruthy();
+    expect(screen.queryByText(/Themis couldn't automatically set up access/i)).toBeNull();
+  });
+
+  it('clicking retry re-triggers bootstrap fetch', async () => {
+    let callCount = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      callCount++;
+      // First two calls (network error, then retry) fail
+      if (callCount <= 2) {
+        return new Response(JSON.stringify({ detail: 'Server error' }), { status: 500 });
+      }
+      // Third call succeeds
+      return new Response(JSON.stringify({
+        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
+        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
+        revoked_at: null, key: 'thm_bootstrap_retry_key',
+      }), { status: 200 });
+    }));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    // Wait for error state
+    await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeTruthy());
+    expect(callCount).toBe(1);
+
+    // Click retry
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+    const retryBtn = screen.getByRole('button', { name: /retry/i });
+    await user.click(retryBtn);
+
+    // Second attempt should also fail (but triggers another fetch)
+    await waitFor(() => {
+      expect(callCount).toBe(2);
+      expect(screen.getByRole('button', { name: /retry/i })).toBeTruthy();
+    });
+
+    // Click retry again
+    await user.click(screen.getByRole('button', { name: /retry/i }));
+
+    // Third attempt succeeds
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+    expect(callCount).toBe(3);
+    expect(getApiKey()).toBe('thm_bootstrap_retry_key');
+  });
 });
