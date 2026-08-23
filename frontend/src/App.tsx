@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
 import { Icons } from './components/icons';
+import { SearchModal } from './components/SearchModal';
 import { useQueue, useQueueConfig } from './api/queue';
 import { useFleetData } from './api/fleet';
 import { AuthGate } from './auth/AuthGate';
@@ -98,6 +99,7 @@ function AppShell() {
     blocked: jobs.filter(j => j.status === 'blocked').length,
   }), [jobs]);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const { laminusStatus } = useServicesHealth();
@@ -107,6 +109,17 @@ function AppShell() {
       setNavCollapsed(false);
     }
   }, [location.pathname]);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   const screenConfig: Record<string, { title: string; crumbs: string[]; actions?: React.ReactNode }> = {
     '/queue':      { title: 'Job queue',        crumbs: ['Workshop'],
@@ -184,6 +197,7 @@ function AppShell() {
           <ServiceBubble name="Laminus" status={laminusStatus} />
         </div>
       </div>
+      <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} jobs={jobs} printers={printers} />
     </div>
   );
 }
