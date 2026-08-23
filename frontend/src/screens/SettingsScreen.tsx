@@ -20,7 +20,7 @@ import {
   type MaintenanceItem, type MaintenanceTemplate,
 } from '../api/maintenance';
 import {
-  getApiKeys, createApiKey, revokeApiKey, deleteApiKey, SCOPES, ALL_SCOPES,
+  getApiKeys, getApiKeyScopes, createApiKey, revokeApiKey, deleteApiKey, SCOPES,
   type ApiKeyOut, type ApiKeyCreated,
 } from '../api/apiKeys';
 import { StatusPill, Empty } from '../components/ui';
@@ -1381,8 +1381,8 @@ function ScopePill({ scope }: { scope: string }) {
   );
 }
 
-function ApiKeyRow({ item, onRevoke, onDelete }: {
-  item: ApiKeyOut; onRevoke: () => void; onDelete: () => void;
+function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
+  item: ApiKeyOut; allScopesLength: number; onRevoke: () => void; onDelete: () => void;
 }) {
   return (
     <tr style={{ opacity: item.enabled ? 1 : 0.55 }}>
@@ -1392,7 +1392,7 @@ function ApiKeyRow({ item, onRevoke, onDelete }: {
         <div className="row gap-1" style={{ flexWrap: 'wrap', maxWidth: 280 }}>
           {item.scopes.length === 0 ? (
             <span className="tiny muted">none</span>
-          ) : item.scopes.length === ALL_SCOPES.length ? (
+          ) : item.scopes.length === allScopesLength ? (
             <span className="pill accent" style={{ fontSize: 10.5, padding: '2px 8px' }} title={item.scopes.join(', ')}>
               All access
             </span>
@@ -1558,6 +1558,7 @@ function RevealKeyDialog({ apiKey, onClose }: { apiKey: ApiKeyCreated; onClose: 
 
 function ApiKeysPage() {
   const [keys, setKeys] = useState<ApiKeyOut[]>([]);
+  const [allScopes, setAllScopes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -1565,8 +1566,11 @@ function ApiKeysPage() {
 
   const refetch = useCallback(() => {
     setLoading(true);
-    getApiKeys()
-      .then(setKeys)
+    Promise.all([getApiKeys(), getApiKeyScopes()])
+      .then(([keys, scopes]) => {
+        setKeys(keys);
+        setAllScopes(scopes);
+      })
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, []);
@@ -1639,6 +1643,7 @@ function ApiKeysPage() {
                   <ApiKeyRow
                     key={k.id}
                     item={k}
+                    allScopesLength={allScopes.length}
                     onRevoke={() => handleRevoke(k.id, k.name)}
                     onDelete={() => handleDelete(k.id, k.name)}
                   />

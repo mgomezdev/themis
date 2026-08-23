@@ -165,3 +165,12 @@ async def test_create_second_key_with_zero_scopes_rejects_400(client: AsyncClien
         headers=headers,
     )
     assert resp.status_code == 400
+
+
+async def test_get_scopes_returns_sorted_list_matching_auth_scopes(client: AsyncClient):
+    raw, headers = await _bootstrap(client)
+    resp = await client.get("/api/v1/api-keys/scopes", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert set(data) == SCOPES
