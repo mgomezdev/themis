@@ -174,3 +174,17 @@ async def test_get_scopes_returns_sorted_list_matching_auth_scopes(client: Async
     data = resp.json()
     assert isinstance(data, list)
     assert set(data) == SCOPES
+
+
+async def test_create_key_with_expires_at(client: AsyncClient):
+    _raw, headers = await _bootstrap(client)
+    expires_at = "2099-12-31T23:59:59"
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"name": "ExpireTest", "scopes": ["files:read"], "expires_at": expires_at},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["expires_at"] == expires_at
+    assert data["name"] == "ExpireTest"

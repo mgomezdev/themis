@@ -22,7 +22,7 @@ def _to_dict(row: ApiKey) -> dict:
         "id": row.id, "name": row.name, "key_prefix": row.key_prefix,
         "scopes": row.scopes or [], "enabled": row.enabled,
         "created_at": row.created_at, "last_used_at": row.last_used_at,
-        "revoked_at": row.revoked_at,
+        "revoked_at": row.revoked_at, "expires_at": row.expires_at,
     }
 
 
@@ -41,6 +41,7 @@ async def _enabled_apikeys_write_count(session: AsyncSession, exclude_id: int | 
 class ApiKeyCreate(BaseModel):
     name: str
     scopes: list[str] = []
+    expires_at: str | None = None
 
 
 @router.get("", dependencies=[Depends(require_scope("apikeys:read"))])
@@ -67,7 +68,7 @@ async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_ses
     raw, prefix = generate_key()
     row = ApiKey(
         name=body.name, key_prefix=prefix, key_hash=hash_key(raw),
-        scopes=scopes, enabled=True, created_at=_now(),
+        scopes=scopes, enabled=True, created_at=_now(), expires_at=body.expires_at,
     )
     session.add(row)
     await session.commit()

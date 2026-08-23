@@ -141,3 +141,39 @@ async def test_revoked_at_set_without_disabled_flag_401(env):
     # Key should now be rejected even though enabled is still True
     resp = await client.get("/protected", headers={"X-Api-Key": raw})
     assert resp.status_code == 401
+
+
+async def test_expired_key_401(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Set expires_at to a past timestamp
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(expires_at="2020-01-01T00:00:00")
+        )
+        await s.commit()
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 401
+
+
+async def test_future_expiry_key_200(env):
+    client, seed_key, factory = env
+    raw = await seed_key(["files:read"])
+    # Set expires_at to a far future timestamp
+    from sqlalchemy import update
+    async with factory() as s:
+        await s.execute(
+            update(ApiKey).where(ApiKey.key_prefix == raw[:12]).values(expires_at="2099-12-31T23:59:59")
+        )
+        await s.commit()
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
+
+
+async def test_null_expiry_key_still_valid_200(env):
+    client, seed_key, _factory = env
+    raw = await seed_key(["files:read"])
+    # expires_at is None by default; key should still authenticate
+    resp = await client.get("/protected", headers={"X-Api-Key": raw})
+    assert resp.status_code == 200
