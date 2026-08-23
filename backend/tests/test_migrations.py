@@ -1,8 +1,9 @@
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.exc import IntegrityError
 from app.database import Base
-from app.migrations import v013_filament_any_keyword
+from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel
 from app.migrations.runner import run_migrations
 
 
@@ -135,4 +136,106 @@ async def test_v013_backfills_and_locks_filament_any_keyword():
     assert notnull["filament_type"] == 1
     assert notnull["filament_color"] == 1
     assert [tuple(r[1:]) for r in rows] == [("any", "any"), ("any", "blue"), ("PLA", "any")]
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v012_creates_api_keys_table_with_unique_prefix_index():
+    """v012 creates api_keys table with unique key_prefix index. Verify the table
+    and index exist, and that the unique constraint is enforced."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await v012_api_keys.up(conn)
+
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(api_keys)"))).fetchall()}
+
+        assert "api_keys" in tables
+        assert {"id", "name", "key_prefix", "key_hash", "scopes", "enabled", "created_at", "last_used_at", "revoked_at"} <= cols
+
+        # Verify unique index enforces uniqueness on key_prefix
+        await conn.execute(text("""
+            INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at)
+            VALUES ('key1', 'prefix1', 'hash1', '[]', 1, '2024-01-01T00:00:00')
+        """))
+
+        with pytest.raises(IntegrityError):
+            await conn.execute(text("""
+                INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at)
+                VALUES ('key2', 'prefix1', 'hash2', '[]', 1, '2024-01-01T00:00:00')
+            """))
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v014_adds_nullable_expires_at_to_api_keys():
+    """v014 adds nullable expires_at column to api_keys. Start from pre-v014 schema
+    (run v012 first to get realistic prior state), then verify expires_at exists
+    and accepts NULL."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        # Build pre-v014 schema
+        await v012_api_keys.up(conn)
+
+        # Insert a row to test NULL insert
+        await conn.execute(text("""
+            INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at)
+            VALUES ('test_key', 'test_prefix', 'hash1', '[]', 1, '2024-01-01T00:00:00')
+        """))
+
+        # Run v014
+        await v014_api_key_expiration.up(conn)
+
+        # Verify expires_at column exists
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(api_keys)"))).fetchall()}
+        assert "expires_at" in cols
+
+        # Verify NULL is accepted (row inserted before migration should still exist)
+        rows = (await conn.execute(text("SELECT expires_at FROM api_keys WHERE name = 'test_key'"))).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] is None
+
+        # Verify we can insert a new row with expires_at as NULL
+        await conn.execute(text("""
+            INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at, expires_at)
+            VALUES ('key_with_null_exp', 'prefix2', 'hash2', '[]', 1, '2024-01-01T00:00:00', NULL)
+        """))
+
+        # Verify we can insert a row with a value
+        await conn.execute(text("""
+            INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at, expires_at)
+            VALUES ('key_with_exp', 'prefix3', 'hash3', '[]', 1, '2024-01-01T00:00:00', '2025-01-01T00:00:00')
+        """))
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v015_creates_bootstrap_sentinel_table():
+    """v015 creates bootstrap_sentinel table for atomic bootstrap-key minting.
+    Verify the table exists with expected columns and can round-trip data."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await v015_bootstrap_sentinel.up(conn)
+
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(bootstrap_sentinel)"))).fetchall()}
+
+        assert "bootstrap_sentinel" in tables
+        assert {"id", "created_at"} <= cols
+
+        # Insert a row and verify round-trip
+        test_timestamp = "2024-01-01T12:34:56"
+        await conn.execute(text("""
+            INSERT INTO bootstrap_sentinel (id, created_at)
+            VALUES (1, :ts)
+        """), {"ts": test_timestamp})
+
+        rows = (await conn.execute(text("SELECT id, created_at FROM bootstrap_sentinel WHERE id = 1"))).fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == 1
+        assert rows[0][1] == test_timestamp
     await engine.dispose()
