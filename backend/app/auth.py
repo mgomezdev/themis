@@ -1,4 +1,5 @@
 from __future__ import annotations
+import secrets
 from datetime import datetime, timezone
 from weakref import WeakSet
 from fastapi import Depends, HTTPException, Request
@@ -59,7 +60,7 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
     row = (await session.execute(
         select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.enabled == True)  # noqa: E712
     )).scalar_one_or_none()
-    if row is None or row.key_hash != hash_key(raw):
+    if row is None or not secrets.compare_digest(row.key_hash, hash_key(raw)):
         return None
     # Throttled last_used_at touch — don't write on every single request.
     if row.last_used_at is None or row.last_used_at[:16] < _now()[:16]:
