@@ -58,13 +58,14 @@ async def get_scopes():
 
 @router.post("", dependencies=[Depends(require_scope("apikeys:write"))])
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
-    try:
-        session.add(BootstrapSentinel(id=1, created_at=_now()))
-        await session.flush()
-        bootstrap = True
-    except IntegrityError:
-        await session.rollback()
-        bootstrap = False
+    bootstrap = False
+    if await _table_is_empty(session):
+        try:
+            session.add(BootstrapSentinel(id=1, created_at=_now()))
+            await session.flush()
+            bootstrap = True
+        except IntegrityError:
+            await session.rollback()
 
     scopes = sorted(SCOPES) if bootstrap else body.scopes
     if not bootstrap and not scopes:

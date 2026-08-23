@@ -227,3 +227,31 @@ async def test_concurrent_bootstrap_race_condition(client: AsyncClient):
     keys = list_resp.json()
     assert len(keys) == 1
     assert keys[0]["id"] == success_data["id"]
+
+
+async def test_create_key_with_empty_sentinel_but_existing_keys_respects_scopes(client: AsyncClient):
+    """Regression: bootstrap_sentinel starts empty on any fresh migration run,
+    including an upgraded deployment that already has rows in api_keys. Without
+    the _table_is_empty() precondition guarding the sentinel-insert attempt, the
+    first create_key call on such a system would still win the (empty) sentinel
+    insert and silently escalate a narrow-scope request to full access — this
+    reproduces that exact scenario by clearing bootstrap_sentinel back to empty
+    after a normal bootstrap, so api_keys is non-empty but the sentinel isn't."""
+    from sqlalchemy import text
+
+    _, headers = await _bootstrap(client)
+
+    session_gen = app.dependency_overrides[get_session]()
+    session = await session_gen.__anext__()
+    await session.execute(text("DELETE FROM bootstrap_sentinel"))
+    await session.commit()
+
+    resp = await client.post(
+        "/api/v1/api-keys",
+        json={"name": "Narrow", "scopes": ["files:read"]},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["scopes"] == ["files:read"]
+    assert set(data["scopes"]) != SCOPES
