@@ -186,7 +186,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         ) : (
           <p className="muted small" style={{ marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
             Themis couldn't automatically set up access for this browser. Paste an existing API key
-            (Settings → API Keys) to continue.
+            (Settings → API Keys) to continue, or set <code style={{ fontSize: 'inherit' }}>THEMIS_BOOTSTRAP_KEY</code> in <code style={{ fontSize: 'inherit' }}>.env</code> and restart Themis.
           </p>
         )}
         <input
