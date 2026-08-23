@@ -3,11 +3,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import SCOPES, require_scope, _table_is_empty
 from ...database import get_session
-from ...models import ApiKey
+from ...models import ApiKey, BootstrapSentinel
 from ...services.api_key_service import generate_key, hash_key
 
 router = APIRouter(prefix="/api/v1/api-keys", tags=["api-keys"])
@@ -57,7 +58,14 @@ async def get_scopes():
 
 @router.post("", dependencies=[Depends(require_scope("apikeys:write"))])
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
-    bootstrap = await _table_is_empty(session)
+    try:
+        session.add(BootstrapSentinel(id=1, created_at=_now()))
+        await session.flush()
+        bootstrap = True
+    except IntegrityError:
+        await session.rollback()
+        bootstrap = False
+
     scopes = sorted(SCOPES) if bootstrap else body.scopes
     if not bootstrap and not scopes:
         raise HTTPException(400, "At least one scope is required")

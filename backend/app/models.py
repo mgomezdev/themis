@@ -302,3 +302,10 @@ class ApiKey(Base):
     last_used_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     revoked_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class BootstrapSentinel(Base):
+    __tablename__ = "bootstrap_sentinel"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(32))

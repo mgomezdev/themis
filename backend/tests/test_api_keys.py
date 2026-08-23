@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -188,3 +189,41 @@ async def test_create_key_with_expires_at(client: AsyncClient):
     data = resp.json()
     assert data["expires_at"] == expires_at
     assert data["name"] == "ExpireTest"
+
+
+async def test_concurrent_bootstrap_race_condition(client: AsyncClient):
+    """Regression: two concurrent bootstrap POSTs (empty api_keys table, no scopes)
+    must result in exactly one 200 (with full scopes) and one 400 (scope required).
+    BootstrapSentinel insert should win on one request, causing the other to fail
+    bootstrap detection and reject due to zero scopes."""
+
+    async def make_bootstrap_request():
+        return await client.post("/api/v1/api-keys", json={"name": "Bootstrap", "scopes": []})
+
+    # Fire two requests concurrently; one wins the sentinel insert, one loses
+    resp1, resp2 = await asyncio.gather(make_bootstrap_request(), make_bootstrap_request())
+
+    # Exactly one 200, one 400
+    statuses = sorted([resp1.status_code, resp2.status_code])
+    assert statuses == [200, 400], f"Expected [200, 400], got {statuses}"
+
+    # The 200 response: full-scopes bootstrap key
+    success_resp = resp1 if resp1.status_code == 200 else resp2
+    success_data = success_resp.json()
+    assert set(success_data["scopes"]) == SCOPES
+    assert success_data["name"] == "Bootstrap"
+    assert "key" in success_data
+    assert success_data["key"].startswith("thm_")
+
+    # The 400 response: zero scopes not allowed (non-bootstrap path)
+    fail_resp = resp2 if resp1.status_code == 200 else resp1
+    fail_data = fail_resp.json()
+    assert "scope" in fail_data.get("detail", "").lower()
+
+    # Verify exactly 1 key in database by listing with the successful key
+    headers = {"X-Api-Key": success_data["key"]}
+    list_resp = await client.get("/api/v1/api-keys", headers=headers)
+    assert list_resp.status_code == 200
+    keys = list_resp.json()
+    assert len(keys) == 1
+    assert keys[0]["id"] == success_data["id"]
