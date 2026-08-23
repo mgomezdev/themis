@@ -257,6 +257,11 @@ valid, non-revoked key (no specific scope) and closes with code `4401` if missin
 and the static frontend (`/`, `/assets/*`, SPA fallback) stay unauthenticated so the app shell can load
 before any key exists.
 
+**Recovery:** the simplest path is `THEMIS_BOOTSTRAP_KEY=<any-string>` in `.env` + restart — any request
+presenting that value as its key is accepted with full scopes, no `api_keys` row required, no DB access
+needed. Deleting all rows from `api_keys` via the sqlite CLI and restarting also works (the empty-table
+check is re-evaluated on every request, not cached), but requires DB access you may not have.
+
 **Scope notes:**
 - `jobs:write` grants the ability to cancel a running job, which stops the printer (see `cancel_job` route in `jobs.py` line 514).
 - Other `write` scopes are update-only; only `jobs:write` and `printers:control` control hardware.
