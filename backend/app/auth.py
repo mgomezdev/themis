@@ -58,7 +58,7 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
         return None
     prefix = raw[:12]
     row = (await session.execute(
-        select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.enabled == True)  # noqa: E712
+        select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.enabled == True, ApiKey.revoked_at.is_(None))  # noqa: E712
     )).scalar_one_or_none()
     if row is None or not secrets.compare_digest(row.key_hash, hash_key(raw)):
         return None
