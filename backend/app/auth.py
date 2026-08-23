@@ -3,7 +3,7 @@ import secrets
 from datetime import datetime, timezone
 from weakref import WeakSet
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_session
@@ -58,7 +58,12 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
         return None
     prefix = raw[:12]
     row = (await session.execute(
-        select(ApiKey).where(ApiKey.key_prefix == prefix, ApiKey.enabled == True, ApiKey.revoked_at.is_(None))  # noqa: E712
+        select(ApiKey).where(
+            ApiKey.key_prefix == prefix,
+            ApiKey.enabled == True,  # noqa: E712
+            ApiKey.revoked_at.is_(None),
+            or_(ApiKey.expires_at.is_(None), ApiKey.expires_at > _now()),
+        )
     )).scalar_one_or_none()
     if row is None or not secrets.compare_digest(row.key_hash, hash_key(raw)):
         return None
