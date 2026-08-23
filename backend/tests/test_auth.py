@@ -27,6 +27,10 @@ def _make_app() -> FastAPI:
     async def protected() -> dict:
         return {"ok": True}
 
+    @app.get("/printers/{id}/snapshot", dependencies=[Depends(require_scope("printers:read"))])
+    async def printer_snapshot(id: str) -> dict:
+        return {"ok": True}
+
     return app
 
 
@@ -108,6 +112,16 @@ async def test_disabled_key_401(env):
 
 async def test_key_via_query_param(env):
     client, seed_key = env
-    raw = await seed_key(["files:read"])
-    resp = await client.get(f"/protected?key={raw}")
+    raw = await seed_key(["printers:read"])
+    # ?key= works on allowlisted routes (ending in /snapshot)
+    resp = await client.get(f"/printers/printer1/snapshot?key={raw}")
     assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+async def test_key_via_query_param_not_allowed_on_generic_route(env):
+    client, seed_key = env
+    raw = await seed_key(["files:read"])
+    # ?key= is blocked on non-allowlisted routes
+    resp = await client.get(f"/protected?key={raw}")
+    assert resp.status_code == 401

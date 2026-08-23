@@ -68,8 +68,15 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
     return row
 
 
+def _path_allows_query_param(path: str) -> bool:
+    """Check if a path is allowed to use ?key= query param for auth."""
+    return "/thumbnails/" in path or path.endswith("/snapshot")
+
+
 async def _resolve_key(request: Request, session: AsyncSession) -> ApiKey | None:
-    raw = request.headers.get("X-Api-Key") or request.query_params.get("key")
+    raw = request.headers.get("X-Api-Key")
+    if raw is None and _path_allows_query_param(request.url.path):
+        raw = request.query_params.get("key")
     return await _resolve_raw_key(raw, session)
 
 
