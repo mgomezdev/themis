@@ -1431,8 +1431,8 @@ function ApiKeyRow({ item, allScopesLength, onRevoke, onDelete }: {
   );
 }
 
-function CreateKeyModal({ onClose, onCreated }: {
-  onClose: () => void; onCreated: (k: ApiKeyCreated) => void;
+function CreateKeyModal({ onClose, onCreated, allScopes }: {
+  onClose: () => void; onCreated: (k: ApiKeyCreated) => void; allScopes: string[];
 }) {
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<Set<string>>(new Set());
@@ -1445,6 +1445,17 @@ function CreateKeyModal({ onClose, onCreated }: {
       if (next.has(s)) next.delete(s); else next.add(s);
       return next;
     });
+  }
+
+  function selectAllScopes() {
+    setScopes(new Set(allScopes));
+  }
+
+  function selectReadOnly() {
+    const readOnlyScopes = SCOPES.flatMap(g =>
+      g.scopes.filter(s => s.label === 'Read').map(s => s.scope)
+    );
+    setScopes(new Set(readOnlyScopes));
   }
 
   async function submit() {
@@ -1481,6 +1492,10 @@ function CreateKeyModal({ onClose, onCreated }: {
                  style={{ width: '100%', marginBottom: 20 }} />
 
           <label className="label">Scopes</label>
+          <div className="row gap-2" style={{ marginBottom: 14 }}>
+            <button className="btn sm" onClick={selectAllScopes} type="button">All scopes</button>
+            <button className="btn sm" onClick={selectReadOnly} type="button">Read-only</button>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 20px', marginTop: 8 }}>
             {SCOPES.map(group => (
               <div key={group.resource}>
@@ -1654,7 +1669,7 @@ function ApiKeysPage() {
         )}
       </div>
 
-      {creating && <CreateKeyModal onClose={() => setCreating(false)} onCreated={handleCreated} />}
+      {creating && <CreateKeyModal onClose={() => setCreating(false)} onCreated={handleCreated} allScopes={allScopes} />}
       {revealKey && <RevealKeyDialog apiKey={revealKey} onClose={() => setRevealKey(null)} />}
     </div>
   );
