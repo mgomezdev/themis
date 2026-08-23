@@ -40,7 +40,10 @@ resolution, no specific scope check; used by `/ws` (`app/api/websocket.py` resol
 code `4401` on failure). `last_used_at` is touched on successful resolution, throttled to roughly
 once/minute per key (not written on every request). OpenAPI's `/docs` Authorize button is wired via an
 `APIKeyHeader(name="X-Api-Key")` security scheme attached in `main.py` (documentation ergonomics only —
-enforcement is entirely `require_scope`).
+enforcement is entirely `require_scope`). `THEMIS_BOOTSTRAP_KEY` env var, checked in `_resolve_raw_key`
+before any DB lookup — if set, that exact value is always accepted as a full-scope key via
+`secrets.compare_digest`. Recovery path for a fully locked-out install; doesn't require an `api_keys` row
+to exist.
 
 ## Services (`app/services/`)
 

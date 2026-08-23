@@ -26,7 +26,7 @@ async def test_broadcast_sends_to_connections():
     from app.api.websocket import ConnectionManager
     mgr = ConnectionManager()
     mock_ws = AsyncMock()
-    mgr.active_connections.append(mock_ws)
+    mgr.active_connections.append((mock_ws, ["fleet:read"]))
     await mgr.broadcast("printer_state", {"id": 1, "state": "IDLE"})
     mock_ws.send_json.assert_called_once()
     call_args = mock_ws.send_json.call_args[0][0]
@@ -143,7 +143,7 @@ def test_disconnect_is_idempotent_on_already_reaped_socket():
     mgr.disconnect(ws)  # never connected — must not raise
     assert mgr.active_connections == []
 
-    mgr.active_connections.append(ws)
+    mgr.active_connections.append((ws, []))
     mgr.disconnect(ws)
     mgr.disconnect(ws)  # second call on the same socket — must not raise
     assert mgr.active_connections == []
@@ -168,7 +168,7 @@ async def test_broadcast_reap_does_not_raise_when_two_broadcasts_race():
         raise RuntimeError("connection closed")
 
     dead_ws.send_json = failing_send
-    mgr.active_connections.append(dead_ws)
+    mgr.active_connections.append((dead_ws, ["fleet:read"]))
 
     await asyncio.gather(
         mgr.broadcast("printer_state", {}),
@@ -177,11 +177,9 @@ async def test_broadcast_reap_does_not_raise_when_two_broadcasts_race():
     assert mgr.active_connections == []
 
 
-def test_ws_narrow_scope_key_receives_out_of_scope_event(tmp_path):
-    """Test that /ws currently enforces NO scope checking — a key with
-    narrow scopes can still receive all event types. This documents the current
-    overpermissive behavior as a known gap (BIZ-75). Once BIZ-75 is fixed,
-    this test should be updated to assert DENIAL instead of acceptance."""
+def test_ws_narrow_scope_key_receives_only_in_scope_events(tmp_path):
+    """Test that /ws enforces scope checking — a key with only fleet:read
+    receives fleet-scoped events but NOT job or queue events."""
     db_path = tmp_path / "ws_scope_narrow.db"
     # Create key with only fleet:read scope (narrow, not a catch-all)
     raw = _seed_db(db_path, scopes=["fleet:read"])
@@ -192,13 +190,57 @@ def test_ws_narrow_scope_key_receives_out_of_scope_event(tmp_path):
     with client.websocket_connect(f"/ws?key={raw}") as ws:
         assert len(connection_manager.active_connections) == 1
 
-        # Broadcast a job_update event (outside fleet:read scope)
+        # Broadcast job_update (requires jobs:read) — should be filtered out
         asyncio.run(connection_manager.broadcast(
             "job_update",
             {"id": 1, "status": "PRINTING"}
         ))
 
-        # Assert the client CAN currently receive the out-of-scope event
+        # Broadcast printer_state (requires fleet:read) — should be received
+        asyncio.run(connection_manager.broadcast(
+            "printer_state",
+            {"id": 2, "state": "IDLE"}
+        ))
+
+        # Only printer_state should arrive
         data = ws.receive_json()
-        assert data["type"] == "job_update"
-        assert data["data"]["id"] == 1
+        assert data["type"] == "printer_state"
+        assert data["data"]["id"] == 2
+
+
+def test_ws_queue_scope_key_receives_queue_updates(tmp_path):
+    """Test that a key with queue:read receives queue_update events."""
+    db_path = tmp_path / "ws_scope_queue.db"
+    raw = _seed_db(db_path, scopes=["queue:read"])
+    assert raw
+    _wire_app_to_db(db_path)
+
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws?key={raw}") as ws:
+        assert len(connection_manager.active_connections) == 1
+
+        # Broadcast queue_update (requires queue:read) — should be received
+        asyncio.run(connection_manager.broadcast(
+            "queue_update",
+            {"queue_length": 3}
+        ))
+
+        data = ws.receive_json()
+        assert data["type"] == "queue_update"
+        assert data["data"]["queue_length"] == 3
+
+
+def test_ws_closes_4403_with_insufficient_scopes(tmp_path):
+    """Test that /ws rejects at connect-time any key lacking all three required
+    scopes (fleet:read, jobs:read, queue:read). A key with only apikeys:read
+    should be rejected with close code 4403."""
+    db_path = tmp_path / "ws_scope_insufficient.db"
+    raw = _seed_db(db_path, scopes=["apikeys:read"])
+    assert raw
+    _wire_app_to_db(db_path)
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws?key={raw}"):
+            pass
+    assert exc_info.value.code == 4403

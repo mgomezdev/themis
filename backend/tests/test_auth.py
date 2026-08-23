@@ -238,3 +238,55 @@ async def test_last_used_at_updated_from_past_minute(env):
         key = (await s.execute(select(ApiKey).where(ApiKey.key_prefix == raw[:12]))).scalar_one()
         assert key.last_used_at != past_minute
         assert key.last_used_at is not None
+
+
+async def test_bootstrap_key_with_nonempty_table_200(env, monkeypatch):
+    client, seed_key, _factory = env
+    bootstrap_value = "thm_bootstrap_secret_key"
+    monkeypatch.setenv("THEMIS_BOOTSTRAP_KEY", bootstrap_value)
+    # Seed an unrelated key to make table non-empty
+    await seed_key(["jobs:read"])
+    # Request with the bootstrap key should succeed and get full scopes
+    resp = await client.get("/protected", headers={"X-Api-Key": bootstrap_value})
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+
+
+async def test_bootstrap_key_wrong_value_401(env, monkeypatch):
+    client, seed_key, _factory = env
+    bootstrap_value = "thm_bootstrap_secret_key"
+    monkeypatch.setenv("THEMIS_BOOTSTRAP_KEY", bootstrap_value)
+    # Seed an unrelated key to make table non-empty
+    await seed_key(["jobs:read"])
+    # Request with a different value should be rejected
+    resp = await client.get("/protected", headers={"X-Api-Key": "thm_wrong_key"})
+    assert resp.status_code == 401
+
+
+async def test_no_bootstrap_key_arbitrary_string_401(env, monkeypatch):
+    client, seed_key, _factory = env
+    # Ensure THEMIS_BOOTSTRAP_KEY is not set
+    monkeypatch.delenv("THEMIS_BOOTSTRAP_KEY", raising=False)
+    # Seed a key to make table non-empty
+    await seed_key(["files:read"])
+    # Request with arbitrary string should be rejected
+    resp = await client.get("/protected", headers={"X-Api-Key": "thm_arbitrary_key"})
+    assert resp.status_code == 401
+
+
+async def test_table_is_empty_recomputed_live(env, monkeypatch):
+    client, seed_key, factory = env
+    # Create a key
+    raw = await seed_key(["files:read"])
+    # Verify table is not empty and request requires key
+    resp = await client.get("/protected")
+    assert resp.status_code == 401
+    # Delete the key directly from DB (bypassing API)
+    from sqlalchemy import delete
+    async with factory() as s:
+        await s.execute(delete(ApiKey).where(ApiKey.key_prefix == raw[:12]))
+        await s.commit()
+    # Table is now empty again; unauthenticated request should get through (bootstrap)
+    resp = await client.get("/protected")
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}

@@ -1,7 +1,7 @@
 from __future__ import annotations
+import os
 import secrets
 from datetime import datetime, timezone
-from weakref import WeakSet
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,22 +31,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-# Engines observed to have a non-empty api_keys table. The app never lets the table go from
-# non-empty back to empty via the API (deleting/revoking the last apikeys:write key is blocked),
-# so once true this is true for the lifetime of the engine — skips a COUNT(*) on every request.
-# Keyed by engine (not a single flag) so per-test in-memory DBs in the test suite stay isolated.
-_bootstrapped_engines: "WeakSet" = WeakSet()
-
-
 async def _table_is_empty(session: AsyncSession) -> bool:
-    engine = session.bind
-    if engine in _bootstrapped_engines:
-        return False
     count = (await session.execute(select(func.count()).select_from(ApiKey))).scalar_one()
-    if count > 0:
-        _bootstrapped_engines.add(engine)
-        return False
-    return True
+    return count == 0
 
 
 async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | None:
@@ -56,6 +43,10 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
     can't run a normal Depends() chain."""
     if not raw:
         return None
+    bootstrap_key = os.environ.get("THEMIS_BOOTSTRAP_KEY")
+    if bootstrap_key and secrets.compare_digest(raw, bootstrap_key):
+        return ApiKey(id=None, key_prefix=None, key_hash=None, scopes=sorted(SCOPES),
+                      enabled=True, revoked_at=None, expires_at=None, last_used_at=None)
     prefix = raw[:12]
     row = (await session.execute(
         select(ApiKey).where(
