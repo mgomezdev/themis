@@ -1496,7 +1496,7 @@ function CreateKeyModal({ onClose, onCreated, allScopes }: {
             <button className="btn sm" onClick={selectAllScopes} type="button">All scopes</button>
             <button className="btn sm" onClick={selectReadOnly} type="button">Read-only</button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px 20px', marginTop: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '14px 20px', marginTop: 8 }}>
             {SCOPES.map(group => (
               <div key={group.resource}>
                 <div className="tiny muted" style={{ textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
