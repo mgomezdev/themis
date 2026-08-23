@@ -179,4 +179,56 @@ describe('SettingsScreen', () => {
     // Button should now be enabled
     expect(modalCreateButton.disabled).toBe(false);
   });
+
+  it('ApiKeysPage: "All scopes" preset enables Create button', async () => {
+    const user = userEvent.setup();
+    const allScopes = ['files:read', 'files:write', 'jobs:read', 'jobs:write', 'printers:read', 'printers:write', 'printers:control', 'queue:read', 'queue:write', 'fleet:read'];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+    await user.type(screen.getByPlaceholderText(/e\.g\. Ordinus/i), 'Test Key');
+
+    const allScopesButton = screen.getByRole('button', { name: /all scopes/i });
+    await user.click(allScopesButton);
+
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    await waitFor(() => expect(modalCreateButton.disabled).toBe(false));
+  });
+
+  it('ApiKeysPage: "Read-only" preset enables Create button with subset of scopes', async () => {
+    const user = userEvent.setup();
+    const allScopes = ['files:read', 'files:write', 'jobs:read', 'jobs:write', 'printers:read', 'printers:write', 'printers:control', 'queue:read', 'queue:write', 'fleet:read'];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
+      if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /api keys/i }));
+    const headerCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    await user.click(headerCreateButtons[0]);
+    await user.type(screen.getByPlaceholderText(/e\.g\. Ordinus/i), 'Test Key');
+
+    const readOnlyButton = screen.getByRole('button', { name: /read-only/i });
+    await user.click(readOnlyButton);
+
+    const allCreateButtons = screen.getAllByRole('button', { name: /create key/i });
+    const modalCreateButton = allCreateButtons[allCreateButtons.length - 1] as HTMLButtonElement;
+    await waitFor(() => expect(modalCreateButton.disabled).toBe(false));
+  });
 });
