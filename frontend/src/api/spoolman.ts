@@ -109,6 +109,18 @@ export async function testSpoolmanConnection(
   return r.json();
 }
 
+export interface SyncNowResponse {
+  filament_count: number;
+  spool_count: number;
+}
+
+export async function syncSpoolman(): Promise<SyncNowResponse> {
+  return request('/api/v1/spoolman/sync-now', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 export async function fetchFilaments(): Promise<ApiFilament[]> {
   return request('/api/v1/spoolman/filaments');
 }

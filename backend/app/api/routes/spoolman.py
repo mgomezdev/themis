@@ -54,6 +54,33 @@ async def get_spools(session: AsyncSession = Depends(get_session)):
         raise HTTPException(status_code=503, detail=str(e))
 
 
+class SyncNowResponse(BaseModel):
+    filament_count: int
+    spool_count: int
+
+
+@router.post(
+    "/sync-now",
+    summary="Manually sync filaments and spools from Spoolman",
+    responses={
+        503: {"description": "Spoolman not configured, disabled, or unreachable"},
+    },
+    dependencies=[Depends(require_scope("spoolman:read"))],
+)
+async def sync_now(session: AsyncSession = Depends(get_session)):
+    """Re-fetch filaments and spools from Spoolman, confirming the connection."""
+    row = await _config_or_503(session)
+    try:
+        filaments = await spoolman_service.fetch_filaments(row.url, row.api_key)
+        spools = await spoolman_service.fetch_spools(row.url, row.api_key)
+        return SyncNowResponse(
+            filament_count=len(filaments),
+            spool_count=len(spools),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 class FilamentPatchBody(BaseModel):
     orca_profiles: dict[str, list[str]]
 

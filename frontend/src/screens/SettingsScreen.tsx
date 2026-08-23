@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, useSpools, useSpoolmanConfig } from '../api/spoolman';
+import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useSpoolmanConfig } from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
@@ -715,6 +715,8 @@ function SpoolmanPage() {
 
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
   const [spoolmanPendingRemap, setSpoolmanPendingRemap] = useState<PendingRemaps | null>(null);
 
   useEffect(() => {
@@ -766,18 +768,18 @@ function SpoolmanPage() {
     await saveSpoolmanConfig({ enabled: false }).catch(console.error);
   }
 
-  function syncNow() {
-    update({ connectionStatus: 'connecting' });
-    testSpoolmanConnection(s.url, s.apiKey || null)
-      .then(r => {
-        if (r.status === 'pending_remaps') {
-          setSpoolmanPendingRemap(r);
-          update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
-        } else {
-          update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
-        }
-      })
-      .catch(() => update({ connectionStatus: 'error' }));
+  async function handleSyncNow() {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      const result = await syncSpoolman();
+      setSyncMsg(`Synced — ${result.filament_count} filaments, ${result.spool_count} spools`);
+      setTimeout(() => setSyncMsg(null), 3000);
+    } catch (e) {
+      setSyncMsg(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSyncing(false);
+    }
   }
 
   const isConnected = s.connectionStatus === 'connected';
@@ -825,7 +827,7 @@ function SpoolmanPage() {
             </div>
           </FieldRow>
 
-          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <button className="btn primary sm" disabled={!s.url.trim() || testing || saving} onClick={testConnection}>
               {testing ? 'Connecting…' : <>{Icons.link} Test connection</>}
             </button>
@@ -834,9 +836,14 @@ function SpoolmanPage() {
             </button>
             {isConnected && (
               <>
-                <button className="btn sm" onClick={syncNow} disabled={testing}>{Icons.refresh} Sync now</button>
+                <button className="btn sm" onClick={handleSyncNow} disabled={syncing}>{syncing ? 'Syncing…' : <>{Icons.refresh} Sync now</>}</button>
                 <button className="btn ghost sm" onClick={disconnect} style={{ color: 'var(--err)' }}>Disconnect</button>
               </>
+            )}
+            {syncMsg && (
+              <span className={`small ${syncMsg.includes('failed') ? 'muted' : ''}`} style={{ color: syncMsg.includes('failed') ? 'var(--err)' : 'var(--ok)' }}>
+                {syncMsg}
+              </span>
             )}
           </div>
 
