@@ -34,6 +34,8 @@ function bootstrapKey(): Promise<string | null> {
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<GateState>(() => (getApiKey() ? 'ready' : 'checking'));
   const [manualKey, setManualKey] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -61,13 +63,37 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     return () => { alive = false; };
   }, []);
 
+  async function validateKey(key: string) {
+    setValidationError(null);
+    setIsValidating(true);
+    try {
+      const response = await fetch('/api/v1/api-keys', {
+        headers: { 'Authorization': `Bearer ${key}` },
+      });
+
+      if (response.ok || response.status === 403) {
+        // 200: valid key with apikeys:read scope
+        // 403: valid key (authenticated), but lacks apikeys:read scope (fine—scope enforced per-action)
+        setApiKey(key);
+        setManualKey('');
+        setState('ready');
+      } else if (response.status === 401) {
+        setValidationError('API key not recognized');
+      } else {
+        setValidationError('Server unreachable');
+      }
+    } catch {
+      setValidationError('Server unreachable');
+    } finally {
+      setIsValidating(false);
+    }
+  }
+
   function submitManualKey(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = manualKey.trim();
     if (!trimmed) return;
-    setApiKey(trimmed);
-    setManualKey('');
-    setState('ready');
+    validateKey(trimmed);
   }
 
   if (state === 'ready') return <>{children}</>;
@@ -99,10 +125,20 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
           value={manualKey}
           onChange={(e) => setManualKey(e.target.value)}
           placeholder="thm_..."
-          style={{ width: '100%', marginBottom: 12 }}
+          style={{ width: '100%', marginBottom: validationError ? 6 : 12 }}
         />
-        <button type="submit" className="btn primary" disabled={!manualKey.trim()} style={{ width: '100%' }}>
-          Continue
+        {validationError && (
+          <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px', lineHeight: 1.5 }}>
+            {validationError}
+          </p>
+        )}
+        <button
+          type="submit"
+          className="btn primary"
+          disabled={!manualKey.trim() || isValidating}
+          style={{ width: '100%' }}
+        >
+          {isValidating ? 'Validating…' : 'Continue'}
         </button>
       </form>
     </div>
