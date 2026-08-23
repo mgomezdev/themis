@@ -110,7 +110,7 @@ describe('SettingsScreen', () => {
     const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
     let revokeCalled = false;
 
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
       if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
