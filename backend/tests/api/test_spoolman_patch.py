@@ -53,3 +53,43 @@ async def test_patch_filament_forwards_spoolman_error(client: AsyncClient):
         )
     assert resp.status_code == 503
     assert "Connection refused" in resp.json()["detail"]
+
+
+async def test_sync_now_happy_path(client: AsyncClient):
+    await _seed_spoolman(client)
+    filaments = [{"id": 1, "name": "PLA"}, {"id": 2, "name": "PETG"}]
+    spools = [{"id": 1, "filament_id": 1}, {"id": 2, "filament_id": 2}, {"id": 3, "filament_id": 1}]
+
+    with patch(
+        "app.api.routes.spoolman.spoolman_service.fetch_filaments",
+        new_callable=AsyncMock,
+        return_value=filaments,
+    ), patch(
+        "app.api.routes.spoolman.spoolman_service.fetch_spools",
+        new_callable=AsyncMock,
+        return_value=spools,
+    ):
+        resp = await client.post("/api/v1/spoolman/sync-now")
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["filament_count"] == 2
+    assert data["spool_count"] == 3
+
+
+async def test_sync_now_503_when_spoolman_not_configured(client: AsyncClient):
+    resp = await client.post("/api/v1/spoolman/sync-now")
+    assert resp.status_code == 503
+
+
+async def test_sync_now_503_when_spoolman_unreachable(client: AsyncClient):
+    await _seed_spoolman(client)
+    with patch(
+        "app.api.routes.spoolman.spoolman_service.fetch_filaments",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection timeout"),
+    ):
+        resp = await client.post("/api/v1/spoolman/sync-now")
+
+    assert resp.status_code == 503
+    assert "Connection timeout" in resp.json()["detail"]

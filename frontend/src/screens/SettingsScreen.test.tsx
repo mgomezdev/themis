@@ -451,4 +451,80 @@ describe('SettingsScreen', () => {
 
     await waitFor(() => expect(screen.getByText(/Duplicate key name/i)).toBeInTheDocument());
   });
+
+  it('SpoolmanPage: Sync now button calls sync-now endpoint and shows success message', async () => {
+    const user = userEvent.setup();
+    let syncCalled = false;
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/api/v1/spoolman/sync-now')) {
+        syncCalled = true;
+        return new Response(JSON.stringify({ filament_count: 5, spool_count: 12 }), { status: 200 });
+      }
+      if (url.includes('/settings/spoolman/test')) {
+        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+      }
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /spoolman/i }));
+
+    // Test connection to mark as connected
+    const testButton = screen.getByRole('button', { name: /test connection/i });
+    await user.click(testButton);
+
+    // Wait for sync button to appear (only visible when connected)
+    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument());
+
+    syncCalled = false;
+    // Click Sync now
+    const syncButton = screen.getByRole('button', { name: /sync now/i });
+    await user.click(syncButton);
+
+    // Check that sync-now endpoint was called
+    expect(syncCalled).toBe(true);
+
+    // Check for success message
+    await waitFor(() => expect(screen.getByText(/Synced — 5 filaments, 12 spools/i)).toBeInTheDocument());
+  });
+
+  it('SpoolmanPage: Sync now button shows error message on failure', async () => {
+    const user = userEvent.setup();
+
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/api/v1/spoolman/sync-now')) {
+        return new Response(JSON.stringify({ detail: 'Connection refused' }), { status: 503 });
+      }
+      if (url.includes('/settings/spoolman/test')) {
+        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
+      }
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', api_key: null }), { status: 200 });
+      if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
+      return new Response(JSON.stringify({}), { status: 200 });
+    }));
+
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /spoolman/i }));
+
+    // Test connection to mark as connected
+    const testButton = screen.getByRole('button', { name: /test connection/i });
+    await user.click(testButton);
+
+    // Wait for sync button to appear
+    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument());
+
+    // Click Sync now
+    const syncButton = screen.getByRole('button', { name: /sync now/i });
+    await user.click(syncButton);
+
+    // Check for error message
+    await waitFor(() => expect(screen.getByText(/Sync failed.*503/i)).toBeInTheDocument());
+  });
 });
