@@ -1,9 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import { getApiKey, setApiKey, clearApiKey } from './apiKeyStore';
-import { setUnauthorizedHandler } from '../api/client';
+import { setUnauthorizedHandler, setForbiddenHandler } from '../api/client';
 
 type GateState = 'checking' | 'ready' | 'manual';
 type BootstrapResult = { key: string } | { key: null; reason: 'already-bootstrapped' | 'error' };
+
+function ForbiddenToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, 4000);
+    return () => clearTimeout(timer);
+  }, [onDismiss]);
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        bottom: 16,
+        right: 16,
+        background: 'var(--error)',
+        color: 'white',
+        padding: '12px 16px',
+        borderRadius: 4,
+        fontSize: 14,
+        zIndex: 9999,
+      }}
+    >
+      {message}
+    </div>
+  );
+}
 
 // Module-level (not component-level) so React StrictMode's dev-only double-invoke of
 // effects — mount, cleanup, mount — shares a single in-flight bootstrap POST instead of
@@ -47,13 +72,18 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [isValidating, setIsValidating] = useState(false);
   const [bootstrapReason, setBootstrapReason] = useState<'already-bootstrapped' | 'error' | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [forbiddenMessage, setForbiddenMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
       clearApiKey();
       setState('manual');
     });
-    return () => setUnauthorizedHandler(null);
+    setForbiddenHandler((msg) => setForbiddenMessage(msg));
+    return () => {
+      setUnauthorizedHandler(null);
+      setForbiddenHandler(null);
+    };
   }, []);
 
   useEffect(() => {
@@ -114,7 +144,14 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setRetryCount((c) => c + 1);
   }
 
-  if (state === 'ready') return <>{children}</>;
+  if (state === 'ready') {
+    return (
+      <>
+        {children}
+        {forbiddenMessage && <ForbiddenToast message={forbiddenMessage} onDismiss={() => setForbiddenMessage(null)} />}
+      </>
+    );
+  }
 
   if (state === 'checking') {
     return (

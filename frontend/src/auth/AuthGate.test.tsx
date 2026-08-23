@@ -232,4 +232,54 @@ describe('AuthGate', () => {
     expect(callCount).toBe(3);
     expect(getApiKey()).toBe('thm_bootstrap_retry_key');
   });
+
+  it('shows forbidden toast when apiFetch gets 403 from authenticated call', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({
+        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
+        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
+        revoked_at: null, key: 'thm_bootstrapped_key',
+      }), { status: 200 })));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    // Wait for ready state
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+
+    // Now simulate a 403 from apiFetch by changing fetch mock
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ detail: 'Missing files:write scope' }), { status: 403 })));
+
+    // Call apiFetch to trigger the forbiddenHandler
+    const { apiFetch } = await import('../api/client');
+    await apiFetch('/api/test');
+
+    // Toast should appear with the detail message
+    await waitFor(() => expect(screen.getByText('Missing files:write scope')).toBeTruthy());
+  });
+
+  it('shows forbidden toast with generic message on 403 without detail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({
+        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
+        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
+        revoked_at: null, key: 'thm_bootstrapped_key',
+      }), { status: 200 })));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+
+    // Mock 403 without detail
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({}), { status: 403 })));
+
+    const { apiFetch } = await import('../api/client');
+    await apiFetch('/api/test');
+
+    // Toast should appear with generic message
+    await waitFor(() => expect(screen.getByText(/doesn't have permission/i)).toBeTruthy());
+  });
 });
