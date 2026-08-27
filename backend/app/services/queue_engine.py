@@ -15,8 +15,9 @@ import httpx
 from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..config import get_laminus_sidecar_url
+from ..config import get_laminus_sidecar_url, get_library_dir
 from ..models import GcodeFile, Job, JobPrinterConfig, Printer, QueueConfig, UploadedFile, WebhookConfig
+from .library_scanner import library_abs_path
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import webhook_service
@@ -312,7 +313,10 @@ class QueueEngine:
             # Capture all scalars before session closes
             machine_preset = (printer.current_orca_printer_profile or "") if printer else ""
             print_profile = (config.print_profile or "") if config else ""
-            stored_path = uploaded_file.stored_path if uploaded_file else None
+            stored_path = (
+                str(library_abs_path(get_library_dir(), uploaded_file.relative_path))
+                if uploaded_file else None
+            )
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
 
@@ -781,7 +785,10 @@ class QueueEngine:
             filament_profile = (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
-            stored_path = uploaded_file.stored_path if uploaded_file else None
+            stored_path = (
+                str(library_abs_path(get_library_dir(), uploaded_file.relative_path))
+                if uploaded_file else None
+            )
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
             build_plate_type = printer.build_plate_type if printer else None

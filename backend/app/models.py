@@ -30,7 +30,13 @@ class UploadedFile(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     original_filename: Mapped[str] = mapped_column(String(512))
-    stored_path: Mapped[str] = mapped_column(String(1024))
+    # Legacy only: an absolute filesystem path, kept solely so migrate_legacy_uploads()
+    # can locate pre-library-index rows (relative_path == "") that predate it. Never
+    # written for any row that has relative_path set — the absolute path on disk is
+    # always computed fresh via library_scanner.library_abs_path(), since the library
+    # root differs between local dev and the container and a persisted absolute path
+    # from one is not valid in the other.
+    stored_path: Mapped[str] = mapped_column(String(1024), default="")
     plates: Mapped[list] = mapped_column(JSON, default=list)
     uploaded_at: Mapped[str] = mapped_column(String(32))
     # Library index fields (filesystem is the source of truth; these cache it).

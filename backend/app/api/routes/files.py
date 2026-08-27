@@ -16,7 +16,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
 from ...services.library_scanner import (
-    LibraryScanner, folder_of, ACTIVE_JOB_STATUSES, MODEL_EXTS,
+    LibraryScanner, folder_of, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services.thumbnail_regen import regen_file_thumbnails
 
@@ -217,11 +217,13 @@ async def upload_file(
             .limit(1)
         )).scalar_one_or_none()
         if existing:
-            if not Path(existing.stored_path).exists():
+            existing_path = library_abs_path(library, existing.relative_path)
+            if not existing_path.exists():
                 # Orphaned record: file was deleted from disk but the DB row was not
                 # cleaned up. Restore it from the just-uploaded bytes so the record
                 # stays valid.
-                shutil.move(str(tmp_path), existing.stored_path)
+                existing_path.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(tmp_path), str(existing_path))
             return _to_dict(existing, [])
 
         dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
@@ -233,7 +235,7 @@ async def upload_file(
     stat = dest.stat()
     scanner = LibraryScanner(session, library, config.get_filecache_dir())
     record = UploadedFile(
-        original_filename=dest.name, stored_path=str(dest), relative_path=rel,
+        original_filename=dest.name, relative_path=rel,
         folder=folder_of(rel), size_bytes=stat.st_size, content_hash=incoming_hash,
         mtime=stat.st_mtime, plates=[], missing=False,
         uploaded_at=datetime.now(timezone.utc).isoformat(),
@@ -323,7 +325,7 @@ async def update_file(file_id: int, body: FilePatch,
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
     library = config.get_library_dir()
-    src = Path(f.stored_path)
+    src = library_abs_path(library, f.relative_path)
     new_folder = body.folder if body.folder is not None else f.folder
     # Strip all path components from the supplied name so that traversal
     # sequences like "../../../evil.stl" cannot escape the library root.
@@ -350,7 +352,6 @@ async def update_file(file_id: int, body: FilePatch,
         src.replace(dest)
     rel = dest.relative_to(library).as_posix()
     f.original_filename = dest.name
-    f.stored_path = str(dest)
     f.relative_path = rel
     f.folder = folder_of(rel)
     await session.commit()
@@ -385,7 +386,7 @@ async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)
     if referenced:
         raise HTTPException(409, "File is referenced by a project item")
 
-    stored_path = f.stored_path
+    abs_path = library_abs_path(config.get_library_dir(), f.relative_path)
     for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
         await session.delete(link)
     await session.delete(f)
@@ -394,9 +395,8 @@ async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)
     # Only touch the filesystem after the DB row is actually gone — otherwise a
     # commit failure (e.g. an unanticipated FK reference) leaves the file deleted
     # but the row still pointing at it.
-    p = Path(stored_path)
-    if p.exists():
-        p.unlink()
+    if abs_path.exists():
+        abs_path.unlink()
     cache = config.get_filecache_dir() / str(file_id)
     if cache.exists():
         import shutil
@@ -490,7 +490,7 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
-    return parse_model_filaments(record.stored_path)
+    return parse_model_filaments(str(library_abs_path(config.get_library_dir(), record.relative_path)))
 
 
 @router.get(
@@ -507,7 +507,7 @@ async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(ge
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
-    return parse_embedded_settings(record.stored_path)
+    return parse_embedded_settings(str(library_abs_path(config.get_library_dir(), record.relative_path)))
 
 
 @router.get(
@@ -543,7 +543,7 @@ async def download_file(file_id: int, session: AsyncSession = Depends(get_sessio
     f = await session.get(UploadedFile, file_id)
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
-    p = Path(f.stored_path)
+    p = library_abs_path(config.get_library_dir(), f.relative_path)
     if not p.exists():
         raise HTTPException(404, "File data not found")
     return FileResponse(str(p), filename=f.original_filename)

@@ -23,6 +23,10 @@ SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=
 def _set_sqlite_pragmas(dbapi_conn, _):
     cursor = dbapi_conn.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    # Without this, a writer that finds the DB locked (e.g. the queue loop and a
+    # request handler committing at the same instant) fails immediately with
+    # "database is locked" instead of waiting for the other transaction to finish.
+    cursor.execute("PRAGMA busy_timeout=5000")
     cursor.close()
 
 

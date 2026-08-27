@@ -14,9 +14,11 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, UploadedFile
+from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
@@ -257,8 +259,9 @@ async def check_overrides(
         raise HTTPException(404, f"Printer {body.printer_id} not found")
 
     empty = {"has_findings": False, "setting_changes": [], "slot_warning": None}
+    source_path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
     # Bare/geometry-only uploads carry no settings to lose.
-    if not source_has_project_settings(uploaded_file.stored_path):
+    if not source_has_project_settings(str(source_path)):
         return {**empty, "has_embedded_settings": False}
     if not printer.current_orca_printer_profile:
         return {**empty, "has_embedded_settings": True}
@@ -309,7 +312,7 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1
-    return inspect_overrides(uploaded_file.stored_path, config, slots)
+    return inspect_overrides(str(source_path), config, slots)
 
 
 @router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
@@ -783,7 +786,7 @@ async def verify_slice(
     plate_config.update(job.overrides or {})
     req = SliceRequest(
         job_id=job_id,
-        source_3mf=uploaded_file.stored_path,
+        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
         plate_number=job.plate_number,
         machine_preset=printer.current_orca_printer_profile,
         process_preset=config.print_profile,

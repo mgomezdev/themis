@@ -17,9 +17,10 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from ..config import get_filecache_dir, get_orca_executable
+from ..config import get_filecache_dir, get_library_dir, get_orca_executable
 from ..database import SessionLocal
 from ..models import UploadedFile
+from .library_scanner import library_abs_path
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,14 @@ async def regen_file_thumbnails(file_id: int) -> None:
     """
     async with SessionLocal() as session:
         f = await session.get(UploadedFile, file_id)
-        if f is None or not f.stored_path:
+        if f is None or not f.relative_path:
             return
 
         plates = list(f.plates or [])
         if not plates:
             return
 
-        stored_path = f.stored_path
+        stored_path = str(library_abs_path(get_library_dir(), f.relative_path))
         plate_numbers = [p["plate_number"] for p in plates if not p.get("thumbnail_path")]
         if not plate_numbers:
             return

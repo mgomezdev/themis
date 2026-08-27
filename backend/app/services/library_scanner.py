@@ -25,6 +25,15 @@ def folder_of(relative_path: str) -> str:
     return "/" if parent == "." else "/" + parent
 
 
+def library_abs_path(library_dir: Path, relative_path: str) -> Path:
+    """Resolve a library-relative path to an absolute one under the *current* library
+    root. Absolute paths are never persisted for library files — `library_dir` differs
+    between local dev (repo `data/`) and the container (`/data`), so a path written by
+    one would silently 404 read back in the other. `relative_path` is the only portable
+    pointer; this is where it becomes a real filesystem path, fresh, every time."""
+    return library_dir / relative_path
+
+
 class LibraryScanner:
     def __init__(self, session: AsyncSession, library_dir: Path, filecache_dir: Path):
         self.session = session
@@ -96,7 +105,6 @@ class LibraryScanner:
                 by_path.pop(moved.relative_path, None)  # drop stale key so reconcile won't delete the moved row
                 moved.relative_path = rel
                 moved.folder = folder_of(rel)
-                moved.stored_path = str(abs_path)
                 moved.size_bytes = stat.st_size
                 moved.mtime = stat.st_mtime
                 moved.missing = False
@@ -107,7 +115,6 @@ class LibraryScanner:
             # Genuinely new file.
             record = UploadedFile(
                 original_filename=abs_path.name,
-                stored_path=str(abs_path),
                 relative_path=rel,
                 folder=folder_of(rel),
                 size_bytes=stat.st_size,
@@ -171,7 +178,7 @@ async def migrate_legacy_uploads(session, data_dir, library_dir, filecache_dir) 
             continue
         rel = dest.relative_to(library_dir).as_posix()
         stat = dest.stat()
-        row.stored_path = str(dest)
+        row.stored_path = ""  # migrated: relative_path is now authoritative
         row.relative_path = rel
         row.folder = folder_of(rel)
         row.size_bytes = stat.st_size

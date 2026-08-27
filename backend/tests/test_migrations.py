@@ -3,7 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
 from app.database import Base
-from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel
+from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path
 from app.migrations.runner import run_migrations
 
 
@@ -238,4 +238,32 @@ async def test_v015_creates_bootstrap_sentinel_table():
         assert len(rows) == 1
         assert rows[0][0] == 1
         assert rows[0][1] == test_timestamp
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v016_clears_stored_path_only_for_indexed_files():
+    """v016 blanks the legacy absolute stored_path column for rows that have been
+    indexed into the library (relative_path set) - it must leave un-migrated legacy
+    rows (relative_path == '') untouched, since migrate_legacy_uploads() still needs
+    their stored_path to locate the file on disk."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("""
+            INSERT INTO uploaded_files
+                (original_filename, stored_path, relative_path, folder,
+                 size_bytes, content_hash, mtime, missing, plates, uploaded_at)
+            VALUES
+                ('indexed.3mf', '/data/library/indexed.3mf', 'indexed.3mf', '/',
+                 0, '', 0.0, 0, '[]', 't'),
+                ('legacy.3mf', '/data/uploads/abc/legacy.3mf', '', '/',
+                 0, '', 0.0, 0, '[]', 't')
+        """))
+        await v016_clear_stored_path.up(conn)
+        rows = (await conn.execute(
+            text("SELECT original_filename, stored_path, relative_path FROM uploaded_files ORDER BY id")
+        )).fetchall()
+    assert rows[0] == ("indexed.3mf", "", "indexed.3mf")
+    assert rows[1] == ("legacy.3mf", "/data/uploads/abc/legacy.3mf", "")
     await engine.dispose()

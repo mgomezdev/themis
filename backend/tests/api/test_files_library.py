@@ -135,6 +135,45 @@ async def test_delete_blocked_by_active_job(client, lib):
 
 
 @pytest.mark.asyncio
+async def test_upload_does_not_persist_absolute_path(client, lib):
+    """stored_path must stay blank for library-indexed files - an absolute path
+    written by one execution context (local dev) is not valid read back in another
+    (the container), so relative_path is the only path persisted."""
+    from app.main import app
+    from app.database import get_session
+    from app.models import UploadedFile
+
+    up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    row = await session.get(UploadedFile, up["id"])
+    assert row.stored_path == ""
+    assert row.relative_path == "Job Uploads/a.stl"
+    await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_download_and_model_filaments_work_without_stored_path(client, lib):
+    """Read paths must resolve the file purely from relative_path + the current
+    library root, with stored_path blank."""
+    up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
+    r = await client.get(f"/api/v1/files/{up['id']}/download")
+    assert r.status_code == 200
+    assert r.content == b"solid x\nendsolid x\n"
+
+
+@pytest.mark.asyncio
+async def test_rename_move_resolves_source_without_stored_path(client, lib):
+    """update_file() locates the file to move via relative_path, not the (blank)
+    stored_path column."""
+    up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
+    r = await client.patch(f"/api/v1/files/{up['id']}", json={"folder": "/Moved"})
+    assert r.status_code == 200, r.text
+    assert (lib / "Moved" / "a.stl").is_file()
+    assert not (lib / "Job Uploads" / "a.stl").exists()
+
+
+@pytest.mark.asyncio
 async def test_delete_succeeds_and_removes_file_from_disk(client, lib):
     up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
     assert (lib / "Job Uploads" / "a.stl").is_file()

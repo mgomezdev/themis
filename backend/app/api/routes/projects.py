@@ -18,7 +18,7 @@ from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
-from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner
+from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
 from ...services.thumbnail_regen import regen_file_thumbnails
@@ -897,6 +897,8 @@ async def generate_project(
         key = (item.filament_type, item.filament_color, item.filament_id)
         groups.setdefault(key, []).append(item)
 
+    library_dir = get_library_dir()
+
     # Resolve STL paths per group
     group_paths: dict[tuple[str, str, int | None], list[Path]] = {}
     for key, group_items in groups.items():
@@ -907,7 +909,7 @@ async def generate_project(
                 raise HTTPException(422, f"File {item.file_id} not found in library")
             if not f.original_filename.lower().endswith(".stl"):
                 raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-            stl_path = Path(f.stored_path)
+            stl_path = library_abs_path(library_dir, f.relative_path)
             if not stl_path.exists():
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
             paths.extend([stl_path] * item.quantity)
@@ -927,14 +929,14 @@ async def generate_project(
         ).first()
         if active is None:
             old_file = await session.get(UploadedFile, proj.result_file_id)
-            if old_file and Path(old_file.stored_path).exists():
-                Path(old_file.stored_path).unlink(missing_ok=True)
             if old_file:
+                old_abs = library_abs_path(library_dir, old_file.relative_path)
+                if old_abs.exists():
+                    old_abs.unlink(missing_ok=True)
                 await session.delete(old_file)
         proj.result_file_id = None
         await session.commit()
 
-    library_dir = get_library_dir()
     job_pack_dir = library_dir / "Job Pack 3MFs"
     job_pack_dir.mkdir(parents=True, exist_ok=True)
 
@@ -982,7 +984,6 @@ async def generate_project(
         rel = out_path.relative_to(library_dir).as_posix()
         new_file = UploadedFile(
             original_filename=out_path.name,
-            stored_path=str(out_path),
             plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
             uploaded_at=now,
             relative_path=rel,
@@ -1035,7 +1036,6 @@ async def generate_project(
         final_subdir = job_pack_dir / job_id_label
         tmp_subdir.rename(final_subdir)
         final_path = final_subdir / out_filename
-        new_file.stored_path = str(final_path)
         new_file.relative_path = final_path.relative_to(library_dir).as_posix()
         new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
         await session.commit()

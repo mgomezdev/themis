@@ -277,14 +277,37 @@ async def update_webhook_config(
 # Fleet backup / restore
 # ---------------------------------------------------------------------------
 
+def _redact_connection_config(printer_type: str, cfg: dict) -> dict:
+    """Blank out credential fields (access codes, API keys, passwords) before a
+    connection_config is written to a downloadable file. Which fields are secret is
+    driven by each printer client's own `connection_fields()` declaration
+    (`field_type == "password"`), not a hardcoded key list, so a new vendor client is
+    covered automatically as long as it marks its own secret fields correctly."""
+    cls = REGISTRY.get(printer_type)
+    if cls is None:
+        return dict(cfg)
+    secret_names = {f.name for f in cls.connection_fields() if f.field_type == "password"}
+    return {k: ("" if k in secret_names else v) for k, v in cfg.items()}
+
+
 @router.get(
     "/fleet-backup",
     summary="Download fleet backup",
     responses={},
     dependencies=[Depends(require_scope("settings:read"))],
 )
-async def fleet_backup(session: AsyncSession = Depends(get_session)) -> Response:
+async def fleet_backup(
+    include_credentials: bool = False,
+    session: AsyncSession = Depends(get_session),
+) -> Response:
     """Export all printer configs as a downloadable JSON file.
+
+    By default, credential fields in each printer's `connection_config` (access codes,
+    API keys — whatever that printer's client marks as `field_type: "password"`) are
+    blanked out. The file is a plaintext download that ends up in ~/Downloads and
+    whatever syncs it; printer LAN credentials shouldn't ride along by default. Pass
+    `include_credentials=true` to export them anyway (e.g. for a personal encrypted
+    backup you control end to end).
 
     The response has `Content-Disposition: attachment; filename=themis-fleet-backup.json`
     so browsers will prompt to save it. Import with `POST /settings/fleet-import`."""
@@ -294,11 +317,15 @@ async def fleet_backup(session: AsyncSession = Depends(get_session)) -> Response
     data = {
         "themis_backup_version": _BACKUP_VERSION,
         "exported_at": datetime.now(timezone.utc).isoformat(),
+        "credentials_redacted": not include_credentials,
         "printers": [
             {
                 "name": p.name,
                 "printer_type": p.printer_type,
-                "connection_config": p.connection_config or {},
+                "connection_config": (
+                    (p.connection_config or {}) if include_credentials
+                    else _redact_connection_config(p.printer_type, p.connection_config or {})
+                ),
                 "orca_printer_profiles": p.orca_printer_profiles or [],
                 "current_orca_printer_profile": p.current_orca_printer_profile,
                 "loaded_filaments": p.loaded_filaments or [],
@@ -338,6 +365,10 @@ async def fleet_import(
     session: AsyncSession = Depends(get_session),
 ) -> FleetImportReport:
     """Import printer configs from a backup file. Profile resolution failures are non-fatal.
+
+    Backups exported without `include_credentials=true` (the default) have blank
+    credential fields — imported printers will need those re-entered before they can
+    connect; the report's `warnings` flags which ones.
 
     Returns a report with counts of imported and skipped printers plus any warnings
     about unrecognised OrcaSlicer profile names."""
@@ -384,6 +415,15 @@ async def fleet_import(
         orca_profiles: list[str] = pr.get("orca_printer_profiles") or []
         current_profile: str | None = pr.get("current_orca_printer_profile")
         loaded: list[dict] = pr.get("loaded_filaments") or []
+        conn_cfg: dict = pr.get("connection_config") or {}
+
+        secret_names = {f.name for f in REGISTRY[ptype].connection_fields() if f.field_type == "password"}
+        blank_secrets = sorted(n for n in secret_names if not conn_cfg.get(n))
+        if blank_secrets:
+            warnings.append(
+                f"'{pname}': credentials not included in this backup "
+                f"({', '.join(blank_secrets)}) — re-enter before connecting"
+            )
 
         if cat:
             for prof in orca_profiles:
@@ -401,7 +441,7 @@ async def fleet_import(
         printer = Printer(
             name=pname,
             printer_type=ptype,
-            connection_config=pr.get("connection_config") or {},
+            connection_config=conn_cfg,
             orca_printer_profiles=orca_profiles,
             current_orca_printer_profile=current_profile,
             loaded_filaments=loaded,
