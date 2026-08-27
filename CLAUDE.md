@@ -5,6 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Communication style
 When reporting information, be extremely concise and sacrifice grammar for the sake of concision.
 
+## Git workflow
+
+Simplified Gitflow: `main` (releases only) + `develop` (integration) + `feature/*` (per-change).
+
+- Branch new work off `develop`, not `main`: `feature/biz-NN-description` (keep the tracker ID from
+  the linked issue when there is one).
+- PR feature branches back into `develop`. Delete the feature branch once merged — don't leave merged
+  branches lying around.
+- `develop` merges to `main` only to cut a release. No `release/*` or `hotfix/*` branches — this repo
+  doesn't carry enough concurrent in-flight work to justify them; revisit if that changes.
+- Before deleting any branch, confirm it's actually merged (`git merge-base --is-ancestor <branch>
+  develop` or `...main`) — never force-delete an unmerged branch without the user confirming first.
+
 ## Commands
 
 ### Backend
