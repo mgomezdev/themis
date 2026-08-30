@@ -18,14 +18,13 @@ beforeEach(() => {
 });
 
 describe('SettingsScreen', () => {
-  it('shows only the wired nav items (no General / Notifications / Data & backup)', () => {
+  it('shows only the wired nav items (no General / Data & backup)', () => {
     render(<SettingsScreen />, { wrapper });
     expect(screen.getAllByText('Tags').length).toBeGreaterThan(0);
     expect(screen.getByText('Print defaults')).toBeTruthy();
     expect(screen.getByText('Spoolman')).toBeTruthy();
     expect(screen.getByText('About')).toBeTruthy();
     expect(screen.queryByText('General')).toBeNull();
-    expect(screen.queryByText('Notifications')).toBeNull();
     expect(screen.queryByText('Data & backup')).toBeNull();
   });
 

@@ -64,6 +64,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/settings/spoolman',         label: 'Spoolman' },
     ...(spoolmanEnabled ? [{ to: '/settings/spoolman-mappings', label: 'Filament Mappings' }] : []),
     { to: '/settings/webhook',          label: 'Webhooks' },
+    { to: '/settings/notifications',    label: 'Notifications' },
     { to: '/settings/fleet-backup',     label: 'Fleet backup' },
     { to: '/settings/api-keys',         label: 'API Keys' },
     { to: '/settings/about',            label: 'About' },

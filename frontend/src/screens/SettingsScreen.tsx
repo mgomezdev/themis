@@ -8,6 +8,10 @@ import { getOrcaCatalogStatus, type OrcaCatalogStatus } from '../api/orca';
 import { refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
 import { RemapModal } from '../components/RemapModal';
 import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
+import {
+  getNotificationConfig, saveNotificationConfig, testNotificationChannel,
+  type NotificationConfig, type NtfyConfig, type DiscordConfig, type EmailConfig,
+} from '../api/notifications';
 import { Icons, Icon } from '../components/icons';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 import {
@@ -1204,6 +1208,211 @@ function WebhookPage() {
 }
 
 // =========================================================================
+// Notifications page
+// =========================================================================
+
+const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+
+function EventCheckboxes({ events, onToggle }: { events: string[]; onToggle: (ev: string) => void }) {
+  return (
+    <div className="col" style={{ gap: 10 }}>
+      {ALL_NOTIFICATION_EVENTS.map(ev => (
+        <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+          <Toggle checked={events.includes(ev)} onChange={() => onToggle(ev)} />
+          <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-1)' }}>{ev}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
+type TestState = { status: 'idle' } | { status: 'testing' } | { status: 'done'; ok: boolean; message: string };
+
+function TestButton({ onTest }: { onTest: () => Promise<{ ok: boolean; message: string }> }) {
+  const [state, setState] = useState<TestState>({ status: 'idle' });
+
+  async function run() {
+    setState({ status: 'testing' });
+    try {
+      const result = await onTest();
+      setState({ status: 'done', ok: result.ok, message: result.message });
+      if (result.ok) setTimeout(() => setState({ status: 'idle' }), 2000);
+    } catch (e) {
+      setState({ status: 'done', ok: false, message: e instanceof Error ? e.message : String(e) });
+    }
+  }
+
+  return (
+    <div className="row gap-2" style={{ alignItems: 'center' }}>
+      <button className="btn sm" disabled={state.status === 'testing'} onClick={run}>
+        {state.status === 'testing' ? 'Testing…' : 'Send test'}
+      </button>
+      {state.status === 'done' && (
+        <span className={`pill ${state.ok ? 'ok' : 'err'}`}>{state.message}</span>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_NOTIFICATION_CONFIG: NotificationConfig = {
+  ntfy: { enabled: false, server_url: '', topic: '', priority: null, events: ALL_NOTIFICATION_EVENTS },
+  discord: { enabled: false, webhook_url: '', events: ALL_NOTIFICATION_EVENTS },
+  email: { enabled: false, host: '', port: null, username: '', password: '', from_addr: '', to_addrs: [], events: ALL_NOTIFICATION_EVENTS },
+};
+
+function NotificationsPage() {
+  const [cfg, setCfg] = useState<NotificationConfig>(EMPTY_NOTIFICATION_CONFIG);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getNotificationConfig()
+      .then(loaded => {
+        setCfg({
+          ntfy: { ...loaded.ntfy, events: loaded.ntfy.events.length ? loaded.ntfy.events : ALL_NOTIFICATION_EVENTS },
+          discord: { ...loaded.discord, events: loaded.discord.events.length ? loaded.discord.events : ALL_NOTIFICATION_EVENTS },
+          email: { ...loaded.email, events: loaded.email.events.length ? loaded.email.events : ALL_NOTIFICATION_EVENTS },
+        });
+      })
+      .catch(console.error);
+  }, []);
+
+  function updateNtfy(patch: Partial<NtfyConfig>) {
+    setCfg(prev => ({ ...prev, ntfy: { ...prev.ntfy, ...patch } }));
+  }
+  function updateDiscord(patch: Partial<DiscordConfig>) {
+    setCfg(prev => ({ ...prev, discord: { ...prev.discord, ...patch } }));
+  }
+  function updateEmail(patch: Partial<EmailConfig>) {
+    setCfg(prev => ({ ...prev, email: { ...prev.email, ...patch } }));
+  }
+
+  function toggleNtfyEvent(ev: string) {
+    updateNtfy({ events: cfg.ntfy.events.includes(ev) ? cfg.ntfy.events.filter(e => e !== ev) : [...cfg.ntfy.events, ev] });
+  }
+  function toggleDiscordEvent(ev: string) {
+    updateDiscord({ events: cfg.discord.events.includes(ev) ? cfg.discord.events.filter(e => e !== ev) : [...cfg.discord.events, ev] });
+  }
+  function toggleEmailEvent(ev: string) {
+    updateEmail({ events: cfg.email.events.includes(ev) ? cfg.email.events.filter(e => e !== ev) : [...cfg.email.events, ev] });
+  }
+
+  async function save() {
+    setSaving(true);
+    setSaved(false);
+    try {
+      await saveNotificationConfig(cfg);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="col gap-3">
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader title="ntfy" sub="Push notifications via a self-hosted or public ntfy server." />
+        <FieldRow label="Enable ntfy">
+          <Toggle checked={cfg.ntfy.enabled} onChange={v => updateNtfy({ enabled: v })} />
+        </FieldRow>
+        <FieldRow label="Server URL" hint="Your ntfy server, e.g. https://ntfy.sh.">
+          <input className="input" value={cfg.ntfy.server_url ?? ''}
+                 onChange={e => updateNtfy({ server_url: e.target.value })}
+                 placeholder="https://ntfy.sh" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="Topic">
+          <input className="input" value={cfg.ntfy.topic ?? ''}
+                 onChange={e => updateNtfy({ topic: e.target.value })}
+                 placeholder="themis-alerts" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="Priority" hint="Optional. 1 (min) to 5 (max).">
+          <input className="input" type="number" min={1} max={5}
+                 value={cfg.ntfy.priority ?? ''}
+                 onChange={e => updateNtfy({ priority: e.target.value === '' ? null : Number(e.target.value) })}
+                 style={{ width: 90 }} />
+        </FieldRow>
+        <FieldRow label="Events" hint="Which job state transitions send a push notification.">
+          <EventCheckboxes events={cfg.ntfy.events} onToggle={toggleNtfyEvent} />
+        </FieldRow>
+        <div style={{ paddingTop: 16 }}>
+          <TestButton onTest={() => testNotificationChannel('ntfy', cfg.ntfy)} />
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader title="Discord" sub="Post a message to a Discord channel via webhook." />
+        <FieldRow label="Enable Discord">
+          <Toggle checked={cfg.discord.enabled} onChange={v => updateDiscord({ enabled: v })} />
+        </FieldRow>
+        <FieldRow label="Webhook URL">
+          <input className="input" value={cfg.discord.webhook_url ?? ''}
+                 onChange={e => updateDiscord({ webhook_url: e.target.value })}
+                 placeholder="https://discord.com/api/webhooks/…" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="Events" hint="Which job state transitions post a Discord message.">
+          <EventCheckboxes events={cfg.discord.events} onToggle={toggleDiscordEvent} />
+        </FieldRow>
+        <div style={{ paddingTop: 16 }}>
+          <TestButton onTest={() => testNotificationChannel('discord', cfg.discord)} />
+        </div>
+      </div>
+
+      <div className="card" style={{ padding: 28 }}>
+        <PageHeader title="Email" sub="Send an email via SMTP." />
+        <FieldRow label="Enable email">
+          <Toggle checked={cfg.email.enabled} onChange={v => updateEmail({ enabled: v })} />
+        </FieldRow>
+        <FieldRow label="SMTP host">
+          <input className="input" value={cfg.email.host ?? ''}
+                 onChange={e => updateEmail({ host: e.target.value })}
+                 placeholder="smtp.example.com" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="SMTP port">
+          <input className="input" type="number" min={1}
+                 value={cfg.email.port ?? ''}
+                 onChange={e => updateEmail({ port: e.target.value === '' ? null : Number(e.target.value) })}
+                 style={{ width: 90 }} />
+        </FieldRow>
+        <FieldRow label="Username">
+          <input className="input" value={cfg.email.username ?? ''}
+                 onChange={e => updateEmail({ username: e.target.value })}
+                 style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="Password">
+          <input className="input" type="password" value={cfg.email.password ?? ''}
+                 onChange={e => updateEmail({ password: e.target.value })}
+                 style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="From address">
+          <input className="input" value={cfg.email.from_addr ?? ''}
+                 onChange={e => updateEmail({ from_addr: e.target.value })}
+                 placeholder="themis@example.com" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="To addresses" hint="Comma-separated list of recipients.">
+          <input className="input" value={cfg.email.to_addrs.join(', ')}
+                 onChange={e => updateEmail({ to_addrs: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                 placeholder="you@example.com, ops@example.com" style={{ width: '100%' }} />
+        </FieldRow>
+        <FieldRow label="Events" hint="Which job state transitions send an email.">
+          <EventCheckboxes events={cfg.email.events} onToggle={toggleEmailEvent} />
+        </FieldRow>
+        <div style={{ paddingTop: 16 }}>
+          <TestButton onTest={() => testNotificationChannel('email', cfg.email)} />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
+        {saved && <span className="pill ok" style={{ alignSelf: 'center' }}>Saved</span>}
+        <button className="btn primary" disabled={saving} onClick={save}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// =========================================================================
 // Maintenance page
 // =========================================================================
 
@@ -1686,7 +1895,7 @@ function ApiKeysPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'fleet-backup' | 'api-keys' | 'about';
+type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1700,7 +1909,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'fleet-backup', 'api-keys', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1730,6 +1939,7 @@ export function SettingsScreen() {
         { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
         ...(spoolmanEnabled ? [{ id: 'spoolman-mappings' as PageId, label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' }] : []),
         { id: 'webhook' as PageId, label: 'Webhooks',          icon: SettingsIcons.webhook,  sub: 'Job state notifications' },
+        { id: 'notifications' as PageId, label: 'Notifications', icon: Icons.bell, sub: 'ntfy, Discord & email alerts' },
       ],
     },
     {
@@ -1773,6 +1983,7 @@ export function SettingsScreen() {
       {activePage === 'spoolman'          && <SpoolmanPage />}
       {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
       {activePage === 'webhook'           && <WebhookPage />}
+      {activePage === 'notifications'     && <NotificationsPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}
       {activePage === 'api-keys'          && <ApiKeysPage />}
       {activePage === 'about'             && <AboutPage />}
