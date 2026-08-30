@@ -134,8 +134,12 @@ sequenceDiagram
     SS->>SS: check ORCA_SIDECAR_URL configured
     note over SS: raises SliceError if not set
 
-    SS->>SS: check prepare_hook is None
-    note over SS: raises SliceError if set<br/>(multi-extruder remapping<br/>not yet supported in sidecar mode)
+    alt prepare_hook set (multi-extruder job)
+        SS->>SS: copy source_3mf → out_dir/prepared.3mf
+        SS->>SS: prepare_hook(prepared.3mf)
+        note over SS: remaps tool_index/filament_map<br/>in place on the job-scoped copy —<br/>never the shared library source file
+        SS->>SS: source_file = prepared.3mf
+    end
 
     alt catalog cache stale (>300s)
         SS->>SC: get_catalog()
@@ -308,9 +312,10 @@ flowchart TD
     F -- No --> FAIL1[SliceError:\nURL not configured]
 
     F -- Yes --> G{prepare_hook\nset?}
-    G -- Yes --> FAIL2[SliceError:\nprepare_hook not\nsupported in sidecar mode]
+    G -- Yes --> G2[copy source_3mf → out_dir/prepared.3mf\nrun prepare_hook on the copy\nuse the copy as source]
+    G2 --> H[_resolve_uuids\nfetch catalog if stale\nmap names → UUIDs]
 
-    G -- No --> H[_resolve_uuids\nfetch catalog if stale\nmap names → UUIDs]
+    G -- No --> H
 
     H --> I{All UUIDs\nfound?}
     I -- No --> FAIL3[SliceError:\nprofile not found\nin sidecar catalog]
@@ -349,7 +354,6 @@ flowchart TD
 | Condition | Error | Source |
 |---|---|---|
 | `ORCA_SIDECAR_URL` not set | `SliceError: ORCA_SIDECAR_URL is not configured` | `SlicerService.slice` |
-| `prepare_hook` is set (multi-extruder job) | `SliceError: prepare_hook not supported` | `SlicerService.slice` |
 | Catalog fetch fails (sidecar down) | `SliceError: Orca sidecar unreachable — cannot resolve profiles: …` | `SlicerService._resolve_uuids` |
 | Profile name not in catalog | `SliceError: Profile not found in Orca sidecar catalog` | `SlicerService._resolve_uuids` |
 | OrcaSlicer CLI returns non-zero (both attempts) | `SidecarError` → `SliceError` | Sidecar `run_orcaslicer_task` |
