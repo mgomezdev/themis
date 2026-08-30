@@ -67,11 +67,6 @@ class SlicerService:
         if not sidecar_url:
             raise SliceError("LAMINUS_SIDECAR_URL is not configured — Laminus sidecar is required for slicing")
 
-        if req.prepare_hook is not None:
-            raise SliceError(
-                "Multi-extruder remapping via prepare_hook is not supported in sidecar-only mode"
-            )
-
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -154,7 +149,8 @@ class SlicerService:
         """Delegate the full slice to the sidecar using stable profile UUIDs.
 
         The sidecar resolves inheritance, builds the 3MF with extra_config merged
-        on top, slices, and streams the artifact back. No local file access.
+        on top, slices, and streams the artifact back. The only local file access
+        is the job-scoped copy-and-remap for ``req.prepare_hook``, if set.
         """
         from .laminus_sidecar_client import LaminusSidecarClient, SidecarError
         client = LaminusSidecarClient(sidecar_url)
@@ -162,6 +158,17 @@ class SlicerService:
         source = Path(req.source_3mf)
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):
             stale.unlink(missing_ok=True)
+
+        if req.prepare_hook is not None:
+            # source is the shared library file (same physical path every job/printer
+            # referencing this upload resolves to) — remap a job-scoped copy, never
+            # the original, or one printer's tool/color routing corrupts it for everyone else.
+            import shutil
+            prepared = out_dir / "prepared.3mf"
+            shutil.copy2(source, prepared)
+            req.prepare_hook(prepared)
+            source = prepared
+
         try:
             job_id = client.slice_start(
                 source, machine_uuid, process_uuid, filament_uuids,
