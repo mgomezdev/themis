@@ -17,13 +17,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
 from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
+from ...services.spool_check import check_spool_sufficiency
+from ...services.spoolman_service import fetch_spools
 
 logger = logging.getLogger(__name__)
 
@@ -419,13 +421,47 @@ async def get_job_details(
                 "thumbnail_path": plate.get("thumbnail_path"),
             }
 
+    # Needed filament grams for the spool preflight check (job-level, reused for
+    # every printer_configs row): the background test-slice estimate if we have
+    # one, else the 3MF-parsed plate estimate.
+    needed_g = job.estimate_filament_grams
+    if needed_g is None and plate_info:
+        needed_g = plate_info.get("filament_g")
+
     # Per-printer slicing configs
     result = await session.execute(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
     )
-    printer_configs = []
-    for cfg in result.scalars().all():
+    configs = result.scalars().all()
+
+    # Resolve each config's loaded-filament slot up front so we know whether a
+    # Spoolman lookup is needed at all, and so we only ever fetch spools once.
+    resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None]] = []
+    spool_ids_needed: set[str] = set()
+    for cfg in configs:
         p = await session.get(Printer, cfg.printer_id)
+        slot = _slot_for_config(cfg, (p.loaded_filaments if p else None) or []) if p else None
+        resolved.append((cfg, p, slot))
+        if slot and slot.get("spoolman_spool_id") is not None:
+            spool_ids_needed.add(str(slot["spoolman_spool_id"]))
+
+    spools_by_id: dict[str, dict] = {}
+    if spool_ids_needed:
+        spoolman_cfg = await session.get(SpoolmanConfig, 1)
+        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+            try:
+                spools = await fetch_spools(spoolman_cfg.url, spoolman_cfg.api_key)
+                spools_by_id = {str(s.get("id")): s for s in spools}
+            except Exception:
+                logger.warning("Spoolman unreachable while checking spool sufficiency for job %s", job_id, exc_info=True)
+
+    printer_configs = []
+    for cfg, p, slot in resolved:
+        spool_warning = None
+        if slot and slot.get("spoolman_spool_id") is not None:
+            spool = spools_by_id.get(str(slot["spoolman_spool_id"]))
+            if spool is not None:
+                spool_warning = check_spool_sufficiency(needed_g, spool)
         printer_configs.append({
             "printer_id": cfg.printer_id,
             "printer_name": p.name if p else f"Printer {cfg.printer_id}",
@@ -439,6 +475,7 @@ async def get_job_details(
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
+            "spool_warning": spool_warning,
         })
 
     # Assigned printer (if claimed)

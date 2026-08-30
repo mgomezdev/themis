@@ -24,6 +24,13 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# anyio's pytest plugin (a transitive dep of starlette/httpx) fights pytest-asyncio's
+# asyncio_mode=auto for control of async test execution. Which one "wins" depends on
+# importlib.metadata entry-point enumeration order, which is not stable across separate
+# venvs/pip installs — in a bad order it causes the in-memory SQLite fixture's connection
+# to run under an event loop the test body doesn't share, dropping the schema mid-test
+# ("no such table"). Disable the plugin outright; nothing here uses anyio's own test marker.
+addopts = "-p no:anyio"
 
 [build-system]
 requires = ["setuptools>=68"]
