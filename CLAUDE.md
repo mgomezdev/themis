@@ -79,29 +79,28 @@ SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `upl
 - `/root/.config/OrcaSlicer` — bind-mounted read-only from `%APPDATA%\OrcaSlicer` on Windows host (set `APPDATA` in `.env`)
 - Static frontend files served from `THEMIS_STATIC_DIR` (default `/frontend/dist` in container)
 
-## Dual-overseer workflow for cross-cutting changes
+## Cross-cutting changes
 
-For feature-sized or cross-cutting requests (plausibly touches both `backend/` and `frontend/`, or the
-shape is ambiguous), spawn two named agents instead of planning solo:
+No backend/frontend overseer-agent split for planning or implementation, even for feature-sized or
+cross-cutting requests — plan and implement directly in one session (use `themis-planning` to scope
+against `docs/agent/` first for anything non-trivial). The dual-overseer workflow this project used
+before 2026-08-31 is retired; its design doc is kept for history at
+`docs/superpowers/specs/2026-08-13-dual-overseer-agent-workflow-design.md` but no longer reflects
+current practice.
 
-```
-Agent({ subagent_type: "backend-lead", name: "backend-lead", prompt: "<request>. Your counterpart is named ui-lead." })
-Agent({ subagent_type: "ui-lead", name: "ui-lead", prompt: "<request>. Your counterpart is named backend-lead." })
-```
+## Review guidelines
 
-Spawn both in the same message. They negotiate directly with each other via `SendMessage` (shared
-contracts, sequencing, file ownership) and each report back their half of a joint plan, escalating any
-single topic that goes past 5 rounds of back-and-forth instead of resolving it themselves. If either
-report contains an "Escalated items" section, resolve those with the user before presenting the plan.
+Before calling a change done, review it against the domain-specific checklist(s) for whatever it
+touches:
+- `docs/agent/backend-review.md` — backend changes
+- `docs/agent/frontend-review.md` — frontend changes
 
-Trivial, single-file, obviously single-domain changes skip this entirely — plan and implement them
-directly as usual. This is a judgment call each time, not a hard rule.
-
-Present the combined joint plan (both reports) to the user and wait for approval before implementation.
-Once approved, tell both agents to proceed — they each dispatch their own worker subagents into one
-shared worktree/branch (via `using-git-worktrees`) and serialize their commits with each other.
-
-Full design: `docs/superpowers/specs/2026-08-13-dual-overseer-agent-workflow-design.md`.
+Both cover systemic gotchas specific to this codebase's shape (recurring ID confusions, hand-duplicated
+contracts with no codegen, the queue loop's blocking-I/O constraint), not generic advice — read them
+once in full, they're short. For a cross-cutting change, the single highest-value check in both is the
+same one: verify a shared API field's key matches byte-for-byte between the backend route that returns
+it and the frontend code that reads it — don't trust that a plan or negotiated contract was actually
+implemented as agreed.
 
 ## Spec & Plans
 - Design spec: `docs/superpowers/specs/2026-05-20-themis-print-farm-manager-design.md`

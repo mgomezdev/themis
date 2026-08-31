@@ -12,9 +12,11 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   finishes. A printer is eligible only when `is_idle AND not awaiting_plate_clear AND queue_on`. Cleared
   only by `POST /printers/{id}/plate-cleared` (the Fleet "Ready for new work" button). Lives in the DB
   row AND the `PrinterManager` set — keep both in sync.
-- **No migration tool**: `Base.metadata.create_all` builds new tables; columns added to *existing*
-  tables need an idempotent guard in `database._migrate()`. Forgetting this means prod/old-dev DBs
-  silently lack the column.
+- **Versioned migrations, not `create_all` alone**: `init_db()` runs `Base.metadata.create_all` *then*
+  `runner.py`'s Flyway-style migration runner (`backend/app/migrations/v00N_*.py`, applied in order,
+  tracked in a `schema_migrations` table). A new table can ride on `create_all`, but a new column on an
+  *existing* table needs its own migration file (see `data-model.md` § Migrations) — there is no
+  `_migrate()` guard function; that pattern was retired.
 - **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
   for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
   `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy
@@ -76,5 +78,6 @@ npx vitest run                  # tests
 
 ## Git
 
-Commit only when asked; branch off `main`; `Co-Authored-By` trailer. Update the relevant `docs/agent/*`
-doc in the same change (or run the `themis-docs-sync` skill) so the reference doesn't drift.
+Commit only when asked; branch off `develop`, not `main` (see root `CLAUDE.md` § Git workflow);
+`Co-Authored-By` trailer. Update the relevant `docs/agent/*` doc in the same change (or run the
+`themis-docs-sync` skill) so the reference doesn't drift.
