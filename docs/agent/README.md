@@ -12,3 +12,5 @@ Supplementary files in this directory (may be stale — verify against source if
 - `recipes.md` — common task recipes
 - `conventions.md` — code style conventions
 - `styling.md` — frontend styling guide
+- `backend-review.md` — checklist for reviewing a backend change; reference during the review step
+- `frontend-review.md` — checklist for reviewing a frontend change; reference during the review step
