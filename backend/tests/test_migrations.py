@@ -3,7 +3,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
 from app.database import Base
-from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path
+from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path, v017_notification_config
 from app.migrations.runner import run_migrations
 
 
@@ -266,4 +266,52 @@ async def test_v016_clears_stored_path_only_for_indexed_files():
         )).fetchall()
     assert rows[0] == ("indexed.3mf", "", "indexed.3mf")
     assert rows[1] == ("legacy.3mf", "/data/uploads/abc/legacy.3mf", "")
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v017_creates_notification_config_table_with_seeded_row():
+    """v017 creates the notification_config singleton table (id=1, same pattern
+    as webhook_config) with per-channel enabled flags and JSON event-list columns."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await run_migrations(conn)  # idempotent second run
+
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(notification_config)"))).fetchall()}
+        row = (await conn.execute(text(
+            "SELECT id, ntfy_enabled, ntfy_events, discord_enabled, discord_events, "
+            "email_enabled, email_to_addrs, email_events FROM notification_config WHERE id = 1"
+        ))).fetchone()
+    assert "notification_config" in tables
+    assert {
+        "id", "ntfy_enabled", "ntfy_server_url", "ntfy_topic", "ntfy_priority", "ntfy_events",
+        "discord_enabled", "discord_webhook_url", "discord_events",
+        "email_enabled", "email_host", "email_port", "email_username",
+        "email_password", "email_from_addr", "email_to_addrs", "email_events",
+    } <= cols
+    assert row == (1, 0, "[]", 0, "[]", 0, "[]", "[]")
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v017_up_down_roundtrip():
+    """v017.down() drops the table cleanly (mirrors webhook_config's down())."""
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await v017_notification_config.up(conn)
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+        assert "notification_config" in tables
+
+        await v017_notification_config.down(conn)
+        tables = {r[0] for r in (await conn.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table'")
+        )).fetchall()}
+        assert "notification_config" not in tables
     await engine.dispose()

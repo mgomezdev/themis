@@ -1,10 +1,10 @@
 """Versioned migration runner for Themis (Flyway-style)."""
 from __future__ import annotations
 from sqlalchemy import text
-from . import v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates, v005_project_order_merge, v006_project_links, v007_printer_bed_size, v008_job_estimates_and_queue_config, v009_drop_filament_profile_uuid, v010_project_parts, v011_maintenance_tracking, v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path
+from . import v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates, v005_project_order_merge, v006_project_links, v007_printer_bed_size, v008_job_estimates_and_queue_config, v009_drop_filament_profile_uuid, v010_project_parts, v011_maintenance_tracking, v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path, v017_notification_config
 
 _MIGRATIONS = sorted(
-    [v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates, v005_project_order_merge, v006_project_links, v007_printer_bed_size, v008_job_estimates_and_queue_config, v009_drop_filament_profile_uuid, v010_project_parts, v011_maintenance_tracking, v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path],
+    [v001_initial, v002_project_order_link, v003_webhook_config, v004_gcode_estimates, v005_project_order_merge, v006_project_links, v007_printer_bed_size, v008_job_estimates_and_queue_config, v009_drop_filament_profile_uuid, v010_project_parts, v011_maintenance_tracking, v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path, v017_notification_config],
     key=lambda m: m.version,
 )
 

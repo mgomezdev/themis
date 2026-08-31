@@ -151,3 +151,218 @@ async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
     finally:
         lmod._catalog_dict = original_catalog
         lmod._pending_sync = original_pending
+
+
+# ---------------------------------------------------------------------------
+# Notification config
+# ---------------------------------------------------------------------------
+
+async def test_get_notifications_fresh_db_all_channels_present_disabled(client: AsyncClient):
+    resp = await client.get("/api/v1/settings/notifications")
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["ntfy"] == {"enabled": False, "server_url": None, "topic": None, "priority": None, "events": []}
+    assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
+    assert body["email"] == {
+        "enabled": False, "host": None, "port": None, "username": None,
+        "password": None, "from_addr": None, "to_addrs": [], "events": [],
+    }
+
+
+async def test_put_notifications_only_ntfy_leaves_others_default(client: AsyncClient):
+    resp = await client.put("/api/v1/settings/notifications", json={
+        "ntfy": {
+            "enabled": True,
+            "server_url": "https://ntfy.sh",
+            "topic": "themis-test",
+            "events": ["job.complete"],
+        }
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ntfy"] == {
+        "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
+        "priority": None, "events": ["job.complete"],
+    }
+    assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
+    assert body["email"]["enabled"] is False
+
+
+async def test_put_notifications_ntfy_priority_round_trips(client: AsyncClient):
+    """The ntfy 'priority' field must actually persist — it was previously
+    accepted by the request body but silently dropped (no matching DB column),
+    so real job-event notifications never honored a configured priority."""
+    resp = await client.put("/api/v1/settings/notifications", json={
+        "ntfy": {
+            "enabled": True,
+            "server_url": "https://ntfy.sh",
+            "topic": "themis-test",
+            "priority": 4,
+            "events": ["job.complete"],
+        }
+    })
+    assert resp.status_code == 200
+    assert resp.json()["ntfy"]["priority"] == 4
+
+    resp = await client.get("/api/v1/settings/notifications")
+    assert resp.status_code == 200
+    assert resp.json()["ntfy"]["priority"] == 4
+
+
+async def test_put_notifications_second_put_other_channel_preserves_first(client: AsyncClient):
+    await client.put("/api/v1/settings/notifications", json={
+        "ntfy": {
+            "enabled": True,
+            "server_url": "https://ntfy.sh",
+            "topic": "themis-test",
+            "events": ["job.complete"],
+        }
+    })
+
+    resp = await client.put("/api/v1/settings/notifications", json={
+        "discord": {
+            "enabled": True,
+            "webhook_url": "https://discord.com/api/webhooks/xyz",
+            "events": ["job.failed"],
+        }
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ntfy"] == {
+        "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
+        "priority": None, "events": ["job.complete"],
+    }
+    assert body["discord"] == {
+        "enabled": True, "webhook_url": "https://discord.com/api/webhooks/xyz",
+        "events": ["job.failed"],
+    }
+
+
+async def test_notifications_test_ntfy_success(client: AsyncClient):
+    with patch("app.api.routes.settings.send_ntfy", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = None
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "ntfy",
+            "config": {"server_url": "https://ntfy.sh", "topic": "themis-test", "priority": None},
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    mock_send.assert_called_once()
+
+
+async def test_notifications_test_ntfy_failure(client: AsyncClient):
+    with patch("app.api.routes.settings.send_ntfy", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = "ntfy server responded 500"
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "ntfy",
+            "config": {"server_url": "https://ntfy.sh", "topic": "themis-test"},
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["message"] == "ntfy server responded 500"
+
+
+async def test_notifications_test_ntfy_missing_field(client: AsyncClient):
+    resp = await client.post("/api/v1/settings/notifications/test", json={
+        "channel": "ntfy",
+        "config": {},
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "message" in body
+
+
+async def test_notifications_test_discord_success(client: AsyncClient):
+    with patch("app.api.routes.settings.send_discord", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = None
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "discord",
+            "config": {"webhook_url": "https://discord.com/api/webhooks/xyz"},
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    mock_send.assert_called_once()
+
+
+async def test_notifications_test_discord_failure(client: AsyncClient):
+    with patch("app.api.routes.settings.send_discord", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = "Discord webhook responded 404"
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "discord",
+            "config": {"webhook_url": "https://discord.com/api/webhooks/xyz"},
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["message"] == "Discord webhook responded 404"
+
+
+async def test_notifications_test_discord_missing_field(client: AsyncClient):
+    resp = await client.post("/api/v1/settings/notifications/test", json={
+        "channel": "discord",
+        "config": {},
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "message" in body
+
+
+async def test_notifications_test_email_success(client: AsyncClient):
+    with patch("app.api.routes.settings.send_email", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = None
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "email",
+            "config": {
+                "host": "smtp.example.com", "port": 587, "username": None, "password": None,
+                "from_addr": "themis@example.com", "to_addrs": ["me@example.com"],
+            },
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    mock_send.assert_called_once()
+
+
+async def test_notifications_test_email_failure(client: AsyncClient):
+    with patch("app.api.routes.settings.send_email", new_callable=AsyncMock) as mock_send:
+        mock_send.return_value = "Connection refused"
+        resp = await client.post("/api/v1/settings/notifications/test", json={
+            "channel": "email",
+            "config": {
+                "host": "smtp.example.com", "port": 587, "username": None, "password": None,
+                "from_addr": "themis@example.com", "to_addrs": ["me@example.com"],
+            },
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["message"] == "Connection refused"
+
+
+async def test_notifications_test_email_missing_field(client: AsyncClient):
+    resp = await client.post("/api/v1/settings/notifications/test", json={
+        "channel": "email",
+        "config": {"host": "smtp.example.com"},
+    })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "message" in body

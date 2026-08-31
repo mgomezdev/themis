@@ -6,7 +6,7 @@ import {
 } from '../components/ui';
 import { StlPreview } from '../components/StlPreview';
 import { Icons } from '../components/icons';
-import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig } from '../api/queue';
+import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFailures, getJobDetails, verifySlice, plateThumbnailUrl, type ApiSliceFailure, type ApiJobPrinterConfig, type ApiJob } from '../api/queue';
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 import { apiFetch } from '../api/client';
@@ -32,6 +32,7 @@ interface DisplayJob {
   fileId: number;
   thumbnailPath: string | null;
   printerName: string | null;
+  lowStockWarning: ApiJob['low_stock_warning'];
 }
 
 // ---- FilterChip ----
@@ -316,6 +317,36 @@ function JobCardRich({
           </span>
         </div>
       )}
+      {!isBlocked && !isFailed && job.lowStockWarning && (
+        <div
+          style={{
+            padding: '10px 14px',
+            borderTop: '1px solid rgba(251,191,36,0.3)',
+            background: 'rgba(251,191,36,0.09)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 4,
+          }}
+        >
+          <div
+            className="row gap-1"
+            style={{
+              color: 'var(--warn)',
+              fontSize: 11,
+              fontWeight: 600,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              alignItems: 'center',
+            }}
+          >
+            <span style={{ display: 'inline-flex', color: 'var(--warn)' }}>{Icons.alert}</span>
+            <span>Low filament</span>
+          </div>
+          <span className="tiny" style={{ color: 'var(--text-1)', lineHeight: 1.4, wordBreak: 'break-word' }}>
+            {job.lowStockWarning.message}
+          </span>
+        </div>
+      )}
     </div>
   );
 }
@@ -477,6 +508,18 @@ function JobDetailPanel({
             </div>
           )}
         </div>
+
+        {job.lowStockWarning && (
+          <>
+            <div className="divider" />
+            <div style={{ marginBottom: 14, padding: '10px 12px', borderRadius: 0, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+              <div className="tiny" style={{ fontWeight: 600, color: 'var(--warn)', marginBottom: 4 }}>
+                Low filament
+              </div>
+              <div className="small" style={{ color: 'var(--text-2)', lineHeight: 1.5 }}>{job.lowStockWarning.message}</div>
+            </div>
+          </>
+        )}
 
         {job.eligiblePrinters.length > 0 && (
           <>
@@ -751,6 +794,7 @@ export function QueueScreen() {
         fileId: j.uploaded_file_id,
         thumbnailPath: plate?.thumbnail_path ?? null,
         printerName,
+        lowStockWarning: j.low_stock_warning ?? null,
       };
     }).sort((a, b) => {
       const order: Record<string, number> = { printing: 0, paused: 0, slicing: 1, uploading: 1, queued: 2, blocked: 2, complete: 3, failed: 4 };
