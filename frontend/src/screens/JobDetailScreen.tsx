@@ -29,6 +29,16 @@ function SliceStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
   return null;
 }
 
+function LowStockStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
+  if (!cfg.low_stock_warning) return null;
+  return (
+    <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+      <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Low filament</div>
+      <div className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{cfg.low_stock_warning.message}</div>
+    </div>
+  );
+}
+
 function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAssigned: boolean }) {
   const badge = printerBadge(cfg.printer_type);
   return (
@@ -79,6 +89,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
       </div>
 
       <SliceStatus cfg={cfg} />
+      <LowStockStatus cfg={cfg} />
     </div>
   );
 }

@@ -62,6 +62,15 @@ export interface ApiJob {
   updated_at: string;
   materials: string[];
   eligible_printers: Array<{ id: number; name: string }>;
+  low_stock_warning: LowStockWarning | null;
+}
+
+export interface LowStockWarning {
+  spool_id: number;
+  spool_label: string;
+  remaining_g: number;
+  needed_g: number;
+  message: string;
 }
 
 export interface ApiSliceFailure {
@@ -84,6 +93,7 @@ export interface ApiJobPrinterConfig {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
   slice_failed: boolean;
   slice_error: string | null;
+  low_stock_warning: LowStockWarning | null;
 }
 
 export interface ApiJobDetails extends ApiJob {

@@ -219,6 +219,31 @@ class WebhookConfig(Base):
     events: Mapped[list] = mapped_column(JSON, default=list)
 
 
+class NotificationConfig(Base):
+    __tablename__ = "notification_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    ntfy_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ntfy_server_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    ntfy_topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ntfy_priority: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    ntfy_events: Mapped[list] = mapped_column(JSON, default=list)
+
+    discord_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    discord_webhook_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    discord_events: Mapped[list] = mapped_column(JSON, default=list)
+
+    email_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_port: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    email_username: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_password: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    email_from_addr: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    email_to_addrs: Mapped[list] = mapped_column(JSON, default=list)
+    email_events: Mapped[list] = mapped_column(JSON, default=list)
+
+
 class ProjectLink(Base):
     __tablename__ = "project_links"
 

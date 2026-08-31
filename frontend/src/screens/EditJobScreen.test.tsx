@@ -83,6 +83,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   estimate_preset_label: null,
   materials: [],
   eligible_printers: [],
+  low_stock_warning: null,
   printer_configs: [
     {
       printer_id: 3,
@@ -96,6 +97,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
       tool_index: 2,
       slice_failed: true,
       slice_error: 'profile mismatch',
+      low_stock_warning: null,
     },
   ],
 };

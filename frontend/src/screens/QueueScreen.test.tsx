@@ -30,6 +30,7 @@ const nullEstimate = {
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
   materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
+  low_stock_warning: null,
 };
 
 const mockJobs: ApiJob[] = [
@@ -316,6 +317,92 @@ describe('QueueScreen', () => {
     expect(screen.getByRole('button', { name: /up/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /down/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /back/i })).toBeTruthy();
+  });
+
+  it('shows low-stock warning strip on job card when present', () => {
+    const warnedJob: ApiJob = {
+      id: 10,
+      uploaded_file_id: 10,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'queued',
+      overrides: null,
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+      low_stock_warning: {
+        spool_id: 12,
+        spool_label: 'Black PLA #12',
+        remaining_g: 220,
+        needed_g: 340,
+        message: 'project needs ~340g PLA, spool Black PLA #12 has ~220g remaining',
+      },
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [warnedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    expect(screen.getByText(/Low filament/i)).toBeTruthy();
+    expect(screen.getByText('project needs ~340g PLA, spool Black PLA #12 has ~220g remaining')).toBeTruthy();
+  });
+
+  it('does not show low-stock warning strip when low_stock_warning is null', () => {
+    const okJob: ApiJob = {
+      id: 11,
+      uploaded_file_id: 10,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'queued',
+      overrides: null,
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [okJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    expect(screen.queryByText(/Low filament/i)).toBeNull();
+  });
+
+  it('shows low-stock warning in job detail panel', async () => {
+    const user = userEvent.setup();
+    const warnedJob: ApiJob = {
+      id: 12,
+      uploaded_file_id: 10,
+      plate_number: 1,
+      order_id: null,
+      assigned_printer_id: null,
+      queue_position: 1.0,
+      status: 'queued',
+      overrides: null,
+      block_reason: null,
+      created_at: '2026-05-27T00:00:00Z',
+      updated_at: '2026-05-27T00:00:00Z',
+      ...nullEstimate,
+      low_stock_warning: {
+        spool_id: 12,
+        spool_label: 'Black PLA #12',
+        remaining_g: 220,
+        needed_g: 340,
+        message: 'project needs ~340g PLA, spool Black PLA #12 has ~220g remaining',
+      },
+    };
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [warnedJob], refetch: vi.fn() });
+
+    render(<QueueScreen />, { wrapper });
+
+    const cards = screen.getAllByText(/Plate \d/i);
+    await user.click(cards[0]);
+
+    // Message renders in both the card strip and the detail panel
+    expect(screen.getAllByText('project needs ~340g PLA, spool Black PLA #12 has ~220g remaining').length).toBeGreaterThan(1);
   });
 });
 

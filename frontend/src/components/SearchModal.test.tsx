@@ -20,7 +20,7 @@ const JOBS: ApiJob[] = [
     actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null, deduction_skipped: null,
     estimate_status: null, estimate_seconds: null, estimate_filament_grams: null, estimate_filament_breakdown: null,
     estimate_preset_label: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    materials: [], eligible_printers: [],
+    materials: [], eligible_printers: [], low_stock_warning: null,
   },
 ];
 

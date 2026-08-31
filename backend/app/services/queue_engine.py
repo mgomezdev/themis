@@ -16,10 +16,20 @@ from sqlalchemy import and_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import get_laminus_sidecar_url, get_library_dir
-from ..models import GcodeFile, Job, JobPrinterConfig, Printer, QueueConfig, UploadedFile, WebhookConfig
+from ..models import (
+    GcodeFile,
+    Job,
+    JobPrinterConfig,
+    NotificationConfig,
+    Printer,
+    QueueConfig,
+    UploadedFile,
+    WebhookConfig,
+)
 from .library_scanner import library_abs_path
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
+from . import notification_service
 from . import webhook_service
 
 
@@ -216,6 +226,40 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
         return None
     return (f"loaded filament doesn't match required "
             f"{config.filament_type or '?'} {config.filament_color or '?'}")
+
+
+def _notification_content(
+    event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None
+) -> tuple[str, str]:
+    """Build a plain, human-readable (title, message) pair for a job event.
+    No templating engine, no config-driven customization — basic per-event
+    text, mirroring the fixed shape of the built-in notification channels."""
+    if event == "job.complete":
+        title = "Themis: job complete"
+        if printer_name:
+            message = f"{file_name} finished printing on {printer_name}."
+        else:
+            message = f"{file_name} finished printing."
+        return title, message
+    if event == "job.failed":
+        title = "Themis: job failed"
+        if printer_name:
+            message = f"{file_name} failed on {printer_name}"
+        else:
+            message = f"{file_name} failed"
+        if reason:
+            message = f"{message}: {reason}"
+        else:
+            message = f"{message}."
+        return title, message
+    if event == "job.blocked":
+        title = "Themis: job blocked"
+        if reason:
+            message = f"{file_name} is blocked: {reason}"
+        else:
+            message = f"{file_name} is blocked."
+        return title, message
+    return f"Themis: {event}", f"{file_name} ({event})"
 
 
 class QueueEngine:
@@ -944,6 +988,7 @@ class QueueEngine:
 
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.blocked")
+        await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=error)
 
     async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
         async with self._factory() as session:
@@ -971,6 +1016,7 @@ class QueueEngine:
             await session.commit()
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.failed")
+        await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason)
 
     async def _has_pending_sliced_job(self, session: AsyncSession, printer_id: int) -> bool:
         stmt = (
@@ -1201,6 +1247,7 @@ class QueueEngine:
 
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.complete")
+        await self._fire_notifications(job_id, "job.complete", printer_id=printer_id)
 
     async def _fire_webhooks(self, job_id: int, event: str) -> None:
         try:
@@ -1210,6 +1257,34 @@ class QueueEngine:
                 webhook_service.schedule(cfg.url, cfg.secret, event, job_id)
         except Exception:
             logger.exception("Failed to load webhook config for job %s", job_id)
+
+    async def _fire_notifications(
+        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None
+    ) -> None:
+        try:
+            async with self._factory() as session:
+                cfg = await session.get(NotificationConfig, 1)
+                if not cfg or not (cfg.ntfy_enabled or cfg.discord_enabled or cfg.email_enabled):
+                    return
+                job = await session.get(Job, job_id)
+                if job is None:
+                    return
+                uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+                file_name = uploaded_file.original_filename if uploaded_file else f"job {job_id}"
+                printer_name = None
+                pid = printer_id if printer_id is not None else job.assigned_printer_id
+                if pid is not None:
+                    printer = await session.get(Printer, pid)
+                    printer_name = printer.name if printer else None
+            title, message = _notification_content(event, job_id, file_name, printer_name, reason)
+            # Fire-and-forget, like _fire_webhooks/webhook_service.schedule: real
+            # channel delivery is network/SMTP I/O with a 5s timeout per channel and
+            # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
+            # which runs before new jobs are claimed each _process_queue iteration).
+            # dispatch() already swallows every per-channel exception itself.
+            asyncio.create_task(notification_service.dispatch(cfg, event, job_id, title, message))
+        except Exception:
+            logger.exception("Failed to dispatch notifications for job %s", job_id)
 
     async def _broadcast_job(self, job_id: int | None) -> None:
         if not self._broadcast_cb or job_id is None:

@@ -589,3 +589,76 @@ async def test_reorder_rejects_non_queued_job(client):
 
     resp = await client.post(f"/api/v1/jobs/{j_id}/reorder", json={"action": "promote"})
     assert resp.status_code == 422
+
+
+async def _seed_spool_warning_fixture(estimate_grams):
+    """Seed UploadedFile/Printer/Job/JobPrinterConfig/SpoolmanConfig rows directly
+    via the test session, wired so the job's JobPrinterConfig resolves (via
+    _slot_for_config) to the printer's loaded_filaments[0] slot, which carries a
+    spoolman_spool_id. Returns (job_id, printer_id)."""
+    from app.models import UploadedFile, Job, JobPrinterConfig, Printer, SpoolmanConfig
+    from app.main import app
+    from app.database import get_session
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                      plates=[], uploaded_at="2026-01-01T00:00:00")
+    p = Printer(name="P1S", printer_type="bambu", connection_config={},
+                loaded_filaments=[{"slot": 0, "type": "PLA", "color": "", "spoolman_spool_id": "99"}])
+    session.add_all([f, p])
+    await session.flush()
+    j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+            queue_position=1.0, created_at="2026-01-01T00:00:00",
+            updated_at="2026-01-01T00:00:00", estimate_filament_grams=estimate_grams)
+    session.add(j)
+    await session.flush()
+    cfg = JobPrinterConfig(job_id=j.id, printer_id=p.id, print_profile="0.20mm",
+                            filament_type="any", filament_color="any")
+    session.add(cfg)
+    spoolman_cfg = await session.get(SpoolmanConfig, 1)
+    if spoolman_cfg is None:
+        spoolman_cfg = SpoolmanConfig(id=1, enabled=True, url="http://spoolman.local", api_key=None)
+        session.add(spoolman_cfg)
+    else:
+        spoolman_cfg.enabled = True
+        spoolman_cfg.url = "http://spoolman.local"
+    await session.commit()
+    job_id, printer_id = j.id, p.id
+    await agen.aclose()
+    return job_id, printer_id
+
+
+async def test_job_details_spool_warning_none_when_sufficient(client):
+    """GET /jobs/{id}/details: low_stock_warning is None when the bound spool has
+    enough filament remaining for the job's estimated grams. Key must match
+    frontend/src/api/queue.ts's ApiJobPrinterConfig.low_stock_warning, not an
+    internal-only name — see queue.py's matching field for the sibling contract."""
+    job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=200.0)
+
+    fake_spool = {"id": 99, "remaining_weight": 900.0,
+                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
+    with patch("app.api.routes.jobs.fetch_spools", return_value=[fake_spool]):
+        resp = await client.get(f"/api/v1/jobs/{job_id}/details")
+    assert resp.status_code == 200
+    data = resp.json()
+    cfg = next(c for c in data["printer_configs"] if c["printer_id"] == printer_id)
+    assert cfg["low_stock_warning"] is None
+
+
+async def test_job_details_spool_warning_set_when_insufficient(client):
+    """GET /jobs/{id}/details: low_stock_warning is populated, with both needed and
+    remaining grams in the message, when the bound spool is short on filament."""
+    job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=340.0)
+
+    fake_spool = {"id": 99, "remaining_weight": 220.0,
+                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
+    with patch("app.api.routes.jobs.fetch_spools", return_value=[fake_spool]):
+        resp = await client.get(f"/api/v1/jobs/{job_id}/details")
+    assert resp.status_code == 200
+    data = resp.json()
+    cfg = next(c for c in data["printer_configs"] if c["printer_id"] == printer_id)
+    warning = cfg["low_stock_warning"]
+    assert warning is not None
+    assert "340" in warning["message"]
+    assert "220" in warning["message"]

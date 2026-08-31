@@ -1,7 +1,7 @@
 import pytest
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.database import Base
-from app.models import Printer, UploadedFile, Job, JobPrinterConfig, GcodeFile
+from app.models import Printer, UploadedFile, Job, JobPrinterConfig, GcodeFile, NotificationConfig
 
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -105,3 +105,30 @@ async def test_create_gcode_file(session):
     await session.commit()
     await session.refresh(gcode)
     assert gcode.id is not None
+
+
+async def test_notification_config_json_list_columns_round_trip(session):
+    cfg = NotificationConfig(id=1)
+    session.add(cfg)
+    await session.commit()
+    await session.refresh(cfg)
+
+    assert cfg.ntfy_enabled is False
+    assert cfg.discord_enabled is False
+    assert cfg.email_enabled is False
+    assert cfg.ntfy_events == []
+    assert cfg.discord_events == []
+    assert cfg.email_events == []
+    assert cfg.email_to_addrs == []
+
+    cfg.ntfy_enabled = True
+    cfg.ntfy_events = ["job.complete"]
+    cfg.discord_events = ["job.failed", "job.blocked"]
+    cfg.email_to_addrs = ["ops@example.com", "alerts@example.com"]
+    await session.commit()
+    await session.refresh(cfg)
+
+    assert cfg.ntfy_enabled is True
+    assert cfg.ntfy_events == ["job.complete"]
+    assert cfg.discord_events == ["job.failed", "job.blocked"]
+    assert cfg.email_to_addrs == ["ops@example.com", "alerts@example.com"]
