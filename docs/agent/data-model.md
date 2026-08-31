@@ -5,12 +5,13 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (20)
+## Tables (22)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
                        printer_maintenance_state.printer_id
 api_keys            (standalone — no FKs)
+bootstrap_sentinel  (standalone — no FKs; see its own section below)
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -19,9 +20,11 @@ orders              ← jobs.order_id (nullable), projects.order_id (nullable)
 jobs                ← job_printer_configs.job_id, gcode_files.job_id, job_item_failures.job_id
 job_printer_configs
 gcode_files
-queue_config        (singleton-ish: check_interval_minutes, operator_name)
+queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
+                       estimates_enabled)
 spoolman_config     (enabled, url, api_key)
 webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
+notification_config (singleton id=1: ntfy/discord/email — see its own section below)
 projects            ← project_items.project_id, project_links.project_id, project_parts.project_id,
                        jobs.project_id
 project_items       ← job_item_failures.project_item_id
@@ -37,7 +40,10 @@ printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCAD
 ### printers
 `id, name, printer_type` (factory key: `bambu`|`elegoo_centauri`|`snapmaker_extended`), `connection_config: JSON`,
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
-`enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `lifetime_job_count: int` (accrued in
+`enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
+`curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`
+(Fleet camera-polling toggle), `bed_x_mm: float=256.0, bed_y_mm: float=256.0` (bed footprint, shown in
+the printer editor and used wherever bed size matters for the UI), `lifetime_job_count: int` (accrued in
 `queue_engine.handle_print_complete`, +1 per successful completion), `lifetime_print_seconds: int`
 (accrued from `job.actual_seconds` in the same handler) — both feed `job_count`/`job_time` maintenance
 trigger math, never reset except by construction (per-item resets live on `printer_maintenance_state`).
@@ -84,6 +90,23 @@ project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`
 - `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
 
+**Actual values** (set at production slice time, before the `gcode_files` row is deleted):
+`actual_filament_grams: float?, actual_seconds: int?, actual_filament_breakdown: JSON?,
+deduction_skipped: bool?`. `deduction_skipped` is set `True` when the queue engine can't confidently
+deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_engine.py` around where
+`lifetime_print_seconds` is accrued.
+
+**Estimate values** (set by an optional background test-slice, gated by `queue_config.estimates_enabled`):
+`estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
+estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
+`queue_engine.spawn_estimate(job_id)` → `run_estimate` → `_do_run_estimate` runs a geometry-only test
+slice off the queue's normal path and writes the result back with a `WHERE estimate_status='pending' AND
+estimate_token=:token` guard — `estimate_token` is bumped on every re-request (job edit, unblock) so a
+slow/stale estimate task can never clobber a newer one's result; a mismatched token on write is a no-op,
+not an error. `estimate_filament_grams` (falling back to the plate's parsed `filament_g` when no
+estimate exists yet) is what `spool_check.check_spool_sufficiency` compares against a bound spool's
+remaining weight for the low-stock warning (see `backend.md` § Services, `spool_check.py`).
+
 ### job_printer_configs  (one row per (job, eligible printer))
 `id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
@@ -91,8 +114,10 @@ loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color
 **ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
 tool/slot; `None` = default/legacy — queue uses type+color ask instead),
 `filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`.
-- `filament_type`+`filament_color` = the eligibility "ask". `slice_failed` blocks the job on that
-  printer until cleared (by `unblock` or `updateJobConfigs`).
+- `filament_type`+`filament_color` = the eligibility "ask". Non-nullable, `server_default="any"` — the
+  literal string `"any"` (never null/blank) means no constraint on that axis; matching logic checks for
+  this keyword rather than a null/empty check. Same convention on `project_items.filament_type/color`
+  below. `slice_failed` blocks the job on that printer until cleared (by `unblock` or `updateJobConfigs`).
 - `tool_index`: when set, `_slot_for_config` resolves `loaded_filaments[tool_index]` directly (bypasses
   type/color match); `_filament_mismatch` checks that slot is loaded.
 - `filament_map`: multi-material model→tool mapping. Shape: `[{model_filament: int (1-based),
@@ -108,29 +133,58 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
 
-### queue_config / spoolman_config / webhook_config
-`queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2}`.
-`spoolman_config{enabled, url?, api_key?}`.
+### queue_config / spoolman_config / webhook_config / notification_config
+`queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
+estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-slice estimate pipeline
+(see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
+Managed via `GET/PUT /api/v1/settings/queue`.
+
+`spoolman_config{enabled, url?, api_key?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
+`POST /api/v1/settings/spoolman/test`.
+
 `webhook_config` (singleton id=1): `{url:str?, secret:str?, events:JSON[str]}`. When `url` is set, the
 queue engine fires a signed `POST` on `job.complete`, `job.failed`, and `job.blocked` events (filtered by `events`
-list — empty list means all). Signature header: `X-Webhook-Signature: sha256=<hmac-sha256>`.
+list — **empty list means all**). Signature header: `X-Webhook-Signature: sha256=<hmac-sha256>`.
 Managed via `GET/PUT /api/v1/settings/webhook`.
 
+`notification_config` (singleton id=1) — three independent built-in channels, additive alongside
+`webhook_config` (not a replacement): `ntfy_{enabled,server_url,topic,priority,events}`,
+`discord_{enabled,webhook_url,events}`, `email_{enabled,host,port,username,password,from_addr,
+to_addrs,events}`. Each channel's own `*_events: JSON[str]` list is evaluated independently —
+**empty list means *none*, the opposite of `webhook_config.events`'s "empty means all"**; this is an
+intentional per-channel opt-in, not a bug, but don't assume the two behave the same way. Dispatch:
+`notification_service.dispatch(cfg, event, ...)` fans out to whichever channels are enabled and have
+the firing event in their own list; fired via `asyncio.create_task` (never awaited directly) from
+`queue_engine._fire_notifications`, alongside `_fire_webhooks`, on the same three job events as
+`webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
+`POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
+
 ### projects
-`id, name, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
+`id, name, customer:str="", order_type:str="internal"` (`"customer"`|`"internal"` — same vocabulary as
+`orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
+bool, due_date?, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
 source_user?, source_layout_id?, created_at, updated_at`.
 - Full CRUD at `/api/v1/projects`. Created by Themis UI (Project Builder) or by Ordinus
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
-- `order_id`: set by `generate_project` — the internal Order that groups all generated jobs.
-  `NULL` until the project is first generated.
+- `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
+  directly via the Project Builder), independent of whether it's linked to an `orders` row.
+- `order_id`: set by `generate_project` — the internal `orders` row that groups all generated jobs for
+  fulfillment tracking. `NULL` until the project is first generated. Not the same thing as the
+  project's own `order_type` field above.
+- `machine_uuid`/`process_uuid`: kept for backward compat with the legacy pre-generate-flow; not shown
+  in the current UI.
 - `result_file_id`: legacy single-result pointer from pre-generate-flow projects. Cleared when
   `generate` is called.
 
 ### project_items
 `id, project_id FK (CASCADE), file_id FK (RESTRICT), quantity, quantity_completed, quantity_failed,
-filament_profile_uuid, color_hex, sort_order`.
+filament_type:str="any", filament_color:str="any", filament_id:int?, color_hex:str="#FFFFFF"
+(legacy), sort_order`.
 - One row per STL file in the project. `quantity` = how many copies to pack.
 - `quantity_completed`/`quantity_failed` are updated as jobs for this project complete.
+- `filament_type`/`filament_color`: the item's own filament requirement spec, same `"any"`-keyword
+  convention as `job_printer_configs` above. `filament_id`: Spoolman filament id. `color_hex` is a
+  legacy OrcaSlicer-era field kept for backward compat with pre-v005 rows; not the current color source.
 
 ### project_links
 `id, project_id FK (CASCADE), url, label?, sort_order, created_at`.
@@ -181,11 +235,21 @@ maintenance_item_id)`, `last_done_at: str, baseline_job_count: int, baseline_pri
 ### api_keys
 `id, name, key_prefix` (unique, indexed — first `PREFIX_LEN`=12 chars of the raw key, e.g. `thm_ab12cd34`,
 unhashed, used for fast lookup before the hash compare), `key_hash` (sha256 hex of the full raw key),
-`scopes: JSON[str]`, `enabled: bool, created_at, last_used_at?, revoked_at?`.
+`scopes: JSON[str]`, `enabled: bool, created_at, last_used_at?, revoked_at?, expires_at?`. A key past
+`expires_at` is treated as invalid by `require_scope`'s resolution the same as `enabled=False`, without
+needing an explicit revoke.
 - The raw key itself is never stored — only `key_prefix` (for lookup) + `key_hash` (for verification).
   Shown to the user exactly once, in the `POST /api/v1/api-keys` response.
 - `scopes` is a subset of the fixed `SCOPES` registry in `app/auth.py` (see `backend.md`'s Auth section).
 - No FKs — standalone credential table, not linked to any other resource.
+
+### bootstrap_sentinel
+`id, created_at`. Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
+`SCOPES` regardless of requested scopes) whenever `api_keys` is empty; two racing requests (e.g. two
+browser tabs on first load) could otherwise both see it empty and both bootstrap. The handler inserts
+`BootstrapSentinel(id=1, ...)` inside the same flush — the fixed PK makes the second concurrent insert
+raise `IntegrityError`, so only one request wins the bootstrap path; the loser falls through to the
+normal (non-bootstrap, caller-specified-scopes) create-key flow. Never has more than one row.
 
 ## Migrations
 
@@ -216,3 +280,10 @@ CLI: `cd backend && python -m app.migrations.migrate up|down`.
 - `ApiOrder.status: StatusKey`, `progress: number` (0..1, ×100 for the bar).
 - `LoadedFilament` (frontend `api/printers.ts`) mirrors the slot dict; `filament_id` is Bambu AMS code or null (not Spoolman); `filament_profile?` and `spoolman_spool_id?` are optional.
 - `loaded_filaments` reaches the Fleet UI via `fleet.py` merging the DB row over the live state.
+- `low_stock_warning: {spool_id, spool_label, remaining_g, needed_g, message} | null` — on each job in
+  `GET /api/v1/queue` and on each `printer_configs[]` entry in `GET /api/v1/jobs/{id}/details`. Built by
+  `spool_check.check_spool_sufficiency`; `null` means either "sufficient" or "nothing to check yet"
+  (no bound spool, Spoolman unreachable) — the frontend treats both the same, never as an error state.
+
+None of these shapes are shared via codegen — every TS type mirroring a backend response is hand-kept
+in sync. See `backend-review.md`/`frontend-review.md` §1 before changing a field on either side.
