@@ -1267,13 +1267,10 @@ function NotificationsPage() {
 
   useEffect(() => {
     getNotificationConfig()
-      .then(loaded => {
-        setCfg({
-          ntfy: { ...loaded.ntfy, events: loaded.ntfy.events.length ? loaded.ntfy.events : ALL_NOTIFICATION_EVENTS },
-          discord: { ...loaded.discord, events: loaded.discord.events.length ? loaded.discord.events : ALL_NOTIFICATION_EVENTS },
-          email: { ...loaded.email, events: loaded.email.events.length ? loaded.email.events : ALL_NOTIFICATION_EVENTS },
-        });
-      })
+      // An empty events list is a deliberate "fires for nothing" choice
+      // (per-channel opt-in, unlike webhooks) — load it as-is, don't
+      // silently re-check every box and lie about the saved state.
+      .then(loaded => setCfg(loaded))
       .catch(console.error);
   }, []);
 

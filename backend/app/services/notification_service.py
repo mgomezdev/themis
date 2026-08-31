@@ -117,7 +117,7 @@ async def dispatch(
     tasks = []
 
     if cfg.ntfy_enabled and event in cfg.ntfy_events:
-        tasks.append(send_ntfy(cfg.ntfy_server_url, cfg.ntfy_topic, title, message))
+        tasks.append(send_ntfy(cfg.ntfy_server_url, cfg.ntfy_topic, title, message, cfg.ntfy_priority))
 
     if cfg.discord_enabled and event in cfg.discord_events:
         tasks.append(send_discord(cfg.discord_webhook_url, message))

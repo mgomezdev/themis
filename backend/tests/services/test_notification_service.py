@@ -307,7 +307,8 @@ async def test_send_email_connection_exception_does_not_raise():
 
 def _cfg(**overrides):
     base = dict(
-        ntfy_enabled=False, ntfy_server_url="http://ntfy.test", ntfy_topic="topic", ntfy_events=[],
+        ntfy_enabled=False, ntfy_server_url="http://ntfy.test", ntfy_topic="topic",
+        ntfy_priority=None, ntfy_events=[],
         discord_enabled=False, discord_webhook_url="http://discord.test/hook", discord_events=[],
         email_enabled=False, email_host="smtp.test", email_port=587, email_username=None,
         email_password=None, email_from_addr="from@example.com", email_to_addrs=["to@example.com"],
@@ -345,6 +346,17 @@ async def test_dispatch_fires_discord_for_its_own_event():
 
     mock_discord.assert_called_once()
     mock_ntfy.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_passes_configured_ntfy_priority_through():
+    """Configured ntfy priority must reach the real send call, not just the
+    one-off settings-page test button — previously dispatch() never passed it."""
+    cfg = _cfg(ntfy_enabled=True, ntfy_events=["job.complete"], ntfy_priority=5)
+    with patch("app.services.notification_service.send_ntfy", AsyncMock()) as mock_ntfy:
+        await dispatch(cfg, "job.complete", 42, "Job done", "Job 42 completed")
+
+    mock_ntfy.assert_called_once_with("http://ntfy.test", "topic", "Job done", "Job 42 completed", 5)
 
 
 @pytest.mark.asyncio

@@ -475,7 +475,7 @@ async def get_job_details(
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
-            "spool_warning": spool_warning,
+            "low_stock_warning": spool_warning,
         })
 
     # Assigned printer (if claimed)

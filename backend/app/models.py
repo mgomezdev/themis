@@ -227,6 +227,7 @@ class NotificationConfig(Base):
     ntfy_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     ntfy_server_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     ntfy_topic: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    ntfy_priority: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     ntfy_events: Mapped[list] = mapped_column(JSON, default=list)
 
     discord_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

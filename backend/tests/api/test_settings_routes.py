@@ -163,7 +163,7 @@ async def test_get_notifications_fresh_db_all_channels_present_disabled(client: 
     assert resp.status_code == 200
     body = resp.json()
 
-    assert body["ntfy"] == {"enabled": False, "server_url": None, "topic": None, "events": []}
+    assert body["ntfy"] == {"enabled": False, "server_url": None, "topic": None, "priority": None, "events": []}
     assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
     assert body["email"] == {
         "enabled": False, "host": None, "port": None, "username": None,
@@ -185,10 +185,31 @@ async def test_put_notifications_only_ntfy_leaves_others_default(client: AsyncCl
     body = resp.json()
     assert body["ntfy"] == {
         "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
-        "events": ["job.complete"],
+        "priority": None, "events": ["job.complete"],
     }
     assert body["discord"] == {"enabled": False, "webhook_url": None, "events": []}
     assert body["email"]["enabled"] is False
+
+
+async def test_put_notifications_ntfy_priority_round_trips(client: AsyncClient):
+    """The ntfy 'priority' field must actually persist — it was previously
+    accepted by the request body but silently dropped (no matching DB column),
+    so real job-event notifications never honored a configured priority."""
+    resp = await client.put("/api/v1/settings/notifications", json={
+        "ntfy": {
+            "enabled": True,
+            "server_url": "https://ntfy.sh",
+            "topic": "themis-test",
+            "priority": 4,
+            "events": ["job.complete"],
+        }
+    })
+    assert resp.status_code == 200
+    assert resp.json()["ntfy"]["priority"] == 4
+
+    resp = await client.get("/api/v1/settings/notifications")
+    assert resp.status_code == 200
+    assert resp.json()["ntfy"]["priority"] == 4
 
 
 async def test_put_notifications_second_put_other_channel_preserves_first(client: AsyncClient):
@@ -213,7 +234,7 @@ async def test_put_notifications_second_put_other_channel_preserves_first(client
     body = resp.json()
     assert body["ntfy"] == {
         "enabled": True, "server_url": "https://ntfy.sh", "topic": "themis-test",
-        "events": ["job.complete"],
+        "priority": None, "events": ["job.complete"],
     }
     assert body["discord"] == {
         "enabled": True, "webhook_url": "https://discord.com/api/webhooks/xyz",

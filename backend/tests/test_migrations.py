@@ -289,7 +289,7 @@ async def test_v017_creates_notification_config_table_with_seeded_row():
         ))).fetchone()
     assert "notification_config" in tables
     assert {
-        "id", "ntfy_enabled", "ntfy_server_url", "ntfy_topic", "ntfy_events",
+        "id", "ntfy_enabled", "ntfy_server_url", "ntfy_topic", "ntfy_priority", "ntfy_events",
         "discord_enabled", "discord_webhook_url", "discord_events",
         "email_enabled", "email_host", "email_port", "email_username",
         "email_password", "email_from_addr", "email_to_addrs", "email_events",

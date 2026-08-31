@@ -1277,7 +1277,12 @@ class QueueEngine:
                     printer = await session.get(Printer, pid)
                     printer_name = printer.name if printer else None
             title, message = _notification_content(event, job_id, file_name, printer_name, reason)
-            await notification_service.dispatch(cfg, event, job_id, title, message)
+            # Fire-and-forget, like _fire_webhooks/webhook_service.schedule: real
+            # channel delivery is network/SMTP I/O with a 5s timeout per channel and
+            # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
+            # which runs before new jobs are claimed each _process_queue iteration).
+            # dispatch() already swallows every per-channel exception itself.
+            asyncio.create_task(notification_service.dispatch(cfg, event, job_id, title, message))
         except Exception:
             logger.exception("Failed to dispatch notifications for job %s", job_id)
 

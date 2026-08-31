@@ -13,6 +13,7 @@ async def up(conn) -> None:
             ntfy_enabled BOOLEAN NOT NULL DEFAULT 0,
             ntfy_server_url TEXT,
             ntfy_topic TEXT,
+            ntfy_priority INTEGER,
             ntfy_events TEXT NOT NULL DEFAULT '[]',
             discord_enabled BOOLEAN NOT NULL DEFAULT 0,
             discord_webhook_url TEXT,

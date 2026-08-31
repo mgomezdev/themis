@@ -1448,6 +1448,8 @@ async def test_fire_notifications_dispatches_when_channel_enabled_and_event_matc
 
     with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
         await qe._fire_notifications(job_id, "job.complete", printer_id=1)
+        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
+        await asyncio.sleep(0)
 
     mock_dispatch.assert_awaited_once()
     args = mock_dispatch.call_args[0]
@@ -1455,6 +1457,42 @@ async def test_fire_notifications_dispatches_when_channel_enabled_and_event_matc
     assert event_arg == "job.complete"
     assert job_id_arg == job_id
     assert "test.3mf" in message_arg
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_does_not_block_on_slow_dispatch(db):
+    """_fire_notifications must return without waiting for channel delivery to
+    finish — it's awaited from _reconcile_printing_jobs, which runs before new
+    jobs are claimed each _process_queue iteration, so a slow ntfy/Discord/SMTP
+    call must not stall claiming work onto idle printers."""
+    from unittest.mock import patch
+    from app.models import NotificationConfig
+
+    job_id = await _seed_job(db, printer_id=1)
+
+    async with db() as session:
+        session.add(NotificationConfig(
+            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
+            ntfy_topic="themis", ntfy_events=["job.complete"],
+        ))
+        await session.commit()
+
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    dispatch_started = asyncio.Event()
+    dispatch_may_finish = asyncio.Event()
+
+    async def slow_dispatch(*args, **kwargs):
+        dispatch_started.set()
+        await dispatch_may_finish.wait()
+
+    with patch("app.services.queue_engine.notification_service.dispatch", side_effect=slow_dispatch):
+        # If _fire_notifications blocked on dispatch, this would hang until the
+        # timeout since dispatch_may_finish is never set beforehand.
+        await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
+        await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
+
+    dispatch_may_finish.set()  # let the background task finish cleanly
 
 
 @pytest.mark.asyncio
@@ -1510,6 +1548,8 @@ async def test_fail_job_post_slice_fires_notifications(db):
 
     with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
         await qe._fail_job_post_slice(job_id, 1, "printer disconnected")
+        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
+        await asyncio.sleep(0)
 
     mock_dispatch.assert_awaited_once()
     args = mock_dispatch.call_args[0]

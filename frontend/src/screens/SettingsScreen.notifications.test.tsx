@@ -113,4 +113,40 @@ describe('Settings → Notifications page', () => {
 
     await waitFor(() => expect(screen.getByText('Test push sent')).toBeInTheDocument());
   });
+
+  it('a loaded channel with an empty events list stays empty, not silently re-checked to all events', async () => {
+    const user = userEvent.setup();
+    const LOADED_WITH_EMPTY_EVENTS = {
+      ...EMPTY_NOTIFICATION_CONFIG,
+      ntfy: { enabled: true, server_url: 'https://ntfy.example.com', topic: 'themis', priority: null, events: [] },
+    };
+    const putBodies: unknown[] = [];
+    stubFetch((url, init) => {
+      if (url.includes('/settings/notifications') && init?.method === 'PUT') {
+        putBodies.push(JSON.parse(init.body as string));
+        return new Response(JSON.stringify(LOADED_WITH_EMPTY_EVENTS), { status: 200 });
+      }
+      if (url.includes('/settings/notifications')) {
+        return new Response(JSON.stringify(LOADED_WITH_EMPTY_EVENTS), { status: 200 });
+      }
+      return undefined;
+    });
+
+    render(<MemoryRouter initialEntries={['/settings/notifications']}><SettingsScreen /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByPlaceholderText('https://ntfy.sh')).toBeInTheDocument());
+
+    // ntfy's enable switch is the first switch; its three event toggles follow.
+    const switches = screen.getAllByRole('switch');
+    const [, ntfyEv1, ntfyEv2, ntfyEv3] = switches;
+    expect(ntfyEv1.getAttribute('aria-checked')).toBe('false');
+    expect(ntfyEv2.getAttribute('aria-checked')).toBe('false');
+    expect(ntfyEv3.getAttribute('aria-checked')).toBe('false');
+
+    const saveButton = screen.getByRole('button', { name: /^save$/i });
+    await user.click(saveButton);
+
+    await waitFor(() => expect(putBodies.length).toBe(1));
+    const body = putBodies[0] as { ntfy: { events: string[] } };
+    expect(body.ntfy.events).toEqual([]);
+  });
 });

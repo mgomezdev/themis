@@ -630,8 +630,10 @@ async def _seed_spool_warning_fixture(estimate_grams):
 
 
 async def test_job_details_spool_warning_none_when_sufficient(client):
-    """GET /jobs/{id}/details: spool_warning is None when the bound spool has
-    enough filament remaining for the job's estimated grams."""
+    """GET /jobs/{id}/details: low_stock_warning is None when the bound spool has
+    enough filament remaining for the job's estimated grams. Key must match
+    frontend/src/api/queue.ts's ApiJobPrinterConfig.low_stock_warning, not an
+    internal-only name — see queue.py's matching field for the sibling contract."""
     job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=200.0)
 
     fake_spool = {"id": 99, "remaining_weight": 900.0,
@@ -641,11 +643,11 @@ async def test_job_details_spool_warning_none_when_sufficient(client):
     assert resp.status_code == 200
     data = resp.json()
     cfg = next(c for c in data["printer_configs"] if c["printer_id"] == printer_id)
-    assert cfg["spool_warning"] is None
+    assert cfg["low_stock_warning"] is None
 
 
 async def test_job_details_spool_warning_set_when_insufficient(client):
-    """GET /jobs/{id}/details: spool_warning is populated, with both needed and
+    """GET /jobs/{id}/details: low_stock_warning is populated, with both needed and
     remaining grams in the message, when the bound spool is short on filament."""
     job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=340.0)
 
@@ -656,7 +658,7 @@ async def test_job_details_spool_warning_set_when_insufficient(client):
     assert resp.status_code == 200
     data = resp.json()
     cfg = next(c for c in data["printer_configs"] if c["printer_id"] == printer_id)
-    warning = cfg["spool_warning"]
+    warning = cfg["low_stock_warning"]
     assert warning is not None
     assert "340" in warning["message"]
     assert "220" in warning["message"]

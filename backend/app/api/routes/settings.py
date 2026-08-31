@@ -288,6 +288,7 @@ class NtfyChannelConfig(BaseModel):
     enabled: bool = False
     server_url: str | None = None
     topic: str | None = None
+    priority: int | None = None
     events: list[str] = []
 
 
@@ -340,6 +341,7 @@ def _to_notification_out(row: NotificationConfig) -> NotificationConfigOut:
             enabled=row.ntfy_enabled,
             server_url=row.ntfy_server_url,
             topic=row.ntfy_topic,
+            priority=row.ntfy_priority,
             events=row.ntfy_events or [],
         ),
         discord=DiscordChannelConfig(
@@ -383,6 +385,7 @@ async def update_notification_config(
         row.ntfy_enabled = body.ntfy.enabled
         row.ntfy_server_url = body.ntfy.server_url
         row.ntfy_topic = body.ntfy.topic
+        row.ntfy_priority = body.ntfy.priority
         row.ntfy_events = body.ntfy.events
     if body.discord is not None:
         row.discord_enabled = body.discord.enabled
