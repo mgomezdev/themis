@@ -41,23 +41,31 @@ temperatures, fan_model/aux/box, speed_factor, klippy_state, cover_url`. A new v
 entry. `loaded_filaments`/`awaiting_plate_clear`/`queue_on`/`enabled` come from the DB row in `fleet.py`,
 not the serializer.
 
-## Slicing pipeline (`SlicerService` + `mesh_3mf_builder` + `project_config_builder`)
+## Slicing pipeline (`SlicerService` → Laminus sidecar)
 
-OrcaSlicer's CLI cannot set the active printer via `--load-settings`, so Themis **generates an
-embedded-config 3MF** and slices that. Flow: `_build_config` (resolve machine+process+filament presets
-through inheritance via `PresetResolver`, merge via `build_project_config`) → `build_sliceable_3mf`
-(embed config, preserve model_settings/overrides) → **`SliceRequest.prepare_hook`** (opaque
-`Callable[[Path], None]`, applied to the prepared 3MF before OrcaSlicer runs; bound by
-`queue_engine._run_slice_and_print` to `client.remap_sliceable_3mf`) → run `[orca, --slice N,
---outputdir, *export_args, input]` → return artifact. Recovery tier: on `SliceError`, retry
-`geometry_only=True` (prepare_hook also re-applied). `filament_profile` (from the matched loaded slot)
-is passed as the filament preset; `filament_colours` from the job ask.
-See the `slicer-cli-architecture` memory for the multicolor model.
+**As of the 2026-06-23 Orca-sidecar migration, Themis does not invoke OrcaSlicer locally for
+production slicing.** `SlicerService.slice(SliceRequest)` resolves `machine_preset`/`process_preset`/
+`filament_presets` names to UUIDs against the sidecar's cached profile catalog, then delegates the
+whole slice — 3MF assembly, profile resolution, gcode generation — to a separate Laminus process over
+HTTP (`laminus_sidecar_client.LaminusSidecarClient.slice_start` → `poll_status` → `download`). The
+pre-sidecar local pipeline (`preset_resolver.py`, `profile_index.py`, `project_config_builder.py`, and
+most of `mesh_3mf_builder.py`) has no remaining callers — see `backend.md` § Services for what's dead.
 
-**`mesh_3mf_builder` is vendor-agnostic.** `build_sliceable_3mf(src, config, out, geometry_only)`
-and `stl_to_3mf(stl, config, out)` have no `tool_index` or `filament_map` parameters — all
-vendor-specific routing is delegated to the printer client's `remap_sliceable_3mf` hook applied after
-the builder returns.
+**`SliceRequest.prepare_hook`** (opaque `Callable[[Path], None]`, bound by
+`queue_engine._run_slice_and_print` to `client.remap_sliceable_3mf`) still runs — but now against a
+**job-scoped copy** of the source 3MF that `SlicerService` makes in the job's output directory, not the
+original. `source_3mf` is the shared library file every job/printer referencing that upload resolves
+to; running the hook on it directly would mutate it for every other consumer (this was a real
+regression, fixed — see the git log around `slicer_service.py`). Recovery tier: on `SliceError`, the
+sidecar itself retries geometry-only; `prepare_hook` isn't Themis's to re-invoke on that retry.
+`filament_profile` (from the matched loaded slot) is passed as the filament preset; `filament_colours`
+from the job ask.
+
+**`mesh_3mf_builder`'s vendor-agnostic design carries over conceptually** even though its actual
+3MF-building functions are now dead: `tool_index`/`filament_map` were never builder params — all
+vendor-specific routing is delegated to the printer client's `remap_sliceable_3mf` hook, which still
+holds under the sidecar architecture (it's applied to the job-scoped copy described above, same as
+before).
 
 **Filament→tool routing is a vendor operation** (`AbstractPrinterClient.remap_sliceable_3mf`):
 - **Default (no-op):** vendors that realize the mapping elsewhere (Bambu: at print time via
