@@ -79,8 +79,9 @@ to exist.
 ## Database & config
 
 - `database.py`: async engine (SQLite WAL), `SessionLocal`, `get_session` dep, `init_db()` =
-  `create_all` + `_migrate()`. **No migration tool** — add columns to existing tables via an
-  idempotent `ALTER TABLE … ADD COLUMN` guard in `_migrate()`; new tables are created by `create_all`.
+  `create_all` + `migrations/runner.py` (Flyway-style versioned files, `v00N_*.py`, tracked in
+  `schema_migrations`). New tables ride on `create_all`; a column added to an *existing* table needs
+  its own migration file — see `data-model.md` § Migrations for the exact steps.
 - `config.py`: `get_data_dir`, `get_orca_config_dir`, `get_orca_executable`, `get_ffmpeg_executable`.
   Defaults are **platform-aware** (Windows local dev resolves `%APPDATA%\OrcaSlicer` and the Program
   Files `orca-slicer.exe`); env vars `THEMIS_DATA_DIR`/`ORCA_CONFIG_DIR`/`ORCA_EXECUTABLE`/
