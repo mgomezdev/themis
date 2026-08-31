@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
@@ -11,8 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import Printer, QueueConfig, SpoolmanConfig, WebhookConfig
+from ...models import NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
+from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
 from ...services.printer_manager import printer_manager
 
@@ -271,6 +274,168 @@ async def update_webhook_config(
     await session.commit()
     await session.refresh(row)
     return row
+
+
+# ---------------------------------------------------------------------------
+# Notification config (ntfy / Discord / email)
+# ---------------------------------------------------------------------------
+
+_TEST_TITLE = "Themis test notification"
+_TEST_MESSAGE = "This is a test notification from Themis."
+
+
+class NtfyChannelConfig(BaseModel):
+    enabled: bool = False
+    server_url: str | None = None
+    topic: str | None = None
+    events: list[str] = []
+
+
+class DiscordChannelConfig(BaseModel):
+    enabled: bool = False
+    webhook_url: str | None = None
+    events: list[str] = []
+
+
+class EmailChannelConfig(BaseModel):
+    enabled: bool = False
+    host: str | None = None
+    port: int | None = None
+    username: str | None = None
+    password: str | None = None
+    from_addr: str | None = None
+    to_addrs: list[str] = []
+    events: list[str] = []
+
+
+class NotificationConfigOut(BaseModel):
+    ntfy: NtfyChannelConfig
+    discord: DiscordChannelConfig
+    email: EmailChannelConfig
+
+
+class NotificationConfigIn(BaseModel):
+    ntfy: NtfyChannelConfig | None = None
+    discord: DiscordChannelConfig | None = None
+    email: EmailChannelConfig | None = None
+
+
+class NotificationTestIn(BaseModel):
+    channel: Literal["ntfy", "discord", "email"]
+    config: dict
+
+
+async def _get_or_create_notifications(session: AsyncSession) -> NotificationConfig:
+    row = await session.get(NotificationConfig, 1)
+    if row is None:
+        row = NotificationConfig(id=1, ntfy_events=[], discord_events=[], email_to_addrs=[], email_events=[])
+        session.add(row)
+        await session.flush()
+    return row
+
+
+def _to_notification_out(row: NotificationConfig) -> NotificationConfigOut:
+    return NotificationConfigOut(
+        ntfy=NtfyChannelConfig(
+            enabled=row.ntfy_enabled,
+            server_url=row.ntfy_server_url,
+            topic=row.ntfy_topic,
+            events=row.ntfy_events or [],
+        ),
+        discord=DiscordChannelConfig(
+            enabled=row.discord_enabled,
+            webhook_url=row.discord_webhook_url,
+            events=row.discord_events or [],
+        ),
+        email=EmailChannelConfig(
+            enabled=row.email_enabled,
+            host=row.email_host,
+            port=row.email_port,
+            username=row.email_username,
+            password=row.email_password,
+            from_addr=row.email_from_addr,
+            to_addrs=row.email_to_addrs or [],
+            events=row.email_events or [],
+        ),
+    )
+
+
+@router.get("/notifications", response_model=NotificationConfigOut, summary="Get notification config",
+           dependencies=[Depends(require_scope("settings:read"))])
+async def get_notification_config(session: AsyncSession = Depends(get_session)):
+    """Built-in notification channel settings (ntfy, Discord, email). All three
+    channels are always present in the response, even when unconfigured."""
+    row = await _get_or_create_notifications(session)
+    return _to_notification_out(row)
+
+
+@router.put("/notifications", response_model=NotificationConfigOut, summary="Update notification config",
+           dependencies=[Depends(require_scope("settings:write"))])
+async def update_notification_config(
+    body: NotificationConfigIn,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update notification channel settings. A channel key omitted from the request
+    body leaves that channel's stored config unchanged; a channel key present
+    replaces that whole channel's config."""
+    row = await _get_or_create_notifications(session)
+    if body.ntfy is not None:
+        row.ntfy_enabled = body.ntfy.enabled
+        row.ntfy_server_url = body.ntfy.server_url
+        row.ntfy_topic = body.ntfy.topic
+        row.ntfy_events = body.ntfy.events
+    if body.discord is not None:
+        row.discord_enabled = body.discord.enabled
+        row.discord_webhook_url = body.discord.webhook_url
+        row.discord_events = body.discord.events
+    if body.email is not None:
+        row.email_enabled = body.email.enabled
+        row.email_host = body.email.host
+        row.email_port = body.email.port
+        row.email_username = body.email.username
+        row.email_password = body.email.password
+        row.email_from_addr = body.email.from_addr
+        row.email_to_addrs = body.email.to_addrs
+        row.email_events = body.email.events
+    await session.commit()
+    await session.refresh(row)
+    return _to_notification_out(row)
+
+
+@router.post("/notifications/test", summary="Send a test notification",
+            dependencies=[Depends(require_scope("settings:write"))])
+async def test_notification_config(body: NotificationTestIn):
+    """Send a test notification for one channel using the supplied (unsaved) config,
+    without requiring it be saved first. Returns `{ok, message}` — including for a
+    missing required field, which is reported this way rather than as a 4xx."""
+    cfg = body.config
+
+    if body.channel == "ntfy":
+        server_url = cfg.get("server_url")
+        topic = cfg.get("topic")
+        if not server_url or not topic:
+            return {"ok": False, "message": "server_url and topic are required"}
+        error = await send_ntfy(server_url, topic, _TEST_TITLE, _TEST_MESSAGE, cfg.get("priority"))
+    elif body.channel == "discord":
+        webhook_url = cfg.get("webhook_url")
+        if not webhook_url:
+            return {"ok": False, "message": "webhook_url is required"}
+        error = await send_discord(webhook_url, f"{_TEST_TITLE}\n{_TEST_MESSAGE}")
+    else:  # email
+        host = cfg.get("host")
+        port = cfg.get("port")
+        from_addr = cfg.get("from_addr")
+        to_addrs = cfg.get("to_addrs")
+        if not host or not port or not from_addr or not to_addrs:
+            return {"ok": False, "message": "host, port, from_addr, and to_addrs are required"}
+        error = await send_email(
+            host, port, cfg.get("username"), cfg.get("password"),
+            from_addr, to_addrs, _TEST_TITLE, _TEST_MESSAGE,
+        )
+
+    if error is None:
+        return {"ok": True, "message": "Test notification sent"}
+    return {"ok": False, "message": error}
 
 
 # ---------------------------------------------------------------------------

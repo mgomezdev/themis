@@ -1426,3 +1426,93 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
         printer = await session.get(Printer, printer_id)
         assert printer.lifetime_job_count == 1
         assert printer.lifetime_print_seconds == 0
+
+
+# --- Notification dispatch wiring -------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_fire_notifications_dispatches_when_channel_enabled_and_event_matches(db):
+    from unittest.mock import patch, AsyncMock
+    from app.models import NotificationConfig
+
+    job_id = await _seed_job(db, printer_id=1)
+
+    async with db() as session:
+        session.add(NotificationConfig(
+            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
+            ntfy_topic="themis", ntfy_events=["job.complete"],
+        ))
+        await session.commit()
+
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
+
+    mock_dispatch.assert_awaited_once()
+    args = mock_dispatch.call_args[0]
+    cfg_arg, event_arg, job_id_arg, title_arg, message_arg = args
+    assert event_arg == "job.complete"
+    assert job_id_arg == job_id
+    assert "test.3mf" in message_arg
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_noop_when_all_channels_disabled(db):
+    from unittest.mock import patch, AsyncMock
+    from app.models import NotificationConfig
+
+    job_id = await _seed_job(db, printer_id=1)
+
+    async with db() as session:
+        session.add(NotificationConfig(id=1))  # all channels default disabled
+        await session.commit()
+
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
+
+    mock_dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_noop_when_no_config_row(db):
+    from unittest.mock import patch, AsyncMock
+
+    job_id = await _seed_job(db, printer_id=1)
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
+
+    mock_dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_fail_job_post_slice_fires_notifications(db):
+    """Integration-style: the real _fail_job_post_slice call site actually
+    triggers _fire_notifications when the job reaches 'failed'."""
+    from unittest.mock import patch, AsyncMock
+    from app.models import NotificationConfig
+
+    job_id = await _seed_job(db, printer_id=1)
+
+    async with db() as session:
+        session.add(NotificationConfig(
+            id=1, email_enabled=True, email_host="smtp.example.com", email_port=587,
+            email_from_addr="themis@example.com", email_to_addrs=["me@example.com"],
+            email_events=["job.failed"],
+        ))
+        await session.commit()
+
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+        await qe._fail_job_post_slice(job_id, 1, "printer disconnected")
+
+    mock_dispatch.assert_awaited_once()
+    args = mock_dispatch.call_args[0]
+    assert args[1] == "job.failed"
+    assert args[2] == job_id
+    assert "printer disconnected" in args[4]

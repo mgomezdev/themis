@@ -22,7 +22,9 @@ async def send_ntfy(
     title: str,
     message: str,
     priority: int | None = None,
-) -> None:
+) -> str | None:
+    """Fire-and-forget: never raises. Returns None on success, else an error
+    description (used by the settings "send test" endpoint; ignored by dispatch)."""
     url = server_url.rstrip("/")
     body = {"topic": topic, "title": title, "message": message}
     if priority is not None:
@@ -32,18 +34,26 @@ async def send_ntfy(
             resp = await client.post(url, json=body)
         if not resp.is_success:
             logger.warning("ntfy POST %s → %s", url, resp.status_code)
+            return f"ntfy server responded {resp.status_code}"
+        return None
     except Exception as exc:
         logger.warning("ntfy delivery failed for %s: %s", url, exc)
+        return str(exc)
 
 
-async def send_discord(webhook_url: str, content: str) -> None:
+async def send_discord(webhook_url: str, content: str) -> str | None:
+    """Fire-and-forget: never raises. Returns None on success, else an error
+    description (used by the settings "send test" endpoint; ignored by dispatch)."""
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(webhook_url, json={"content": content})
         if not resp.is_success:
             logger.warning("Discord POST %s → %s", webhook_url, resp.status_code)
+            return f"Discord webhook responded {resp.status_code}"
+        return None
     except Exception as exc:
         logger.warning("Discord delivery failed for %s: %s", webhook_url, exc)
+        return str(exc)
 
 
 def _send_email_sync(
@@ -81,13 +91,17 @@ async def send_email(
     to_addrs: list[str],
     subject: str,
     body: str,
-) -> None:
+) -> str | None:
+    """Fire-and-forget: never raises. Returns None on success, else an error
+    description (used by the settings "send test" endpoint; ignored by dispatch)."""
     try:
         await asyncio.to_thread(
             _send_email_sync, host, port, username, password, from_addr, to_addrs, subject, body
         )
+        return None
     except Exception as exc:
         logger.warning("Email delivery failed for %s: %s", to_addrs, exc)
+        return str(exc)
 
 
 async def dispatch(

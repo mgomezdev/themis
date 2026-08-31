@@ -106,19 +106,30 @@ async def test_send_ntfy_body_with_priority():
 
 
 @pytest.mark.asyncio
+async def test_send_ntfy_success_returns_none():
+    ctx, _ = _mock_client(_ok_response())
+    with ctx:
+        result = await send_ntfy("http://ntfy.test", "myprinter", "Job done", "Job 42 completed")
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_send_ntfy_non_2xx_does_not_raise():
     ctx, _ = _mock_client(_error_response(500))
     with ctx:
-        await send_ntfy("http://ntfy.test", "myprinter", "Job done", "Job 42 completed")
-    # no exception propagated
+        result = await send_ntfy("http://ntfy.test", "myprinter", "Job done", "Job 42 completed")
+    # no exception propagated; failure surfaced via return value for the settings test endpoint
+    assert result is not None
+    assert "500" in result
 
 
 @pytest.mark.asyncio
 async def test_send_ntfy_exception_does_not_raise():
     ctx, _ = _mock_client(post_exception=httpx.ConnectError("boom"))
     with ctx:
-        await send_ntfy("http://ntfy.test", "myprinter", "Job done", "Job 42 completed")
-    # no exception propagated
+        result = await send_ntfy("http://ntfy.test", "myprinter", "Job done", "Job 42 completed")
+    # no exception propagated; failure surfaced via return value
+    assert result is not None
 
 
 # ---------------------------------------------------------------------------
@@ -140,17 +151,28 @@ async def test_send_discord_posts_to_webhook_url_with_content_only():
 
 
 @pytest.mark.asyncio
+async def test_send_discord_success_returns_none():
+    ctx, _ = _mock_client(_ok_response())
+    with ctx:
+        result = await send_discord("http://discord.test/api/webhooks/1/abc", "Job 42 completed")
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_send_discord_non_2xx_does_not_raise():
     ctx, _ = _mock_client(_error_response(400))
     with ctx:
-        await send_discord("http://discord.test/api/webhooks/1/abc", "Job 42 completed")
+        result = await send_discord("http://discord.test/api/webhooks/1/abc", "Job 42 completed")
+    assert result is not None
+    assert "400" in result
 
 
 @pytest.mark.asyncio
 async def test_send_discord_exception_does_not_raise():
     ctx, _ = _mock_client(post_exception=httpx.ConnectError("boom"))
     with ctx:
-        await send_discord("http://discord.test/api/webhooks/1/abc", "Job 42 completed")
+        result = await send_discord("http://discord.test/api/webhooks/1/abc", "Job 42 completed")
+    assert result is not None
 
 
 # ---------------------------------------------------------------------------
@@ -239,29 +261,44 @@ async def test_send_email_starttls_not_supported_continues_without_tls():
 
 
 @pytest.mark.asyncio
+async def test_send_email_success_returns_none():
+    mock_smtp_instance = MagicMock()
+    mock_smtp_cls = MagicMock(return_value=mock_smtp_instance)
+    with patch("app.services.notification_service.smtplib.SMTP", mock_smtp_cls):
+        result = await send_email(
+            "smtp.test", 587, None, None,
+            "from@example.com", ["to@example.com"],
+            "Job done", "Job 42 completed",
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_send_email_login_exception_does_not_raise():
     mock_smtp_instance = MagicMock()
     mock_smtp_instance.login.side_effect = smtplib.SMTPAuthenticationError(535, b"bad creds")
     mock_smtp_cls = MagicMock(return_value=mock_smtp_instance)
     with patch("app.services.notification_service.smtplib.SMTP", mock_smtp_cls):
-        await send_email(
+        result = await send_email(
             "smtp.test", 587, "user", "pass",
             "from@example.com", ["to@example.com"],
             "Job done", "Job 42 completed",
         )
-    # no exception propagated
+    # no exception propagated; failure surfaced via return value
+    assert result is not None
 
 
 @pytest.mark.asyncio
 async def test_send_email_connection_exception_does_not_raise():
     mock_smtp_cls = MagicMock(side_effect=OSError("connection refused"))
     with patch("app.services.notification_service.smtplib.SMTP", mock_smtp_cls):
-        await send_email(
+        result = await send_email(
             "smtp.test", 587, None, None,
             "from@example.com", ["to@example.com"],
             "Job done", "Job 42 completed",
         )
-    # no exception propagated
+    # no exception propagated; failure surfaced via return value
+    assert result is not None
 
 
 # ---------------------------------------------------------------------------
