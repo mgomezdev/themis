@@ -11,6 +11,10 @@ external services required.
 
 > 📐 **Agent/LLM architecture reference:** [`docs/agent/`](docs/agent/) — backend, frontend, data model, printer protocols, recipes, and conventions.
 
+> 🤖 **This is also an exercise in full agentic coding with human oversight.** Themis is a real tool
+> being built end-to-end this way, as a practical testbed for prompt design, multi-agent workflows, and
+> harnessing techniques as they mature — not a toy demo.
+
 ---
 
 ## ✨ Features
