@@ -28,7 +28,7 @@ services:
       - "${APPDATA}/OrcaSlicer:/root/.config/OrcaSlicer:ro"
       - themis-data:/data
     environment:
-      - ORCA_SIDECAR_URL=http://orca:5000
+      - LAMINUS_SIDECAR_URL=http://orca:5000
       - THEMIS_LIBRARY_DIR=/data/library
     depends_on:
       orca:
