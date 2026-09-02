@@ -4,7 +4,7 @@
 # Start orca for dev:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up orca
 #
-# Then run Themis locally via /themis-start (sets ORCA_SIDECAR_URL automatically).
+# Then run Themis locally via /themis-start (sets LAMINUS_SIDECAR_URL automatically).
 services:
   orca:
     ports:
