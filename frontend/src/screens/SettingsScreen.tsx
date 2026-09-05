@@ -748,7 +748,7 @@ function SpoolmanPage() {
       const cfg = await saveSpoolmanConfig({
         enabled: s.enabled,
         url: s.url,
-        api_key: s.apiKeyTouched ? (s.apiKey || null) : undefined,
+        api_key: s.apiKeyTouched ? s.apiKey : undefined,
       });
       update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
     } finally {
@@ -761,7 +761,7 @@ function SpoolmanPage() {
     setTesting(true);
     update({ connectionStatus: 'connecting' });
     try {
-      const apiKeyForSave = s.apiKeyTouched ? (s.apiKey || null) : undefined;
+      const apiKeyForSave = s.apiKeyTouched ? s.apiKey : undefined;
       const cfg = await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: apiKeyForSave });
       update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
       const result = await testSpoolmanConnection(s.url, apiKeyForSave);
@@ -1167,7 +1167,7 @@ function WebhookPage() {
     try {
       const cfg = await saveWebhookConfig({
         url: url.trim() || null,
-        secret: secretTouched ? (secret.trim() || null) : undefined,
+        secret: secretTouched ? secret.trim() : undefined,
         events,
       });
       setHasSecret(cfg.has_secret);
