@@ -12,7 +12,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
     if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-    if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+    if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
     return new Response('{}', { status: 200 });
   }));
 });
@@ -40,7 +40,7 @@ describe('SettingsScreen', () => {
     const putBodies: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/settings/queue') && init?.method === 'PUT') {
         putBodies.push(JSON.parse(init.body as string));
         return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
@@ -86,7 +86,7 @@ describe('SettingsScreen', () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({
         check_interval_minutes: 5,
         operator_name: null,
@@ -112,7 +112,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys') && url.includes('revoke')) {
         revokeCalled = true;
         return new Response('{}', { status: 200 });
@@ -150,7 +150,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
     }));
@@ -185,7 +185,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
@@ -211,7 +211,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
@@ -240,7 +240,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         createCalled = true;
@@ -287,7 +287,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({
@@ -337,7 +337,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({
@@ -382,7 +382,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys') && url.includes('revoke') && init?.method === 'POST') {
         revokeCalled = true;
         return new Response('{}', { status: 200 });
@@ -426,7 +426,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({ detail: 'Duplicate key name' }), { status: 400 });
@@ -465,7 +465,7 @@ describe('SettingsScreen', () => {
       if (url.includes('/settings/spoolman/test')) {
         return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
       }
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
       return new Response(JSON.stringify({}), { status: 200 });
     }));
@@ -504,7 +504,7 @@ describe('SettingsScreen', () => {
       if (url.includes('/settings/spoolman/test')) {
         return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
       }
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', api_key: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', has_api_key: false }), { status: 200 });
       if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
       return new Response(JSON.stringify({}), { status: 200 });
     }));

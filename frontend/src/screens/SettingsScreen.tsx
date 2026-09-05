@@ -648,6 +648,8 @@ interface SpoolmanSettings {
   enabled: boolean;
   url: string;
   apiKey: string;
+  apiKeyTouched: boolean;
+  hasApiKey: boolean;
   connectionStatus: ConnectionStatus;
   lastSyncedAt: string | null;
   syncInterval: number;
@@ -705,6 +707,8 @@ function SpoolmanPage() {
     enabled: false,
     url: '',
     apiKey: '',
+    apiKeyTouched: false,
+    hasApiKey: false,
     connectionStatus: 'disconnected',
     lastSyncedAt: null,
     syncInterval: 15,
@@ -725,7 +729,7 @@ function SpoolmanPage() {
 
   useEffect(() => {
     getSpoolmanConfig()
-      .then(cfg => update({ enabled: cfg.enabled, url: cfg.url ?? '', apiKey: cfg.api_key ?? '' }))
+      .then(cfg => update({ enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key }))
       .catch(console.error);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -741,7 +745,12 @@ function SpoolmanPage() {
   async function saveConfig() {
     setSaving(true);
     try {
-      await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: s.apiKey || null });
+      const cfg = await saveSpoolmanConfig({
+        enabled: s.enabled,
+        url: s.url,
+        api_key: s.apiKeyTouched ? (s.apiKey || null) : undefined,
+      });
+      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
     } finally {
       setSaving(false);
     }
@@ -752,8 +761,10 @@ function SpoolmanPage() {
     setTesting(true);
     update({ connectionStatus: 'connecting' });
     try {
-      await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: s.apiKey || null });
-      const result = await testSpoolmanConnection(s.url, s.apiKey || null);
+      const apiKeyForSave = s.apiKeyTouched ? (s.apiKey || null) : undefined;
+      const cfg = await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: apiKeyForSave });
+      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
+      const result = await testSpoolmanConnection(s.url, apiKeyForSave);
       if (result.status === 'pending_remaps') {
         setSpoolmanPendingRemap(result);
         update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
@@ -822,11 +833,13 @@ function SpoolmanPage() {
           </FieldRow>
 
           <FieldRow label="API key"
-                    hint="Optional. Required only if you've enabled Spoolman API authentication.">
+                    hint={s.hasApiKey && !s.apiKeyTouched
+                      ? 'A key is saved. Leave blank to keep it, or type a new one to replace it.'
+                      : "Optional. Required only if you've enabled Spoolman API authentication."}>
             <div className="row gap-2" style={{ flex: 1 }}>
               <input className="input" type="password" value={s.apiKey}
-                     onChange={e => update({ apiKey: e.target.value })}
-                     placeholder="Leave blank if auth is off"
+                     onChange={e => update({ apiKey: e.target.value, apiKeyTouched: true })}
+                     placeholder={s.hasApiKey && !s.apiKeyTouched ? '••••••••' : 'Leave blank if auth is off'}
                      style={{ flex: 1 }} />
             </div>
           </FieldRow>
@@ -1132,6 +1145,8 @@ const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
 function WebhookPage() {
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
+  const [secretTouched, setSecretTouched] = useState(false);
+  const [hasSecret, setHasSecret] = useState(false);
   const [events, setEvents] = useState<string[]>(ALL_WEBHOOK_EVENTS);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1140,7 +1155,7 @@ function WebhookPage() {
     getWebhookConfig()
       .then(cfg => {
         setUrl(cfg.url ?? '');
-        setSecret(cfg.secret ?? '');
+        setHasSecret(cfg.has_secret);
         setEvents(cfg.events.length ? cfg.events : ALL_WEBHOOK_EVENTS);
       })
       .catch(console.error);
@@ -1150,7 +1165,14 @@ function WebhookPage() {
     setSaving(true);
     setSaved(false);
     try {
-      await saveWebhookConfig({ url: url.trim() || null, secret: secret.trim() || null, events });
+      const cfg = await saveWebhookConfig({
+        url: url.trim() || null,
+        secret: secretTouched ? (secret.trim() || null) : undefined,
+        events,
+      });
+      setHasSecret(cfg.has_secret);
+      setSecret('');
+      setSecretTouched(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
@@ -1177,13 +1199,15 @@ function WebhookPage() {
           style={{ width: '100%' }}
         />
       </FieldRow>
-      <FieldRow label="Secret" hint="Optional. Included as X-Webhook-Signature: sha256=<hmac>.">
+      <FieldRow label="Secret" hint={hasSecret && !secretTouched
+        ? 'A secret is saved. Leave blank to keep it, or type a new one to replace it.'
+        : 'Optional. Included as X-Webhook-Signature: sha256=<hmac>.'}>
         <input
           className="input"
           type="password"
-          placeholder="webhook-secret"
+          placeholder={hasSecret && !secretTouched ? '••••••••' : 'webhook-secret'}
           value={secret}
-          onChange={e => setSecret(e.target.value)}
+          onChange={e => { setSecret(e.target.value); setSecretTouched(true); }}
           style={{ width: '100%' }}
         />
       </FieldRow>
