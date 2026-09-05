@@ -33,7 +33,11 @@ try {
 const toolName = payload.tool_name || '';
 const command = (payload.tool_input && payload.tool_input.command) || '';
 
-const isGhPrCreate = toolName === 'Bash' && /\bgh\s+pr\s+create\b/.test(command);
+// Anchored to a command-position match (start of string, or right after a shell
+// separator/operator) so the phrase merely appearing in prose - e.g. inside a
+// heredoc commit message that talks about this very hook - doesn't false-positive.
+const isGhPrCreate = toolName === 'Bash' &&
+  /(^|[;&|\n]|&&|\|\|)\s*gh\s+pr\s+create\b/.test(command);
 const isMcpCreatePr = toolName === 'mcp__github__create_pull_request';
 
 if (!isGhPrCreate && !isMcpCreatePr) {
