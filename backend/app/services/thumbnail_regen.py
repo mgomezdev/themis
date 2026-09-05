@@ -26,6 +26,15 @@ logger = logging.getLogger(__name__)
 
 _TIMEOUT = 120  # seconds per plate before giving up
 
+# Injectable so tests can point this at an isolated DB instead of the real,
+# file-backed one - see set_session_factory().
+_session_factory = SessionLocal
+
+
+def set_session_factory(factory) -> None:
+    global _session_factory
+    _session_factory = factory
+
 
 async def regen_file_thumbnails(file_id: int) -> None:
     """Background coroutine: regenerate thumbnails for every plate in *file_id*.
@@ -33,7 +42,7 @@ async def regen_file_thumbnails(file_id: int) -> None:
     Opens its own DB session (the request session is gone by the time this runs).
     Silently no-ops if OrcaSlicer isn't configured or the file has no plates.
     """
-    async with SessionLocal() as session:
+    async with _session_factory() as session:
         f = await session.get(UploadedFile, file_id)
         if f is None or not f.relative_path:
             return

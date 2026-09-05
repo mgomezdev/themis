@@ -7,6 +7,7 @@ from app.main import app
 from app.database import Base, get_session
 from app.auth import SCOPES
 from app.models import ApiKey
+from app.services import thumbnail_regen
 from app.services.api_key_service import generate_key, hash_key
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -26,6 +27,9 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_session] = override_get_session
 
+    original_thumbnail_factory = thumbnail_regen._session_factory
+    thumbnail_regen.set_session_factory(factory)
+
     # Seed a full-scope API key so the bootstrap hatch closes deterministically
     # and every existing call site keeps working unmodified (auth is enforced
     # everywhere now — see Task 5).
@@ -44,4 +48,5 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         yield c
 
     app.dependency_overrides.clear()
+    thumbnail_regen.set_session_factory(original_thumbnail_factory)
     await engine.dispose()
