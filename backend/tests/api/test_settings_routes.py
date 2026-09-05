@@ -60,6 +60,102 @@ async def test_estimates_enabled_get_put(client: AsyncClient):
     assert get_resp2.json()["estimates_enabled"] is True
 
 
+async def test_webhook_config_get_never_returns_raw_secret(client: AsyncClient):
+    await client.put("/api/v1/settings/webhook", json={"secret": "s3cr3t-value"})
+
+    resp = await client.get("/api/v1/settings/webhook")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "secret" not in body
+    assert body["has_secret"] is True
+    assert "s3cr3t-value" not in resp.text
+
+
+async def test_webhook_config_put_response_also_never_returns_raw_secret(client: AsyncClient):
+    resp = await client.put("/api/v1/settings/webhook", json={"secret": "s3cr3t-value"})
+
+    assert resp.status_code == 200
+    assert "s3cr3t-value" not in resp.text
+    assert resp.json()["has_secret"] is True
+
+
+async def test_webhook_config_has_secret_false_when_unset(client: AsyncClient):
+    resp = await client.get("/api/v1/settings/webhook")
+
+    assert resp.json()["has_secret"] is False
+
+
+async def test_webhook_config_put_omitting_secret_leaves_it_unchanged(client: AsyncClient):
+    await client.put("/api/v1/settings/webhook", json={"secret": "s3cr3t-value"})
+
+    resp = await client.put("/api/v1/settings/webhook", json={"url": "https://example.com/hook"})
+
+    assert resp.status_code == 200
+    assert resp.json()["has_secret"] is True
+    assert resp.json()["url"] == "https://example.com/hook"
+
+
+async def test_webhook_config_put_empty_secret_clears_it(client: AsyncClient):
+    await client.put("/api/v1/settings/webhook", json={"secret": "s3cr3t-value"})
+
+    resp = await client.put("/api/v1/settings/webhook", json={"secret": ""})
+
+    assert resp.status_code == 200
+    assert resp.json()["has_secret"] is False
+
+
+async def test_spoolman_config_get_never_returns_raw_api_key(client: AsyncClient):
+    await client.put("/api/v1/settings/spoolman", json={"api_key": "sm-key-value"})
+
+    resp = await client.get("/api/v1/settings/spoolman")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert "api_key" not in body
+    assert body["has_api_key"] is True
+    assert "sm-key-value" not in resp.text
+
+
+async def test_spoolman_config_put_omitting_api_key_leaves_it_unchanged(client: AsyncClient):
+    await client.put("/api/v1/settings/spoolman", json={"api_key": "sm-key-value"})
+
+    resp = await client.put("/api/v1/settings/spoolman", json={"url": "http://spoolman.test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["has_api_key"] is True
+    assert resp.json()["url"] == "http://spoolman.test"
+
+
+async def test_spoolman_config_put_empty_api_key_clears_it(client: AsyncClient):
+    await client.put("/api/v1/settings/spoolman", json={"api_key": "sm-key-value"})
+
+    resp = await client.put("/api/v1/settings/spoolman", json={"api_key": ""})
+
+    assert resp.status_code == 200
+    assert resp.json()["has_api_key"] is False
+
+
+async def test_spoolman_test_falls_back_to_saved_api_key_when_omitted(client: AsyncClient):
+    """/spoolman/test must still be able to use the saved key even though GET
+    no longer exposes it - the caller omits api_key rather than resending it."""
+    await client.put(
+        "/api/v1/settings/spoolman",
+        json={"url": "http://spoolman.test", "api_key": "sm-key-value"},
+    )
+
+    with patch(
+        "app.api.routes.settings.spoolman_service.test_connection",
+        new_callable=AsyncMock,
+        return_value={"version": "1.0"},
+    ) as mock_test:
+        resp = await client.post("/api/v1/settings/spoolman/test", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_test.assert_called_once_with("http://spoolman.test", "sm-key-value")
+
+
 async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
     """All Spoolman filament UUIDs present in catalog → normal success response."""
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]}

@@ -83,7 +83,7 @@ async def update_queue_config(
 class SpoolmanConfigOut(BaseModel):
     enabled: bool
     url: str | None
-    api_key: str | None
+    has_api_key: bool
 
 
 class SpoolmanConfigIn(BaseModel):
@@ -101,11 +101,16 @@ async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
     return row
 
 
+def _spoolman_out(row: SpoolmanConfig) -> SpoolmanConfigOut:
+    return SpoolmanConfigOut(enabled=row.enabled, url=row.url, has_api_key=row.api_key is not None)
+
+
 @router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_spoolman_config(session: AsyncSession = Depends(get_session)):
-    """Spoolman integration settings: enabled flag, base URL, and API key."""
-    return await _get_or_create(session)
+    """Spoolman integration settings: enabled flag, base URL, and whether an API key is set.
+    The key itself never round-trips - omit `api_key` on PUT to leave it unchanged."""
+    return _spoolman_out(await _get_or_create(session))
 
 
 @router.put("/spoolman", response_model=SpoolmanConfigOut, summary="Update Spoolman config",
@@ -114,7 +119,8 @@ async def update_spoolman_config(
     body: SpoolmanConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
-    """Update Spoolman integration settings. Omitted fields are left unchanged."""
+    """Update Spoolman integration settings. Omitted fields (including `api_key`) are left
+    unchanged; an empty string for `api_key` clears it."""
     row = await _get_or_create(session)
     if body.enabled is not None:
         row.enabled = body.enabled
@@ -124,7 +130,7 @@ async def update_spoolman_config(
         row.api_key = body.api_key or None
     await session.commit()
     await session.refresh(row)
-    return row
+    return _spoolman_out(row)
 
 
 @router.post("/spoolman/test", summary="Test Spoolman connection",
@@ -231,7 +237,7 @@ async def test_spoolman_connection(
 
 class WebhookConfigOut(BaseModel):
     url: str | None
-    secret: str | None
+    has_secret: bool
     events: list[str]
 
 
@@ -250,11 +256,16 @@ async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
     return row
 
 
+def _webhook_out(row: WebhookConfig) -> WebhookConfigOut:
+    return WebhookConfigOut(url=row.url, has_secret=row.secret is not None, events=row.events)
+
+
 @router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_webhook_config(session: AsyncSession = Depends(get_session)):
-    """Outbound webhook settings: endpoint URL, HMAC secret, and subscribed event types."""
-    return await _get_or_create_webhook(session)
+    """Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed
+    event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged."""
+    return _webhook_out(await _get_or_create_webhook(session))
 
 
 @router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config",
@@ -263,7 +274,8 @@ async def update_webhook_config(
     body: WebhookConfigIn,
     session: AsyncSession = Depends(get_session),
 ):
-    """Update webhook settings. Omitted fields are left unchanged."""
+    """Update webhook settings. Omitted fields (including `secret`) are left unchanged; an
+    empty string for `secret` clears it."""
     row = await _get_or_create_webhook(session)
     if body.url is not None:
         row.url = body.url or None
@@ -273,7 +285,7 @@ async def update_webhook_config(
         row.events = body.events
     await session.commit()
     await session.refresh(row)
-    return row
+    return _webhook_out(row)
 
 
 # ---------------------------------------------------------------------------
