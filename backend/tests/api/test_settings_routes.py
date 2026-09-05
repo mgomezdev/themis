@@ -156,6 +156,27 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_omitted(client: As
     mock_test.assert_called_once_with("http://spoolman.test", "sm-key-value")
 
 
+async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(client: AsyncClient):
+    """The actual frontend path: it always sends url (required to even enable the
+    Test button) but omits api_key when the user hasn't retyped it. The fallback
+    must not be gated on the url also being missing."""
+    await client.put(
+        "/api/v1/settings/spoolman",
+        json={"url": "http://spoolman.test", "api_key": "sm-key-value"},
+    )
+
+    with patch(
+        "app.api.routes.settings.spoolman_service.test_connection",
+        new_callable=AsyncMock,
+        return_value={"version": "1.0"},
+    ) as mock_test:
+        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+    mock_test.assert_called_once_with("http://spoolman.test", "sm-key-value")
+
+
 async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
     """All Spoolman filament UUIDs present in catalog → normal success response."""
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]}

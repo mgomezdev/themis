@@ -145,9 +145,10 @@ async def test_spoolman_connection(
     returns `{status: "pending_remaps", ...}` instead."""
     url = body.url
     api_key = body.api_key
-    if not url:
+    if not url or api_key is None:
         row = await _get_or_create(session)
-        url = row.url
+        if not url:
+            url = row.url
         if api_key is None:
             api_key = row.api_key
     if not url:
