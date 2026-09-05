@@ -44,7 +44,7 @@ function makeFetch(url: string) {
   if (url.includes('/types')) return Promise.resolve({ ok: true, json: () => Promise.resolve(mockTypes) });
   if (url === '/api/v1/printers') return Promise.resolve({ ok: true, json: () => Promise.resolve(mockPrinters) });
   if (url.includes('/orca-machine-catalog')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
-  if (url.includes('/spoolman')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false, url: null, api_key: null }) });
+  if (url.includes('/spoolman')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: false, url: null, has_api_key: false }) });
   if (url.includes('/profiles')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ print_profiles: [], filament_profiles: [] }) });
   return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
 }
@@ -210,7 +210,7 @@ describe('PrintersScreen EditForm + SlotSpoolPicker integration', () => {
         return Promise.resolve({ ok: true, json: () => Promise.resolve(INTEGRATION_PRINTER) });
       }
       if (url === '/api/v1/settings/spoolman') {
-        return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', api_key: null }) });
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', has_api_key: false }) });
       }
       if (url === '/api/v1/spoolman/spools') {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([INTEGRATION_SPOOL]) });

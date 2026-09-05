@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
     if (url.includes('/orca-machine-catalog')) return new Response('[]', { status: 200 });
-    if (url.includes('/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 });
+    if (url.includes('/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
     if (url.match(/\/printers\/7\/profiles$/)) return new Response(JSON.stringify({ print_profiles: [], filament_profiles: ['Generic PLA @BBL', 'PolyTerra PLA @BBL'] }), { status: 200 });
     if (url.match(/\/printers\/7$/) && init?.method === 'PATCH') return new Response(JSON.stringify(PRINTER), { status: 200 });
     return new Response('[]', { status: 200 });

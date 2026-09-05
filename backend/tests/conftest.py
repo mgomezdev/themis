@@ -30,23 +30,24 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     original_thumbnail_factory = thumbnail_regen._session_factory
     thumbnail_regen.set_session_factory(factory)
 
-    # Seed a full-scope API key so the bootstrap hatch closes deterministically
-    # and every existing call site keeps working unmodified (auth is enforced
-    # everywhere now — see Task 5).
-    raw, prefix = generate_key()
-    async with factory() as _seed:
-        _seed.add(ApiKey(
-            name="test-fixture", key_prefix=prefix, key_hash=hash_key(raw),
-            scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00",
-        ))
-        await _seed.commit()
+    try:
+        # Seed a full-scope API key so the bootstrap hatch closes deterministically
+        # and every existing call site keeps working unmodified (auth is enforced
+        # everywhere now — see Task 5).
+        raw, prefix = generate_key()
+        async with factory() as _seed:
+            _seed.add(ApiKey(
+                name="test-fixture", key_prefix=prefix, key_hash=hash_key(raw),
+                scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00",
+            ))
+            await _seed.commit()
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-Api-Key": raw},
-    ) as c:
-        yield c
-
-    app.dependency_overrides.clear()
-    thumbnail_regen.set_session_factory(original_thumbnail_factory)
-    await engine.dispose()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+            headers={"X-Api-Key": raw},
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+        thumbnail_regen.set_session_factory(original_thumbnail_factory)
+        await engine.dispose()

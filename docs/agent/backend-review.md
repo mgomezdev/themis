@@ -57,9 +57,16 @@ Every DB read/write in a request handler goes through `Depends(get_session)` —
 `SessionLocal`/`engine` from `database.py`. Code that imports the module-level session factory
 directly bypasses the test suite's in-memory-DB override and silently depends on whatever's actually in
 `<repo-root>/data/themis.db`. `printer_manager` (via `set_session_factory()`) and `thumbnail_regen.py`
-(same pattern, added later) both take an injectable session factory instead — `conftest.py`'s `client`
-fixture points both at the per-test in-memory engine. Don't reintroduce a direct `SessionLocal` import
-in new background/singleton code; follow the `set_session_factory()` pattern instead.
+(same pattern, added later) both take an injectable session factory instead of a direct `SessionLocal`
+import. Only `thumbnail_regen.py` is actually wired up in tests — `conftest.py`'s `client` fixture calls
+`thumbnail_regen.set_session_factory(factory)` with the per-test in-memory engine. `printer_manager`'s
+factory defaults to `None` and is only set to the real `SessionLocal` in `app/main.py`'s lifespan, which
+the test client's `ASGITransport` never runs, so it stays `None` under test and its factory-gated
+methods (`if not self._session_factory: return`) just no-op rather than touching any DB — harmless, but
+means printer_manager's own DB-dependent behavior isn't exercised by the shared `client` fixture; tests
+that need it call `mgr.set_session_factory(...)` themselves (see `test_ams_merge.py`). Don't reintroduce
+a direct `SessionLocal` import in new background/singleton code; follow the `set_session_factory()`
+pattern instead.
 
 ## 5. Migrations
 

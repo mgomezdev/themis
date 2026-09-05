@@ -17,6 +17,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 from ..config import get_filecache_dir, get_library_dir, get_orca_executable
 from ..database import SessionLocal
 from ..models import UploadedFile
@@ -28,10 +30,10 @@ _TIMEOUT = 120  # seconds per plate before giving up
 
 # Injectable so tests can point this at an isolated DB instead of the real,
 # file-backed one - see set_session_factory().
-_session_factory = SessionLocal
+_session_factory: async_sessionmaker = SessionLocal
 
 
-def set_session_factory(factory) -> None:
+def set_session_factory(factory: async_sessionmaker) -> None:
     global _session_factory
     _session_factory = factory
 
