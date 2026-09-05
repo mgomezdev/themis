@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(gh *)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/gate-pr-review.js",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__github__create_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/gate-pr-review.js",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
