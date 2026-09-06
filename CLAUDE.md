@@ -106,10 +106,13 @@ for everything except review.
 - **Commit**: main session, after addressing whatever the reviewer flags.
 
 **Enforcement:** a `PreToolUse` hook (`.claude/hooks/gate-pr-review.js`, wired in `.claude/settings.json`)
-blocks `gh pr create` and `mcp__github__create_pull_request` unless `.claude/review-state.json` (gitignored)
-records `{"sha": "<current HEAD>", "verdict": "clean"}`. This makes review mandatory for every PR, not
-just non-trivial ones — accepted deliberately: a review of a trivial change is quick by nature, and the
-gate is what turns "should review" into "can't skip it, even by forgetting."
+blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShell both covered) unless
+`.claude/review-state.json` (gitignored) records `{"sha": "<current HEAD>", "verdict": "clean"}`. This
+makes review the default for every PR, not just non-trivial ones — accepted deliberately: a review of a
+trivial change is quick by nature, and the gate is what turns "should review" into "hard to skip by
+forgetting." It's a forgetting-guard, not a security boundary — the agent it gates is the same one that
+writes the marker, and a raw `gh api ... pulls` call isn't mechanically caught (though it's still
+against the policy this section describes).
 
 Before dispatching a reviewer, check `.claude/review-state.json` against current `HEAD` yourself — if it
 already matches with `verdict: "clean"`, nothing changed since the last review, skip straight to

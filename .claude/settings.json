@@ -2,12 +2,11 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "if": "Bash(gh *)",
+        "matcher": "Bash|PowerShell",
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/gate-pr-review.js",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pr-review.js\"",
             "timeout": 15
           }
         ]
@@ -17,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/gate-pr-review.js",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.claude/hooks/gate-pr-review.js\"",
             "timeout": 15
           }
         ]
