@@ -4,8 +4,16 @@ const BASE = '/api/v1/settings';
 
 export interface WebhookConfig {
   url: string | null;
-  secret: string | null;
+  has_secret: boolean;
   events: string[];
+}
+
+// The secret never round-trips from the backend (see backend-review.md "Secrets").
+// Omit `secret` to leave it unchanged, "" to clear it, or a new value to set it.
+export interface WebhookConfigUpdate {
+  url?: string | null;
+  secret?: string | null;
+  events?: string[];
 }
 
 export async function getWebhookConfig(): Promise<WebhookConfig> {
@@ -14,7 +22,7 @@ export async function getWebhookConfig(): Promise<WebhookConfig> {
   return resp.json();
 }
 
-export async function saveWebhookConfig(cfg: Partial<WebhookConfig>): Promise<WebhookConfig> {
+export async function saveWebhookConfig(cfg: WebhookConfigUpdate): Promise<WebhookConfig> {
   const resp = await apiFetch(`${BASE}/webhook`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

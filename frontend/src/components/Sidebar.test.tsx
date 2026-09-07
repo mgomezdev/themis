@@ -5,7 +5,7 @@ import { Sidebar } from './Sidebar';
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () =>
-    new Response(JSON.stringify({ enabled: false, url: null, api_key: null }), { status: 200 })
+    new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 })
   ));
 });
 

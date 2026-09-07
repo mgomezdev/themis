@@ -64,7 +64,15 @@ export interface ApiSpool {
 export interface SpoolmanConfig {
   enabled: boolean;
   url: string | null;
-  api_key: string | null;
+  has_api_key: boolean;
+}
+
+// The API key never round-trips from the backend (see backend-review.md "Secrets").
+// Omit `api_key` to leave it unchanged, "" to clear it, or a new value to set it.
+export interface SpoolmanConfigUpdate {
+  enabled?: boolean;
+  url?: string | null;
+  api_key?: string | null;
 }
 
 export function spoolDisplayName(spool: ApiSpool): string {
@@ -85,7 +93,7 @@ export async function getSpoolmanConfig(): Promise<SpoolmanConfig> {
   return request('/api/v1/settings/spoolman');
 }
 
-export async function saveSpoolmanConfig(cfg: Partial<SpoolmanConfig>): Promise<SpoolmanConfig> {
+export async function saveSpoolmanConfig(cfg: SpoolmanConfigUpdate): Promise<SpoolmanConfig> {
   return request('/api/v1/settings/spoolman', {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -95,7 +103,7 @@ export async function saveSpoolmanConfig(cfg: Partial<SpoolmanConfig>): Promise<
 
 export async function testSpoolmanConnection(
   url: string,
-  api_key: string | null,
+  api_key: string | null | undefined,
 ): Promise<SyncResponse> {
   const r = await apiFetch('/api/v1/settings/spoolman/test', {
     method: 'POST',
