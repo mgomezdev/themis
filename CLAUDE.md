@@ -88,6 +88,38 @@ before 2026-08-31 is retired; its design doc is kept for history at
 `docs/superpowers/specs/2026-08-13-dual-overseer-agent-workflow-design.md` but no longer reflects
 current practice.
 
+## Development workflow
+
+For non-trivial changes: design → document → implement → review → commit, staying in the main session
+for everything except review.
+
+- **Design + document**: `brainstorming` then `writing-plans`, plan saved to `docs/superpowers/plans/`.
+  No subagent — this runs on the session's own context, not a cold start.
+- **Implement**: execute the plan directly in the main session (`executing-plans` style), not a fresh
+  subagent per task. Per-task subagent fan-out (implementer + 2 reviewers × N tasks) and multi-agent
+  negotiation are token multipliers this project has already paid for and cut — see the retired
+  dual-overseer workflow above. Run the real test/build commands (see Commands) before handoff so review
+  isn't spent catching regressions a local run would've caught for free.
+- **Review**: exactly one fresh, non-fork subagent, one pass. Handover by reference, not paste:
+  base/head SHA, the plan file path, and `docs/agent/backend-review.md` / `docs/agent/frontend-review.md`
+  as applicable (see Review guidelines below) — it reads what it needs itself.
+- **Commit**: main session, after addressing whatever the reviewer flags.
+
+**Enforcement:** a `PreToolUse` hook (`.claude/hooks/gate-pr-review.js`, wired in `.claude/settings.json`)
+blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShell both covered) unless
+`.claude/review-state.json` (gitignored) records `{"sha": "<current HEAD>", "verdict": "clean"}`. This
+makes review the default for every PR, not just non-trivial ones — accepted deliberately: a review of a
+trivial change is quick by nature, and the gate is what turns "should review" into "hard to skip by
+forgetting." It's a forgetting-guard, not a security boundary — the agent it gates is the same one that
+writes the marker, and a raw `gh api ... pulls` call isn't mechanically caught (though it's still
+against the policy this section describes).
+
+Before dispatching a reviewer, check `.claude/review-state.json` against current `HEAD` yourself — if it
+already matches with `verdict: "clean"`, nothing changed since the last review, skip straight to
+`gh pr create`. Only spawn a reviewer when the marker is missing, stale (SHA mismatch), or not clean.
+Write the marker yourself once Critical/Important findings are addressed; a new commit after that
+naturally invalidates it and requires a fresh review, which is correct, not a duplicate.
+
 ## Review guidelines
 
 Before calling a change done, review it against the domain-specific checklist(s) for whatever it
