@@ -227,19 +227,12 @@ async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
     return result
 
 
-async def _project_dict(project: Project, session: AsyncSession) -> dict:
-    items = await _load_items(session, project.id)
-    links = await _load_links(session, project.id)
-    parts = await _load_parts(session, project.id)
+_TERMINAL = {"complete", "failed", "cancelled"}
 
-    job_rows = (await session.execute(
-        select(Job).where(Job.project_id == project.id)
-    )).scalars().all()
 
+def _project_progress(job_rows: list[Job]) -> dict:
     jobs_total = len(job_rows)
     jobs_complete = sum(1 for j in job_rows if j.status == "complete")
-
-    _TERMINAL = {"complete", "failed", "cancelled"}
 
     estimate_filament_grams_total = (
         sum(j.estimate_filament_grams for j in job_rows if j.estimate_filament_grams is not None) or None
@@ -267,6 +260,28 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
     )
 
     return {
+        "jobs_total": jobs_total,
+        "jobs_complete": jobs_complete,
+        "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
+        "estimate_seconds_total": estimate_seconds_total,
+        "estimate_filament_grams_remaining": round(estimate_filament_grams_remaining, 2) if estimate_filament_grams_remaining else None,
+        "estimate_seconds_remaining": estimate_seconds_remaining,
+        "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
+        "actual_seconds": actual_seconds,
+    }
+
+
+async def _project_dict(project: Project, session: AsyncSession) -> dict:
+    items = await _load_items(session, project.id)
+    links = await _load_links(session, project.id)
+    parts = await _load_parts(session, project.id)
+
+    job_rows = (await session.execute(
+        select(Job).where(Job.project_id == project.id)
+    )).scalars().all()
+    progress = _project_progress(job_rows)
+
+    return {
         "id": project.id,
         "name": project.name,
         "customer": project.customer,
@@ -283,14 +298,7 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "items": items,
         "links": links,
         "parts": parts,
-        "jobs_total": jobs_total,
-        "jobs_complete": jobs_complete,
-        "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
-        "estimate_seconds_total": estimate_seconds_total,
-        "estimate_filament_grams_remaining": round(estimate_filament_grams_remaining, 2) if estimate_filament_grams_remaining else None,
-        "estimate_seconds_remaining": estimate_seconds_remaining,
-        "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
-        "actual_seconds": actual_seconds,
+        **progress,
     }
 
 
