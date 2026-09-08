@@ -64,7 +64,13 @@ export function ProjectDetailScreen() {
     getProjectShare(projectId).then(setShare).catch(console.error);
   }, [projectId]);
 
-  useEffect(() => { loadShare(); }, [loadShare]);
+  function toggleShare() {
+    setShowShare(v => {
+      const next = !v;
+      if (next) loadShare();
+      return next;
+    });
+  }
 
   async function handleCreateOrRegenerateShare() {
     if (!projectId) return;
@@ -181,7 +187,7 @@ export function ProjectDetailScreen() {
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            <button className="btn sm" onClick={() => setShowShare(v => !v)}>
+            <button className="btn sm" onClick={toggleShare}>
               Share
             </button>
             <button className="btn sm" onClick={() => navigate(`/projects/${project.id}/edit`)}>

@@ -44,6 +44,16 @@ beforeEach(() => {
 });
 
 describe('ProjectDetailScreen share panel', () => {
+  it('does not fetch share state until the Share panel is opened', async () => {
+    const fetchMock = mockFetch({ enabled: false, token: null });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderScreen();
+    await waitFor(() => screen.getByText('Test Project'));
+
+    expect(fetchMock.mock.calls.some(([url]) => url.includes('/share'))).toBe(false);
+  });
+
   it('shows a Create share link button when no link exists', async () => {
     vi.stubGlobal('fetch', mockFetch({ enabled: false, token: null }));
 

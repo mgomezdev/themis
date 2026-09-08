@@ -47,10 +47,15 @@ require it — **not** `projects:write`. Rationale: an integration key (e.g. Ord
 unauthenticated links for arbitrary projects just because it can write project data. Minting a public
 link is a materially more sensitive action than editing project fields and gets its own gate.
 
-The browser-bootstrapped "Browser" API key every human gets on first load (`AuthGate.tsx`) is already
-granted every scope in `SCOPES` (see `auth.py`'s bootstrap path) — this is the closest thing Themis has
-to "admin," and it picks up `projects:share` automatically with no code change. A scoped-down
-integration key only gets it if explicitly granted via the API Keys settings page.
+The browser-bootstrapped "Browser" API key a human gets on first load (`AuthGate.tsx`) is granted every
+scope in `SCOPES` at the moment it's created (see `auth.py`'s bootstrap path) — this is the closest
+thing Themis has to "admin." That happens once, at creation: `api_keys.py` snapshots `sorted(SCOPES)`
+into the row and never recomputes it, so a Browser key minted on a fresh install picks up
+`projects:share` automatically, but a Browser key that already existed before this scope was added does
+**not** gain it retroactively — that key's stored scope list is frozen as of when it was created. An
+existing install upgrading to this feature will see 403s on the new share endpoints from its existing
+Browser key until a new key (or one with `projects:share` explicitly added) is used. A scoped-down
+integration key only gets the scope if explicitly granted via the API Keys settings page.
 
 This scope must be added in two places that don't share a source of truth (a documented, hand-mirrored
 contract in this codebase — see `docs/agent/backend-review.md` § 2):
