@@ -45,6 +45,15 @@ describe('SharedProjectScreen', () => {
     await waitFor(() => expect(screen.getByText(/invalid or has been revoked/i)).toBeTruthy());
   });
 
+  it('shows a generic load-error message (not "revoked") on a 500', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })));
+
+    renderAtToken('valid-token');
+
+    await waitFor(() => expect(screen.getByText(/couldn't load this page/i)).toBeTruthy());
+    expect(screen.queryByText(/invalid or has been revoked/i)).toBeNull();
+  });
+
   it('does not send an X-Api-Key header', async () => {
     const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify({
       name: 'P', customer: '', due_date: null, on_hold: false,

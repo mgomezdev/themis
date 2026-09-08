@@ -13,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -65,6 +66,7 @@ class ProjectPatch(BaseModel):
 class ProjectShareOut(BaseModel):
     enabled: bool
     token: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class ProjectItemCreate(BaseModel):
@@ -436,7 +438,10 @@ async def get_project_share(
     session: AsyncSession = Depends(get_session),
 ) -> ProjectShareOut:
     proj = await _get_project_or_404(project_id, session)
-    return ProjectShareOut(enabled=proj.share_token is not None, token=proj.share_token)
+    return ProjectShareOut(
+        enabled=proj.share_token is not None, token=proj.share_token,
+        created_at=proj.share_token_created_at,
+    )
 
 
 @router.put(
@@ -451,13 +456,21 @@ async def put_project_share(
     session: AsyncSession = Depends(get_session),
 ) -> ProjectShareOut:
     """Always generates a fresh token, whether or not one already existed - "create"
-    and "regenerate" are the same operation."""
+    and "regenerate" are the same operation. Retries once on the astronomically
+    unlikely event of a token collision (unique constraint violation)."""
     proj = await _get_project_or_404(project_id, session)
-    proj.share_token = secrets.token_urlsafe(32)
-    proj.share_token_created_at = _now_iso()
-    await session.commit()
+    for attempt in range(2):
+        proj.share_token = secrets.token_urlsafe(32)
+        proj.share_token_created_at = _now_iso()
+        try:
+            await session.commit()
+            break
+        except IntegrityError:
+            await session.rollback()
+            if attempt == 1:
+                raise
     await session.refresh(proj)
-    return ProjectShareOut(enabled=True, token=proj.share_token)
+    return ProjectShareOut(enabled=True, token=proj.share_token, created_at=proj.share_token_created_at)
 
 
 @router.delete(

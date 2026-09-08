@@ -1,30 +1,27 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { getPublicProject, type PublicProject } from '../api/public';
-
-function fmtDate(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fmtDuration(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
+import { getPublicProject, ShareNotFoundError, type PublicProject } from '../api/public';
+import { fmtDate, fmtDuration } from '../data/helpers';
 
 export function SharedProjectScreen() {
   const { token } = useParams<{ token: string }>();
   const [project, setProject] = useState<PublicProject | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     if (!token) return;
     let alive = true;
+    setProject(null);
+    setNotFound(false);
+    setLoadError(false);
     getPublicProject(token)
       .then(p => { if (alive) setProject(p); })
-      .catch(() => { if (alive) setNotFound(true); });
+      .catch(e => {
+        if (!alive) return;
+        if (e instanceof ShareNotFoundError) setNotFound(true);
+        else setLoadError(true);
+      });
     return () => { alive = false; };
   }, [token]);
 
@@ -43,6 +40,18 @@ export function SharedProjectScreen() {
         <div style={cardStyle}>
           <p style={{ color: 'var(--text-3)', margin: 0 }}>
             This link is invalid or has been revoked.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div style={shellStyle}>
+        <div style={cardStyle}>
+          <p style={{ color: 'var(--text-3)', margin: 0 }}>
+            Couldn't load this page. Please try again.
           </p>
         </div>
       </div>

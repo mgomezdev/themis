@@ -24,7 +24,7 @@ function renderScreen() {
   );
 }
 
-function mockFetch(shareState: { enabled: boolean; token: string | null }) {
+function mockFetch(shareState: { enabled: boolean; token: string | null; created_at?: string | null }) {
   return vi.fn(async (url: string, _init?: RequestInit) => {
     if (url.includes('/share')) {
       return new Response(JSON.stringify(shareState), { status: 200 });
@@ -64,14 +64,15 @@ describe('ProjectDetailScreen share panel', () => {
     expect(await screen.findByRole('button', { name: /create share link/i })).toBeTruthy();
   });
 
-  it('shows the share URL and Copy/Regenerate/Revoke when a link exists', async () => {
-    vi.stubGlobal('fetch', mockFetch({ enabled: true, token: 'abc123' }));
+  it('shows the share URL, "Shared since", and Copy/Regenerate/Revoke when a link exists', async () => {
+    vi.stubGlobal('fetch', mockFetch({ enabled: true, token: 'abc123', created_at: '2026-09-06T00:00:00Z' }));
 
     renderScreen();
     await waitFor(() => screen.getByText('Test Project'));
     await userEvent.click(screen.getByRole('button', { name: /share/i }));
 
     await waitFor(() => expect(screen.getByDisplayValue(/abc123/)).toBeTruthy());
+    expect(screen.getByText(/shared since/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /copy/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /regenerate/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /revoke/i })).toBeTruthy();

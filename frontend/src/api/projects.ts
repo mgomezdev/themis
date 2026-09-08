@@ -164,6 +164,7 @@ export const getProjectJobs = (projectId: number) =>
 export interface ProjectShare {
   enabled: boolean;
   token: string | null;
+  created_at: string | null;
 }
 
 export const getProjectShare = (projectId: number) =>

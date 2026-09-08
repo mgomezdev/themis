@@ -4,6 +4,7 @@ import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { fmtDate, fmtDuration } from '../data/helpers';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
@@ -20,18 +21,6 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   complete:  { label: 'Done',     color: 'var(--ok)' },
   cancelled: { label: 'Cancelled',color: 'var(--text-4)' },
 };
-
-function fmtDate(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fmtDuration(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
 
 export function ProjectDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -333,6 +322,13 @@ export function ProjectDetailScreen() {
                   Copy
                 </button>
               </div>
+              {share.created_at && (
+                <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 12 }}>
+                  Shared since {new Date(share.created_at).toLocaleString(undefined, {
+                    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+                  })}
+                </div>
+              )}
               {confirmAction === null ? (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <button className="btn sm" onClick={() => setConfirmAction('regenerate')} disabled={shareBusy}>
