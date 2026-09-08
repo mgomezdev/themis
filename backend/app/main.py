@@ -28,6 +28,7 @@ from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
+from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
@@ -155,6 +156,7 @@ app.include_router(jobs_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
 app.include_router(projects_router)
+app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(spoolman_router)
