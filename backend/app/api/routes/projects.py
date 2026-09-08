@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -59,6 +60,11 @@ class ProjectPatch(BaseModel):
     on_hold: Optional[bool] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
+
+
+class ProjectShareOut(BaseModel):
+    enabled: bool
+    token: Optional[str] = None
 
 
 class ProjectItemCreate(BaseModel):
@@ -416,6 +422,61 @@ async def delete_project(
     await session.delete(proj)
     await session.commit()
     return {"deleted": project_id}
+
+
+@router.get(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Get project share-link state",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def get_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    proj = await _get_project_or_404(project_id, session)
+    return ProjectShareOut(enabled=proj.share_token is not None, token=proj.share_token)
+
+
+@router.put(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Create or regenerate the project's share link",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def put_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    """Always generates a fresh token, whether or not one already existed - "create"
+    and "regenerate" are the same operation."""
+    proj = await _get_project_or_404(project_id, session)
+    proj.share_token = secrets.token_urlsafe(32)
+    proj.share_token_created_at = _now_iso()
+    await session.commit()
+    await session.refresh(proj)
+    return ProjectShareOut(enabled=True, token=proj.share_token)
+
+
+@router.delete(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Revoke the project's share link",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def delete_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    proj = await _get_project_or_404(project_id, session)
+    proj.share_token = None
+    proj.share_token_created_at = None
+    await session.commit()
+    await session.refresh(proj)
+    return ProjectShareOut(enabled=False, token=None)
 
 
 @router.get(
