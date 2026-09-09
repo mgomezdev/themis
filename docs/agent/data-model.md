@@ -163,7 +163,7 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `id, name, customer:str="", order_type:str="internal"` (`"customer"`|`"internal"` — same vocabulary as
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
 bool, due_date?, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
-source_user?, source_layout_id?, created_at, updated_at`.
+source_user?, source_layout_id?, share_token? (unique), share_token_created_at?, created_at, updated_at`.
 - Full CRUD at `/api/v1/projects`. Created by Themis UI (Project Builder) or by Ordinus
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
 - `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
@@ -171,6 +171,16 @@ source_user?, source_layout_id?, created_at, updated_at`.
 - `order_id`: set by `generate_project` — the internal `orders` row that groups all generated jobs for
   fulfillment tracking. `NULL` until the project is first generated. Not the same thing as the
   project's own `order_type` field above.
+- `share_token`/`share_token_created_at`: public share-link state, `NULL` = not shared. Managed via
+  `GET`/`PUT`/`DELETE /api/v1/projects/{id}/share` (scope `projects:share`, distinct from
+  `projects:write` — see `docs/agent/conventions.md` § Invariants). `PUT` always generates a fresh
+  token (create and regenerate are the same operation); `DELETE` clears it (revoke). Read via the
+  unauthenticated `GET /api/v1/public/projects/{token}` in `app/api/routes/public.py`, which returns
+  exactly: `name, customer, due_date, on_hold, items[{name, quantity, quantity_completed}],
+  parts[{name, quantity}], links[{url, label}], jobs_total, jobs_complete,
+  estimate_seconds_remaining, updated_at` — nothing else. If a review of `public.py` finds a field in
+  its response not in this list, that's a leak, not a stale doc; update this list only when the route's
+  own field set intentionally changes.
 - `machine_uuid`/`process_uuid`: kept for backward compat with the legacy pre-generate-flow; not shown
   in the current UI.
 - `result_file_id`: legacy single-result pointer from pre-generate-flow projects. Cleared when

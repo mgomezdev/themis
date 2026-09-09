@@ -3,14 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Empty, Progress } from '../components/ui';
 import { useProjects, deleteProject, generateProject, type Project } from '../api/projects';
+import { fmtDate as formatDate } from '../data/helpers';
 
 type Filter = 'all' | 'pending' | 'active' | 'completed';
-
-function formatDate(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
 
 function projectFilter(p: Project, f: Filter): boolean {
   switch (f) {

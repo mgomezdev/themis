@@ -1,7 +1,8 @@
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from app.database import Base
-from app.models import Printer, UploadedFile, Job, JobPrinterConfig, GcodeFile, NotificationConfig
+from app.models import Printer, UploadedFile, Job, JobPrinterConfig, GcodeFile, NotificationConfig, Project
 
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -132,3 +133,22 @@ async def test_notification_config_json_list_columns_round_trip(session):
     assert cfg.ntfy_events == ["job.complete"]
     assert cfg.discord_events == ["job.failed", "job.blocked"]
     assert cfg.email_to_addrs == ["ops@example.com", "alerts@example.com"]
+
+
+async def test_project_share_token_must_be_unique(session):
+    now = "2026-09-06T00:00:00Z"
+    p1 = Project(name="Project A", created_at=now, updated_at=now, share_token="dup-token")
+    p2 = Project(name="Project B", created_at=now, updated_at=now, share_token="dup-token")
+    session.add_all([p1, p2])
+    with pytest.raises(IntegrityError):
+        await session.commit()
+
+
+async def test_project_share_token_defaults_to_none(session):
+    now = "2026-09-06T00:00:00Z"
+    p = Project(name="Project C", created_at=now, updated_at=now)
+    session.add(p)
+    await session.commit()
+    await session.refresh(p)
+    assert p.share_token is None
+    assert p.share_token_created_at is None

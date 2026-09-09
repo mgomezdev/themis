@@ -4,9 +4,11 @@ import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { fmtDate, fmtDuration } from '../data/helpers';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart,
-  type Project, type ProjectJob,
+  getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
+  type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
@@ -19,18 +21,6 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
   complete:  { label: 'Done',     color: 'var(--ok)' },
   cancelled: { label: 'Cancelled',color: 'var(--text-4)' },
 };
-
-function fmtDate(iso: string | null): string | null {
-  if (!iso) return null;
-  const d = new Date(iso + 'T00:00:00');
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-function fmtDuration(s: number): string {
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
 
 export function ProjectDetailScreen() {
   const { id } = useParams<{ id: string }>();
@@ -45,6 +35,10 @@ export function ProjectDetailScreen() {
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
   const [processPreset, setProcessPreset] = useState<string | null>(null);
+  const [share, setShare] = useState<ProjectShare | null>(null);
+  const [showShare, setShowShare] = useState(false);
+  const [shareBusy, setShareBusy] = useState(false);
+  const [confirmAction, setConfirmAction] = useState<'regenerate' | 'revoke' | null>(null);
 
   const reload = useCallback(() => {
     if (!projectId) return;
@@ -53,6 +47,41 @@ export function ProjectDetailScreen() {
   }, [projectId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  const loadShare = useCallback(() => {
+    if (!projectId) return;
+    getProjectShare(projectId).then(setShare).catch(console.error);
+  }, [projectId]);
+
+  function toggleShare() {
+    setShowShare(v => {
+      const next = !v;
+      if (next) loadShare();
+      return next;
+    });
+  }
+
+  async function handleCreateOrRegenerateShare() {
+    if (!projectId) return;
+    setShareBusy(true);
+    try {
+      setShare(await createOrRegenerateProjectShare(projectId));
+    } finally {
+      setShareBusy(false);
+      setConfirmAction(null);
+    }
+  }
+
+  async function handleRevokeShare() {
+    if (!projectId) return;
+    setShareBusy(true);
+    try {
+      setShare(await revokeProjectShare(projectId));
+    } finally {
+      setShareBusy(false);
+      setConfirmAction(null);
+    }
+  }
 
   async function toggleAllocated(partId: number, allocated: boolean) {
     if (!projectId) return;
@@ -147,6 +176,9 @@ export function ProjectDetailScreen() {
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            <button className="btn sm" onClick={toggleShare}>
+              Share
+            </button>
             <button className="btn sm" onClick={() => navigate(`/projects/${project.id}/edit`)}>
               Edit
             </button>
@@ -259,6 +291,76 @@ export function ProjectDetailScreen() {
           </div>
         )}
       </div>
+
+      {showShare && (
+        <div className="card" style={{ padding: 20 }}>
+          {!share ? (
+            <p style={{ color: 'var(--text-3)', margin: 0 }}>Loading…</p>
+          ) : !share.enabled ? (
+            <div>
+              <p style={{ color: 'var(--text-3)', marginTop: 0 }}>
+                This project isn't shared. Anyone with the link can view its status - no login required.
+              </p>
+              <button className="btn primary sm" onClick={handleCreateOrRegenerateShare} disabled={shareBusy}>
+                {shareBusy ? 'Creating…' : 'Create share link'}
+              </button>
+            </div>
+          ) : (
+            <div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                <input
+                  className="input"
+                  readOnly
+                  value={`${window.location.origin}/share/${share.token}`}
+                  style={{ flex: 1 }}
+                  onFocus={e => e.target.select()}
+                />
+                <button
+                  className="btn sm"
+                  onClick={() => navigator.clipboard.writeText(`${window.location.origin}/share/${share.token}`)}
+                >
+                  Copy
+                </button>
+              </div>
+              {share.created_at && (
+                <div style={{ fontSize: 12, color: 'var(--text-4)', marginBottom: 12 }}>
+                  Shared since {new Date(share.created_at).toLocaleString(undefined, {
+                    month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
+                  })}
+                </div>
+              )}
+              {confirmAction === null ? (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn sm" onClick={() => setConfirmAction('regenerate')} disabled={shareBusy}>
+                    Regenerate
+                  </button>
+                  <button className="btn sm" onClick={() => setConfirmAction('revoke')} disabled={shareBusy}>
+                    Revoke
+                  </button>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, color: 'var(--warn)' }}>
+                    {confirmAction === 'regenerate'
+                      ? 'This invalidates the current link. Continue?'
+                      : 'This disables the current link. Continue?'}
+                  </span>
+                  <button
+                    className="btn primary sm"
+                    disabled={shareBusy}
+                    onClick={confirmAction === 'regenerate' ? handleCreateOrRegenerateShare : handleRevokeShare}
+                  >
+                    Confirm
+                  </button>
+                  <button className="btn sm" onClick={() => setConfirmAction(null)} disabled={shareBusy}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ── Links ───────────────────────────────────────────────────────── */}
       {project.links && project.links.length > 0 && (

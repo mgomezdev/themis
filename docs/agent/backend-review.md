@@ -111,3 +111,13 @@ code that touches one of these areas, not just before review.
 TDD: a test that failed for the right reason before the fix, for every behavior change — not just
 coverage added after the fact. Full suite green (`pytest -v` from `backend/`) before calling anything
 done.
+
+## 10. Public (unauthenticated) routes
+
+`app/api/routes/public.py` is the one deliberate exception (beyond the empty-`api_keys`-table bootstrap
+hatch) to § 4's "every route requires `Depends(require_scope(...))`" rule — its single route,
+`GET /api/v1/public/projects/{token}`, is addressed by an unguessable per-project token instead. This is
+intentional, not an oversight: don't add `require_scope` to it, and don't add a second route to that
+file without re-reading its module docstring first. If you're reviewing a change near this file, the
+question isn't "does this have auth" (it deliberately doesn't) but "does the response leak anything
+beyond what `docs/agent/data-model.md`'s § projects documents as the intended public field list."

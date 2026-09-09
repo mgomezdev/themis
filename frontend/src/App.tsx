@@ -22,6 +22,7 @@ import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 import { ProjectDetailScreen }  from './screens/ProjectDetailScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
+import { SharedProjectScreen }  from './screens/SharedProjectScreen';
 
 type SvcStatus = 'up' | 'down' | 'unconfigured';
 
@@ -205,9 +206,17 @@ function AppShell() {
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthGate>
-        <AppShell />
-      </AuthGate>
+      <Routes>
+        <Route path="/share/:token" element={<SharedProjectScreen />} />
+        <Route
+          path="/*"
+          element={
+            <AuthGate>
+              <AppShell />
+            </AuthGate>
+          }
+        />
+      </Routes>
     </BrowserRouter>
   );
 }

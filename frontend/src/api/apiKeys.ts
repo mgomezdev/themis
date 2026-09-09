@@ -77,6 +77,7 @@ export const SCOPES: ScopeGroup[] = [
   { resource: 'projects', label: 'Projects', scopes: [
     { scope: 'projects:read', label: 'Read' },
     { scope: 'projects:write', label: 'Write' },
+    { scope: 'projects:share', label: 'Share links' },
   ] },
   { resource: 'laminus', label: 'Laminus', scopes: [
     { scope: 'laminus:read', label: 'Read' },

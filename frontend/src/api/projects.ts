@@ -161,6 +161,19 @@ export interface ProjectJob {
 export const getProjectJobs = (projectId: number) =>
   request<ProjectJob[]>(`/api/v1/projects/${projectId}/jobs`);
 
+export interface ProjectShare {
+  enabled: boolean;
+  token: string | null;
+  created_at: string | null;
+}
+
+export const getProjectShare = (projectId: number) =>
+  request<ProjectShare>(`/api/v1/projects/${projectId}/share`);
+export const createOrRegenerateProjectShare = (projectId: number) =>
+  request<ProjectShare>(`/api/v1/projects/${projectId}/share`, { method: 'PUT' });
+export const revokeProjectShare = (projectId: number) =>
+  request<ProjectShare>(`/api/v1/projects/${projectId}/share`, { method: 'DELETE' });
+
 export interface ProjectLinkCreate {
   url: string;
   label?: string | null;

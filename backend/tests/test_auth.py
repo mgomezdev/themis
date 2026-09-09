@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.auth import require_scope
+from app.auth import SCOPES, require_scope
 from app.database import Base, get_session
 from app.models import ApiKey
 from app.services.api_key_service import generate_key, hash_key
@@ -290,3 +290,8 @@ async def test_table_is_empty_recomputed_live(env, monkeypatch):
     resp = await client.get("/protected")
     assert resp.status_code == 200
     assert resp.json() == {"ok": True}
+
+
+def test_projects_share_scope_is_registered():
+    assert "projects:share" in SCOPES
+    require_scope("projects:share")  # must not raise ValueError("unknown scope")

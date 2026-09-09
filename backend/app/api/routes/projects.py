@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import secrets
 import uuid as _uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -59,6 +61,12 @@ class ProjectPatch(BaseModel):
     on_hold: Optional[bool] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
+
+
+class ProjectShareOut(BaseModel):
+    enabled: bool
+    token: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class ProjectItemCreate(BaseModel):
@@ -227,19 +235,12 @@ async def _load_items(session: AsyncSession, project_id: int) -> list[dict]:
     return result
 
 
-async def _project_dict(project: Project, session: AsyncSession) -> dict:
-    items = await _load_items(session, project.id)
-    links = await _load_links(session, project.id)
-    parts = await _load_parts(session, project.id)
+_TERMINAL = {"complete", "failed", "cancelled"}
 
-    job_rows = (await session.execute(
-        select(Job).where(Job.project_id == project.id)
-    )).scalars().all()
 
+def _project_progress(job_rows: list[Job]) -> dict:
     jobs_total = len(job_rows)
     jobs_complete = sum(1 for j in job_rows if j.status == "complete")
-
-    _TERMINAL = {"complete", "failed", "cancelled"}
 
     estimate_filament_grams_total = (
         sum(j.estimate_filament_grams for j in job_rows if j.estimate_filament_grams is not None) or None
@@ -267,6 +268,28 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
     )
 
     return {
+        "jobs_total": jobs_total,
+        "jobs_complete": jobs_complete,
+        "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
+        "estimate_seconds_total": estimate_seconds_total,
+        "estimate_filament_grams_remaining": round(estimate_filament_grams_remaining, 2) if estimate_filament_grams_remaining else None,
+        "estimate_seconds_remaining": estimate_seconds_remaining,
+        "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
+        "actual_seconds": actual_seconds,
+    }
+
+
+async def _project_dict(project: Project, session: AsyncSession) -> dict:
+    items = await _load_items(session, project.id)
+    links = await _load_links(session, project.id)
+    parts = await _load_parts(session, project.id)
+
+    job_rows = (await session.execute(
+        select(Job).where(Job.project_id == project.id)
+    )).scalars().all()
+    progress = _project_progress(job_rows)
+
+    return {
         "id": project.id,
         "name": project.name,
         "customer": project.customer,
@@ -283,14 +306,7 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "items": items,
         "links": links,
         "parts": parts,
-        "jobs_total": jobs_total,
-        "jobs_complete": jobs_complete,
-        "estimate_filament_grams_total": round(estimate_filament_grams_total, 2) if estimate_filament_grams_total else None,
-        "estimate_seconds_total": estimate_seconds_total,
-        "estimate_filament_grams_remaining": round(estimate_filament_grams_remaining, 2) if estimate_filament_grams_remaining else None,
-        "estimate_seconds_remaining": estimate_seconds_remaining,
-        "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
-        "actual_seconds": actual_seconds,
+        **progress,
     }
 
 
@@ -408,6 +424,72 @@ async def delete_project(
     await session.delete(proj)
     await session.commit()
     return {"deleted": project_id}
+
+
+@router.get(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Get project share-link state",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def get_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    proj = await _get_project_or_404(project_id, session)
+    return ProjectShareOut(
+        enabled=proj.share_token is not None, token=proj.share_token,
+        created_at=proj.share_token_created_at,
+    )
+
+
+@router.put(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Create or regenerate the project's share link",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def put_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    """Always generates a fresh token, whether or not one already existed - "create"
+    and "regenerate" are the same operation. Retries once on the astronomically
+    unlikely event of a token collision (unique constraint violation)."""
+    proj = await _get_project_or_404(project_id, session)
+    for attempt in range(2):
+        proj.share_token = secrets.token_urlsafe(32)
+        proj.share_token_created_at = _now_iso()
+        try:
+            await session.commit()
+            break
+        except IntegrityError:
+            await session.rollback()
+            if attempt == 1:
+                raise
+    await session.refresh(proj)
+    return ProjectShareOut(enabled=True, token=proj.share_token, created_at=proj.share_token_created_at)
+
+
+@router.delete(
+    "/{project_id}/share",
+    response_model=ProjectShareOut,
+    summary="Revoke the project's share link",
+    responses={404: {"description": "Project not found"}},
+    dependencies=[Depends(require_scope("projects:share"))],
+)
+async def delete_project_share(
+    project_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> ProjectShareOut:
+    proj = await _get_project_or_404(project_id, session)
+    proj.share_token = None
+    proj.share_token_created_at = None
+    await session.commit()
+    await session.refresh(proj)
+    return ProjectShareOut(enabled=False, token=None)
 
 
 @router.get(
