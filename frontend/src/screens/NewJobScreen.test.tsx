@@ -24,7 +24,7 @@ import * as spoolmanApi from '../api/spoolman';
 
 function mockSpoolmanConnected() {
   vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({
-    config: { enabled: true, url: 'http://artemis:7912', api_key: null },
+    config: { enabled: true, url: 'http://artemis:7912', has_api_key: false },
     refetch: vi.fn(),
   });
   vi.mocked(spoolmanApi.useFilaments).mockReturnValue(MOCK_FILAMENTS as never);

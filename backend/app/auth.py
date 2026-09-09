@@ -17,7 +17,7 @@ SCOPES: set[str] = {
     "queue:read", "queue:write",
     "fleet:read",
     "orders:read", "orders:write",
-    "projects:read", "projects:write",
+    "projects:read", "projects:write", "projects:share",
     "laminus:read", "laminus:write",
     "settings:read", "settings:write",
     "spoolman:read", "spoolman:write",

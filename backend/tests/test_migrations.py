@@ -314,4 +314,17 @@ async def test_v017_up_down_roundtrip():
             text("SELECT name FROM sqlite_master WHERE type='table'")
         )).fetchall()}
         assert "notification_config" not in tables
+
+
+@pytest.mark.asyncio
+async def test_migrate_adds_share_token_to_projects_idempotently():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await run_migrations(conn)  # idempotent — second run must not raise
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(projects)"))).fetchall()}
+    assert "share_token" in cols
+    assert "share_token_created_at" in cols
+    await engine.dispose()
     await engine.dispose()

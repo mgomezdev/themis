@@ -7,6 +7,7 @@ from app.main import app
 from app.database import Base, get_session
 from app.auth import SCOPES
 from app.models import ApiKey
+from app.services import thumbnail_regen
 from app.services.api_key_service import generate_key, hash_key
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -26,22 +27,27 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_session] = override_get_session
 
-    # Seed a full-scope API key so the bootstrap hatch closes deterministically
-    # and every existing call site keeps working unmodified (auth is enforced
-    # everywhere now — see Task 5).
-    raw, prefix = generate_key()
-    async with factory() as _seed:
-        _seed.add(ApiKey(
-            name="test-fixture", key_prefix=prefix, key_hash=hash_key(raw),
-            scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00",
-        ))
-        await _seed.commit()
+    original_thumbnail_factory = thumbnail_regen._session_factory
+    thumbnail_regen.set_session_factory(factory)
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
-        headers={"X-Api-Key": raw},
-    ) as c:
-        yield c
+    try:
+        # Seed a full-scope API key so the bootstrap hatch closes deterministically
+        # and every existing call site keeps working unmodified (auth is enforced
+        # everywhere now — see Task 5).
+        raw, prefix = generate_key()
+        async with factory() as _seed:
+            _seed.add(ApiKey(
+                name="test-fixture", key_prefix=prefix, key_hash=hash_key(raw),
+                scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00",
+            ))
+            await _seed.commit()
 
-    app.dependency_overrides.clear()
-    await engine.dispose()
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test",
+            headers={"X-Api-Key": raw},
+        ) as c:
+            yield c
+    finally:
+        app.dependency_overrides.clear()
+        thumbnail_regen.set_session_factory(original_thumbnail_factory)
+        await engine.dispose()

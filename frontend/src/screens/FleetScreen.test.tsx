@@ -323,7 +323,7 @@ function makeIntegrationFetch(
     }
     // Spoolman config
     if (url === '/api/v1/settings/spoolman') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', api_key: null }) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', has_api_key: false }) });
     }
     // Spoolman spools
     if (url === '/api/v1/spoolman/spools') {

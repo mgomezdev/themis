@@ -129,7 +129,7 @@ const MOCK_FILAMENTS = [
 function mockSpoolman(enabled: boolean) {
   vi.mocked(spoolman.useSpoolmanConfig).mockReturnValue(
     enabled
-      ? { config: { enabled: true, url: 'http://artemis:7912', api_key: null }, refetch: vi.fn() }
+      ? { config: { enabled: true, url: 'http://artemis:7912', has_api_key: false }, refetch: vi.fn() }
       : { config: null, refetch: vi.fn() },
   );
   vi.mocked(spoolman.useFilaments).mockReturnValue(enabled ? MOCK_FILAMENTS as never : []);

@@ -6,6 +6,161 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/api-keys": {
+      "get": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "List Keys",
+        "operationId": "list_keys_api_v1_api_keys_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "Create Key",
+        "operationId": "create_key_api_v1_api_keys_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApiKeyCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/scopes": {
+      "get": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "Get Scopes",
+        "operationId": "get_scopes_api_v1_api_keys_scopes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/{key_id}/revoke": {
+      "post": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "Revoke Key",
+        "operationId": "revoke_key_api_v1_api_keys__key_id__revoke_post",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/{key_id}": {
+      "delete": {
+        "tags": [
+          "api-keys"
+        ],
+        "summary": "Delete Key",
+        "operationId": "delete_key_api_v1_api_keys__key_id__delete",
+        "parameters": [
+          {
+            "name": "key_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Key Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/orders": {
       "get": {
         "tags": [
@@ -592,6 +747,9 @@
           },
           "404": {
             "description": "Printer not found"
+          },
+          "409": {
+            "description": "Printer has an active job"
           },
           "422": {
             "description": "Validation Error",
@@ -1641,7 +1799,7 @@
             "description": "File not found"
           },
           "409": {
-            "description": "File is referenced by an active job"
+            "description": "File is referenced by an active job or a project item"
           },
           "422": {
             "description": "Validation Error",
@@ -4345,7 +4503,7 @@
           "settings"
         ],
         "summary": "Get Spoolman config",
-        "description": "Spoolman integration settings: enabled flag, base URL, and API key.",
+        "description": "Spoolman integration settings: enabled flag, base URL, and whether an API key is set.\nThe key itself never round-trips - omit `api_key` on PUT to leave it unchanged.",
         "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
         "responses": {
           "200": {
@@ -4365,7 +4523,7 @@
           "settings"
         ],
         "summary": "Update Spoolman config",
-        "description": "Update Spoolman integration settings. Omitted fields are left unchanged.",
+        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it.",
         "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
         "requestBody": {
           "content": {
@@ -4447,7 +4605,7 @@
           "settings"
         ],
         "summary": "Get webhook config",
-        "description": "Outbound webhook settings: endpoint URL, HMAC secret, and subscribed event types.",
+        "description": "Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed\nevent types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged.",
         "operationId": "get_webhook_config_api_v1_settings_webhook_get",
         "responses": {
           "200": {
@@ -4467,7 +4625,7 @@
           "settings"
         ],
         "summary": "Update webhook config",
-        "description": "Update webhook settings. Omitted fields are left unchanged.",
+        "description": "Update webhook settings. Omitted fields (including `secret`) are left unchanged; an\nempty string for `secret` clears it.",
         "operationId": "update_webhook_config_api_v1_settings_webhook_put",
         "requestBody": {
           "content": {
@@ -4503,20 +4661,144 @@
         }
       }
     },
-    "/api/v1/settings/fleet-backup": {
+    "/api/v1/settings/notifications": {
       "get": {
         "tags": [
           "settings"
         ],
-        "summary": "Download fleet backup",
-        "description": "Export all printer configs as a downloadable JSON file.\n\nThe response has `Content-Disposition: attachment; filename=themis-fleet-backup.json`\nso browsers will prompt to save it. Import with `POST /settings/fleet-import`.",
-        "operationId": "fleet_backup_api_v1_settings_fleet_backup_get",
+        "summary": "Get notification config",
+        "description": "Built-in notification channel settings (ntfy, Discord, email). All three\nchannels are always present in the response, even when unconfigured.",
+        "operationId": "get_notification_config_api_v1_settings_notifications_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update notification config",
+        "description": "Update notification channel settings. A channel key omitted from the request\nbody leaves that channel's stored config unchanged; a channel key present\nreplaces that whole channel's config.",
+        "operationId": "update_notification_config_api_v1_settings_notifications_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/notifications/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Send a test notification",
+        "description": "Send a test notification for one channel using the supplied (unsaved) config,\nwithout requiring it be saved first. Returns `{ok, message}` \u2014 including for a\nmissing required field, which is reported this way rather than as a 4xx.",
+        "operationId": "test_notification_config_api_v1_settings_notifications_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NotificationTestIn"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/fleet-backup": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Download fleet backup",
+        "description": "Export all printer configs as a downloadable JSON file.\n\nBy default, credential fields in each printer's `connection_config` (access codes,\nAPI keys \u2014 whatever that printer's client marks as `field_type: \"password\"`) are\nblanked out. The file is a plaintext download that ends up in ~/Downloads and\nwhatever syncs it; printer LAN credentials shouldn't ride along by default. Pass\n`include_credentials=true` to export them anyway (e.g. for a personal encrypted\nbackup you control end to end).\n\nThe response has `Content-Disposition: attachment; filename=themis-fleet-backup.json`\nso browsers will prompt to save it. Import with `POST /settings/fleet-import`.",
+        "operationId": "fleet_backup_api_v1_settings_fleet_backup_get",
+        "parameters": [
+          {
+            "name": "include_credentials",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Credentials"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
               }
             }
           }
@@ -4529,7 +4811,7 @@
           "settings"
         ],
         "summary": "Import fleet backup",
-        "description": "Import printer configs from a backup file. Profile resolution failures are non-fatal.\n\nReturns a report with counts of imported and skipped printers plus any warnings\nabout unrecognised OrcaSlicer profile names.",
+        "description": "Import printer configs from a backup file. Profile resolution failures are non-fatal.\n\nBackups exported without `include_credentials=true` (the default) have blank\ncredential fields \u2014 imported printers will need those re-entered before they can\nconnect; the report's `warnings` flags which ones.\n\nReturns a report with counts of imported and skipped printers plus any warnings\nabout unrecognised OrcaSlicer profile names.",
         "operationId": "fleet_import_api_v1_settings_fleet_import_post",
         "requestBody": {
           "content": {
@@ -4599,6 +4881,29 @@
         "summary": "List Spoolman spools",
         "description": "Fetch all spool inventory from the configured Spoolman instance.",
         "operationId": "get_spools_api_v1_spoolman_spools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/sync-now": {
+      "post": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Manually sync filaments and spools from Spoolman",
+        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.",
+        "operationId": "sync_now_api_v1_spoolman_sync_now_post",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4861,7 +5166,12 @@
               }
             }
           }
-        }
+        },
+        "security": [
+          {
+            "APIKeyHeader": []
+          }
+        ]
       }
     }
   },
@@ -4879,6 +5189,38 @@
           "preset"
         ],
         "title": "ActivePresetUpdate"
+      },
+      "ApiKeyCreate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "scopes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Scopes",
+            "default": []
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ApiKeyCreate"
       },
       "BedTempBody": {
         "properties": {
@@ -4933,9 +5275,7 @@
             "title": "Sync Id"
           },
           "resolutions": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Resolutions"
+            "$ref": "#/components/schemas/RemapResolutions"
           }
         },
         "type": "object",
@@ -4944,6 +5284,118 @@
           "resolutions"
         ],
         "title": "ConfirmRemapBody"
+      },
+      "DiscordChannelConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "webhook_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Webhook Url"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "DiscordChannelConfig"
+      },
+      "EmailChannelConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Host"
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Password"
+          },
+          "from_addr": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From Addr"
+          },
+          "to_addrs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "To Addrs",
+            "default": []
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "EmailChannelConfig"
       },
       "FanBody": {
         "properties": {
@@ -5058,6 +5510,17 @@
             "type": "array",
             "title": "Eligible Printer Ids",
             "default": []
+          },
+          "process_preset": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Process Preset"
           }
         },
         "type": "object",
@@ -5309,6 +5772,138 @@
         },
         "type": "object",
         "title": "MaintenanceItemPatch"
+      },
+      "NotificationConfigIn": {
+        "properties": {
+          "ntfy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NtfyChannelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "discord": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DiscordChannelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "email": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EmailChannelConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "NotificationConfigIn"
+      },
+      "NotificationConfigOut": {
+        "properties": {
+          "ntfy": {
+            "$ref": "#/components/schemas/NtfyChannelConfig"
+          },
+          "discord": {
+            "$ref": "#/components/schemas/DiscordChannelConfig"
+          },
+          "email": {
+            "$ref": "#/components/schemas/EmailChannelConfig"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ntfy",
+          "discord",
+          "email"
+        ],
+        "title": "NotificationConfigOut"
+      },
+      "NotificationTestIn": {
+        "properties": {
+          "channel": {
+            "type": "string",
+            "enum": [
+              "ntfy",
+              "discord",
+              "email"
+            ],
+            "title": "Channel"
+          },
+          "config": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Config"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel",
+          "config"
+        ],
+        "title": "NotificationTestIn"
+      },
+      "NtfyChannelConfig": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Server Url"
+          },
+          "topic": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Topic"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "NtfyChannelConfig"
       },
       "OrderCreate": {
         "properties": {
@@ -5638,25 +6233,11 @@
             "title": "Filament Id"
           },
           "filament_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Filament Type"
           },
           "filament_color": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Filament Color"
           },
           "tool_index": {
@@ -5673,7 +6254,10 @@
           "filament_map": {
             "anyOf": [
               {
-                "items": {},
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
                 "type": "array"
               },
               {
@@ -5686,7 +6270,9 @@
         "type": "object",
         "required": [
           "printer_id",
-          "print_profile"
+          "print_profile",
+          "filament_type",
+          "filament_color"
         ],
         "title": "PrinterConfigInput"
       },
@@ -6394,6 +6980,65 @@
         ],
         "title": "QueueConfigOut"
       },
+      "RemapResolutionEntry": {
+        "properties": {
+          "field": {
+            "type": "string",
+            "title": "Field"
+          },
+          "stale_value": {
+            "type": "string",
+            "title": "Stale Value"
+          },
+          "new_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Value"
+          }
+        },
+        "type": "object",
+        "required": [
+          "field",
+          "stale_value"
+        ],
+        "title": "RemapResolutionEntry"
+      },
+      "RemapResolutions": {
+        "properties": {
+          "printers": {
+            "items": {
+              "$ref": "#/components/schemas/RemapResolutionEntry"
+            },
+            "type": "array",
+            "title": "Printers",
+            "default": []
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/RemapResolutionEntry"
+            },
+            "type": "array",
+            "title": "Jobs",
+            "default": []
+          },
+          "spoolman_filaments": {
+            "items": {
+              "$ref": "#/components/schemas/SpoolmanResolutionEntry"
+            },
+            "type": "array",
+            "title": "Spoolman Filaments",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "RemapResolutions"
+      },
       "ReorderBody": {
         "properties": {
           "action": {
@@ -6497,7 +7142,30 @@
             ],
             "title": "Url"
           },
-          "api_key": {
+          "has_api_key": {
+            "type": "boolean",
+            "title": "Has Api Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "url",
+          "has_api_key"
+        ],
+        "title": "SpoolmanConfigOut"
+      },
+      "SpoolmanResolutionEntry": {
+        "properties": {
+          "printer_preset": {
+            "type": "string",
+            "title": "Printer Preset"
+          },
+          "stale_name": {
+            "type": "string",
+            "title": "Stale Name"
+          },
+          "new_name": {
             "anyOf": [
               {
                 "type": "string"
@@ -6506,16 +7174,15 @@
                 "type": "null"
               }
             ],
-            "title": "Api Key"
+            "title": "New Name"
           }
         },
         "type": "object",
         "required": [
-          "enabled",
-          "url",
-          "api_key"
+          "printer_preset",
+          "stale_name"
         ],
-        "title": "SpoolmanConfigOut"
+        "title": "SpoolmanResolutionEntry"
       },
       "TagAssign": {
         "properties": {
@@ -6764,16 +7431,9 @@
             ],
             "title": "Url"
           },
-          "secret": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Secret"
+          "has_secret": {
+            "type": "boolean",
+            "title": "Has Secret"
           },
           "events": {
             "items": {
@@ -6786,10 +7446,17 @@
         "type": "object",
         "required": [
           "url",
-          "secret",
+          "has_secret",
           "events"
         ],
         "title": "WebhookConfigOut"
+      }
+    },
+    "securitySchemes": {
+      "APIKeyHeader": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Api-Key"
       }
     }
   }

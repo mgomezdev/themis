@@ -56,8 +56,17 @@ awaiting it. Any new fire-and-forget delivery mechanism should follow the same s
 Every DB read/write in a request handler goes through `Depends(get_session)` — never a raw import of
 `SessionLocal`/`engine` from `database.py`. Code that imports the module-level session factory
 directly bypasses the test suite's in-memory-DB override and silently depends on whatever's actually in
-`<repo-root>/data/themis.db`. `printer_manager` and `thumbnail_regen.py` already do this (a known,
-standing gap, not something to fix opportunistically) — don't copy the pattern into new code.
+`<repo-root>/data/themis.db`. `printer_manager` (via `set_session_factory()`) and `thumbnail_regen.py`
+(same pattern, added later) both take an injectable session factory instead of a direct `SessionLocal`
+import. Only `thumbnail_regen.py` is actually wired up in tests — `conftest.py`'s `client` fixture calls
+`thumbnail_regen.set_session_factory(factory)` with the per-test in-memory engine. `printer_manager`'s
+factory defaults to `None` and is only set to the real `SessionLocal` in `app/main.py`'s lifespan, which
+the test client's `ASGITransport` never runs, so it stays `None` under test and its factory-gated
+methods (`if not self._session_factory: return`) just no-op rather than touching any DB — harmless, but
+means printer_manager's own DB-dependent behavior isn't exercised by the shared `client` fixture; tests
+that need it call `mgr.set_session_factory(...)` themselves (see `test_ams_merge.py`). Don't reintroduce
+a direct `SessionLocal` import in new background/singleton code; follow the `set_session_factory()`
+pattern instead.
 
 ## 5. Migrations
 
@@ -81,10 +90,14 @@ leaving as N+1 — the cost compounds with poll frequency in a way it doesn't on
 
 ## 7. Secrets
 
-No masking convention exists in this codebase yet — `webhook_config.secret`, `spoolman_config.api_key`,
-and similar fields all round-trip in cleartext on GET. That's a known, standing gap. Match the existing
-(unmasked) convention for a new secret field rather than half-fixing it by masking just the new one;
-flag the broader gap separately if you think it should change.
+Convention: a secret field never round-trips in a GET/PUT response. The `*ConfigOut` schema exposes
+`has_<field>: bool` instead (e.g. `WebhookConfigOut.has_secret`, `SpoolmanConfigOut.has_api_key`); the
+`*ConfigIn` schema still accepts the real value for writes, with the existing omit/empty/value semantics
+(omit = leave unchanged, `""` = clear, non-empty = set). A route that needs the real value internally
+(sending the webhook, calling Spoolman) reads it straight off the ORM row — never through the `Out`
+schema. If a caller needs to reuse the *saved* secret without re-entering it (e.g. `/spoolman/test`),
+have it omit the field and let the route fall back to the row's value, rather than trying to round-trip
+a masked placeholder. Apply this to any new secret field.
 
 ## 8. Existing invariants
 
@@ -98,3 +111,13 @@ code that touches one of these areas, not just before review.
 TDD: a test that failed for the right reason before the fix, for every behavior change — not just
 coverage added after the fact. Full suite green (`pytest -v` from `backend/`) before calling anything
 done.
+
+## 10. Public (unauthenticated) routes
+
+`app/api/routes/public.py` is the one deliberate exception (beyond the empty-`api_keys`-table bootstrap
+hatch) to § 4's "every route requires `Depends(require_scope(...))`" rule — its single route,
+`GET /api/v1/public/projects/{token}`, is addressed by an unguessable per-project token instead. This is
+intentional, not an oversight: don't add `require_scope` to it, and don't add a second route to that
+file without re-reading its module docstring first. If you're reviewing a change near this file, the
+question isn't "does this have auth" (it deliberately doesn't) but "does the response leak anything
+beyond what `docs/agent/data-model.md`'s § projects documents as the intended public field list."

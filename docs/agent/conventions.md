@@ -31,8 +31,13 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   `Depends(require_scope("<scope>"))`, and the scope must exist in the hardcoded `SCOPES` registry in
   `app/auth.py` — there's no auto-derivation, forgetting either half means an unprotected route or a
   crash on an unknown scope. The bootstrap hatch (open access while `api_keys` is empty) is the only
-  built-in exception; don't hand-roll another one. Frontend: every `api/*.ts` call goes through
-  `apiFetch`/`withKeyParam` (`api/client.ts`), never raw `fetch`, or it silently 401s once a key exists.
+  built-in exception; don't hand-roll another one. The one other deliberate exception is
+  `app/api/routes/public.py`'s `GET /api/v1/public/projects/{token}` — addressed by an unguessable
+  per-project token instead of a scope, by design; it's the sole route in that file and the file exists
+  specifically to keep that exception isolated and auditable. Frontend: every `api/*.ts` call goes
+  through `apiFetch`/`withKeyParam` (`api/client.ts`), never raw `fetch`, or it silently 401s once a key
+  exists — except the public share page (`SharedProjectScreen`), which deliberately uses a plain
+  `fetch()` since it has no API key and must not touch the authenticated client's 401/403 handlers.
 
 ## Dev-environment traps
 

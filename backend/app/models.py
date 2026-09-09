@@ -186,6 +186,10 @@ class Project(Base):
     source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
+    share_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    share_token_created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 
 
 class ProjectItem(Base):
