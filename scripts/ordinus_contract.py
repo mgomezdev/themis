@@ -1,14 +1,25 @@
 #!/usr/bin/env python3
 """Print a stable digest of the Themis API surface that Ordinus consumes.
 
-Ordinus talks to Themis through exactly four operations, all of them behind
-`ordinus/server/src/services/themis.service.ts`. CI compares this digest between
+Ordinus talks to Themis through six operations: five in
+`ordinus/server/src/services/themis.service.ts`, plus a health probe in
+`ordinus/server/src/routes/settings.routes.ts`. CI compares this digest between
 a pull request's base and head to decide whether that pull request could break
 Ordinus. When the digest is unchanged the Ordinus container is never started,
 which keeps a typical Themis pull request at three containers instead of four.
 
 The digest follows `$ref` closures, so a change to a schema these operations
 depend on is caught even though the path entry itself is untouched.
+
+KNOWN LIMIT: these routes declare no `response_model`, so their 200 bodies are
+untyped in the spec. Ordinus reads `data.id`, `items[].file_id` and
+`links[].url`, none of which appear in openapi.json at all -- renaming one would
+NOT move this digest. CI therefore ORs this check with a path filter on the
+route modules; see the guard step in .github/workflows/ci.yml. Adding real
+response models to those routes is the durable fix.
+
+Exits non-zero if the spec cannot be read, so a failure can never be mistaken
+for "nothing changed".
 
 Usage:
     python scripts/ordinus_contract.py [path/to/openapi.json]
@@ -20,12 +31,15 @@ import json
 import sys
 from typing import Any
 
-# (path, method) pairs Ordinus calls. Keep in sync with themis.service.ts.
+# (path, method) pairs Ordinus calls. Keep in sync with the two Ordinus modules
+# named in the docstring; every entry below was traced to a specific call site.
 CONSUMED: tuple[tuple[str, str], ...] = (
-    ("/api/v1/health", "get"),
-    ("/api/v1/files/upload", "post"),
-    ("/api/v1/projects", "post"),
-    ("/api/v1/projects/{project_id}/items", "post"),
+    ("/api/v1/health", "get"),                              # settings.routes.ts checkHealth
+    ("/api/v1/files/upload", "post"),                       # themis.service.ts uploadFile
+    ("/api/v1/projects", "post"),                           # themis.service.ts createProject
+    ("/api/v1/projects/{project_id}/links", "post"),        # themis.service.ts addThemisProjectLink
+    ("/api/v1/projects/{project_id}/items", "post"),        # themis.service.ts addProjectItem
+    ("/api/v1/projects/{project_id}", "get"),               # themis.service.ts getThemisProject
 )
 
 _SCHEMA_PREFIX = "#/components/schemas/"
@@ -82,11 +96,11 @@ def main() -> int:
         with open(source, encoding="utf-8") as fh:
             spec = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        # An unreadable base spec (first run, or the file did not exist yet)
-        # must not silently look identical to the head spec.
-        print(f"unreadable:{exc.__class__.__name__}", file=sys.stderr)
-        print("unreadable")
-        return 0
+        # Exit non-zero rather than printing a sentinel. A constant sentinel
+        # compares equal to itself, so an unreadable spec on BOTH sides would
+        # have read as "unchanged" and skipped the Ordinus test silently.
+        print(f"{source}: {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 2
     print(digest(spec))
     return 0
 
