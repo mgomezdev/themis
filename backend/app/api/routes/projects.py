@@ -28,6 +28,14 @@ from ...services.thumbnail_regen import regen_file_thumbnails
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
 
+PAYMENT_STATUSES = {"unpaid", "partial", "paid"}
+
+
+def _validate_payment_status(v: str | None) -> str | None:
+    if v is not None and v not in PAYMENT_STATUSES:
+        raise ValueError(f"payment_status must be one of {sorted(PAYMENT_STATUSES)}")
+    return v
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -52,6 +60,13 @@ class ProjectCreate(BaseModel):
     source_app: Optional[str] = None
     source_user: Optional[str] = None
     source_layout_id: Optional[int] = None
+    amount_paid: Optional[float] = None
+    payment_status: str = "unpaid"
+
+    @field_validator("payment_status")
+    @classmethod
+    def _valid_payment_status(cls, v: str) -> str:
+        return _validate_payment_status(v)
 
 
 class ProjectPatch(BaseModel):
@@ -61,6 +76,13 @@ class ProjectPatch(BaseModel):
     on_hold: Optional[bool] = None
     due_date: Optional[str] = None
     notes: Optional[str] = None
+    amount_paid: Optional[float] = None
+    payment_status: Optional[str] = None
+
+    @field_validator("payment_status")
+    @classmethod
+    def _valid_payment_status(cls, v: Optional[str]) -> Optional[str]:
+        return _validate_payment_status(v)
 
 
 class ProjectShareOut(BaseModel):
@@ -266,6 +288,8 @@ def _project_progress(job_rows: list[Job]) -> dict:
     actual_seconds = (
         sum(j.actual_seconds for j in job_rows if j.actual_seconds is not None) or None
     )
+    filament_cost_values = [j.filament_cost for j in job_rows if j.filament_cost is not None]
+    filament_cost_total = round(sum(filament_cost_values), 2) if filament_cost_values else None
 
     return {
         "jobs_total": jobs_total,
@@ -276,6 +300,7 @@ def _project_progress(job_rows: list[Job]) -> dict:
         "estimate_seconds_remaining": estimate_seconds_remaining,
         "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
         "actual_seconds": actual_seconds,
+        "filament_cost_total": filament_cost_total,
     }
 
 
@@ -301,6 +326,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "source_app": project.source_app,
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
+        "amount_paid": project.amount_paid,
+        "payment_status": project.payment_status,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
@@ -351,6 +378,8 @@ async def create_project(
         source_app=body.source_app,
         source_user=body.source_user,
         source_layout_id=body.source_layout_id,
+        amount_paid=body.amount_paid,
+        payment_status=body.payment_status,
         created_at=now,
         updated_at=now,
     )
@@ -402,6 +431,10 @@ async def patch_project(
         proj.due_date = body.due_date
     if body.notes is not None:
         proj.notes = body.notes
+    if body.amount_paid is not None:
+        proj.amount_paid = body.amount_paid
+    if body.payment_status is not None:
+        proj.payment_status = body.payment_status
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)

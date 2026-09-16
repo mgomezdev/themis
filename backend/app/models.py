@@ -82,6 +82,9 @@ class Order(Base):
     parts: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
+    # Payment tracking, for future profit/loss reporting.
+    amount_paid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
 
 
 class Job(Base):
@@ -114,6 +117,8 @@ class Job(Base):
     estimate_filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     estimate_filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Manually-entered cost of the filament used for this job, for profit/loss reporting.
+    filament_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -188,6 +193,9 @@ class Project(Base):
     updated_at: Mapped[str] = mapped_column(String(32))
     share_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     share_token_created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Payment tracking, for future profit/loss reporting.
+    amount_paid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
 
     __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
-import { getJobDetails, cancelJob, unblockJob, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
+import { getJobDetails, cancelJob, unblockJob, setJobCost, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
 
 const BADGE: Record<string, string> = {
@@ -104,16 +104,31 @@ export function JobDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [unblocking, setUnblocking] = useState(false);
+  const [costInput, setCostInput] = useState('');
+  const [savingCost, setSavingCost] = useState(false);
 
   useEffect(() => {
     if (jobId == null) return;
     let alive = true;
     setLoading(true);
     getJobDetails(jobId)
-      .then(d => { if (alive) { setJob(d); setLoading(false); } })
+      .then(d => { if (alive) { setJob(d); setCostInput(d.filament_cost != null ? String(d.filament_cost) : ''); setLoading(false); } })
       .catch(e => { if (alive) { setError(String(e)); setLoading(false); } });
     return () => { alive = false; };
   }, [jobId]);
+
+  async function handleSaveCost() {
+    if (!job || savingCost) return;
+    setSavingCost(true);
+    try {
+      const updated = await setJobCost(job.id, costInput.trim() ? Number(costInput) : null);
+      setJob(prev => prev ? { ...prev, filament_cost: updated.filament_cost } : prev);
+    } catch (e) {
+      setError(`Failed to save cost: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingCost(false);
+    }
+  }
 
   async function handleUnblock() {
     if (!job || unblocking) return;
@@ -375,6 +390,26 @@ export function JobDetailScreen() {
               )}
             </div>
           )}
+
+          {/* Cost */}
+          <div className="card" style={{ padding: 20 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Filament cost</div>
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <input
+                type="number" min="0" step="0.01"
+                className="input" placeholder="0.00"
+                style={{ maxWidth: 140 }}
+                value={costInput}
+                onChange={e => setCostInput(e.target.value)}
+              />
+              <button className="btn sm" disabled={savingCost} onClick={handleSaveCost}>
+                {savingCost ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+            <div className="tiny muted" style={{ marginTop: 8 }}>
+              Manually entered cost of the filament used, for profit/loss reporting.
+            </div>
+          </div>
         </div>
 
         {/* Sidebar */}

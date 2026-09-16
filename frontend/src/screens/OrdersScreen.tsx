@@ -137,6 +137,15 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
             <span className="tag-key">DUE</span>
             <span className="num small" style={{ marginTop: 2 }}>{order.due_date ? order.due_date.slice(5) : '—'}</span>
           </div>
+          <div className="col" style={{ width: 100, flexShrink: 0 }}>
+            <span className="tag-key">PAID</span>
+            <span className="num small" style={{
+              marginTop: 2,
+              color: order.payment_status === 'paid' ? 'var(--ok)' : order.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-3)',
+            }}>
+              {order.amount_paid != null ? `$${order.amount_paid.toFixed(2)}` : '—'}
+            </span>
+          </div>
           <div className="col" style={{ width: 140, flexShrink: 0 }}>
             <div className="row between">
               <span className="tag-key">JOBS</span>
@@ -152,6 +161,10 @@ function OrderAccordion({ order, expanded, onToggle, onChanged }: {
 
       {expanded && (
         <div style={{ borderTop: '1px solid var(--border-1)', background: 'var(--bg-1)' }}>
+          <div className="row gap-4" style={{ padding: '12px 18px 0' }}>
+            <div className="tiny muted">Paid: <strong style={{ color: 'var(--text-1)' }}>{order.amount_paid != null ? `$${order.amount_paid.toFixed(2)}` : '—'}</strong> ({order.payment_status})</div>
+            <div className="tiny muted">Filament cost: <strong style={{ color: 'var(--text-1)' }}>{order.filament_cost_total != null ? `$${order.filament_cost_total.toFixed(2)}` : '—'}</strong></div>
+          </div>
           <div className="row between" style={{ padding: '12px 18px', alignItems: 'center' }}>
             <div className="tiny muted">{order.notes || `${order.job_count} job${order.job_count === 1 ? '' : 's'} linked`}</div>
             <div className="row gap-2">

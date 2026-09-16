@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { matColor, fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
-import { createOrder, updateOrder, getOrder, type OrderType, type OrderPartInput } from '../api/orders';
+import { createOrder, updateOrder, getOrder, type OrderType, type OrderPartInput, type PaymentStatus } from '../api/orders';
 import { useSpoolmanConfig, useFilaments, filamentDisplayName, type ApiFilament } from '../api/spoolman';
 
 interface PartRow {
@@ -129,6 +129,8 @@ export function NewOrderScreen() {
   const [due, setDue] = useState('');
   const [title, setTitle] = useState('');
   const [notes, setNotes] = useState('');
+  const [amountPaid, setAmountPaid] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('unpaid');
   const [parts, setParts] = useState<PartRow[]>([emptyRow()]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -147,6 +149,8 @@ export function NewOrderScreen() {
       setDue(o.due_date ?? '');
       setTitle(o.title);
       setNotes(o.notes ?? '');
+      setAmountPaid(o.amount_paid != null ? String(o.amount_paid) : '');
+      setPaymentStatus(o.payment_status ?? 'unpaid');
       setParts(o.parts.length ? o.parts.map(p => ({
         id: p.id, name: p.name, material: p.material, qty: p.qty,
         est_minutes: p.est_minutes,
@@ -184,6 +188,8 @@ export function NewOrderScreen() {
       due_date: due || null,
       notes: notes || null,
       parts: payloadParts,
+      amount_paid: amountPaid.trim() ? Number(amountPaid) : null,
+      payment_status: paymentStatus,
     };
     try {
       if (editingId == null) await createOrder(body);
@@ -249,6 +255,23 @@ export function NewOrderScreen() {
               <label className="label">Notes (optional)</label>
               <textarea className="textarea" value={notes} onChange={e => setNotes(e.target.value)}
                         placeholder="Material preferences, finishing, anything special…" />
+            </div>
+
+            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label className="label">Amount paid</label>
+                <input type="number" min="0" step="0.01" className="input" value={amountPaid}
+                       onChange={e => setAmountPaid(e.target.value)} placeholder="0.00" />
+              </div>
+              <div>
+                <label className="label">Payment status</label>
+                <select className="select" value={paymentStatus}
+                        onChange={e => setPaymentStatus(e.target.value as PaymentStatus)}>
+                  <option value="unpaid">Unpaid</option>
+                  <option value="partial">Partial</option>
+                  <option value="paid">Paid</option>
+                </select>
+              </div>
             </div>
           </div>
 

@@ -43,6 +43,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
   materials: [],
   eligible_printers: [],
   low_stock_warning: null,
+  filament_cost: null,
   printer_configs: [
     {
       printer_id: 3,

@@ -114,3 +114,48 @@ async def test_delete_nulls_job_link(client, tmp_path):
     assert (await client.get(f"/api/v1/orders/{oid}")).status_code == 404
     job = (await client.get(f"/api/v1/jobs/{job_id}")).json()
     assert job["order_id"] is None
+
+
+async def test_payment_defaults(client):
+    data = (await _create_order(client)).json()
+    assert data["amount_paid"] is None
+    assert data["payment_status"] == "unpaid"
+    assert data["filament_cost_total"] is None
+
+
+async def test_create_order_with_payment(client):
+    data = (await _create_order(client, amount_paid=42.5, payment_status="paid")).json()
+    assert data["amount_paid"] == 42.5
+    assert data["payment_status"] == "paid"
+
+
+async def test_patch_payment_status(client):
+    oid = (await _create_order(client)).json()["id"]
+    resp = await client.patch(f"/api/v1/orders/{oid}", json={"amount_paid": 10, "payment_status": "partial"})
+    assert resp.status_code == 200
+    assert resp.json()["amount_paid"] == 10.0
+    assert resp.json()["payment_status"] == "partial"
+
+
+async def test_invalid_payment_status_rejected(client):
+    resp = await _create_order(client, payment_status="paid_in_full")
+    assert resp.status_code == 422
+
+
+async def test_filament_cost_total_aggregates_jobs(client, tmp_path):
+    oid = (await _create_order(client)).json()["id"]
+    job1 = await _make_job(client, tmp_path, oid)
+    job2 = await _make_job(client, tmp_path, oid)
+    await client.patch(f"/api/v1/jobs/{job1}/cost", json={"filament_cost": 3.5})
+    await client.patch(f"/api/v1/jobs/{job2}/cost", json={"filament_cost": 1.25})
+    data = (await client.get(f"/api/v1/orders/{oid}")).json()
+    assert data["filament_cost_total"] == 4.75
+
+
+async def test_filament_cost_total_zero_is_not_null(client, tmp_path):
+    """A job explicitly costed at $0 must report a $0.00 total, not '—' (no data)."""
+    oid = (await _create_order(client)).json()["id"]
+    job_id = await _make_job(client, tmp_path, oid)
+    await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 0})
+    data = (await client.get(f"/api/v1/orders/{oid}")).json()
+    assert data["filament_cost_total"] == 0.0
