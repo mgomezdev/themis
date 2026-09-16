@@ -22,7 +22,7 @@ from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config
+from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
 from ...services.spool_check import check_spool_sufficiency
 from ...services.spoolman_service import fetch_spools
@@ -754,6 +754,10 @@ class VerifySliceBody(BaseModel):
     printer_id: int
 
 
+class CompleteManuallyBody(BaseModel):
+    printer_id: int
+
+
 def _build_slice_request(
     job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile,
 ) -> SliceRequest:
@@ -860,6 +864,148 @@ async def verify_slice(
         return {"ok": False, "error": f"Unexpected error: {exc}"}
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+_MANUAL_COMPLETE_TERMINAL_STATUSES = {"complete", "cancelled", "failed"}
+
+
+@router.post(
+    "/{job_id}/complete-manually",
+    summary="Manually complete a job without printing it",
+    responses={
+        404: {"description": "Job, printer, or printer config not found"},
+        409: {"description": "Job is already in a terminal status"},
+        422: {"description": "Printer has no OrcaSlicer machine preset configured"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def complete_job_manually(
+    job_id: int,
+    body: CompleteManuallyBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Slice the job for the chosen printer - a real slice, in an isolated directory,
+    never the job's production gcode path - and mark it complete without ever
+    printing it or sending anything to the printer. For work that was already done
+    physically: printed before Themis tracked it, printed manually, or a job
+    Themis's own tracking is stuck on but which really did finish. Deducts Spoolman
+    filament on success. Fires no webhooks or notifications either way - this is an
+    out-of-band admin action, not a real completion or a real failure as far as
+    integrations are concerned."""
+    job = await _get_or_404(job_id, session)
+    if job.status in _MANUAL_COMPLETE_TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job in status {job.status!r} is already terminal")
+
+    printer = await session.get(Printer, body.printer_id)
+    if printer is None:
+        raise HTTPException(404, f"Printer {body.printer_id} not found")
+
+    cfg_result = await session.execute(
+        select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id,
+            JobPrinterConfig.printer_id == body.printer_id,
+        )
+    )
+    config = cfg_result.scalar_one_or_none()
+    if config is None:
+        raise HTTPException(404, f"Job {job_id} has no config for printer {body.printer_id}")
+
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if uploaded_file is None:
+        raise HTTPException(404, f"File {job.uploaded_file_id} not found")
+
+    if not printer.current_orca_printer_profile:
+        raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")
+
+    job.status = "slicing"
+    job.assigned_printer_id = body.printer_id
+    job.block_reason = None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+
+    req = _build_slice_request(job, config, printer, uploaded_file)
+    output_dir = queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
+    try:
+        gcode_path = await queue_engine.run_verify_slice(req, output_dir)
+        # Parse before the `finally` cleanup below removes output_dir - the gcode
+        # file must be read while it still exists.
+        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+    except SliceError as exc:
+        config.slice_failed = True
+        config.slice_error = str(exc)
+        job.status = "blocked"
+        job.block_reason = f"slicing failed: {exc}"
+        job.assigned_printer_id = None
+        job.updated_at = datetime.now(timezone.utc).isoformat()
+        await session.commit()
+        await session.refresh(job)
+        return _to_dict(job)
+    except Exception as exc:
+        logger.exception("Unexpected error in complete-manually slice for job %s", job_id)
+        config.slice_failed = True
+        config.slice_error = f"Unexpected error: {exc}"
+        job.status = "blocked"
+        job.block_reason = f"slicing failed: Unexpected error: {exc}"
+        job.assigned_printer_id = None
+        job.updated_at = datetime.now(timezone.utc).isoformat()
+        await session.commit()
+        await session.refresh(job)
+        return _to_dict(job)
+    finally:
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    job.actual_filament_grams = grams
+    job.actual_seconds = secs
+    if extruder_grams is not None:
+        job.actual_filament_breakdown = [
+            {
+                "extruder_index": i,
+                "filament_profile": req.filament_presets[i] if i < len(req.filament_presets) else None,
+                "grams": g,
+            }
+            for i, g in enumerate(extruder_grams)
+        ]
+    job.status = "complete"
+    job.completed_at = datetime.now(timezone.utc).isoformat()
+    job.outcome = None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+
+    printer.lifetime_job_count += 1
+    printer.lifetime_print_seconds += secs or 0
+    printer.awaiting_plate_clear = True
+    printer_manager.set_awaiting_plate_clear(body.printer_id, True)
+
+    spool_id = None
+    spoolman_url = None
+    spoolman_key = None
+    grams_to_deduct = None
+    if grams is not None:
+        spoolman_cfg = await session.get(SpoolmanConfig, 1)
+        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+            loaded = printer.loaded_filaments or []
+            slot = _slot_for_config(config, loaded)
+            if slot is not None:
+                raw_spool_id = slot.get("spoolman_spool_id")
+                if raw_spool_id is not None:
+                    try:
+                        spool_id = int(raw_spool_id)
+                        spoolman_url = spoolman_cfg.url
+                        spoolman_key = spoolman_cfg.api_key
+                        grams_to_deduct = grams
+                        job.deduction_skipped = False
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                            raw_spool_id, job_id,
+                        )
+
+    await session.commit()
+    await session.refresh(job)
+
+    if spool_id is not None and spoolman_url and grams_to_deduct is not None:
+        asyncio.create_task(_deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct))
+
+    return _to_dict(job)
 
 
 @router.get(
