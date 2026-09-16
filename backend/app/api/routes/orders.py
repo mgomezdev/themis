@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,14 @@ from ...database import get_session
 from ...models import Job, Order
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
+
+PAYMENT_STATUSES = {"unpaid", "partial", "paid"}
+
+
+def _validate_payment_status(v: str | None) -> str | None:
+    if v is not None and v not in PAYMENT_STATUSES:
+        raise ValueError(f"payment_status must be one of {sorted(PAYMENT_STATUSES)}")
+    return v
 
 
 class OrderPartIn(BaseModel):
@@ -31,6 +39,13 @@ class OrderCreate(BaseModel):
     due_date: str | None = None
     notes: str | None = None
     parts: list[OrderPartIn] = []
+    amount_paid: float | None = None
+    payment_status: str = "unpaid"
+
+    @field_validator("payment_status")
+    @classmethod
+    def _valid_payment_status(cls, v: str) -> str:
+        return _validate_payment_status(v)
 
 
 class OrderPatch(BaseModel):
@@ -41,6 +56,13 @@ class OrderPatch(BaseModel):
     notes: str | None = None
     on_hold: bool | None = None
     parts: list[OrderPartIn] | None = None
+    amount_paid: float | None = None
+    payment_status: str | None = None
+
+    @field_validator("payment_status")
+    @classmethod
+    def _valid_payment_status(cls, v: str | None) -> str | None:
+        return _validate_payment_status(v)
 
 
 def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
@@ -58,9 +80,12 @@ def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
     return out
 
 
-async def _derive(session: AsyncSession, order: Order) -> tuple[str, float, int]:
-    result = await session.execute(select(Job.status).where(Job.order_id == order.id))
-    statuses = [r[0] for r in result.all()]
+async def _derive(session: AsyncSession, order: Order) -> tuple[str, float, int, float | None]:
+    result = await session.execute(
+        select(Job.status, Job.filament_cost).where(Job.order_id == order.id)
+    )
+    rows = result.all()
+    statuses = [r[0] for r in rows]
     active = [s for s in statuses if s != "cancelled"]
     completed = [s for s in active if s == "complete"]
     # Manual hold overrides derived state (per spec).
@@ -73,11 +98,12 @@ async def _derive(session: AsyncSession, order: Order) -> tuple[str, float, int]
     else:
         status = "in_progress"
     progress = (len(completed) / len(active)) if active else 0.0
-    return status, round(progress, 4), len(active)
+    filament_cost_total = sum(r[1] for r in rows if r[1] is not None) or None
+    return status, round(progress, 4), len(active), (round(filament_cost_total, 2) if filament_cost_total else None)
 
 
 async def _to_dict(session: AsyncSession, o: Order, with_jobs: bool = False) -> dict:
-    status, progress, job_count = await _derive(session, o)
+    status, progress, job_count, filament_cost_total = await _derive(session, o)
     data = {
         "id": o.id,
         "order_type": o.order_type,
@@ -87,6 +113,9 @@ async def _to_dict(session: AsyncSession, o: Order, with_jobs: bool = False) -> 
         "notes": o.notes,
         "on_hold": o.on_hold,
         "parts": o.parts or [],
+        "amount_paid": o.amount_paid,
+        "payment_status": o.payment_status,
+        "filament_cost_total": filament_cost_total,
         "status": status,
         "progress": progress,
         "job_count": job_count,
@@ -138,6 +167,8 @@ async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_se
         notes=body.notes,
         on_hold=False,
         parts=_normalize_parts(body.parts),
+        amount_paid=body.amount_paid,
+        payment_status=body.payment_status,
         created_at=now,
         updated_at=now,
     )

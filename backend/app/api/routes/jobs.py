@@ -128,6 +128,7 @@ def _to_dict(j: Job) -> dict:
         "estimate_filament_grams": j.estimate_filament_grams,
         "estimate_filament_breakdown": j.estimate_filament_breakdown,
         "estimate_preset_label": j.estimate_preset_label,
+        "filament_cost": j.filament_cost,
     }
 
 
@@ -883,6 +884,39 @@ async def get_slice_failures(
         }
         for c in result.scalars().all()
     ]
+
+
+class JobCostPatch(BaseModel):
+    filament_cost: float | None = None
+
+    @field_validator("filament_cost")
+    @classmethod
+    def _non_negative(cls, v: float | None) -> float | None:
+        if v is not None and v < 0:
+            raise ValueError("filament_cost must not be negative")
+        return v
+
+
+@router.patch(
+    "/{job_id}/cost",
+    summary="Set job filament cost",
+    responses={
+        404: {"description": "Job not found"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def set_job_cost(
+    job_id: int,
+    body: JobCostPatch,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Record the cost of the filament used for this job, for profit/loss reporting."""
+    job = await _get_or_404(job_id, session)
+    job.filament_cost = body.filament_cost
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    return _to_dict(job)
 
 
 class OutcomeFailureItem(BaseModel):

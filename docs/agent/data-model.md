@@ -74,10 +74,14 @@ Library index fields (filesystem is source of truth; these cache it):
 
 ### orders
 `id, order_type` (`customer`|`internal`), `customer, title, due_date?, notes?`, `on_hold: bool`,
-`parts: JSON, created_at, updated_at`.
+`parts: JSON, amount_paid: float?, payment_status: str="unpaid"` (`unpaid|partial|paid`),
+`created_at, updated_at`.
 - `parts`: BoM checklist `[{id, name, qty, material, est_minutes, filament_id?, filament_color?}]`. No
   per-part fulfillment tracking. **Derived (not stored)**: `status` (hold if on_hold; else queued/
-  in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`.
+  in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`,
+  `filament_cost_total` (sum of `jobs.filament_cost` across the order's non-cancelled jobs, or `null`).
+- `amount_paid`/`payment_status`: manually-entered customer payment tracking, for future profit/loss
+  reporting. Set/edited via `POST`/`PATCH /api/v1/orders`.
 - Internal orders (`order_type="internal"`) are auto-created by `generate_project` and linked to a
   Project via `projects.order_id`. All jobs generated for that project also set `job.order_id`.
 
@@ -99,6 +103,11 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 **Estimate values** (set by an optional background test-slice, gated by `queue_config.estimates_enabled`):
 `estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
+
+`filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
+Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched
+by any other route. Summed (non-null values only) into `filament_cost_total` on the linked order
+(`orders.py::_derive`) and on the linked project (`projects.py::_project_progress`).
 `queue_engine.spawn_estimate(job_id)` → `run_estimate` → `_do_run_estimate` runs a geometry-only test
 slice off the queue's normal path and writes the result back with a `WHERE estimate_status='pending' AND
 estimate_token=:token` guard — `estimate_token` is bumped on every re-request (job edit, unblock) so a
@@ -163,11 +172,16 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `id, name, customer:str="", order_type:str="internal"` (`"customer"`|`"internal"` — same vocabulary as
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
 bool, due_date?, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
-source_user?, source_layout_id?, share_token? (unique), share_token_created_at?, created_at, updated_at`.
+source_user?, source_layout_id?, share_token? (unique), share_token_created_at?, amount_paid: float?,
+payment_status: str="unpaid"` (`unpaid|partial|paid`), `created_at, updated_at`.
 - Full CRUD at `/api/v1/projects`. Created by Themis UI (Project Builder) or by Ordinus
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
 - `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
   directly via the Project Builder), independent of whether it's linked to an `orders` row.
+- `amount_paid`/`payment_status`: manually-entered customer payment tracking, independent of the linked
+  order's own copy (a project isn't required to have one) — for future profit/loss reporting.
+  `filament_cost_total` (derived, not stored — `projects.py::_project_progress`) sums `jobs.filament_cost`
+  across the project's jobs, alongside the existing `actual_filament_grams`/`actual_seconds` aggregates.
 - `order_id`: set by `generate_project` — the internal `orders` row that groups all generated jobs for
   fulfillment tracking. `NULL` until the project is first generated. Not the same thing as the
   project's own `order_type` field above.
