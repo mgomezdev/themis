@@ -754,6 +754,54 @@ class VerifySliceBody(BaseModel):
     printer_id: int
 
 
+def _build_slice_request(
+    job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile,
+) -> SliceRequest:
+    """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
+    matched `config` - shared by verify-slice and complete-manually, both of which
+    slice in an isolated directory and never touch the job's production gcode path."""
+    loaded = printer.loaded_filaments or []
+    slot = _slot_for_config(config, loaded)
+    filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
+
+    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+    file_base = f"{safe}_p{job.plate_number}_j{job.id}"
+
+    client = printer_manager._clients.get(printer.id)
+    export_args = client.orca_export_args(file_base) if client else []
+
+    cfg_tool_index = config.tool_index
+    cfg_filament_map = config.filament_map
+    prepare_hook = None
+    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
+        prepare_hook = (
+            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
+            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
+        )
+
+    if cfg_filament_map:
+        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
+        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
+    else:
+        filament_presets = [filament_profile] if filament_profile else []
+
+    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
+    plate_config.update(job.overrides or {})
+    return SliceRequest(
+        job_id=job.id,
+        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
+        plate_number=job.plate_number,
+        machine_preset=printer.current_orca_printer_profile,
+        process_preset=config.print_profile,
+        filament_presets=filament_presets,
+        filament_colours=[config.filament_color] if config.filament_color else [],
+        export_args=export_args,
+        prepare_hook=prepare_hook,
+        extra_config=plate_config,
+    )
+
+
 @router.post(
     "/{job_id}/verify-slice",
     summary="Test-slice job",
@@ -792,47 +840,7 @@ async def verify_slice(
     if not printer.current_orca_printer_profile:
         return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
 
-    # Mirror _run_slice_and_print: resolve the filament slot and build the SliceRequest.
-    loaded = printer.loaded_filaments or []
-    slot = _slot_for_config(config, loaded)
-    filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
-
-    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-    file_base = f"{safe}_p{job.plate_number}_j{job_id}"
-
-    client = printer_manager._clients.get(body.printer_id)
-    export_args = client.orca_export_args(file_base) if client else []
-
-    cfg_tool_index = config.tool_index
-    cfg_filament_map = config.filament_map
-    prepare_hook = None
-    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
-        prepare_hook = (
-            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
-            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
-        )
-
-    if cfg_filament_map:
-        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
-        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-    else:
-        filament_presets = [filament_profile] if filament_profile else []
-
-    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
-    plate_config.update(job.overrides or {})
-    req = SliceRequest(
-        job_id=job_id,
-        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
-        plate_number=job.plate_number,
-        machine_preset=printer.current_orca_printer_profile,
-        process_preset=config.print_profile,
-        filament_presets=filament_presets,
-        filament_colours=[config.filament_color] if config.filament_color else [],
-        export_args=export_args,
-        prepare_hook=prepare_hook,
-        extra_config=plate_config,
-    )
+    req = _build_slice_request(job, config, printer, uploaded_file)
 
     # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
