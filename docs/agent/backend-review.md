@@ -121,3 +121,12 @@ intentional, not an oversight: don't add `require_scope` to it, and don't add a 
 file without re-reading its module docstring first. If you're reviewing a change near this file, the
 question isn't "does this have auth" (it deliberately doesn't) but "does the response leak anything
 beyond what `docs/agent/data-model.md`'s § projects documents as the intended public field list."
+
+## 11. Isolated slice directories
+
+Three separate slice output directories exist under the data dir, and none may ever write into
+another's: `gcode/<job_id>` (production — a live upload/print may be reading from this), `gcode_verify/
+<job_id>` (`verify-slice`, debug-only), `gcode_manual_complete/<job_id>` (`complete-manually`). Both
+non-production paths exist specifically so a debug/manual slice action can safely run even while a job
+is genuinely `printing`/`uploading` through the production path. If you add another slice-invoking
+route, give it its own isolated subdirectory rather than reusing one of these.
