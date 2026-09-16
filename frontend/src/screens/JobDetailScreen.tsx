@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
-import { getJobDetails, cancelJob, unblockJob, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
+import { getJobDetails, cancelJob, unblockJob, completeJobManually, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
 
 const BADGE: Record<string, string> = {
@@ -104,6 +104,10 @@ export function JobDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [unblocking, setUnblocking] = useState(false);
+  const [showCompletePanel, setShowCompletePanel] = useState(false);
+  const [completePrinterId, setCompletePrinterId] = useState<number | null>(null);
+  const [completing, setCompleting] = useState(false);
+  const [completeError, setCompleteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -141,6 +145,32 @@ export function JobDetailScreen() {
     }
   }
 
+  function openCompletePanel() {
+    if (!job) return;
+    setCompleteError(null);
+    setCompletePrinterId(
+      job.assigned_printer?.id
+      ?? (job.printer_configs.length === 1 ? job.printer_configs[0].printer_id : null),
+    );
+    setShowCompletePanel(true);
+  }
+
+  async function handleCompleteManually() {
+    if (!job || completePrinterId == null || completing) return;
+    setCompleting(true);
+    setCompleteError(null);
+    try {
+      await completeJobManually(job.id, completePrinterId);
+      const refreshed = await getJobDetails(job.id);
+      setJob(refreshed);
+      setShowCompletePanel(false);
+    } catch (e) {
+      setCompleteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCompleting(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="col" style={{ alignItems: 'center', padding: '60px 20px', color: 'var(--text-3)' }}>
@@ -165,6 +195,7 @@ export function JobDetailScreen() {
   const isActive = job.status === 'printing' || job.status === 'paused';
   const isBlocked = job.status === 'blocked';
   const cancellable = ['queued', 'slicing', 'uploading', 'printing', 'paused', 'failed', 'blocked'].includes(job.status);
+  const canCompleteManually = !['complete', 'cancelled', 'failed'].includes(job.status);
   const thumbUrl = plateThumbnailUrl(job.uploaded_file_id, job.plate?.thumbnail_path);
 
   return (
@@ -432,6 +463,59 @@ export function JobDetailScreen() {
               >
                 {Icons.refresh} Unblock — retry at top of queue
               </button>
+            </div>
+          )}
+
+          {canCompleteManually && (
+            <div className="card" style={{ padding: 18 }}>
+              {!showCompletePanel ? (
+                <button
+                  className="btn sm"
+                  style={{ width: '100%' }}
+                  onClick={openCompletePanel}
+                >
+                  {Icons.check} Mark as already completed
+                </button>
+              ) : (
+                <div className="col" style={{ gap: 10 }}>
+                  <div style={{ fontSize: 13, color: 'var(--warn)' }}>
+                    This will mark the job complete without actually printing it — this can't be undone.
+                  </div>
+                  {job.printer_configs.length > 1 && (
+                    <select
+                      className="input"
+                      value={completePrinterId ?? ''}
+                      onChange={e => setCompletePrinterId(Number(e.target.value))}
+                    >
+                      <option value="" disabled>Choose a printer…</option>
+                      {job.printer_configs.map(cfg => (
+                        <option key={cfg.printer_id} value={cfg.printer_id}>{cfg.printer_name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {completeError && (
+                    <div style={{ fontSize: 12, color: 'var(--err)' }}>{completeError}</div>
+                  )}
+                  <div className="row gap-2">
+                    <button
+                      className="btn primary sm"
+                      style={{ flex: 1 }}
+                      disabled={completing || completePrinterId == null}
+                      onClick={handleCompleteManually}
+                    >
+                      {completing ? 'Slicing…' : 'Confirm'}
+                    </button>
+                    <button
+                      className="btn sm"
+                      style={{ flex: 1 }}
+                      disabled={completing}
+                      onClick={() => setShowCompletePanel(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
