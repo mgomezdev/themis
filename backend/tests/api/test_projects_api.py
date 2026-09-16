@@ -88,6 +88,43 @@ async def test_create_project_source_fields_default_null(client):
     data = resp.json()
     assert data["source_app"] is None
     assert data["source_user"] is None
+
+
+async def test_create_project_payment_defaults(client):
+    resp = await client.post("/api/v1/projects", json={"name": "Widget batch"})
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["amount_paid"] is None
+    assert data["payment_status"] == "unpaid"
+    assert data["filament_cost_total"] is None
+
+
+async def test_create_project_with_payment(client):
+    resp = await client.post("/api/v1/projects", json={
+        "name": "Widget batch", "amount_paid": 20.0, "payment_status": "partial",
+    })
+    assert resp.status_code == 201
+    data = resp.json()
+    assert data["amount_paid"] == 20.0
+    assert data["payment_status"] == "partial"
+
+
+async def test_project_invalid_payment_status_rejected(client):
+    resp = await client.post("/api/v1/projects", json={
+        "name": "Widget batch", "payment_status": "not-a-status",
+    })
+    assert resp.status_code == 422
+
+
+async def test_patch_project_payment_status(client):
+    project_id = (await client.post("/api/v1/projects", json={"name": "Widget batch"})).json()["id"]
+    resp = await client.patch(f"/api/v1/projects/{project_id}", json={
+        "amount_paid": 15.5, "payment_status": "paid",
+    })
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["amount_paid"] == 15.5
+    assert data["payment_status"] == "paid"
     assert data["source_layout_id"] is None
 
 

@@ -288,9 +288,8 @@ def _project_progress(job_rows: list[Job]) -> dict:
     actual_seconds = (
         sum(j.actual_seconds for j in job_rows if j.actual_seconds is not None) or None
     )
-    filament_cost_total = (
-        sum(j.filament_cost for j in job_rows if j.filament_cost is not None) or None
-    )
+    filament_cost_values = [j.filament_cost for j in job_rows if j.filament_cost is not None]
+    filament_cost_total = round(sum(filament_cost_values), 2) if filament_cost_values else None
 
     return {
         "jobs_total": jobs_total,
@@ -301,7 +300,7 @@ def _project_progress(job_rows: list[Job]) -> dict:
         "estimate_seconds_remaining": estimate_seconds_remaining,
         "actual_filament_grams": round(actual_filament_grams, 2) if actual_filament_grams else None,
         "actual_seconds": actual_seconds,
-        "filament_cost_total": round(filament_cost_total, 2) if filament_cost_total else None,
+        "filament_cost_total": filament_cost_total,
     }
 
 

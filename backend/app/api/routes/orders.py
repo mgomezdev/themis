@@ -98,8 +98,9 @@ async def _derive(session: AsyncSession, order: Order) -> tuple[str, float, int,
     else:
         status = "in_progress"
     progress = (len(completed) / len(active)) if active else 0.0
-    filament_cost_total = sum(r[1] for r in rows if r[1] is not None) or None
-    return status, round(progress, 4), len(active), (round(filament_cost_total, 2) if filament_cost_total else None)
+    cost_values = [r[1] for r in rows if r[1] is not None]
+    filament_cost_total = round(sum(cost_values), 2) if cost_values else None
+    return status, round(progress, 4), len(active), filament_cost_total
 
 
 async def _to_dict(session: AsyncSession, o: Order, with_jobs: bool = False) -> dict:
