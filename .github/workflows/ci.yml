@@ -226,6 +226,25 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
 
+  # The release gate: real Laminus, real OrcaSlicer, no mocks. Only runs on a
+  # pull request targeting main -- i.e. a develop -> main release PR -- never
+  # on a develop-targeting PR and never on push. That is deliberate: it is what
+  # lets a ruleset on this repo's main branch require this check without ever
+  # seeing it skipped, which a check gated any other way would be.
+  e2e-full:
+    needs: [image]
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    permissions:
+      contents: read
+      packages: read
+    uses: mgomezdev/concordia/.github/workflows/e2e-full.yml@main
+    with:
+      image_artifact: themis-ci-image
+      themis_image: themis:ci
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+
   # Publishing lives here rather than in its own workflow so it can actually
   # depend on the tests. As two separate workflows there was no edge between
   # them, and a red suite still shipped an image.
