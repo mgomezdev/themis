@@ -279,6 +279,17 @@ export async function verifySlice(
   });
 }
 
+export async function completeJobManually(
+  jobId: number,
+  printerId: number,
+): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/complete-manually`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ printer_id: printerId }),
+  });
+}
+
 export async function markJobOutcome(
   jobId: number,
   failures: { project_item_id: number; quantity_failed: number }[],
