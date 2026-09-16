@@ -256,3 +256,62 @@ async def test_complete_manually_sends_no_printer_commands(client, tmp_path):
         # called by _build_slice_request - that's not a printer command.
     finally:
         printer_manager._clients.pop(printer_id, None)
+
+
+async def test_complete_manually_deducts_spoolman_filament(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(
+        client, loaded_filaments=[{"slot": 0, "type": "PLA", "color": "#000000", "spoolman_spool_id": 42}],
+    )
+    job_id = await _create_job(client, file_id, printer_id)
+
+    await client.put("/api/v1/settings/spoolman", json={
+        "enabled": True, "url": "http://spoolman.test",
+    })
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        return _fake_gcode_with_estimates(output_dir, grams=8.0)
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
+         patch("app.api.routes.jobs._deduct_spool") as mock_deduct:
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+
+    assert resp.status_code == 200
+    mock_deduct.assert_called_once()
+    call_args = mock_deduct.call_args[0]
+    assert call_args[0] == "http://spoolman.test"  # url
+    assert call_args[2] == 42                       # spool_id
+    assert call_args[3] == 8.0                       # grams
+
+
+async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(
+        client, loaded_filaments=[{"slot": 0, "type": "PLA", "color": "#000000", "spoolman_spool_id": 42}],
+    )
+    job_id = await _create_job(client, file_id, printer_id)
+    # Spoolman left at its default (disabled).
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        return _fake_gcode_with_estimates(output_dir, grams=8.0)
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
+         patch("app.api.routes.jobs._deduct_spool") as mock_deduct:
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+
+    assert resp.status_code == 200
+    mock_deduct.assert_not_called()
