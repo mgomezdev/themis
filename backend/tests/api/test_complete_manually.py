@@ -108,3 +108,151 @@ async def test_complete_manually_happy_path(client, tmp_path):
     assert printer.lifetime_job_count == 1
     assert printer.lifetime_print_seconds == 3930
     await agen.aclose()
+
+
+async def test_complete_manually_404_unknown_job(client):
+    resp = await client.post("/api/v1/jobs/999999/complete-manually", json={"printer_id": 1})
+    assert resp.status_code == 404
+
+
+async def test_complete_manually_404_unknown_printer(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    resp = await client.post(
+        f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": 999999},
+    )
+    assert resp.status_code == 404
+
+
+async def test_complete_manually_404_no_config_for_printer(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    other_printer_id = await _create_printer(client, name="P1S #2")
+    job_id = await _create_job(client, file_id, printer_id)
+
+    resp = await client.post(
+        f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": other_printer_id},
+    )
+    assert resp.status_code == 404
+
+
+async def test_complete_manually_409_already_complete(client, tmp_path):
+    from app.database import get_session
+    from app.main import app
+    from app.models import Job
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.status = "complete"
+    await session.commit()
+    await agen.aclose()
+
+    resp = await client.post(
+        f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+    )
+    assert resp.status_code == 409
+
+
+async def test_complete_manually_slice_failure_blocks_job(client, tmp_path):
+    from app.services.slicer_service import SliceError
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        raise SliceError("OrcaSlicer exited with code 1\nboom")
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "blocked"
+    assert body["assigned_printer_id"] is None
+
+    # _to_dict() (what complete-manually returns) doesn't carry block_reason -
+    # only /jobs/{id}/details does. Check the real error landed there.
+    details_resp = await client.get(f"/api/v1/jobs/{job_id}/details")
+    assert "OrcaSlicer" in details_resp.json()["block_reason"]
+
+    # get_slice_failures already filters to slice_failed==True configs — presence
+    # in this list plus the right printer_id is the assertion, no separate flag.
+    failures_resp = await client.get(f"/api/v1/jobs/{job_id}/slice-failures")
+    failures = failures_resp.json()
+    assert any(f["printer_id"] == printer_id and "OrcaSlicer" in f["slice_error"] for f in failures)
+
+
+async def test_complete_manually_output_dir_cleaned_up_on_success(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+    expected_output_dir = tmp_path / "gcode_manual_complete" / str(job_id)
+
+    async def fake_run_verify_slice(req, output_dir):
+        assert output_dir == expected_output_dir
+        return _fake_gcode_with_estimates(output_dir)
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
+         patch("app.api.routes.jobs._deduct_spool"):
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+
+    assert resp.status_code == 200
+    assert not expected_output_dir.exists()
+
+
+async def test_complete_manually_sends_no_printer_commands(client, tmp_path):
+    """The whole point of this endpoint is that it never talks to the printer.
+    A mock vendor client is wired into printer_manager so any accidental call to
+    start_print/upload_file/stop_print (or anything else on it) fails loudly."""
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        return _fake_gcode_with_estimates(output_dir)
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    mock_client = MagicMock()
+    mock_client.connected = True
+    from app.services.printer_manager import printer_manager
+    printer_manager._clients[printer_id] = mock_client
+    try:
+        with patch("app.api.routes.jobs.queue_engine", mock_qe), \
+             patch("app.api.routes.jobs._deduct_spool"):
+            resp = await client.post(
+                f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+            )
+        assert resp.status_code == 200
+        mock_client.start_print.assert_not_called()
+        mock_client.upload_file.assert_not_called()
+        mock_client.stop_print.assert_not_called()
+        # orca_export_args (local file-naming, no printer I/O) IS expected to be
+        # called by _build_slice_request - that's not a printer command.
+    finally:
+        printer_manager._clients.pop(printer_id, None)
