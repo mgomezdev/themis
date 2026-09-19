@@ -867,6 +867,7 @@ async def verify_slice(
 
 
 _MANUAL_COMPLETE_TERMINAL_STATUSES = {"complete", "cancelled", "failed"}
+_manual_complete_in_flight: set[int] = set()
 
 
 @router.post(
@@ -874,8 +875,8 @@ _MANUAL_COMPLETE_TERMINAL_STATUSES = {"complete", "cancelled", "failed"}
     summary="Manually complete a job without printing it",
     responses={
         404: {"description": "Job, printer, or printer config not found"},
-        409: {"description": "Job is already in a terminal status"},
-        422: {"description": "Printer has no OrcaSlicer machine preset configured"},
+        409: {"description": "Job is terminal, or already being manually completed"},
+        422: {"description": "No OrcaSlicer machine preset on the printer, or the slice failed"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -917,11 +918,13 @@ async def complete_job_manually(
     if not printer.current_orca_printer_profile:
         raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")
 
-    job.status = "slicing"
-    job.assigned_printer_id = body.printer_id
-    job.block_reason = None
-    job.updated_at = datetime.now(timezone.utc).isoformat()
-    await session.commit()
+    # No status/assigned_printer_id change before the slice: the job may genuinely be
+    # printing/uploading, and clobbering either would orphan the live print from
+    # _reconcile_printing_jobs. The in-flight set stops a double-click/second tab from
+    # completing (and double-counting counters + Spoolman) the same job twice.
+    if job_id in _manual_complete_in_flight:
+        raise HTTPException(409, f"Job {job_id} is already being manually completed")
+    _manual_complete_in_flight.add(job_id)
 
     req = _build_slice_request(job, config, printer, uploaded_file)
     output_dir = queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
@@ -931,28 +934,21 @@ async def complete_job_manually(
         # file must be read while it still exists.
         grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
     except SliceError as exc:
-        config.slice_failed = True
-        config.slice_error = str(exc)
-        job.status = "blocked"
-        job.block_reason = f"slicing failed: {exc}"
-        job.assigned_printer_id = None
-        job.updated_at = datetime.now(timezone.utc).isoformat()
-        await session.commit()
-        await session.refresh(job)
-        return _to_dict(job)
+        raise HTTPException(422, f"Slicing failed: {exc}")
     except Exception as exc:
         logger.exception("Unexpected error in complete-manually slice for job %s", job_id)
-        config.slice_failed = True
-        config.slice_error = f"Unexpected error: {exc}"
-        job.status = "blocked"
-        job.block_reason = f"slicing failed: Unexpected error: {exc}"
-        job.assigned_printer_id = None
-        job.updated_at = datetime.now(timezone.utc).isoformat()
-        await session.commit()
-        await session.refresh(job)
-        return _to_dict(job)
+        raise HTTPException(422, f"Slicing failed: Unexpected error: {exc}")
     finally:
+        _manual_complete_in_flight.discard(job_id)
         shutil.rmtree(output_dir, ignore_errors=True)
+
+    # Re-check after the (slow) slice: the job may have been cancelled or completed
+    # by the queue engine / a real print finishing while we were slicing.
+    await session.refresh(job)
+    if job.status in _MANUAL_COMPLETE_TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job in status {job.status!r} is already terminal")
+    job.assigned_printer_id = body.printer_id
+    job.block_reason = None
 
     job.actual_filament_grams = grams
     job.actual_seconds = secs

@@ -160,12 +160,30 @@ async def test_complete_manually_409_already_complete(client, tmp_path):
     assert resp.status_code == 409
 
 
-async def test_complete_manually_slice_failure_blocks_job(client, tmp_path):
+async def _set_job_status(job_id, status, printer_id=None):
+    from app.database import get_session
+    from app.main import app
+    from app.models import Job
+
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    job = await session.get(Job, job_id)
+    job.status = status
+    job.assigned_printer_id = printer_id
+    await session.commit()
+    await agen.aclose()
+
+
+async def test_complete_manually_slice_failure_422_leaves_job_untouched(client, tmp_path):
     from app.services.slicer_service import SliceError
 
     file_id = await _upload_file(client, tmp_path)
     printer_id = await _create_printer(client)
+    other_printer_id = await _create_printer(client, name="P1S #2")
     job_id = await _create_job(client, file_id, printer_id)
+    # A genuinely printing job on another printer: a failed manual slice must not
+    # orphan the live print from its printer.
+    await _set_job_status(job_id, "printing", other_printer_id)
 
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
@@ -180,21 +198,53 @@ async def test_complete_manually_slice_failure_blocks_job(client, tmp_path):
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
 
+    assert resp.status_code == 422
+    assert "OrcaSlicer" in resp.json()["detail"]
+
+    details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
+    assert details["status"] == "printing"
+    assert details["assigned_printer"]["id"] == other_printer_id
+    assert details["block_reason"] is None
+
+
+async def test_complete_manually_409_when_already_in_flight(client, tmp_path):
+    from app.api.routes import jobs as jobs_route
+
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+
+    jobs_route._manual_complete_in_flight.add(job_id)
+    try:
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+    finally:
+        jobs_route._manual_complete_in_flight.discard(job_id)
+    assert resp.status_code == 409
+
+
+async def test_complete_manually_from_printing_status_completes(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    job_id = await _create_job(client, file_id, printer_id)
+    await _set_job_status(job_id, "printing", printer_id)
+
+    mock_qe = MagicMock()
+    mock_qe._slicer._data_dir = tmp_path
+
+    async def fake_run_verify_slice(req, output_dir):
+        return _fake_gcode_with_estimates(output_dir)
+
+    mock_qe.run_verify_slice = fake_run_verify_slice
+
+    with patch("app.api.routes.jobs.queue_engine", mock_qe),          patch("app.api.routes.jobs._deduct_spool"):
+        resp = await client.post(
+            f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
+        )
+
     assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "blocked"
-    assert body["assigned_printer_id"] is None
-
-    # _to_dict() (what complete-manually returns) doesn't carry block_reason -
-    # only /jobs/{id}/details does. Check the real error landed there.
-    details_resp = await client.get(f"/api/v1/jobs/{job_id}/details")
-    assert "OrcaSlicer" in details_resp.json()["block_reason"]
-
-    # get_slice_failures already filters to slice_failed==True configs — presence
-    # in this list plus the right printer_id is the assertion, no separate flag.
-    failures_resp = await client.get(f"/api/v1/jobs/{job_id}/slice-failures")
-    failures = failures_resp.json()
-    assert any(f["printer_id"] == printer_id and "OrcaSlicer" in f["slice_error"] for f in failures)
+    assert resp.json()["status"] == "complete"
 
 
 async def test_complete_manually_output_dir_cleaned_up_on_success(client, tmp_path):
