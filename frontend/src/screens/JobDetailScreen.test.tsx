@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { JobDetailScreen } from './JobDetailScreen';
 import * as queueApi from '../api/queue';
@@ -11,6 +12,7 @@ vi.mock('../api/queue', async (importOriginal) => {
     getJobDetails: vi.fn(),
     cancelJob: vi.fn(),
     unblockJob: vi.fn(),
+    completeJobManually: vi.fn(),
   };
 });
 
@@ -110,5 +112,82 @@ describe('JobDetailScreen — low_stock_warning', () => {
     // Wait for the printer config card to render first
     await screen.findByText('U1');
     expect(screen.queryByText(/Low filament/i)).toBeNull();
+  });
+});
+
+describe('JobDetailScreen — manual completion', () => {
+  it('shows the button for a queued job', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    renderJobDetail();
+    expect(await screen.findByRole('button', { name: /mark as already completed/i })).toBeTruthy();
+  });
+
+  it('does not show the button for a completed job', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'complete' });
+    renderJobDetail();
+    await screen.findByText(/part\.3mf/);
+    expect(screen.queryByRole('button', { name: /mark as already completed/i })).toBeNull();
+  });
+
+  it('requires confirmation before calling the API', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    renderJobDetail();
+
+    await user.click(await screen.findByRole('button', { name: /mark as already completed/i }));
+    expect(queueApi.completeJobManually).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: /^confirm$/i })).toBeTruthy();
+  });
+
+  it('pre-selects the single eligible printer and calls the API on confirm', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    vi.mocked(queueApi.completeJobManually).mockResolvedValue({ ...BASE_JOB, status: 'complete' } as queueApi.ApiJob);
+    renderJobDetail();
+
+    await user.click(await screen.findByRole('button', { name: /mark as already completed/i }));
+    await user.click(screen.getByRole('button', { name: /^confirm$/i }));
+
+    // completeJobManually is called, then handleCompleteManually awaits a
+    // getJobDetails() refresh before the confirm panel closes — wait for that
+    // full chain to settle rather than asserting immediately after the click.
+    await waitFor(() => {
+      expect(queueApi.completeJobManually).toHaveBeenCalledWith(5, 3); // job id 5, the sole printer_configs entry (printer_id 3)
+    });
+  });
+
+  it('shows a printer picker when more than one config exists', async () => {
+    const user = userEvent.setup();
+    const job: queueApi.ApiJobDetails = {
+      ...BASE_JOB,
+      status: 'queued',
+      printer_configs: [
+        { ...BASE_JOB.printer_configs[0], printer_id: 3, printer_name: 'U1' },
+        { ...BASE_JOB.printer_configs[0], printer_id: 4, printer_name: 'U2' },
+      ],
+    };
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(job);
+    renderJobDetail();
+
+    await user.click(await screen.findByRole('button', { name: /mark as already completed/i }));
+
+    // "U1"/"U2" also appear in the pre-existing eligible-printers card list, so
+    // scope the assertion to the select's own options rather than the whole page.
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    const optionLabels = Array.from(select.options).map(o => o.textContent);
+    expect(optionLabels).toContain('U1');
+    expect(optionLabels).toContain('U2');
+  });
+
+  it('shows an error message when the API call fails', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    vi.mocked(queueApi.completeJobManually).mockRejectedValue(new Error('500 slice error'));
+    renderJobDetail();
+
+    await user.click(await screen.findByRole('button', { name: /mark as already completed/i }));
+    await user.click(screen.getByRole('button', { name: /^confirm$/i }));
+
+    expect(await screen.findByText(/500 slice error/i)).toBeTruthy();
   });
 });

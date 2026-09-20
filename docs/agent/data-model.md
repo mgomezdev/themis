@@ -89,6 +89,13 @@ project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
 - `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
+- `POST /api/v1/jobs/{id}/complete-manually`: slices for a chosen printer (real slice, isolated
+  directory, same pattern as `verify-slice`) then marks the job `complete` without ever printing it -
+  sets `actual_filament_grams`/`actual_seconds` from the real slice, deducts Spoolman filament, and
+  updates the printer's `awaiting_plate_clear`/lifetime counters as if it had really finished, all
+  without sending anything to the printer connection. Fires no webhooks/notifications either way. Works
+  from any non-terminal status, including `printing`/`uploading`; touches no job state until the slice succeeds (a failed slice returns 422 and leaves the job exactly as it was), and a second concurrent call for the same job gets 409. See
+  `docs/superpowers/specs/2026-09-15-manual-job-completion-design.md`.
 
 **Actual values** (set at production slice time, before the `gcode_files` row is deleted):
 `actual_filament_grams: float?, actual_seconds: int?, actual_filament_breakdown: JSON?,

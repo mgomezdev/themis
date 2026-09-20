@@ -22,7 +22,7 @@ from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config
+from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
 from ...services.spool_check import check_spool_sufficiency
 from ...services.spoolman_service import fetch_spools
@@ -754,6 +754,58 @@ class VerifySliceBody(BaseModel):
     printer_id: int
 
 
+class CompleteManuallyBody(BaseModel):
+    printer_id: int
+
+
+def _build_slice_request(
+    job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile,
+) -> SliceRequest:
+    """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
+    matched `config` - shared by verify-slice and complete-manually, both of which
+    slice in an isolated directory and never touch the job's production gcode path."""
+    loaded = printer.loaded_filaments or []
+    slot = _slot_for_config(config, loaded)
+    filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
+
+    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+    file_base = f"{safe}_p{job.plate_number}_j{job.id}"
+
+    client = printer_manager._clients.get(printer.id)
+    export_args = client.orca_export_args(file_base) if client else []
+
+    cfg_tool_index = config.tool_index
+    cfg_filament_map = config.filament_map
+    prepare_hook = None
+    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
+        prepare_hook = (
+            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
+            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
+        )
+
+    if cfg_filament_map:
+        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
+        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
+    else:
+        filament_presets = [filament_profile] if filament_profile else []
+
+    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
+    plate_config.update(job.overrides or {})
+    return SliceRequest(
+        job_id=job.id,
+        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
+        plate_number=job.plate_number,
+        machine_preset=printer.current_orca_printer_profile,
+        process_preset=config.print_profile,
+        filament_presets=filament_presets,
+        filament_colours=[config.filament_color] if config.filament_color else [],
+        export_args=export_args,
+        prepare_hook=prepare_hook,
+        extra_config=plate_config,
+    )
+
+
 @router.post(
     "/{job_id}/verify-slice",
     summary="Test-slice job",
@@ -792,47 +844,7 @@ async def verify_slice(
     if not printer.current_orca_printer_profile:
         return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
 
-    # Mirror _run_slice_and_print: resolve the filament slot and build the SliceRequest.
-    loaded = printer.loaded_filaments or []
-    slot = _slot_for_config(config, loaded)
-    filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
-
-    stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-    file_base = f"{safe}_p{job.plate_number}_j{job_id}"
-
-    client = printer_manager._clients.get(body.printer_id)
-    export_args = client.orca_export_args(file_base) if client else []
-
-    cfg_tool_index = config.tool_index
-    cfg_filament_map = config.filament_map
-    prepare_hook = None
-    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
-        prepare_hook = (
-            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
-            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
-        )
-
-    if cfg_filament_map:
-        ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
-        filament_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-    else:
-        filament_presets = [filament_profile] if filament_profile else []
-
-    plate_config = {"curr_bed_type": printer.build_plate_type} if printer.build_plate_type else {}
-    plate_config.update(job.overrides or {})
-    req = SliceRequest(
-        job_id=job_id,
-        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
-        plate_number=job.plate_number,
-        machine_preset=printer.current_orca_printer_profile,
-        process_preset=config.print_profile,
-        filament_presets=filament_presets,
-        filament_colours=[config.filament_color] if config.filament_color else [],
-        export_args=export_args,
-        prepare_hook=prepare_hook,
-        extra_config=plate_config,
-    )
+    req = _build_slice_request(job, config, printer, uploaded_file)
 
     # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
@@ -852,6 +864,144 @@ async def verify_slice(
         return {"ok": False, "error": f"Unexpected error: {exc}"}
     finally:
         shutil.rmtree(output_dir, ignore_errors=True)
+
+
+_MANUAL_COMPLETE_TERMINAL_STATUSES = {"complete", "cancelled", "failed"}
+_manual_complete_in_flight: set[int] = set()
+
+
+@router.post(
+    "/{job_id}/complete-manually",
+    summary="Manually complete a job without printing it",
+    responses={
+        404: {"description": "Job, printer, or printer config not found"},
+        409: {"description": "Job is terminal, or already being manually completed"},
+        422: {"description": "No OrcaSlicer machine preset on the printer, or the slice failed"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def complete_job_manually(
+    job_id: int,
+    body: CompleteManuallyBody,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Slice the job for the chosen printer - a real slice, in an isolated directory,
+    never the job's production gcode path - and mark it complete without ever
+    printing it or sending anything to the printer. For work that was already done
+    physically: printed before Themis tracked it, printed manually, or a job
+    Themis's own tracking is stuck on but which really did finish. Deducts Spoolman
+    filament on success. Fires no webhooks or notifications either way - this is an
+    out-of-band admin action, not a real completion or a real failure as far as
+    integrations are concerned."""
+    job = await _get_or_404(job_id, session)
+    if job.status in _MANUAL_COMPLETE_TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job in status {job.status!r} is already terminal")
+
+    printer = await session.get(Printer, body.printer_id)
+    if printer is None:
+        raise HTTPException(404, f"Printer {body.printer_id} not found")
+
+    cfg_result = await session.execute(
+        select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id,
+            JobPrinterConfig.printer_id == body.printer_id,
+        )
+    )
+    config = cfg_result.scalar_one_or_none()
+    if config is None:
+        raise HTTPException(404, f"Job {job_id} has no config for printer {body.printer_id}")
+
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    if uploaded_file is None:
+        raise HTTPException(404, f"File {job.uploaded_file_id} not found")
+
+    if not printer.current_orca_printer_profile:
+        raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")
+
+    # No status/assigned_printer_id change before the slice: the job may genuinely be
+    # printing/uploading, and clobbering either would orphan the live print from
+    # _reconcile_printing_jobs. The in-flight set stops a double-click/second tab from
+    # completing (and double-counting counters + Spoolman) the same job twice.
+    if job_id in _manual_complete_in_flight:
+        raise HTTPException(409, f"Job {job_id} is already being manually completed")
+    _manual_complete_in_flight.add(job_id)
+
+    req = _build_slice_request(job, config, printer, uploaded_file)
+    output_dir = queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
+    try:
+        gcode_path = await queue_engine.run_verify_slice(req, output_dir)
+        # Parse before the `finally` cleanup below removes output_dir - the gcode
+        # file must be read while it still exists.
+        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+    except SliceError as exc:
+        raise HTTPException(422, f"Slicing failed: {exc}")
+    except Exception as exc:
+        logger.exception("Unexpected error in complete-manually slice for job %s", job_id)
+        raise HTTPException(422, f"Slicing failed: Unexpected error: {exc}")
+    finally:
+        _manual_complete_in_flight.discard(job_id)
+        shutil.rmtree(output_dir, ignore_errors=True)
+
+    # Re-check after the (slow) slice: the job may have been cancelled or completed
+    # by the queue engine / a real print finishing while we were slicing.
+    await session.refresh(job)
+    if job.status in _MANUAL_COMPLETE_TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job in status {job.status!r} is already terminal")
+    job.assigned_printer_id = body.printer_id
+    job.block_reason = None
+
+    job.actual_filament_grams = grams
+    job.actual_seconds = secs
+    if extruder_grams is not None:
+        job.actual_filament_breakdown = [
+            {
+                "extruder_index": i,
+                "filament_profile": req.filament_presets[i] if i < len(req.filament_presets) else None,
+                "grams": g,
+            }
+            for i, g in enumerate(extruder_grams)
+        ]
+    job.status = "complete"
+    job.completed_at = datetime.now(timezone.utc).isoformat()
+    job.outcome = None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+
+    printer.lifetime_job_count += 1
+    printer.lifetime_print_seconds += secs or 0
+    printer.awaiting_plate_clear = True
+    printer_manager.set_awaiting_plate_clear(body.printer_id, True)
+
+    spool_id = None
+    spoolman_url = None
+    spoolman_key = None
+    grams_to_deduct = None
+    if grams is not None:
+        spoolman_cfg = await session.get(SpoolmanConfig, 1)
+        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+            loaded = printer.loaded_filaments or []
+            slot = _slot_for_config(config, loaded)
+            if slot is not None:
+                raw_spool_id = slot.get("spoolman_spool_id")
+                if raw_spool_id is not None:
+                    try:
+                        spool_id = int(raw_spool_id)
+                        spoolman_url = spoolman_cfg.url
+                        spoolman_key = spoolman_cfg.api_key
+                        grams_to_deduct = grams
+                        job.deduction_skipped = False
+                    except (TypeError, ValueError):
+                        logger.warning(
+                            "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                            raw_spool_id, job_id,
+                        )
+
+    await session.commit()
+    await session.refresh(job)
+
+    if spool_id is not None and spoolman_url and grams_to_deduct is not None:
+        asyncio.create_task(_deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct))
+
+    return _to_dict(job)
 
 
 @router.get(

@@ -2721,6 +2721,60 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/complete-manually": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Manually complete a job without printing it",
+        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts Spoolman\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
+        "operationId": "complete_job_manually_api_v1_jobs__job_id__complete_manually_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteManuallyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Complete Job Manually Api V1 Jobs  Job Id  Complete Manually Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job, printer, or printer config not found"
+          },
+          "409": {
+            "description": "Job is terminal, or already being manually completed"
+          },
+          "422": {
+            "description": "No OrcaSlicer machine preset on the printer, or the slice failed"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/slice-failures": {
       "get": {
         "tags": [
@@ -5443,6 +5497,19 @@
           "file"
         ],
         "title": "Body_upload_file_api_v1_files_upload_post"
+      },
+      "CompleteManuallyBody": {
+        "properties": {
+          "printer_id": {
+            "type": "integer",
+            "title": "Printer Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_id"
+        ],
+        "title": "CompleteManuallyBody"
       },
       "ConfirmRemapBody": {
         "properties": {
