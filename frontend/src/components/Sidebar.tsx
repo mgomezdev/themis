@@ -1,6 +1,7 @@
 import { NavLink, useLocation } from 'react-router-dom';
 import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
+import { SpoolmanStatusChip } from './SpoolmanStatusChip';
 import { useSpoolmanConfig } from '../api/spoolman';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
@@ -124,6 +125,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
           </div>
         )}
         <LaminusStatusChip />
+        <SpoolmanStatusChip />
       </div>
 
       <div className="sidebar-toggle">
