@@ -1133,7 +1133,7 @@ class QueueEngine:
 
         async with self._factory() as session:
             job = await session.get(Job, job_id)
-            if job is None or job.status == "cancelled":
+            if job is None or job.status in ("cancelled", "complete"):
                 return
             job.status = "printing"
             job.updated_at = _now()
