@@ -84,12 +84,14 @@ class SpoolmanConfigOut(BaseModel):
     enabled: bool
     url: str | None
     has_api_key: bool
+    sync_interval_minutes: int
 
 
 class SpoolmanConfigIn(BaseModel):
     enabled: bool | None = None
     url: str | None = None
     api_key: str | None = None
+    sync_interval_minutes: int | None = None
 
 
 async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
@@ -102,7 +104,10 @@ async def _get_or_create(session: AsyncSession) -> SpoolmanConfig:
 
 
 def _spoolman_out(row: SpoolmanConfig) -> SpoolmanConfigOut:
-    return SpoolmanConfigOut(enabled=row.enabled, url=row.url, has_api_key=row.api_key is not None)
+    return SpoolmanConfigOut(
+        enabled=row.enabled, url=row.url, has_api_key=row.api_key is not None,
+        sync_interval_minutes=row.sync_interval_minutes,
+    )
 
 
 @router.get("/spoolman", response_model=SpoolmanConfigOut, summary="Get Spoolman config",
@@ -128,6 +133,8 @@ async def update_spoolman_config(
         row.url = body.url or None
     if body.api_key is not None:
         row.api_key = body.api_key or None
+    if body.sync_interval_minutes is not None:
+        row.sync_interval_minutes = max(1, body.sync_interval_minutes)
     await session.commit()
     await session.refresh(row)
     return _spoolman_out(row)

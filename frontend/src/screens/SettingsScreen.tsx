@@ -1,6 +1,9 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useSpoolmanConfig } from '../api/spoolman';
+import {
+  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools,
+  useSpoolmanConfig, useSpoolmanSyncStatus, spoolmanSyncTone, type SpoolmanSyncStatus,
+} from '../api/spoolman';
 import { getQueueConfig, saveQueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
@@ -702,6 +705,35 @@ function SpoolStat({ label, value, tone }: { label: string; value: number; tone?
   );
 }
 
+function SyncDetails({ status }: { status: SpoolmanSyncStatus }) {
+  const tone = spoolmanSyncTone(status);
+  const toneColor = tone === 'success' ? 'var(--ok)' : tone === 'fail' ? 'var(--err)' : 'var(--warn)';
+  const toneLabel = tone === 'success' ? 'Synced' : tone === 'fail' ? 'Sync failing' : 'Stale';
+
+  return (
+    <div style={{ padding: '20px 0', borderBottom: '1px solid var(--border-1)' }}>
+      <div className="row between" style={{ alignItems: 'center', marginBottom: 10 }}>
+        <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
+          Sync status
+        </div>
+        <span className="row gap-1" style={{ alignItems: 'center', fontSize: 12, fontWeight: 500, color: toneColor }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: toneColor, flexShrink: 0 }} />
+          {toneLabel}
+        </span>
+      </div>
+      <div className="small muted">
+        Last successful sync: {status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'never'}
+      </div>
+      {status.last_error && (
+        <div className="small" style={{ color: 'var(--err)', marginTop: 4 }}>
+          Last attempt ({status.last_attempt_at ? new Date(status.last_attempt_at).toLocaleString() : 'unknown time'}) failed
+          {status.last_error_code ? ` [${status.last_error_code}]` : ''}: {status.last_error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SpoolmanPage() {
   const [s, set] = useState<SpoolmanSettings>({
     enabled: false,
@@ -729,10 +761,14 @@ function SpoolmanPage() {
 
   useEffect(() => {
     getSpoolmanConfig()
-      .then(cfg => update({ enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key }))
+      .then(cfg => update({
+        enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key,
+        syncInterval: cfg.sync_interval_minutes,
+      }))
       .catch(console.error);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { status: syncStatus, refetch: refetchSyncStatus } = useSpoolmanSyncStatus();
   const spools = useSpools(s.connectionStatus === 'connected');
 
   const stats = useMemo(() => ({
@@ -749,8 +785,9 @@ function SpoolmanPage() {
         enabled: s.enabled,
         url: s.url,
         api_key: s.apiKeyTouched ? s.apiKey : undefined,
+        sync_interval_minutes: s.syncInterval,
       });
-      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
+      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false, syncInterval: cfg.sync_interval_minutes });
     } finally {
       setSaving(false);
     }
@@ -762,7 +799,9 @@ function SpoolmanPage() {
     update({ connectionStatus: 'connecting' });
     try {
       const apiKeyForSave = s.apiKeyTouched ? s.apiKey : undefined;
-      const cfg = await saveSpoolmanConfig({ enabled: s.enabled, url: s.url, api_key: apiKeyForSave });
+      const cfg = await saveSpoolmanConfig({
+        enabled: s.enabled, url: s.url, api_key: apiKeyForSave, sync_interval_minutes: s.syncInterval,
+      });
       update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
       const result = await testSpoolmanConnection(s.url, apiKeyForSave);
       if (result.status === 'pending_remaps') {
@@ -794,6 +833,7 @@ function SpoolmanPage() {
       setSyncMsg(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSyncing(false);
+      refetchSyncStatus();
     }
   }
 
@@ -874,6 +914,8 @@ function SpoolmanPage() {
               </div>
             </div>
           )}
+
+          {s.enabled && syncStatus && <SyncDetails status={syncStatus} />}
 
           <div style={{ marginTop: 24, marginBottom: 4, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
             Sync behavior

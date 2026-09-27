@@ -38,6 +38,7 @@ from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
 from .services.slicer_service import SlicerService
+from .services.spoolman_sync import spoolman_sync_loop
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
@@ -99,6 +100,9 @@ async def lifespan(app: FastAPI):
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
 
+    spoolman_sync_loop.configure(SessionLocal)
+    await spoolman_sync_loop.start()
+
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
     from .config import get_laminus_sidecar_url as _get_sidecar_url
@@ -118,6 +122,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    await spoolman_sync_loop.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
         printer_manager.disconnect_printer(pid)

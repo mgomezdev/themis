@@ -148,8 +148,15 @@ estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-sl
 (see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
 Managed via `GET/PUT /api/v1/settings/queue`.
 
-`spoolman_config{enabled, url?, api_key?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
-`POST /api/v1/settings/spoolman/test`.
+`spoolman_config{enabled, url?, api_key?, sync_interval_minutes:int=15, last_sync_at?, last_attempt_at?,
+last_sync_error?, last_sync_error_code?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
+`POST /api/v1/settings/spoolman/test`. The last four sync-status fields are written only by
+`spoolman_sync.record_sync()` (called by the manual `POST /api/v1/spoolman/sync-now` and by
+`spoolman_sync.SpoolmanSyncLoop`'s periodic background sync, paced by `sync_interval_minutes`); a
+successful sync always clears `last_sync_error`/`last_sync_error_code`. Read via
+`GET /api/v1/spoolman/sync-status` — used by the App shell's status-indicator bubble (green/red/orange
+for success/fail/stale, stale = last successful sync more than 2 intervals old) and by the Spoolman
+settings page's sync-details panel.
 
 `webhook_config` (singleton id=1): `{url:str?, secret:str?, events:JSON[str]}`. When `url` is set, the
 queue engine fires a signed `POST` on `job.complete`, `job.failed`, and `job.blocked` events (filtered by `events`
