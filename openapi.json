@@ -2772,6 +2772,64 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/cost": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Set job filament cost",
+        "description": "Record the cost of the filament used for this job, for profit/loss reporting.",
+        "operationId": "set_job_cost_api_v1_jobs__job_id__cost_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCostPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Cost Api V1 Jobs  Job Id  Cost Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/outcome": {
       "put": {
         "tags": [
@@ -5078,7 +5136,7 @@
           "spoolman"
         ],
         "summary": "Manually sync filaments and spools from Spoolman",
-        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.",
+        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.\nRecords the outcome (success clears any previously shown error) so the\nstatus indicator and Spoolman settings page reflect this attempt too.",
         "operationId": "sync_now_api_v1_spoolman_sync_now_post",
         "responses": {
           "200": {
@@ -5091,6 +5149,28 @@
           },
           "503": {
             "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/sync-status": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Spoolman sync health for the status indicator and settings page",
+        "description": "Never 503s, even when Spoolman is disabled/unconfigured \u2014 callers use\n`enabled` to decide whether to show anything at all.",
+        "operationId": "get_sync_status_api_v1_spoolman_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -5743,6 +5823,23 @@
         ],
         "title": "JobConfigsUpdate"
       },
+      "JobCostPatch": {
+        "properties": {
+          "filament_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Cost"
+          }
+        },
+        "type": "object",
+        "title": "JobCostPatch"
+      },
       "JobCreate": {
         "properties": {
           "uploaded_file_id": {
@@ -6124,6 +6221,22 @@
             "type": "array",
             "title": "Parts",
             "default": []
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "type": "string",
+            "title": "Payment Status",
+            "default": "unpaid"
           }
         },
         "type": "object",
@@ -6276,6 +6389,28 @@
               }
             ],
             "title": "Parts"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Status"
           }
         },
         "type": "object",
@@ -6740,6 +6875,22 @@
               }
             ],
             "title": "Source Layout Id"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "type": "string",
+            "title": "Payment Status",
+            "default": "unpaid"
           }
         },
         "type": "object",
@@ -7066,6 +7217,28 @@
               }
             ],
             "title": "Notes"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Status"
           }
         },
         "type": "object",
@@ -7331,6 +7504,17 @@
               }
             ],
             "title": "Api Key"
+          },
+          "sync_interval_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Interval Minutes"
           }
         },
         "type": "object",
@@ -7356,13 +7540,18 @@
           "has_api_key": {
             "type": "boolean",
             "title": "Has Api Key"
+          },
+          "sync_interval_minutes": {
+            "type": "integer",
+            "title": "Sync Interval Minutes"
           }
         },
         "type": "object",
         "required": [
           "enabled",
           "url",
-          "has_api_key"
+          "has_api_key",
+          "sync_interval_minutes"
         ],
         "title": "SpoolmanConfigOut"
       },
@@ -7394,6 +7583,72 @@
           "stale_name"
         ],
         "title": "SpoolmanResolutionEntry"
+      },
+      "SyncStatusResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
+          "last_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "interval_minutes",
+          "last_sync_at",
+          "last_attempt_at",
+          "last_error",
+          "last_error_code"
+        ],
+        "title": "SyncStatusResponse"
       },
       "TagAssign": {
         "properties": {
