@@ -63,6 +63,7 @@ export interface ApiJob {
   materials: string[];
   eligible_printers: Array<{ id: number; name: string }>;
   low_stock_warning: LowStockWarning | null;
+  filament_cost: number | null;
 }
 
 export interface LowStockWarning {
@@ -262,6 +263,14 @@ export async function updateJobConfigs(
 
 export async function getJobDetails(jobId: number): Promise<ApiJobDetails> {
   return request(`/api/v1/jobs/${jobId}/details`);
+}
+
+export async function setJobCost(jobId: number, filamentCost: number | null): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/cost`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ filament_cost: filamentCost }),
+  });
 }
 
 export async function getSliceFailures(jobId: number): Promise<ApiSliceFailure[]> {

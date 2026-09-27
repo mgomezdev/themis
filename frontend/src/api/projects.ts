@@ -48,6 +48,8 @@ export interface ProjectPart {
   created_at: string;
 }
 
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
+
 export interface Project {
   id: number;
   name: string;
@@ -60,6 +62,8 @@ export interface Project {
   source_app: string | null;
   source_user: string | null;
   source_layout_id: number | null;
+  amount_paid: number | null;
+  payment_status: PaymentStatus;
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
@@ -73,6 +77,7 @@ export interface Project {
   estimate_seconds_remaining: number | null;
   actual_filament_grams: number | null;
   actual_seconds: number | null;
+  filament_cost_total: number | null;
 }
 
 export interface GenerateOut {
@@ -105,6 +110,8 @@ export interface ProjectCreate {
   source_app?: string | null;
   source_user?: string | null;
   source_layout_id?: number | null;
+  amount_paid?: number | null;
+  payment_status?: PaymentStatus;
 }
 
 export interface ProjectItemCreate {

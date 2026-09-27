@@ -47,7 +47,8 @@ describe('ProjectBuilderScreen', () => {
     await user.click(addBtn);
 
     expect(screen.getAllByTitle('Remove')).toHaveLength(1);
-    expect(screen.getByRole('spinbutton')).toHaveValue(2);
+    const spinbuttons = screen.getAllByRole('spinbutton');
+    expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(2);
   });
 
   it('filters the STL list by filename when searching', async () => {
@@ -84,7 +85,8 @@ describe('ProjectBuilderScreen', () => {
 
     await user.click(screen.getByRole('button', { name: 'Undo' }));
     expect(screen.getByTitle('Remove')).toBeTruthy();
-    expect(screen.getByRole('spinbutton')).toHaveValue(1);
+    const spinbuttons = screen.getAllByRole('spinbutton');
+    expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(1);
   });
 
   it('labels Generate as "without dispatch" when no printers are selected', async () => {

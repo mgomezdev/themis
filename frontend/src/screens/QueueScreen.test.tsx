@@ -30,7 +30,7 @@ const nullEstimate = {
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
   materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
-  low_stock_warning: null,
+  low_stock_warning: null, filament_cost: null,
 };
 
 const mockJobs: ApiJob[] = [

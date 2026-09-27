@@ -9,6 +9,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import SpoolmanConfig
 from ...services import spoolman_service
+from ...services.spoolman_sync import record_sync
 
 router = APIRouter(prefix="/api/v1/spoolman", tags=["spoolman"])
 
@@ -68,17 +69,50 @@ class SyncNowResponse(BaseModel):
     dependencies=[Depends(require_scope("spoolman:read"))],
 )
 async def sync_now(session: AsyncSession = Depends(get_session)):
-    """Re-fetch filaments and spools from Spoolman, confirming the connection."""
+    """Re-fetch filaments and spools from Spoolman, confirming the connection.
+    Records the outcome (success clears any previously shown error) so the
+    status indicator and Spoolman settings page reflect this attempt too."""
     row = await _config_or_503(session)
     try:
-        filaments = await spoolman_service.fetch_filaments(row.url, row.api_key)
-        spools = await spoolman_service.fetch_spools(row.url, row.api_key)
-        return SyncNowResponse(
-            filament_count=len(filaments),
-            spool_count=len(spools),
-        )
+        result = await record_sync(session, row)
+        return SyncNowResponse(**result)
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
+
+
+class SyncStatusResponse(BaseModel):
+    enabled: bool
+    interval_minutes: int
+    last_sync_at: str | None
+    last_attempt_at: str | None
+    last_error: str | None
+    last_error_code: str | None
+
+
+@router.get(
+    "/sync-status",
+    summary="Spoolman sync health for the status indicator and settings page",
+    response_model=SyncStatusResponse,
+    dependencies=[Depends(require_scope("spoolman:read"))],
+)
+async def get_sync_status(session: AsyncSession = Depends(get_session)):
+    """Never 503s, even when Spoolman is disabled/unconfigured — callers use
+    `enabled` to decide whether to show anything at all."""
+    row = await session.get(SpoolmanConfig, 1)
+    if row is None:
+        return SyncStatusResponse(
+            enabled=False, interval_minutes=15,
+            last_sync_at=None, last_attempt_at=None,
+            last_error=None, last_error_code=None,
+        )
+    return SyncStatusResponse(
+        enabled=row.enabled,
+        interval_minutes=row.sync_interval_minutes,
+        last_sync_at=row.last_sync_at,
+        last_attempt_at=row.last_attempt_at,
+        last_error=row.last_sync_error,
+        last_error_code=row.last_sync_error_code,
+    )
 
 
 class FilamentPatchBody(BaseModel):
