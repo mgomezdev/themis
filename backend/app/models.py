@@ -167,6 +167,13 @@ class SpoolmanConfig(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     api_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    sync_interval_minutes: Mapped[int] = mapped_column(Integer, default=15)
+    # last_sync_at: last time a sync attempt *succeeded*. last_attempt_at: last
+    # attempt regardless of outcome (drives the sync-interval polling cadence).
+    last_sync_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_sync_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class Project(Base):

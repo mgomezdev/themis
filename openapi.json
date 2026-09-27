@@ -2721,6 +2721,60 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/complete-manually": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Manually complete a job without printing it",
+        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts Spoolman\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
+        "operationId": "complete_job_manually_api_v1_jobs__job_id__complete_manually_post",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteManuallyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Complete Job Manually Api V1 Jobs  Job Id  Complete Manually Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job, printer, or printer config not found"
+          },
+          "409": {
+            "description": "Job is terminal, or already being manually completed"
+          },
+          "422": {
+            "description": "No OrcaSlicer machine preset on the printer, or the slice failed"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/slice-failures": {
       "get": {
         "tags": [
@@ -2752,6 +2806,64 @@
                     "additionalProperties": true
                   },
                   "title": "Response Get Slice Failures Api V1 Jobs  Job Id  Slice Failures Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/cost": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Set job filament cost",
+        "description": "Record the cost of the filament used for this job, for profit/loss reporting.",
+        "operationId": "set_job_cost_api_v1_jobs__job_id__cost_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobCostPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Cost Api V1 Jobs  Job Id  Cost Patch"
                 }
               }
             }
@@ -5078,7 +5190,7 @@
           "spoolman"
         ],
         "summary": "Manually sync filaments and spools from Spoolman",
-        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.",
+        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.\nRecords the outcome (success clears any previously shown error) so the\nstatus indicator and Spoolman settings page reflect this attempt too.",
         "operationId": "sync_now_api_v1_spoolman_sync_now_post",
         "responses": {
           "200": {
@@ -5091,6 +5203,28 @@
           },
           "503": {
             "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/sync-status": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Spoolman sync health for the status indicator and settings page",
+        "description": "Never 503s, even when Spoolman is disabled/unconfigured \u2014 callers use\n`enabled` to decide whether to show anything at all.",
+        "operationId": "get_sync_status_api_v1_spoolman_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -5444,6 +5578,19 @@
         ],
         "title": "Body_upload_file_api_v1_files_upload_post"
       },
+      "CompleteManuallyBody": {
+        "properties": {
+          "printer_id": {
+            "type": "integer",
+            "title": "Printer Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_id"
+        ],
+        "title": "CompleteManuallyBody"
+      },
       "ConfirmRemapBody": {
         "properties": {
           "sync_id": {
@@ -5742,6 +5889,23 @@
           "printer_configs"
         ],
         "title": "JobConfigsUpdate"
+      },
+      "JobCostPatch": {
+        "properties": {
+          "filament_cost": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Cost"
+          }
+        },
+        "type": "object",
+        "title": "JobCostPatch"
       },
       "JobCreate": {
         "properties": {
@@ -6124,6 +6288,22 @@
             "type": "array",
             "title": "Parts",
             "default": []
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "type": "string",
+            "title": "Payment Status",
+            "default": "unpaid"
           }
         },
         "type": "object",
@@ -6276,6 +6456,28 @@
               }
             ],
             "title": "Parts"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Status"
           }
         },
         "type": "object",
@@ -6740,6 +6942,22 @@
               }
             ],
             "title": "Source Layout Id"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "type": "string",
+            "title": "Payment Status",
+            "default": "unpaid"
           }
         },
         "type": "object",
@@ -7066,6 +7284,28 @@
               }
             ],
             "title": "Notes"
+          },
+          "amount_paid": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount Paid"
+          },
+          "payment_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payment Status"
           }
         },
         "type": "object",
@@ -7331,6 +7571,17 @@
               }
             ],
             "title": "Api Key"
+          },
+          "sync_interval_minutes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sync Interval Minutes"
           }
         },
         "type": "object",
@@ -7356,13 +7607,18 @@
           "has_api_key": {
             "type": "boolean",
             "title": "Has Api Key"
+          },
+          "sync_interval_minutes": {
+            "type": "integer",
+            "title": "Sync Interval Minutes"
           }
         },
         "type": "object",
         "required": [
           "enabled",
           "url",
-          "has_api_key"
+          "has_api_key",
+          "sync_interval_minutes"
         ],
         "title": "SpoolmanConfigOut"
       },
@@ -7394,6 +7650,72 @@
           "stale_name"
         ],
         "title": "SpoolmanResolutionEntry"
+      },
+      "SyncStatusResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "last_sync_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Sync At"
+          },
+          "last_attempt_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempt At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "last_error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error Code"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled",
+          "interval_minutes",
+          "last_sync_at",
+          "last_attempt_at",
+          "last_error",
+          "last_error_code"
+        ],
+        "title": "SyncStatusResponse"
       },
       "TagAssign": {
         "properties": {

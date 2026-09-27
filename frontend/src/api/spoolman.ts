@@ -65,6 +65,7 @@ export interface SpoolmanConfig {
   enabled: boolean;
   url: string | null;
   has_api_key: boolean;
+  sync_interval_minutes: number;
 }
 
 // The API key never round-trips from the backend (see backend-review.md "Secrets").
@@ -73,6 +74,29 @@ export interface SpoolmanConfigUpdate {
   enabled?: boolean;
   url?: string | null;
   api_key?: string | null;
+  sync_interval_minutes?: number;
+}
+
+export interface SpoolmanSyncStatus {
+  enabled: boolean;
+  interval_minutes: number;
+  last_sync_at: string | null;
+  last_attempt_at: string | null;
+  last_error: string | null;
+  last_error_code: string | null;
+}
+
+export type SpoolmanSyncTone = 'success' | 'fail' | 'stale';
+
+/** success (green): synced recently, no error. fail (red): most recent attempt
+ * errored. stale (orange): no error, but the last successful sync is more than
+ * 2 sync intervals old (or there has never been one). */
+export function spoolmanSyncTone(s: SpoolmanSyncStatus): SpoolmanSyncTone {
+  if (s.last_error) return 'fail';
+  if (!s.last_sync_at) return 'stale';
+  const staleAfterMs = 2 * s.interval_minutes * 60_000;
+  const age = Date.now() - new Date(s.last_sync_at).getTime();
+  return age > staleAfterMs ? 'stale' : 'success';
 }
 
 export function spoolDisplayName(spool: ApiSpool): string {
@@ -127,6 +151,32 @@ export async function syncSpoolman(): Promise<SyncNowResponse> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+export async function getSpoolmanSyncStatus(): Promise<SpoolmanSyncStatus> {
+  return request('/api/v1/spoolman/sync-status');
+}
+
+const SYNC_STATUS_POLL_MS = 30000;
+
+export function useSpoolmanSyncStatus(): { status: SpoolmanSyncStatus | null; refetch: () => void } {
+  const [status, setStatus] = useState<SpoolmanSyncStatus | null>(null);
+  const [tick, setTick] = useState(0);
+  const refetch = useCallback(() => setTick(t => t + 1), []);
+
+  useEffect(() => {
+    let alive = true;
+    function poll() {
+      getSpoolmanSyncStatus()
+        .then(s => { if (alive) setStatus(s); })
+        .catch(() => { /* leave last-known status in place */ });
+    }
+    poll();
+    const id = setInterval(poll, SYNC_STATUS_POLL_MS);
+    return () => { alive = false; clearInterval(id); };
+  }, [tick]);
+
+  return { status, refetch };
 }
 
 export async function fetchFilaments(): Promise<ApiFilament[]> {
