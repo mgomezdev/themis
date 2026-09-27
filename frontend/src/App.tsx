@@ -8,8 +8,6 @@ import { useQueue, useQueueConfig } from './api/queue';
 import { useFleetData } from './api/fleet';
 import { AuthGate } from './auth/AuthGate';
 import { apiFetch } from './api/client';
-import { useSpoolmanSyncStatus, spoolmanSyncTone } from './api/spoolman';
-import type { SpoolmanSyncStatus } from './api/spoolman';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -34,20 +32,6 @@ function ServiceBubble({ name, status }: { name: string; status: SvcStatus }) {
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-4)', userSelect: 'none' }}>
       <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 }} />
       {name}
-    </span>
-  );
-}
-
-function SpoolmanSyncBubble({ status }: { status: SpoolmanSyncStatus }) {
-  const tone = spoolmanSyncTone(status);
-  const dot = tone === 'success' ? 'var(--ok)' : tone === 'fail' ? 'var(--err)' : 'var(--warn)';
-  const title = status.last_sync_at
-    ? `Last successful Spoolman sync: ${new Date(status.last_sync_at).toLocaleString()}`
-    : 'Spoolman has never synced successfully';
-  return (
-    <span title={title} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-4)', userSelect: 'none' }}>
-      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dot, flexShrink: 0 }} />
-      Spoolman
     </span>
   );
 }
@@ -120,7 +104,6 @@ function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { laminusStatus } = useServicesHealth();
-  const { status: spoolmanSync } = useSpoolmanSyncStatus();
 
   useEffect(() => {
     if (location.pathname.startsWith('/settings')) {
@@ -213,7 +196,6 @@ function AppShell() {
           flexShrink: 0,
         }}>
           <ServiceBubble name="Laminus" status={laminusStatus} />
-          {spoolmanSync?.enabled && <SpoolmanSyncBubble status={spoolmanSync} />}
         </div>
       </div>
       <SearchModal open={searchOpen} onClose={() => setSearchOpen(false)} jobs={jobs} printers={printers} />

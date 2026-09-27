@@ -760,12 +760,30 @@ function SpoolmanPage() {
   const [spoolmanPendingRemap, setSpoolmanPendingRemap] = useState<PendingRemaps | null>(null);
 
   useEffect(() => {
+    let alive = true;
     getSpoolmanConfig()
-      .then(cfg => update({
-        enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key,
-        syncInterval: cfg.sync_interval_minutes,
-      }))
+      .then(async cfg => {
+        if (!alive) return;
+        update({
+          enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key,
+          syncInterval: cfg.sync_interval_minutes,
+        });
+        // A saved config doesn't mean Spoolman is still reachable — verify on
+        // load so the pill reflects reality instead of defaulting to
+        // "disconnected" (and hiding the stats/sync-details panels) on every
+        // page refresh even though the backend's own periodic sync is fine.
+        if (cfg.enabled && cfg.url) {
+          update({ connectionStatus: 'connecting' });
+          try {
+            await testSpoolmanConnection(cfg.url, undefined);
+            if (alive) update({ connectionStatus: 'connected' });
+          } catch {
+            if (alive) update({ connectionStatus: 'error' });
+          }
+        }
+      })
       .catch(console.error);
+    return () => { alive = false; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { status: syncStatus, refetch: refetchSyncStatus } = useSpoolmanSyncStatus();
