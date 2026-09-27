@@ -3,6 +3,7 @@ import type { StatusKey } from '../data/types';
 import { apiFetch, openAuthedWebSocket } from './client';
 
 export type OrderType = 'customer' | 'internal';
+export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
 
 export interface ApiOrderPart {
   id: string;
@@ -31,6 +32,9 @@ export interface ApiOrder {
   notes: string | null;
   on_hold: boolean;
   parts: ApiOrderPart[];
+  amount_paid: number | null;
+  payment_status: PaymentStatus;
+  filament_cost_total: number | null;
   status: StatusKey;
   progress: number;       // 0..1
   job_count: number;
@@ -59,6 +63,8 @@ export interface OrderCreateInput {
   due_date: string | null;
   notes: string | null;
   parts: OrderPartInput[];
+  amount_paid?: number | null;
+  payment_status?: PaymentStatus;
 }
 
 export type OrderPatchInput = Partial<OrderCreateInput & { on_hold: boolean }>;

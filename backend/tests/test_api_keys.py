@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
@@ -16,12 +17,22 @@ pytestmark = pytest.mark.asyncio
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
     """These tests exercise the real bootstrap-hatch behavior (empty api_keys
     table grants unauthenticated access to the first POST), so — unlike the
     shared `client` fixture in conftest.py — this one does NOT pre-seed a key.
-    Shadows conftest's `client` fixture for every test in this module."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    Shadows conftest's `client` fixture for every test in this module.
+
+    Backed by a real on-disk SQLite file rather than `:memory:`: an in-memory
+    DB's default StaticPool hands every checkout the *same* physical
+    connection, so two genuinely concurrent AsyncSessions (as in
+    test_concurrent_bootstrap_race_condition below) end up sharing one
+    connection's single SQLite transaction context instead of each getting
+    its own — breaking the isolation the race-condition test depends on. A
+    file-backed DB gives each session a real, independently-locked
+    connection, so SQLite's own locking (not a shared Python object) decides
+    who wins the race."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'test.db'}")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

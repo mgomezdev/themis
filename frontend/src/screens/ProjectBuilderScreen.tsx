@@ -15,6 +15,7 @@ import {
   addProjectPart, updateProjectPart, deleteProjectPart,
   generateProject,
   type ProjectItem,
+  type PaymentStatus,
 } from '../api/projects';
 
 // ---------------------------------------------------------------------------
@@ -166,6 +167,8 @@ export function ProjectBuilderScreen() {
   const [onHold, setOnHold] = useState(false);
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
+  const [amountPaid, setAmountPaid] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('unpaid');
 
   // Part items
   const [items, setItems] = useState<LocalItem[]>([]);
@@ -229,10 +232,11 @@ export function ProjectBuilderScreen() {
   function computeSnap(
     n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
     its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
+    ap: string = amountPaid, ps: PaymentStatus = paymentStatus,
   ) {
     return JSON.stringify({
       name: n, customer: ot === 'customer' ? c : '', orderType: ot,
-      onHold: oh, dueDate: dd, notes: no,
+      onHold: oh, dueDate: dd, notes: no, amountPaid: ap, paymentStatus: ps,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
         ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
@@ -268,6 +272,8 @@ export function ProjectBuilderScreen() {
       const oh = p.on_hold ?? false;
       const dd = p.due_date ?? '';
       const no = p.notes ?? '';
+      const ap = p.amount_paid != null ? String(p.amount_paid) : '';
+      const ps = p.payment_status ?? 'unpaid';
       const its: LocalItem[] = p.items.map(it => ({
         localId: newLocalId(),
         serverId: it.id,
@@ -293,11 +299,12 @@ export function ProjectBuilderScreen() {
         allocated: pt.allocated,
       }));
       setName(n); setCustomer(c); setOrderType(ot); setOnHold(oh);
-      setDueDate(dd); setNotes(no); setItems(its); setLinks(lks); setParts(prts);
+      setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps);
+      setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts));
+      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts, ap, ps));
     }).catch(console.error);
   }, [projectId]);
 
@@ -382,6 +389,8 @@ export function ProjectBuilderScreen() {
       on_hold: onHold,
       due_date: dueDate || null,
       notes: notes || null,
+      amount_paid: amountPaid.trim() ? Number(amountPaid) : null,
+      payment_status: paymentStatus,
     };
     if (projectId) {
       await patchProject(projectId, projectFields);
@@ -633,6 +642,32 @@ export function ProjectBuilderScreen() {
             />
             On hold
           </label>
+        </div>
+
+        {/* Payment row */}
+        <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="label">Amount paid</label>
+            <input
+              type="number" min="0" step="0.01"
+              className="input"
+              placeholder="0.00"
+              value={amountPaid}
+              onChange={e => setAmountPaid(e.target.value)}
+            />
+          </div>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="label">Payment status</label>
+            <select
+              className="select"
+              value={paymentStatus}
+              onChange={e => setPaymentStatus(e.target.value as PaymentStatus)}
+            >
+              <option value="unpaid">Unpaid</option>
+              <option value="partial">Partial</option>
+              <option value="paid">Paid</option>
+            </select>
+          </div>
         </div>
 
         {/* Links editor */}

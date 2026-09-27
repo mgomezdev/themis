@@ -73,6 +73,54 @@ async def test_list_jobs_empty(client):
     assert response.json() == []
 
 
+async def _create_job(client, tmp_path):
+    file_id = await _upload_file(client, tmp_path)
+    printer_id = await _create_printer(client)
+    with patch("app.api.routes.jobs.queue_engine"):
+        create = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id,
+            "plate_number": 1,
+            "printer_configs": [
+                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
+            ],
+        })
+    return create.json()["id"]
+
+
+async def test_job_filament_cost_defaults_null(client, tmp_path):
+    job_id = await _create_job(client, tmp_path)
+    data = (await client.get(f"/api/v1/jobs/{job_id}")).json()
+    assert data["filament_cost"] is None
+
+
+async def test_set_job_cost(client, tmp_path):
+    job_id = await _create_job(client, tmp_path)
+    resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 2.75})
+    assert resp.status_code == 200
+    assert resp.json()["filament_cost"] == 2.75
+    data = (await client.get(f"/api/v1/jobs/{job_id}")).json()
+    assert data["filament_cost"] == 2.75
+
+
+async def test_set_job_cost_to_null_clears_it(client, tmp_path):
+    job_id = await _create_job(client, tmp_path)
+    await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 5.0})
+    resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": None})
+    assert resp.status_code == 200
+    assert resp.json()["filament_cost"] is None
+
+
+async def test_set_job_cost_rejects_negative(client, tmp_path):
+    job_id = await _create_job(client, tmp_path)
+    resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": -1})
+    assert resp.status_code == 422
+
+
+async def test_set_job_cost_404_for_missing_job(client):
+    resp = await client.patch("/api/v1/jobs/999999/cost", json={"filament_cost": 1.0})
+    assert resp.status_code == 404
+
+
 async def test_get_job(client, tmp_path):
     file_id = await _upload_file(client, tmp_path)
     printer_id = await _create_printer(client)

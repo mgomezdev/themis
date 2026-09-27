@@ -152,6 +152,16 @@ export function ProjectDetailScreen() {
                   textTransform: 'uppercase', letterSpacing: '0.04em',
                 }}>On hold</span>
               )}
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                background: project.payment_status === 'paid' ? 'rgba(34,197,94,0.15)'
+                  : project.payment_status === 'partial' ? 'rgba(239,160,0,0.15)' : 'var(--bg-3)',
+                color: project.payment_status === 'paid' ? 'var(--ok)'
+                  : project.payment_status === 'partial' ? 'var(--warn)' : 'var(--text-4)',
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>
+                {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
+              </span>
             </div>
             {project.customer && (
               <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 3 }}>
@@ -165,6 +175,9 @@ export function ProjectDetailScreen() {
                 </span>
               )}
               {project.notes && <span>{project.notes}</span>}
+              {project.filament_cost_total != null && (
+                <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
+              )}
               {project.source_layout_id != null && (
                 <span title={`source_app: ${project.source_app ?? '?'}`}>
                   {Icons.link}
