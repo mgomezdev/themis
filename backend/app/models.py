@@ -176,6 +176,20 @@ class SpoolmanConfig(Base):
     last_sync_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
+class Customer(Base):
+    __tablename__ = "customers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(255), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+
+PROJECT_STAGES = ("draft", "planning", "queued")
+
+
 class Project(Base):
     __tablename__ = "projects"
 
@@ -203,6 +217,10 @@ class Project(Base):
     # Payment tracking, for future profit/loss reporting.
     amount_paid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
+    stage: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
+    )
 
     __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 
@@ -352,6 +370,25 @@ class ApiKey(Base):
     last_used_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     revoked_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    # Set for customer login sessions; NULL for staff/integration API keys.
+    customer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), nullable=True
+    )
+    # True for admin login sessions: hidden from the key list, revoked on admin password change.
+    admin_session: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+class AdminAccount(Base):
+    """Singleton (id=1), created on first boot with no password. See docs/agent/conventions.md."""
+    __tablename__ = "admin_account"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), default="admin")
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    allow_local_login: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    recovery_code_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    recovery_code_expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    recovery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class BootstrapSentinel(Base):

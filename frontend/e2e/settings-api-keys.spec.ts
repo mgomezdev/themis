@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('API Keys management', () => {
-  // Test the real bootstrap flow without pre-seeded localStorage.
+  // No pre-seeded key: the browser is a keyless local-network admin.
   // Sets up custom route mocks for the create/reveal/revoke flow.
 
   test('create, reveal, and revoke API keys through the Settings UI', async ({ page }) => {
@@ -36,27 +36,15 @@ test.describe('API Keys management', () => {
         body: JSON.stringify(body),
       });
 
-      // Handle bootstrap (POST with name: 'Browser') vs create (POST with arbitrary name)
+      // Local-network admin: no key, no sign-in (THEMIS_LOCAL_NETWORKS).
+      if (path === '/auth/me') return ok({ local: true, role: 'admin', customer: null });
+
       if (method === 'POST' && path === '/api-keys') {
         let body: any = {};
         try {
           body = req.postDataJSON() || {};
         } catch (e) {
-          // No JSON body (maybe empty POST for bootstrap validation)
-        }
-        if (body.name === 'Browser') {
-          // Bootstrap response
-          return ok({
-            id: 0,
-            name: 'Browser',
-            key_prefix: 'thm_e2e_bootstrap',
-            scopes: [],
-            enabled: true,
-            created_at: new Date().toISOString(),
-            last_used_at: null,
-            revoked_at: null,
-            key: 'thm_e2e_bootstrap_key',
-          });
+          // No JSON body
         }
         // Create response
         const keyId = nextKeyId++;
@@ -112,7 +100,7 @@ test.describe('API Keys management', () => {
       return ok({});
     });
 
-    // Navigate to the app (no pre-seeded key → bootstrap fires)
+    // Navigate to the app (no pre-seeded key → local admin)
     await page.goto('/');
     await page.waitForLoadState('networkidle');
 

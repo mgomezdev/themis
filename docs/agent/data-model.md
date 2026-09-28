@@ -5,13 +5,15 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (22)
+## Tables (24)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
                        printer_maintenance_state.printer_id
-api_keys            (standalone — no FKs)
-bootstrap_sentinel  (standalone — no FKs; see its own section below)
+customers           ← projects.customer_id (SET NULL), api_keys.customer_id (CASCADE)
+admin_account       (singleton id=1 — see its own section below)
+api_keys            (customer_id FK? — set only on customer login sessions)
+bootstrap_sentinel  (retired — no longer read or written)
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -187,7 +189,12 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
 bool, due_date?, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
 source_user?, source_layout_id?, share_token? (unique), share_token_created_at?, amount_paid: float?,
-payment_status: str="unpaid"` (`unpaid|partial|paid`), `created_at, updated_at`.
+payment_status: str="unpaid"` (`unpaid|partial|paid`), `stage: str="queued"` (`draft|planning|queued`),
+`customer_id FK?` (owning customer account), `created_at, updated_at`.
+- `stage`: `draft` (customer request; `generate` → 409) → `planning` (staff can generate jobs; queue
+  engine won't claim them) → `queued` (jobs claimable). Forward-only via `POST /{id}/promote`. Staff/API
+  creates default `queued` (pre-stage behavior); customer portal creates `draft`. Queue filter lives in
+  `queue_engine._try_claim_for_printer` (jobs with no project always claimable).
 - Full CRUD at `/api/v1/projects`. Created by Themis UI (Project Builder) or by Ordinus
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
 - `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
@@ -279,10 +286,26 @@ needing an explicit revoke.
 - The raw key itself is never stored — only `key_prefix` (for lookup) + `key_hash` (for verification).
   Shown to the user exactly once, in the `POST /api/v1/api-keys` response.
 - `scopes` is a subset of the fixed `SCOPES` registry in `app/auth.py` (see `backend.md`'s Auth section).
-- No FKs — standalone credential table, not linked to any other resource.
+- `customer_id` FK? — set only for customer login sessions (`POST /auth/login`, scopes `["customer"]`,
+  30-day expiry). Hidden from `GET /api-keys`; revoked when the customer is disabled or its password
+  changes.
+
+### customers
+`id, name, email` (unique, stored lowercased), `password_hash` (PBKDF2 — `services/password.py`),
+`enabled, created_at`. Staff-managed via `/api/v1/customers` (`customers:read`/`customers:write`); no
+self-signup.
+
+### admin_account
+Singleton (id=1), created by migration v022 on first boot: `username="admin", password_hash?`
+(PBKDF2, NULL until set), `allow_local_login: bool=true` (keyless local-network access is admin),
+`recovery_code_hash?, recovery_code_expires_at?, recovery_attempts` (log-delivered one-time code —
+`services/admin_account.py`). `auth.get_admin_account()` creates the row if missing (test DBs).
+`api_keys.admin_session` marks admin login sessions (hidden from `GET /api-keys`, revoked on
+admin password change/recovery).
 
 ### bootstrap_sentinel
-`id, created_at`. Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
+**Retired** (bootstrap hatch removed); table left in place, unused. Historical note: `id, created_at`.
+Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
 `SCOPES` regardless of requested scopes) whenever `api_keys` is empty; two racing requests (e.g. two
 browser tabs on first load) could otherwise both see it empty and both bootstrap. The handler inserts
 `BootstrapSentinel(id=1, ...)` inside the same flush — the fixed PK makes the second concurrent insert

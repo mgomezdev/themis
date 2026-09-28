@@ -32,7 +32,7 @@ external services required.
 | **Spoolman integration** | Source filament choices from your Spoolman catalog; store per-filament OrcaSlicer profile mappings back to Spoolman; a job bound to a spool gets a low-stock warning if it won't have enough filament left. |
 | **Per-color filament assignment** | For multi-material jobs, map each model-filament color to a specific printer tool/slot; stored as `filament_map` and rewritten into the sliceable 3MF before slicing. |
 | **Notifications** | Job complete/failed/blocked events fire to a generic signed webhook and/or built-in ntfy, Discord, and email channels. |
-| **API-key auth** | Every route requires a scoped API key, managed from Settings; a first-run bootstrap flow mints the first key. |
+| **Accounts & API-key auth** | An `admin` account (local-network devices skip sign-in by default; password recovery works fully offline via `docker compose exec themis python -m app.admin reset-password` or a one-time code in the server log), customer accounts with a restricted portal, and scoped API keys for integrations. |
 | **Live camera & telemetry** | MJPEG passthrough or RTSP→MJPEG transcode, plus temps, fans, progress over WebSocket. |
 | **Capability-driven UI** | Every control renders from a printer's capability flags — never a hard-coded vendor check. |
 

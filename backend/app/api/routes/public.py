@@ -1,7 +1,7 @@
 """Public, unauthenticated read-only routes.
 
-This is the ONE deliberate exception (beyond the empty-api_keys-table bootstrap
-hatch) to this codebase's "every /api/v1/* route requires Depends(require_scope(...))"
+This is the ONE deliberate exception (besides the login/recovery routes in
+session.py) to this codebase's "every /api/v1/* route requires Depends(require_scope(...))"
 invariant - see docs/agent/conventions.md § Invariants. Keep this module small and
 its own file so the one auth-exempt surface in the whole API stays trivially easy to
 audit in isolation. Never import require_scope here, and never add a route to this

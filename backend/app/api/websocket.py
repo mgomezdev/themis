@@ -64,27 +64,26 @@ async def websocket_endpoint(websocket: WebSocket, key: str | None = None) -> No
     # inlined since there's no request/response cycle to hang a dependency off.
     # Local import: avoids adding app.auth to this module's import-time surface
     # for a check that only runs once per connection.
-    from ..auth import _resolve_raw_key, _table_is_empty
+    from ..auth import _resolve_raw_key, local_admin_allowed
 
     session_dep = websocket.app.dependency_overrides.get(get_session, get_session)
     session_gen = session_dep()
     session = await session_gen.__anext__()
     try:
-        scopes = None
-        if not await _table_is_empty(session):
-            resolved = await _resolve_raw_key(key, session)
-            if resolved is None:
-                await websocket.close(code=4401)
-                return
-            # Check that the key has at least one of the required fleet/jobs/queue scopes.
-            required = {"fleet:read", "jobs:read", "queue:read"}
+        # Same precedence as HTTP (auth.require_scope): a presented valid key wins over local
+        # mode, so a customer signed in on the LAN doesn't get the staff live feed.
+        required = {"fleet:read", "jobs:read", "queue:read"}
+        resolved = await _resolve_raw_key(key, session) if key else None
+        if resolved is not None:
             if not (required & set(resolved.scopes or [])):
                 await websocket.close(code=4403)
                 return
             scopes = resolved.scopes
+        elif await local_admin_allowed(websocket.client.host if websocket.client else None, session):
+            scopes = sorted(required)
         else:
-            # Bootstrap: grant all three scopes so filtering logic is uniform.
-            scopes = ["fleet:read", "jobs:read", "queue:read"]
+            await websocket.close(code=4401)
+            return
     finally:
         await session_gen.aclose()
 

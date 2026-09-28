@@ -109,14 +109,17 @@ def test_ws_accepts_with_valid_key(tmp_path):
         assert len(connection_manager.active_connections) == 1
 
 
-def test_ws_accepts_when_table_empty(tmp_path):
+def test_ws_closes_4401_when_table_empty(tmp_path):
+    """No bootstrap hatch: an empty key table doesn't open the live feed to remote clients."""
     db_path = tmp_path / "ws3.db"
-    _seed_db(db_path, scopes=None)  # schema only, no keys — bootstrap window
+    _seed_db(db_path, scopes=None)  # schema only, no keys
     _wire_app_to_db(db_path)
 
     client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        assert len(connection_manager.active_connections) == 1
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws"):
+            pass
+    assert exc_info.value.code == 4401
 
 
 def test_ws_closes_4401_with_bad_key(tmp_path):
@@ -130,6 +133,37 @@ def test_ws_closes_4401_with_bad_key(tmp_path):
         with client.websocket_connect("/ws?key=thm_not-a-real-key"):
             pass
     assert exc_info.value.code == 4401
+
+
+def test_ws_closes_4403_for_customer_session_key(tmp_path):
+    """A customer portal session (scope "customer" only) must not get the live fleet/queue feed."""
+    db_path = tmp_path / "ws_customer.db"
+    raw = _seed_db(db_path, scopes=["customer"])
+    _wire_app_to_db(db_path)
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws?key={raw}"):
+            pass
+    assert exc_info.value.code == 4403
+    assert len(connection_manager.active_connections) == 0
+
+
+def test_ws_customer_key_wins_over_local_mode(tmp_path, monkeypatch):
+    """On the LAN, a signed-in customer's key is still a customer key — no staff live feed."""
+    db_path = tmp_path / "ws_customer_local.db"
+    raw = _seed_db(db_path, scopes=["customer"])
+    _wire_app_to_db(db_path)
+    monkeypatch.setattr("app.auth.is_local", lambda host: True)
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws?key={raw}"):
+            pass
+    assert exc_info.value.code == 4403
+    # Keyless local client still gets the feed.
+    with client.websocket_connect("/ws"):
+        assert len(connection_manager.active_connections) == 1
 
 
 def test_disconnect_is_idempotent_on_already_reaped_socket():

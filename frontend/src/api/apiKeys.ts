@@ -103,6 +103,11 @@ export const SCOPES: ScopeGroup[] = [
     { scope: 'apikeys:read', label: 'Read' },
     { scope: 'apikeys:write', label: 'Write' },
   ] },
+  { resource: 'customers', label: 'Customers', scopes: [
+    { scope: 'customers:read', label: 'Read' },
+    { scope: 'customers:write', label: 'Write' },
+  ] },
+  // 'customer' is deliberately absent: it's minted only by customer login, never by hand.
 ];
 
 export const ALL_SCOPES: string[] = SCOPES.flatMap(g => g.scopes.map(s => s.scope));

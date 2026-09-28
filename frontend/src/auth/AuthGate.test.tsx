@@ -2,9 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { getApiKey } from './apiKeyStore';
 
-// AuthGate caches its bootstrap POST in a module-level promise (so React StrictMode's
-// dev-only double-invoke of effects doesn't fire it twice) — reset the module between
-// tests so each one gets its own fresh bootstrap attempt.
+// Fresh module per test so handler registration and state don't leak between tests.
 beforeEach(() => {
   localStorage.clear();
   vi.restoreAllMocks();
@@ -19,23 +17,106 @@ describe('AuthGate', () => {
     expect(screen.getByText('protected content')).toBeTruthy();
   });
 
-  it('bootstraps a key via POST and stores it when none is stored', async () => {
+  it('lets a local-network device in without a key and never mints one', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({
-        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
-        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
-        revoked_at: null, key: 'thm_bootstrapped_key',
-      }), { status: 200 })));
+      new Response(JSON.stringify({ local: true, role: 'admin', customer: null }), { status: 200 })));
 
     const { AuthGate } = await import('./AuthGate');
     render(<AuthGate><div>protected content</div></AuthGate>);
 
     await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
-    expect(getApiKey()).toBe('thm_bootstrapped_key');
-    expect(fetch).toHaveBeenCalledWith('/api/v1/api-keys', expect.objectContaining({ method: 'POST' }));
+    expect(getApiKey()).toBeNull();
+    expect(fetch).toHaveBeenCalledWith('/api/v1/auth/me');
+    expect(fetch).not.toHaveBeenCalledWith('/api/v1/api-keys', expect.objectContaining({ method: 'POST' }));
   });
 
-  it('shows the manual-entry form when bootstrap 401s', async () => {
+  it('shows the sign-in form to a signed-out visitor', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 })));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+
+    await waitFor(() => expect(screen.getByPlaceholderText('Email or username')).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Sign in' })).toBeTruthy();
+    expect(screen.getByText(/Enter your API key/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
+    expect(screen.queryByText('protected content')).toBeNull();
+  });
+
+  it('signs in as admin and stores the session key', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === '/api/v1/auth/login')
+        return new Response(JSON.stringify({ key: 'thm_admin_session', customer: null, admin: true }), { status: 200 });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.type(await screen.findByPlaceholderText('Email or username'), 'admin');
+    await user.type(screen.getByPlaceholderText('Password'), 's3cret');
+    await user.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
+    expect(getApiKey()).toBe('thm_admin_session');
+    const [, init] = fetchMock.mock.calls.find(([u]) => u === '/api/v1/auth/login')! as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ email: 'admin', password: 's3cret' });
+  });
+
+  it('admin recovery: requests a log code, then sets a new password', async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url === '/api/v1/auth/recover')
+        return new Response(JSON.stringify({ detail: 'ok' }), { status: 202 });
+      if (url === '/api/v1/auth/recover/confirm')
+        return new Response(JSON.stringify({ detail: 'ok' }), { status: 200 });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /forgot admin password/i }));
+    await user.click(screen.getByRole('button', { name: /write a one-time code/i }));
+    await waitFor(() => expect(screen.getByText(/written to the Themis server log/i)).toBeTruthy());
+
+    await user.type(screen.getByPlaceholderText('Recovery code'), 'ABCDE-FGHJK');
+    await user.type(screen.getByPlaceholderText('New admin password'), 'newpw');
+    await user.click(screen.getByRole('button', { name: /set admin password/i }));
+
+    await waitFor(() => expect(screen.getByText(/Admin password set/i)).toBeTruthy());
+    expect((screen.getByPlaceholderText('Email or username') as HTMLInputElement).value).toBe('admin');
+    const [, init] = fetchMock.mock.calls.find(([u]) => u === '/api/v1/auth/recover/confirm')! as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({ code: 'ABCDE-FGHJK', password: 'newpw' });
+  });
+
+  it('admin recovery: shows an error for a wrong or expired code', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/auth/recover/confirm')
+        return new Response(JSON.stringify({ detail: 'Invalid or expired recovery code' }), { status: 400 });
+      return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
+    }));
+
+    const { AuthGate } = await import('./AuthGate');
+    render(<AuthGate><div>protected content</div></AuthGate>);
+    const { userEvent } = await import('@testing-library/user-event');
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: /forgot admin password/i }));
+    await user.type(screen.getByPlaceholderText('Recovery code'), 'WRONG-CODE0');
+    await user.type(screen.getByPlaceholderText('New admin password'), 'x');
+    await user.click(screen.getByRole('button', { name: /set admin password/i }));
+
+    await waitFor(() => expect(screen.getByText('Invalid or expired recovery code')).toBeTruthy());
+  });
+
+  it('shows the manual-entry form when the session check fails', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 })));
 
@@ -48,10 +129,10 @@ describe('AuthGate', () => {
   });
 
   it('accepts a valid key (200) via manual entry', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url, opts) => {
-      // bootstrap 401s → show form
-      if (opts?.method === 'POST') {
-        return new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _opts?: RequestInit) => {
+      // signed-out visitor → sign-in / key form
+      if (url === '/api/v1/auth/me') {
+        return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
       }
       // manual key validation succeeds
       return new Response(JSON.stringify({ id: 1 }), { status: 200 });
@@ -76,12 +157,16 @@ describe('AuthGate', () => {
     // Key accepted, state should be 'ready'
     await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
     expect(getApiKey()).toBe('thm_test_valid_key');
+    // Validated with the header the backend actually reads.
+    const call = (fetch as any).mock.calls.find(([u]: [string]) => u === '/api/v1/api-keys');
+    expect(new Headers(call[1].headers).get('X-Api-Key')).toBe('thm_test_valid_key');
   });
 
   it('accepts a valid key (403) via manual entry', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url, opts) => {
-      if (opts?.method === 'POST') {
-        return new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _opts?: RequestInit) => {
+      // signed-out visitor → sign-in / key form
+      if (url === '/api/v1/auth/me') {
+        return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
       }
       // 403: valid key, lacks apikeys:read scope
       return new Response(JSON.stringify({}), { status: 403 });
@@ -106,9 +191,10 @@ describe('AuthGate', () => {
   });
 
   it('rejects invalid key (401) and shows error', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url, opts) => {
-      if (opts?.method === 'POST') {
-        return new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _opts?: RequestInit) => {
+      // signed-out visitor → sign-in / key form
+      if (url === '/api/v1/auth/me') {
+        return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
       }
       // Invalid key
       return new Response(JSON.stringify({ detail: 'Unauthorized' }), { status: 401 });
@@ -137,9 +223,10 @@ describe('AuthGate', () => {
   });
 
   it('shows server error on network failure', async () => {
-    vi.stubGlobal('fetch', vi.fn(async (_url, opts) => {
-      if (opts?.method === 'POST') {
-        return new Response(JSON.stringify({ detail: 'Missing or invalid API key' }), { status: 401 });
+    vi.stubGlobal('fetch', vi.fn(async (url: string, _opts?: RequestInit) => {
+      // signed-out visitor → sign-in / key form
+      if (url === '/api/v1/auth/me') {
+        return new Response(JSON.stringify({ local: false, role: null, customer: null }), { status: 200 });
       }
       // Server error
       return new Response(JSON.stringify({}), { status: 500 });
@@ -164,20 +251,7 @@ describe('AuthGate', () => {
     expect(getApiKey()).toBeNull();
   });
 
-  it('bootstrap 400 shows neutral message, no error or retry button', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({ detail: 'Table not empty' }), { status: 400 })));
-
-    const { AuthGate } = await import('./AuthGate');
-    render(<AuthGate><div>protected content</div></AuthGate>);
-
-    await waitFor(() => expect(screen.getByText(/Enter your API key/i)).toBeTruthy());
-    expect(screen.getByText(/Themis couldn't automatically set up access/i)).toBeTruthy();
-    expect(screen.queryByText(/Couldn't reach the Themis server/i)).toBeNull();
-    expect(screen.queryByRole('button', { name: /retry/i })).toBeNull();
-  });
-
-  it('bootstrap 500 shows error message and retry button', async () => {
+  it('session-check 500 shows error message and retry button', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
       new Response(JSON.stringify({ detail: 'Internal error' }), { status: 500 })));
 
@@ -186,10 +260,9 @@ describe('AuthGate', () => {
 
     await waitFor(() => expect(screen.getByText(/Couldn't reach the Themis server/i)).toBeTruthy());
     expect(screen.getByRole('button', { name: /retry/i })).toBeTruthy();
-    expect(screen.queryByText(/Themis couldn't automatically set up access/i)).toBeNull();
   });
 
-  it('clicking retry re-triggers bootstrap fetch', async () => {
+  it('clicking retry re-checks the session', async () => {
     let callCount = 0;
     vi.stubGlobal('fetch', vi.fn(async () => {
       callCount++;
@@ -197,12 +270,8 @@ describe('AuthGate', () => {
       if (callCount <= 2) {
         return new Response(JSON.stringify({ detail: 'Server error' }), { status: 500 });
       }
-      // Third call succeeds
-      return new Response(JSON.stringify({
-        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
-        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
-        revoked_at: null, key: 'thm_bootstrap_retry_key',
-      }), { status: 200 });
+      // Third call succeeds (local-network admin)
+      return new Response(JSON.stringify({ local: true, role: 'admin', customer: null }), { status: 200 });
     }));
 
     const { AuthGate } = await import('./AuthGate');
@@ -230,16 +299,11 @@ describe('AuthGate', () => {
     // Third attempt succeeds
     await waitFor(() => expect(screen.getByText('protected content')).toBeTruthy());
     expect(callCount).toBe(3);
-    expect(getApiKey()).toBe('thm_bootstrap_retry_key');
   });
 
   it('shows forbidden toast when apiFetch gets 403 from authenticated call', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({
-        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
-        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
-        revoked_at: null, key: 'thm_bootstrapped_key',
-      }), { status: 200 })));
+      new Response(JSON.stringify({ local: true, role: 'admin', customer: null }), { status: 200 })));
 
     const { AuthGate } = await import('./AuthGate');
     render(<AuthGate><div>protected content</div></AuthGate>);
@@ -261,11 +325,7 @@ describe('AuthGate', () => {
 
   it('shows forbidden toast with generic message on 403 without detail', async () => {
     vi.stubGlobal('fetch', vi.fn(async () =>
-      new Response(JSON.stringify({
-        id: 1, name: 'Browser', key_prefix: 'thm_abc123', scopes: ['files:read'],
-        enabled: true, created_at: '2026-01-01T00:00:00', last_used_at: null,
-        revoked_at: null, key: 'thm_bootstrapped_key',
-      }), { status: 200 })));
+      new Response(JSON.stringify({ local: true, role: 'admin', customer: null }), { status: 200 })));
 
     const { AuthGate } = await import('./AuthGate');
     render(<AuthGate><div>protected content</div></AuthGate>);

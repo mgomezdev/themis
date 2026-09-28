@@ -67,11 +67,11 @@ async def env():
     await engine.dispose()
 
 
-async def test_no_key_empty_table_passes_through(env):
+async def test_no_key_empty_table_401(env):
+    """No bootstrap hatch: an empty api_keys table does not grant open access."""
     client, _seed_key, _factory = env
     resp = await client.get("/protected")
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    assert resp.status_code == 401
 
 
 async def test_no_key_nonempty_table_401(env):
@@ -274,22 +274,14 @@ async def test_no_bootstrap_key_arbitrary_string_401(env, monkeypatch):
     assert resp.status_code == 401
 
 
-async def test_table_is_empty_recomputed_live(env, monkeypatch):
+async def test_deleting_every_key_does_not_reopen_access(env):
     client, seed_key, factory = env
-    # Create a key
     raw = await seed_key(["files:read"])
-    # Verify table is not empty and request requires key
-    resp = await client.get("/protected")
-    assert resp.status_code == 401
-    # Delete the key directly from DB (bypassing API)
     from sqlalchemy import delete
     async with factory() as s:
         await s.execute(delete(ApiKey).where(ApiKey.key_prefix == raw[:12]))
         await s.commit()
-    # Table is now empty again; unauthenticated request should get through (bootstrap)
-    resp = await client.get("/protected")
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    assert (await client.get("/protected")).status_code == 401
 
 
 def test_projects_share_scope_is_registered():

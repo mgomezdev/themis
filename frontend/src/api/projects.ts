@@ -1,3 +1,4 @@
+import type { ProjectStage } from './customers';
 import { useCallback, useEffect, useState } from 'react';
 import type { LibraryFile } from '../data/types';
 import { apiFetch } from './client';
@@ -64,6 +65,8 @@ export interface Project {
   source_layout_id: number | null;
   amount_paid: number | null;
   payment_status: PaymentStatus;
+  stage: ProjectStage;
+  customer_id: number | null;
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
@@ -112,6 +115,7 @@ export interface ProjectCreate {
   source_layout_id?: number | null;
   amount_paid?: number | null;
   payment_status?: PaymentStatus;
+  customer_id?: number | null;
 }
 
 export interface ProjectItemCreate {

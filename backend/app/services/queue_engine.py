@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import get_laminus_sidecar_url, get_library_dir
@@ -22,6 +22,7 @@ from ..models import (
     JobPrinterConfig,
     NotificationConfig,
     Printer,
+    Project,
     QueueConfig,
     UploadedFile,
     WebhookConfig,
@@ -728,7 +729,10 @@ class QueueEngine:
                 JobPrinterConfig,
                 and_(JobPrinterConfig.job_id == Job.id, JobPrinterConfig.printer_id == printer_id),
             )
+            # Jobs of a project only become claimable once the project is promoted to "queued".
+            .outerjoin(Project, Project.id == Job.project_id)
             .where(Job.status.in_(["queued", "blocked"]))
+            .where(or_(Job.project_id.is_(None), Project.stage == "queued"))
             .order_by(Job.queue_position.asc())
             .limit(1)
         )

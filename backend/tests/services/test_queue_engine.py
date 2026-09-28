@@ -1556,3 +1556,62 @@ async def test_fail_job_post_slice_fires_notifications(db):
     assert args[1] == "job.failed"
     assert args[2] == job_id
     assert "printer disconnected" in args[4]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["draft", "planning"])
+async def test_job_of_unqueued_project_is_not_claimed(db, stage):
+    from app.models import Project
+    mgr = _make_mock_printer_manager([1])
+    qe = QueueEngine(db, mgr, MagicMock())
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    async with db() as session:
+        now = datetime.now(timezone.utc).isoformat()
+        p = Project(name="P", stage=stage, created_at=now, updated_at=now)
+        session.add(p)
+        await session.flush()
+        (await session.get(Job, job_id)).project_id = p.id
+        await session.commit()
+
+    await qe._process_queue()
+
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_path):
+    """Jobs generated in planning sit unclaimed; promoting the project to queued releases them."""
+    from app.models import Project
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    async with db() as session:
+        now = datetime.now(timezone.utc).isoformat()
+        p = Project(name="P", stage="planning", created_at=now, updated_at=now)
+        session.add(p)
+        await session.flush()
+        project_id = p.id
+        (await session.get(Job, job_id)).project_id = project_id
+        await session.commit()
+
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "queued"
+    assert mock_slicer.slice.call_count == 0
+
+    async with db() as session:
+        (await session.get(Project, project_id)).stage = "queued"
+        await session.commit()
+
+    await qe._process_queue()
+    await asyncio.sleep(0.1)
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "printing"
+    assert mock_slicer.slice.call_count == 1

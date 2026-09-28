@@ -19,7 +19,10 @@ from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
+from .api.routes.admin_account import router as admin_account_router
 from .api.routes.api_keys import router as api_keys_router
+from .api.routes.customer_portal import router as customer_portal_router
+from .api.routes.customers import router as customers_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
 from .api.routes.fleet import router as fleet_router
@@ -30,6 +33,7 @@ from .api.routes.printers import router as printers_router
 from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
+from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
 from .api.routes.tags import router as tags_router
@@ -152,7 +156,11 @@ app = FastAPI(
 )
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
+app.include_router(admin_account_router)
 app.include_router(api_keys_router)
+app.include_router(customers_router)
+app.include_router(customer_portal_router)
+app.include_router(session_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(fleet_router)
