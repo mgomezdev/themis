@@ -146,6 +146,23 @@ def test_ws_closes_4403_for_customer_session_key(tmp_path):
     assert len(connection_manager.active_connections) == 0
 
 
+def test_ws_customer_key_wins_over_local_mode(tmp_path, monkeypatch):
+    """On the LAN, a signed-in customer's key is still a customer key — no staff live feed."""
+    db_path = tmp_path / "ws_customer_local.db"
+    raw = _seed_db(db_path, scopes=["customer"])
+    _wire_app_to_db(db_path)
+    monkeypatch.setattr("app.auth.is_local", lambda host: True)
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws?key={raw}"):
+            pass
+    assert exc_info.value.code == 4403
+    # Keyless local client still gets the feed.
+    with client.websocket_connect("/ws"):
+        assert len(connection_manager.active_connections) == 1
+
+
 def test_disconnect_is_idempotent_on_already_reaped_socket():
     """disconnect() must not raise when the socket was already removed — e.g. a
     broadcast reaped it as dead before the endpoint's WebSocketDisconnect handler

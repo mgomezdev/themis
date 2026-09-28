@@ -229,10 +229,10 @@ async def test_customer_cannot_edit_or_upload_to_another_customers_draft(admin: 
 
     async with await _login("alice@example.com", "pw") as ac:
         r = await ac.patch(f"/api/v1/customer/projects/{bobs['id']}", json={"notes": "hijack"})
-        assert r.status_code == 404
+        assert r.status_code == 404 and r.json()["detail"] == "Project not found"
         r = await ac.post(f"/api/v1/customer/projects/{bobs['id']}/files",
                           files={"file": ("x.stl", b"solid x\nendsolid x\n", "application/octet-stream")})
-        assert r.status_code == 404
+        assert r.status_code == 404 and r.json()["detail"] == "Project not found"
 
     staff_view = (await admin.get(f"/api/v1/projects/{bobs['id']}")).json()
     assert staff_view["notes"] == "orig" and staff_view["items"] == []
@@ -243,7 +243,7 @@ async def test_customer_cannot_upload_once_project_is_promoted(admin: AsyncClien
     await _create_customer(admin, "Alice", "alice@example.com", "pw")
     async with await _login("alice@example.com", "pw") as ac:
         d = (await ac.post("/api/v1/customer/projects", json={"name": "Part"})).json()
-        await admin.post(f"/api/v1/projects/{d['id']}/promote", json={"stage": "planning"})
+        assert (await admin.post(f"/api/v1/projects/{d['id']}/promote", json={"stage": "planning"})).status_code == 200
         r = await ac.post(f"/api/v1/customer/projects/{d['id']}/files",
                           files={"file": ("x.stl", b"solid x\nendsolid x\n", "application/octet-stream")})
         assert r.status_code == 409
@@ -261,12 +261,18 @@ async def test_customer_account_validation(admin: AsyncClient):
     assert r.status_code == 409
     r = await admin.patch(f"/api/v1/customers/{b['id']}", json={"email": "Alice@Example.com"})
     assert r.status_code == 409
+    emails = {c["id"]: c["email"] for c in (await admin.get("/api/v1/customers")).json()}
+    assert emails[b["id"]] == "bob@example.com"
+    # A mixed-case rename is stored lowercased.
+    r = await admin.patch(f"/api/v1/customers/{b['id']}", json={"email": "Robert@Example.COM"})
+    assert r.status_code == 200 and r.json()["email"] == "robert@example.com"
     # Renaming to your own email is fine.
     r = await admin.patch(f"/api/v1/customers/{a['id']}", json={"email": "alice@example.com"})
     assert r.status_code == 200
 
     # Missing / empty required fields.
     for body in ({"name": "X", "email": "x@example.com"},
+                 {"email": "x@example.com", "password": "pw"},
                  {"name": "X", "password": "pw"},
                  {"name": "X", "email": "x@example.com", "password": ""},
                  {"name": "X", "email": "  ", "password": "pw"}):

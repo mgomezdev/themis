@@ -111,7 +111,11 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
         return send(200, portalProject(own));
       }
       if (m![2] && method === 'POST') {
-        const filename = /filename="([^"]+)"/.exec(req.postDataBuffer()?.toString() ?? '')?.[1] ?? '?';
+        // Real route: `file: UploadFile` — multipart with a field named "file", else 422.
+        const ctype = req.headers()['content-type'] ?? '';
+        const filename = /name="file"; filename="([^"]+)"/.exec(req.postDataBuffer()?.toString() ?? '')?.[1];
+        if (!ctype.startsWith('multipart/form-data') || !filename)
+          return send(422, { detail: [{ loc: ['body', 'file'], msg: 'Field required' }] });
         own.items = [...(own.items ?? []), { id: (own.items?.length ?? 0) + 1, filename, quantity: 1 }];
         return send(201, portalProject(own));
       }
