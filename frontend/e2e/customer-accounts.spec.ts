@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 const STAFF_KEY = 'thm_e2e_staff_key';
 
 interface Customer { id: number; name: string; email: string; password: string; enabled: boolean }
-interface FakeProject { id: number; name: string; customer_id: number | null; stage: 'draft' | 'planning' | 'queued'; jobs: any[]; items?: any[] }  // items: staff ProjectItem shape (only used on the staff view)
+interface FakeProject { id: number; name: string; customer_id: number | null; stage: 'draft' | 'planning' | 'queued'; jobs: any[]; items?: any[]; notes?: string | null }  // items: staff ProjectItem shape (only used on the staff view)
 
 function fakeBackend() {
   const customers: Customer[] = [];
@@ -24,7 +24,7 @@ const publicCustomer = (c: Customer) =>
 
 function portalProject(p: FakeProject) {
   return {
-    id: p.id, name: p.name, notes: null, stage: p.stage, due_date: null,
+    id: p.id, name: p.name, notes: p.notes ?? null, stage: p.stage, due_date: null,
     created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T00:00:00Z',
     items: p.items ?? [], jobs: p.jobs, jobs_total: p.jobs.length,
     jobs_complete: p.jobs.filter(j => j.status === 'complete').length,
@@ -88,11 +88,33 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
       return send(200, { local: false, role: isStaff ? 'staff' : null, customer: null });
     }
 
-    // Customer portal: only a customer session, only its own projects.
+    // A key that is neither staff nor a live session (revoked/expired) → 401, like require_scope.
+    if (key && !isStaff && customerId == null) return send(401, { detail: 'Missing or invalid API key' });
+
+    // Customer portal: only a customer session, only its own projects, edits only while draft.
     if (path.startsWith('/customer/')) {
       if (customerId == null) return send(403, { detail: 'Customer account required' });
       if (path === '/customer/projects' && method === 'GET')
         return send(200, fake.projects.filter(p => p.customer_id === customerId).map(portalProject));
+      if (path === '/customer/projects' && method === 'POST') {
+        const p: FakeProject = { id: 100 + fake.projects.length, name: body.name, notes: body.notes ?? null,
+                                 customer_id: customerId, stage: 'draft', jobs: [] };
+        fake.projects.push(p);
+        return send(201, portalProject(p));
+      }
+      const own = (m = path.match(/^\/customer\/projects\/(\d+)(\/files)?$/))
+        ? fake.projects.find(x => x.id === +m[1] && x.customer_id === customerId) : undefined;
+      if (!own) return send(404, { detail: 'Project not found' });
+      if (own.stage !== 'draft') return send(409, { detail: 'Only draft projects can be edited' });
+      if (!m![2] && method === 'PATCH') {
+        Object.assign(own, body);
+        return send(200, portalProject(own));
+      }
+      if (m![2] && method === 'POST') {
+        const filename = /filename="([^"]+)"/.exec(req.postDataBuffer()?.toString() ?? '')?.[1] ?? '?';
+        own.items = [...(own.items ?? []), { id: (own.items?.length ?? 0) + 1, filename, quantity: 1 }];
+        return send(201, portalProject(own));
+      }
       return send(404, { detail: 'Not found' });
     }
 
@@ -255,4 +277,59 @@ test('admin promotes a customer draft to planning, then to queued', async ({ pag
 
   expect(fake.captured.filter(c => c.path === '/projects/11/promote').map(c => c.body))
     .toEqual([{ stage: 'planning' }, { stage: 'queued' }]);
+});
+
+test('customer creates a draft, edits it, uploads a file, and signs out', async ({ page }) => {
+  const fake = fakeBackend();
+  fake.customers.push({ id: 1, name: 'Alice', email: 'alice@example.com', password: 'pw', enabled: true });
+  await install(page, fake);
+  await signIn(page, 'alice@example.com', 'pw');
+  await expect(page.getByText('No projects yet')).toBeVisible();
+
+  // New request → draft, selected for editing.
+  await page.getByPlaceholder('New project request name').fill('Gear Housing');
+  await page.getByRole('button', { name: 'New request' }).click();
+  await expect(page.getByRole('heading', { name: 'Gear Housing' })).toBeVisible();
+  await expect(page.locator('.pill', { hasText: 'Draft' })).toBeVisible();
+
+  // Edit notes.
+  await page.getByPlaceholder('Describe what you need').fill('10 units, black PETG');
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => fake.projects.find(p => p.name === 'Gear Housing')?.notes).toBe('10 units, black PETG');
+
+  // Upload a model file.
+  await page.locator('input[type=file]').setInputFiles({
+    name: 'housing.stl', mimeType: 'application/octet-stream', buffer: Buffer.from('solid x\nendsolid x\n'),
+  });
+  await expect(page.getByText('housing.stl × 1')).toBeVisible();
+
+  expect(fake.captured.filter(c => c.path !== '/api-keys').map(c => `${c.method} ${c.path}`)).toEqual([
+    'POST /auth/login',
+    'POST /customer/projects',
+    'PATCH /customer/projects/100',
+    'POST /customer/projects/100/files',
+  ]);
+
+  // Sign out → back to the sign-in form, key gone.
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  expect(await page.evaluate(() => localStorage.getItem('themis.apiKey'))).toBeNull();
+});
+
+test('customer whose session expires mid-use is returned to the sign-in form', async ({ page }) => {
+  const fake = fakeBackend();
+  fake.customers.push({ id: 1, name: 'Alice', email: 'alice@example.com', password: 'pw', enabled: true });
+  await install(page, fake);
+  await signIn(page, 'alice@example.com', 'pw');
+  await expect(page.getByText('No projects yet')).toBeVisible();  // initial list request has landed
+
+  fake.sessions.clear();  // server-side: session expired / revoked
+
+  await page.getByPlaceholder('New project request name').fill('After expiry');
+  await page.getByRole('button', { name: 'New request' }).click();
+
+  await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'My projects' })).toHaveCount(0);
+  expect(await page.evaluate(() => localStorage.getItem('themis.apiKey'))).toBeNull();
+  expect(fake.projects).toEqual([]);
 });

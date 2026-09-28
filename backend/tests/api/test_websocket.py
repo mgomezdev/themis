@@ -132,6 +132,20 @@ def test_ws_closes_4401_with_bad_key(tmp_path):
     assert exc_info.value.code == 4401
 
 
+def test_ws_closes_4403_for_customer_session_key(tmp_path):
+    """A customer portal session (scope "customer" only) must not get the live fleet/queue feed."""
+    db_path = tmp_path / "ws_customer.db"
+    raw = _seed_db(db_path, scopes=["customer"])
+    _wire_app_to_db(db_path)
+
+    client = TestClient(app)
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect(f"/ws?key={raw}"):
+            pass
+    assert exc_info.value.code == 4403
+    assert len(connection_manager.active_connections) == 0
+
+
 def test_disconnect_is_idempotent_on_already_reaped_socket():
     """disconnect() must not raise when the socket was already removed — e.g. a
     broadcast reaped it as dead before the endpoint's WebSocketDisconnect handler

@@ -175,3 +175,102 @@ async def test_login_only_works_for_accounts_the_admin_created(admin: AsyncClien
         # Email match is case-insensitive.
         r = await anon.post("/api/v1/auth/login", json={"email": "NEW@example.com", "password": "pw"})
         assert r.status_code == 200 and r.json()["customer"]["email"] == "new@example.com"
+
+
+# ---- Session lifecycle -------------------------------------------------------------------
+
+async def test_password_reset_signs_customer_out_and_only_new_password_works(client: AsyncClient):
+    """Remote client (no local mode); `client` carries a full-scope staff key as the admin."""
+    alice = (await client.post("/api/v1/customers",
+                               json={"name": "Alice", "email": "alice@example.com", "password": "old-pw"})).json()
+    async with await _login("alice@example.com", "old-pw") as ac:
+        assert (await ac.get("/api/v1/customer/projects")).status_code == 200
+
+        r = await client.patch(f"/api/v1/customers/{alice['id']}", json={"password": "new-pw"})
+        assert r.status_code == 200
+        assert (await ac.get("/api/v1/customer/projects")).status_code == 401
+
+    async with _keyless() as anon:
+        r = await anon.post("/api/v1/auth/login", json={"email": "alice@example.com", "password": "old-pw"})
+        assert r.status_code == 401
+    async with await _login("alice@example.com", "new-pw") as ac:
+        assert (await ac.get("/api/v1/customer/projects")).status_code == 200
+
+
+async def test_expired_session_is_rejected(client: AsyncClient):
+    """Remote client (no local mode): a session past its 30-day expiry gets 401."""
+    from sqlalchemy import update
+    from app.models import ApiKey
+
+    r = await client.post("/api/v1/customers", json={"name": "A", "email": "a@example.com", "password": "pw"})
+    assert r.status_code == 201
+    async with await _login("a@example.com", "pw") as ac:
+        assert (await ac.get("/api/v1/customer/projects")).status_code == 200
+
+        agen = app.dependency_overrides[get_session]()
+        session = await agen.__anext__()
+        await session.execute(update(ApiKey).where(ApiKey.customer_id.is_not(None))
+                              .values(expires_at="2000-01-01T00:00:00+00:00"))
+        await session.commit()
+        await agen.aclose()
+
+        assert (await ac.get("/api/v1/customer/projects")).status_code == 401
+        assert (await ac.get("/api/v1/auth/me")).json()["role"] is None
+
+
+# ---- Customer write scoping --------------------------------------------------------------
+
+async def test_customer_cannot_edit_or_upload_to_another_customers_draft(admin: AsyncClient, tmp_path, monkeypatch):
+    monkeypatch.setenv("THEMIS_DATA_DIR", str(tmp_path))
+    await _create_customer(admin, "Alice", "alice@example.com", "pw")
+    await _create_customer(admin, "Bob", "bob@example.com", "pw")
+    async with await _login("bob@example.com", "pw") as bc:
+        bobs = (await bc.post("/api/v1/customer/projects", json={"name": "Bob's", "notes": "orig"})).json()
+
+    async with await _login("alice@example.com", "pw") as ac:
+        r = await ac.patch(f"/api/v1/customer/projects/{bobs['id']}", json={"notes": "hijack"})
+        assert r.status_code == 404
+        r = await ac.post(f"/api/v1/customer/projects/{bobs['id']}/files",
+                          files={"file": ("x.stl", b"solid x\nendsolid x\n", "application/octet-stream")})
+        assert r.status_code == 404
+
+    staff_view = (await admin.get(f"/api/v1/projects/{bobs['id']}")).json()
+    assert staff_view["notes"] == "orig" and staff_view["items"] == []
+
+
+async def test_customer_cannot_upload_once_project_is_promoted(admin: AsyncClient, tmp_path, monkeypatch):
+    monkeypatch.setenv("THEMIS_DATA_DIR", str(tmp_path))
+    await _create_customer(admin, "Alice", "alice@example.com", "pw")
+    async with await _login("alice@example.com", "pw") as ac:
+        d = (await ac.post("/api/v1/customer/projects", json={"name": "Part"})).json()
+        await admin.post(f"/api/v1/projects/{d['id']}/promote", json={"stage": "planning"})
+        r = await ac.post(f"/api/v1/customer/projects/{d['id']}/files",
+                          files={"file": ("x.stl", b"solid x\nendsolid x\n", "application/octet-stream")})
+        assert r.status_code == 409
+        assert (await ac.get(f"/api/v1/customer/projects/{d['id']}")).json()["items"] == []
+
+
+# ---- Account management validation -------------------------------------------------------
+
+async def test_customer_account_validation(admin: AsyncClient):
+    a = await _create_customer(admin, "Alice", "alice@example.com", "pw")
+    b = await _create_customer(admin, "Bob", "bob@example.com", "pw")
+
+    # Duplicate email (case-insensitive) on create and on rename.
+    r = await admin.post("/api/v1/customers", json={"name": "A2", "email": "ALICE@example.com", "password": "pw"})
+    assert r.status_code == 409
+    r = await admin.patch(f"/api/v1/customers/{b['id']}", json={"email": "Alice@Example.com"})
+    assert r.status_code == 409
+    # Renaming to your own email is fine.
+    r = await admin.patch(f"/api/v1/customers/{a['id']}", json={"email": "alice@example.com"})
+    assert r.status_code == 200
+
+    # Missing / empty required fields.
+    for body in ({"name": "X", "email": "x@example.com"},
+                 {"name": "X", "password": "pw"},
+                 {"name": "X", "email": "x@example.com", "password": ""},
+                 {"name": "X", "email": "  ", "password": "pw"}):
+        assert (await admin.post("/api/v1/customers", json=body)).status_code == 422, body
+    r = await admin.patch(f"/api/v1/customers/{a['id']}", json={"email": " "})
+    assert r.status_code == 422
+    assert len((await admin.get("/api/v1/customers")).json()) == 2
