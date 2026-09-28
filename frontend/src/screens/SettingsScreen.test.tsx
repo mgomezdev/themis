@@ -476,10 +476,13 @@ describe('SettingsScreen', () => {
 
     render(<SettingsScreen />, { wrapper });
     await user.click(screen.getByRole('button', { name: /spoolman/i }));
+    // The saved config already has enabled+url, so mounting the page fires one
+    // automatic connectivity check on its own before the explicit click below.
+    await waitFor(() => expect(testBodies.length).toBe(1));
     await user.click(screen.getByRole('button', { name: /test connection/i }));
 
-    await waitFor(() => expect(testBodies.length).toBe(1));
-    expect(testBodies[0]).not.toHaveProperty('api_key');
+    await waitFor(() => expect(testBodies.length).toBe(2));
+    for (const body of testBodies) expect(body).not.toHaveProperty('api_key');
   });
 
   it('WebhookPage: saving without touching the secret field leaves the saved secret unchanged', async () => {
