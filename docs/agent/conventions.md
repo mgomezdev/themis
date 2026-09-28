@@ -34,7 +34,16 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   built-in exception; don't hand-roll another one. The one other deliberate exception is
   `app/api/routes/public.py`'s `GET /api/v1/public/projects/{token}` — addressed by an unguessable
   per-project token instead of a scope, by design; it's the sole route in that file and the file exists
-  specifically to keep that exception isolated and auditable. Frontend: every `api/*.ts` call goes
+  specifically to keep that exception isolated and auditable. `app/api/routes/session.py`
+  (`POST /api/v1/auth/login`, `GET /api/v1/auth/me`) is also unauthenticated by design — login is how a
+  customer gets a key. **Local mode**: requests whose socket peer IP is in `THEMIS_LOCAL_NETWORKS`
+  (comma-separated CIDRs, default `192.168.0.0/16`; add `100.64.0.0/10` for Tailscale) are full admin
+  with no key (`auth.is_local` → `local_admin_key()`) — but a valid presented key always wins, so a
+  customer signed in on the LAN stays a customer. Only the peer IP is trusted, never proxy headers — a
+  reverse proxy or Docker NAT gateway (e.g. Docker Desktop's `192.168.65.x`) whose own IP is in range
+  makes every request local; check `request.client.host` in the deployed container before relying on it. **Customer sessions**
+  are `api_keys` rows with `customer_id` set and scopes `["customer"]`; portal routes use
+  `require_customer` and must filter by that `customer_id`. Frontend: every `api/*.ts` call goes
   through `apiFetch`/`withKeyParam` (`api/client.ts`), never raw `fetch`, or it silently 401s once a key
   exists — except the public share page (`SharedProjectScreen`), which deliberately uses a plain
   `fetch()` since it has no API key and must not touch the authenticated client's 401/403 handlers.

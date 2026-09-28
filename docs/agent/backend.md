@@ -9,14 +9,14 @@ the three subsystems and connects enabled printers.
 
 Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the public contract.
 
-13 route modules, all registered in `main.py`.
+16 route modules, all registered in `main.py`.
 
 | Module | Prefix | Key endpoints (method path → purpose) |
 |---|---|---|
 | `files.py` | `/api/v1/files` | `POST /upload` (store 3MF/STL, parse plates), `GET /{id}/plates`, `GET /{id}/model-filaments` (→ `parse_model_filaments`; returns `[{index,color,type}]`), `GET /{id}/thumbnails/{name}` |
 | `jobs.py` | `/api/v1/jobs` | `POST ""` create, `GET ""`/`GET /{id}`, `GET /{id}/details` (full: file/plate/per-printer configs incl. `tool_index`/`filament_map`/assigned/`estimate_*`/`actual_*`; each `printer_configs[]` entry carries `low_stock_warning` — see **Spool preflight & notifications** below), `POST /check-overrides`, `PATCH /{id}/configs` (replace configs + re-queue; persists `tool_index`+`filament_map`), `PATCH /{id}/cost` (set manually-entered `filament_cost`, any status), `POST /{id}/unblock` (clear slice_failed + re-queue top), `POST /{id}/cancel` (→ stops printer if running), `GET /{id}/slice-failures` |
 | `orders.py` | `/api/v1/orders` | CRUD; list/get carry derived `status`+`progress`+`job_count`; `GET /{id}` adds linked `jobs`; `DELETE` nulls `order_id` on jobs |
-| `projects.py` | `/api/v1/projects` | CRUD (`GET ""`/`POST ""`/`GET`/`PATCH`/`DELETE /{id}`), `GET /{id}/jobs`; child resources `items`/`links`/`parts` each get `GET`/`POST /{project_id}/<child>` + `PUT`/`DELETE /{project_id}/<child>/{child_id}` (items also: `PUT /{project_id}/items/reorder`); `POST /{id}/generate` — packs `project_items` into plates (via `project_pack_builder`/sidecar `arrange`), creates the jobs + a linked internal `orders` row. See `data-model.md` § projects/project_items/project_links/project_parts. |
+| `projects.py` | `/api/v1/projects` | CRUD (`GET ""`/`POST ""`/`GET`/`PATCH`/`DELETE /{id}`), `GET /{id}/jobs`; child resources `items`/`links`/`parts` each get `GET`/`POST /{project_id}/<child>` + `PUT`/`DELETE /{project_id}/<child>/{child_id}` (items also: `PUT /{project_id}/items/reorder`); `POST /{id}/generate` — packs `project_items` into plates (via `project_pack_builder`/sidecar `arrange`), creates the jobs + a linked internal `orders` row (409 while `stage=draft`); `POST /{id}/promote` `{stage}` (forward-only). See `data-model.md` § projects/project_items/project_links/project_parts. |
 | `printers.py` | `/api/v1/printers` | `GET /types` (vendor descriptors for add-form), `POST ""`/`GET`/`PATCH`/`DELETE /{id}`, `POST /test-connection`, `GET /{id}/profiles` (compatible orca process+filament presets), `GET /orca-machine-catalog`, `POST /rescan-profiles`, `POST /{id}/plate-cleared` (ready-for-work), control: `pause`/`resume`/`stop`(→reconciles job)/`light`/`jog-z`/`fan`/`bed-temp`/`reconnect`, camera: `GET /{id}/camera`(MJPEG), `GET /{id}/snapshot` |
 | `queue.py` | `/api/v1/queue` | `GET ""` (active jobs ordered; each job carries `low_stock_warning` — see below, batched: one Spoolman fetch per request, not per job), `PATCH /reorder` |
 | `fleet.py` | `/api/v1/fleet` | `GET ""` — per-printer merge of DB row (`enabled,queue_on,awaiting_plate_clear,loaded_filaments`) + live `printer_manager.get_normalized_state` |
@@ -26,6 +26,9 @@ Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the pub
 | `spoolman.py` | `/api/v1/spoolman` | `GET /filaments`, `GET /spools` (proxy to Spoolman), `PATCH /filaments/{id}` (update `orca_profiles` extra field), `POST /sync-now` (manual sync, records outcome), `GET /sync-status` (sync health for the status-indicator bubble + settings page; never 503s) |
 | `tags.py` | `/api/v1/tags` | `GET ""`, `POST ""`, `PATCH /{id}`, `DELETE /{id}`, `POST /files/{file_id}/assign`, `POST /files/{file_id}/unassign` |
 | `api_keys.py` | `/api/v1/api-keys` | `GET ""` (list, never returns hash/raw key), `POST ""` (create — raw key in response **once**; while `api_keys` is empty, bootstrap: ignores requested scopes, grants all of `SCOPES`, guarded by `bootstrap_sentinel` — see `data-model.md`), `POST /{id}/revoke` (soft: `enabled=False`+`revoked_at`), `DELETE /{id}` (hard). Revoking/deleting the last enabled key holding `apikeys:write` → `400`. |
+| `session.py` | `/api/v1/auth` | Unauthenticated. `POST /login` (customer email+password → session key), `GET /me` (`{local, role: admin|staff|customer|null, customer}`) |
+| `customers.py` | `/api/v1/customers` | `GET ""`, `POST ""` (409 dup email), `PATCH /{id}` (name/email/password/enabled; password change or disable revokes sessions) |
+| `customer_portal.py` | `/api/v1/customer` | `require_customer`, scoped to own projects: `GET /projects`, `GET /projects/{id}`, `POST /projects` (draft), `PATCH /projects/{id}` + `POST /projects/{id}/files` (draft only, else 409) |
 
 ### Spool preflight & notifications
 

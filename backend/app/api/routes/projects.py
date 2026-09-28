@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
+from ...models import PROJECT_STAGES, Customer, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
@@ -62,11 +62,22 @@ class ProjectCreate(BaseModel):
     source_layout_id: Optional[int] = None
     amount_paid: Optional[float] = None
     payment_status: str = "unpaid"
+    # Staff/API-created projects default to "queued" (unchanged behavior); customer drafts
+    # are created via the customer portal.
+    stage: str = "queued"
+    customer_id: Optional[int] = None
 
     @field_validator("payment_status")
     @classmethod
     def _valid_payment_status(cls, v: str) -> str:
         return _validate_payment_status(v)
+
+    @field_validator("stage")
+    @classmethod
+    def _valid_stage(cls, v: str) -> str:
+        if v not in PROJECT_STAGES:
+            raise ValueError(f"stage must be one of {list(PROJECT_STAGES)}")
+        return v
 
 
 class ProjectPatch(BaseModel):
@@ -78,6 +89,7 @@ class ProjectPatch(BaseModel):
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
     payment_status: Optional[str] = None
+    customer_id: Optional[int] = None  # send null to unassign
 
     @field_validator("payment_status")
     @classmethod
@@ -328,6 +340,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "source_layout_id": project.source_layout_id,
         "amount_paid": project.amount_paid,
         "payment_status": project.payment_status,
+        "stage": project.stage,
+        "customer_id": project.customer_id,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
@@ -335,6 +349,12 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "parts": parts,
         **progress,
     }
+
+
+async def _valid_customer_id(customer_id: Optional[int], session: AsyncSession) -> Optional[int]:
+    if customer_id is not None and await session.get(Customer, customer_id) is None:
+        raise HTTPException(404, f"Customer {customer_id} not found")
+    return customer_id
 
 
 async def _get_project_or_404(project_id: int, session: AsyncSession) -> Project:
@@ -380,6 +400,8 @@ async def create_project(
         source_layout_id=body.source_layout_id,
         amount_paid=body.amount_paid,
         payment_status=body.payment_status,
+        stage=body.stage,
+        customer_id=await _valid_customer_id(body.customer_id, session),
         created_at=now,
         updated_at=now,
     )
@@ -435,9 +457,44 @@ async def patch_project(
         proj.amount_paid = body.amount_paid
     if body.payment_status is not None:
         proj.payment_status = body.payment_status
+    if "customer_id" in body.model_fields_set:
+        proj.customer_id = await _valid_customer_id(body.customer_id, session)
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)
+    return await _project_dict(proj, session)
+
+
+class ProjectPromote(BaseModel):
+    stage: str
+
+
+@router.post(
+    "/{project_id}/promote",
+    summary="Promote project stage",
+    responses={
+        404: {"description": "Project not found"},
+        409: {"description": "Not a forward transition (draft → planning → queued)"},
+    },
+    dependencies=[Depends(require_scope("projects:write"))],
+)
+async def promote_project(
+    project_id: int,
+    body: ProjectPromote,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Move a project forward one stage: draft → planning (jobs may be created) →
+    queued (its jobs become eligible for printers)."""
+    proj = await _get_project_or_404(project_id, session)
+    current = PROJECT_STAGES.index(proj.stage) if proj.stage in PROJECT_STAGES else -1
+    if body.stage not in PROJECT_STAGES or PROJECT_STAGES.index(body.stage) != current + 1:
+        raise HTTPException(409, f"Cannot move project from {proj.stage!r} to {body.stage!r}")
+    proj.stage = body.stage
+    proj.updated_at = _now_iso()
+    await session.commit()
+    await session.refresh(proj)
+    if proj.stage == "queued":
+        queue_engine.wake()
     return await _project_dict(proj, session)
 
 
@@ -976,6 +1033,8 @@ async def generate_project(
     and queue one job per plate. Returns created job and file IDs plus the bed dimensions used
     for packing."""
     proj = await _get_project_or_404(project_id, session)
+    if proj.stage == "draft":
+        raise HTTPException(409, "Promote the project to planning before creating jobs")
 
     sidecar_url = get_laminus_sidecar_url()
     if not sidecar_url:

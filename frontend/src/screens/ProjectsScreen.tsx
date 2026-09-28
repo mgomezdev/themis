@@ -79,6 +79,13 @@ function ProjectCard({
             textTransform: 'uppercase', letterSpacing: '0.04em',
           }}>On hold</span>
         )}
+        {project.stage !== 'queued' && (
+          <span style={{
+            fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+            background: 'rgba(239,160,0,0.15)', color: 'var(--warn)',
+            textTransform: 'uppercase', letterSpacing: '0.04em',
+          }}>{project.stage}</span>
+        )}
         <span style={{ fontSize: 10, color: 'var(--text-4)', marginLeft: 'auto' }}>#{project.id}</span>
       </div>
 

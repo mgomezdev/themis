@@ -8,6 +8,8 @@ import { useQueue, useQueueConfig } from './api/queue';
 import { useFleetData } from './api/fleet';
 import { AuthGate } from './auth/AuthGate';
 import { apiFetch } from './api/client';
+import { getSession, type Role } from './auth/session';
+import { CustomerPortal } from './screens/CustomerPortal';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -203,6 +205,19 @@ function AppShell() {
   );
 }
 
+/** Customers get the portal; everyone else (local admin, staff API key) the full app.
+ *  Waits for the role so staff-only hooks never fire under a customer session. */
+function RoleSwitch() {
+  const [role, setRole] = useState<Role | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    getSession().then(s => { if (alive) setRole(s?.role ?? null); });
+    return () => { alive = false; };
+  }, []);
+  if (role === undefined) return null;
+  return role === 'customer' ? <CustomerPortal /> : <AppShell />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
@@ -212,7 +227,7 @@ export default function App() {
           path="/*"
           element={
             <AuthGate>
-              <AppShell />
+              <RoleSwitch />
             </AuthGate>
           }
         />
