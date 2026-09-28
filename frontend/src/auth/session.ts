@@ -19,8 +19,8 @@ export async function getSession(): Promise<SessionInfo | null> {
   }
 }
 
-/** Returns the session key on success, or an error message. */
-export async function loginCustomer(email: string, password: string): Promise<{ key: string } | { error: string }> {
+/** Customer email or the admin username. Returns the session key on success, or an error message. */
+export async function login(email: string, password: string): Promise<{ key: string } | { error: string }> {
   try {
     const r = await fetch('/api/v1/auth/login', {
       method: 'POST',
@@ -33,5 +33,31 @@ export async function loginCustomer(email: string, password: string): Promise<{ 
     return typeof data?.key === 'string' ? { key: data.key } : { error: 'Server unreachable' };
   } catch {
     return { error: 'Server unreachable' };
+  }
+}
+
+/** Asks the server to write a one-time admin recovery code to its log. */
+export async function requestRecoveryCode(): Promise<boolean> {
+  try {
+    const r = await fetch('/api/v1/auth/recover', { method: 'POST' });
+    return r.status === 202;
+  } catch {
+    return false;
+  }
+}
+
+/** true on success, else an error message. */
+export async function confirmRecovery(code: string, password: string): Promise<true | string> {
+  try {
+    const r = await fetch('/api/v1/auth/recover/confirm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, password }),
+    });
+    if (r.ok) return true;
+    if (r.status === 400) return 'Invalid or expired recovery code';
+    return 'Server unreachable';
+  } catch {
+    return 'Server unreachable';
   }
 }

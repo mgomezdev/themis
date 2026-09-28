@@ -6,6 +6,114 @@
     "version": "1.0.0"
   },
   "paths": {
+    "/api/v1/admin-account": {
+      "get": {
+        "tags": [
+          "admin-account"
+        ],
+        "summary": "Admin account settings",
+        "operationId": "get_account_api_v1_admin_account_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Account Api V1 Admin Account Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "admin-account"
+        ],
+        "summary": "Update admin account settings",
+        "operationId": "patch_account_api_v1_admin_account_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Patch Account Api V1 Admin Account Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin-account/password": {
+      "put": {
+        "tags": [
+          "admin-account"
+        ],
+        "summary": "Set admin password",
+        "description": "Signs out every other admin session (the caller's own session, if any, stays valid).",
+        "operationId": "set_password_api_v1_admin_account_password_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Set Password Api V1 Admin Account Password Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/api-keys": {
       "get": {
         "tags": [
@@ -505,8 +613,8 @@
         "tags": [
           "auth"
         ],
-        "summary": "Customer login",
-        "description": "Exchange customer email + password for a session key (sent as X-Api-Key afterwards).",
+        "summary": "Customer or admin login",
+        "description": "Exchange email (or the admin username) + password for a session key (sent as X-Api-Key).\nFailed attempts are throttled per client IP (services/login_throttle.py).",
         "operationId": "login_api_v1_auth_login_post",
         "requestBody": {
           "content": {
@@ -550,7 +658,7 @@
           "auth"
         ],
         "summary": "Current session",
-        "description": "`role`: \"admin\" (local network or bootstrap), \"staff\" (API key), \"customer\", or null\nwhen the request carries no valid credential.",
+        "description": "`role`: \"admin\" (local network or admin session), \"staff\" (API key), \"customer\", or null\nwhen the request carries no valid credential.",
         "operationId": "me_api_v1_auth_me_get",
         "responses": {
           "200": {
@@ -561,6 +669,72 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Me Api V1 Auth Me Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/recover": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Write an admin recovery code to the server log",
+        "operationId": "recover_api_v1_auth_recover_post",
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Recover Api V1 Auth Recover Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/recover/confirm": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Set the admin password with a recovery code",
+        "operationId": "recover_confirm_api_v1_auth_recover_confirm_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecoverConfirm"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Recover Confirm Api V1 Auth Recover Confirm Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -5955,6 +6129,23 @@
   },
   "components": {
     "schemas": {
+      "AccountPatch": {
+        "properties": {
+          "allow_local_login": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allow Local Login"
+          }
+        },
+        "type": "object",
+        "title": "AccountPatch"
+      },
       "ActivePresetUpdate": {
         "properties": {
           "preset": {
@@ -7185,6 +7376,19 @@
         ],
         "title": "OverrideCheckRequest"
       },
+      "PasswordBody": {
+        "properties": {
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "password"
+        ],
+        "title": "PasswordBody"
+      },
       "PositionUpdate": {
         "properties": {
           "job_id": {
@@ -8095,6 +8299,24 @@
           "estimates_enabled"
         ],
         "title": "QueueConfigOut"
+      },
+      "RecoverConfirm": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "password"
+        ],
+        "title": "RecoverConfirm"
       },
       "RemapResolutionEntry": {
         "properties": {

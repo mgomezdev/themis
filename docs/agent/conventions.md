@@ -30,16 +30,28 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Auth is mandatory, not opt-in**: every `/api/v1/*` route (new or existing) must carry
   `Depends(require_scope("<scope>"))`, and the scope must exist in the hardcoded `SCOPES` registry in
   `app/auth.py` — there's no auto-derivation, forgetting either half means an unprotected route or a
-  crash on an unknown scope. The bootstrap hatch (open access while `api_keys` is empty) is the only
-  built-in exception; don't hand-roll another one. The one other deliberate exception is
+  crash on an unknown scope. There is **no** bootstrap hatch any more: an empty `api_keys` table is not
+  open access. Don't hand-roll an exception. The one deliberate exception is
   `app/api/routes/public.py`'s `GET /api/v1/public/projects/{token}` — addressed by an unguessable
   per-project token instead of a scope, by design; it's the sole route in that file and the file exists
   specifically to keep that exception isolated and auditable. `app/api/routes/session.py`
-  (`POST /api/v1/auth/login`, `GET /api/v1/auth/me`) is also unauthenticated by design — login is how a
-  customer gets a key. **Local mode**: requests whose socket peer IP is in `THEMIS_LOCAL_NETWORKS`
-  (comma-separated CIDRs, default `192.168.0.0/16`; add `100.64.0.0/10` for Tailscale) are full admin
-  with no key (`auth.is_local` → `local_admin_key()`) — but a valid presented key always wins, so a
-  customer signed in on the LAN stays a customer. Only the peer IP is trusted, never proxy headers — a
+  (`POST /auth/login`, `GET /auth/me`, `POST /auth/recover`, `POST /auth/recover/confirm`) is also
+  unauthenticated by design — login/recovery is how a browser gets a key. **Admin account**: one
+  `admin_account` row, created on first boot with no password; `POST /auth/login` with username
+  `admin` mints an admin session (all scopes except `customer`). **Local mode**: requests whose socket
+  peer IP is in `THEMIS_LOCAL_NETWORKS` (comma-separated CIDRs, default `192.168.0.0/16`; add
+  `100.64.0.0/10` for Tailscale) are full admin with no key **while `admin_account.allow_local_login`**
+  (Settings → Admin account; can only be turned off once a password is set) —
+  `auth.local_admin_allowed` → `local_admin_key()`. A valid presented key always wins, so a customer
+  signed in on the LAN stays a customer (HTTP and `/ws` alike). `/api/v1/admin-account` is admin-only
+  (local admin, `THEMIS_BOOTSTRAP_KEY`, or an admin session — not a scoped staff key). Admin password
+  ≥ 8 chars; failed `/auth/login` + `/auth/recover/confirm` are throttled per client IP
+  (`services/login_throttle.py`, 10 per 15 min, in-memory). **Offline recovery**:
+  `docker compose exec themis python -m app.admin reset-password` (prints to the terminal) /
+  `allow-local-login`, or `/auth/recover` which writes a single-use 15-min code to the log (read with
+  `docker compose logs themis`; never over HTTP; a live code is never replaced; 5 wrong guesses burn
+  it). Old full-access API keys (e.g. pre-upgrade "Browser" keys) keep working when local sign-in is
+  turned off — the Admin account page counts and warns about them. Only the peer IP is trusted, never proxy headers — a
   reverse proxy or Docker NAT gateway (e.g. Docker Desktop's `192.168.65.x`) whose own IP is in range
   makes every request local; check `request.client.host` in the deployed container before relying on it. **Customer sessions**
   are `api_keys` rows with `customer_id` set and scopes `["customer"]`; portal routes use

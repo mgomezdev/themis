@@ -9,12 +9,12 @@ uses hooks that fetch on mount and merge live `/ws` events. Entry: `main.tsx` �
 
 ## Auth (`src/auth/*.tsx`, `src/api/client.ts`)
 
-`App.tsx` wraps `<AppShell>` in `<AuthGate>` (`auth/AuthGate.tsx`). On mount: if no key is stored
-(`auth/apiKeyStore.ts`'s `getApiKey()`, namespaced localStorage key `themis.apiKey`), `AuthGate` POSTs
-`/api/v1/api-keys` with `{name: "Browser"}` via plain `fetch` (nothing to inject yet), stores the
-returned raw key, and renders children — this is the browser's own device-credential-style key, there's
-no login system. If that bootstrap call 401/403s (table already non-empty — e.g. two tabs racing), it
-falls back to a manual "enter your API key" form instead. A live 401 from any `apiFetch` call (e.g. this
+`App.tsx` wraps a `RoleSwitch` (customer → `CustomerPortal`, else `AppShell`) in `<AuthGate>`
+(`auth/AuthGate.tsx`). On mount: a stored key (`auth/apiKeyStore.ts`, localStorage `themis.apiKey` —
+an API key or a login session) → children. Otherwise `GET /api/v1/auth/me`: a role (keyless
+local-network admin) → children; no role → sign-in form ("Email or username" — customers, or
+`admin`), a "Forgot admin password?" recovery panel (log code → new password), and a paste-an-API-key
+form; fetch failure → "couldn't reach" + Retry. No key is ever auto-minted. A live 401 from any `apiFetch` call (e.g. this
 browser's key got revoked elsewhere) clears the stored key and re-shows the manual form, wired via
 `client.ts`'s `setUnauthorizedHandler` callback rather than a per-call-site check.
 
@@ -108,7 +108,7 @@ calls `apiFetch` (not raw `fetch`) internally — see **Auth** above. Mutations 
 
 Suite under `frontend/e2e/`. Config: `frontend/playwright.config.ts` (Chromium, baseURL `:5173`, `webServer: npm run dev` with `reuseExistingServer`).
 
-**Deterministic / no backend:** `e2e/mock-api.ts` exports `mockApi(page, over?)` which route-mocks `**/api/v1/**` with canned data and captures mutating request bodies into `mocks.captured` for payload assertions. Also mocks `/ws`. Seeds `localStorage` with a fake API key via `page.addInitScript` before the app loads (and route-mocks `POST **/api/v1/api-keys` as a fallback in case `AuthGate`'s bootstrap races anyway), so specs never see the auth gate. No backend process, no printers, zero print risk.
+**Deterministic / no backend:** `e2e/mock-api.ts` exports `mockApi(page, over?)` which route-mocks `**/api/v1/**` with canned data and captures mutating request bodies into `mocks.captured` for payload assertions. Also mocks `/ws`. Seeds `localStorage` with a fake API key via `page.addInitScript` before the app loads (and answers `/auth/me` as `staff`), so specs never see the auth gate. No backend process, no printers, zero print risk.
 
 Canned data includes: a 4-slot U1 printer + a single-tool printer; a multi-material file with 2 model filaments + 2 plates; Spoolman disabled; list endpoints → `[]`.
 

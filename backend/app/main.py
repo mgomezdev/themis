@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
+from .api.routes.admin_account import router as admin_account_router
 from .api.routes.api_keys import router as api_keys_router
 from .api.routes.customer_portal import router as customer_portal_router
 from .api.routes.customers import router as customers_router
@@ -155,6 +156,7 @@ app = FastAPI(
 )
 
 app.add_api_websocket_route("/ws", websocket_endpoint)
+app.include_router(admin_account_router)
 app.include_router(api_keys_router)
 app.include_router(customers_router)
 app.include_router(customer_portal_router)
