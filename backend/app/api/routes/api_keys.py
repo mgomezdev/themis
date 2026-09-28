@@ -47,7 +47,9 @@ class ApiKeyCreate(BaseModel):
 
 @router.get("", dependencies=[Depends(require_scope("apikeys:read"))])
 async def list_keys(session: AsyncSession = Depends(get_session)):
-    rows = (await session.execute(select(ApiKey).order_by(ApiKey.created_at.desc()))).scalars().all()
+    rows = (await session.execute(
+        select(ApiKey).where(ApiKey.customer_id.is_(None)).order_by(ApiKey.created_at.desc())
+    )).scalars().all()
     return [_to_dict(r) for r in rows]
 
 

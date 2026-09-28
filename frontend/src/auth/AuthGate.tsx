@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getApiKey, setApiKey, clearApiKey } from './apiKeyStore';
 import { setUnauthorizedHandler, setForbiddenHandler } from '../api/client';
+import { getSession, loginCustomer } from './session';
 
 type GateState = 'checking' | 'ready' | 'manual';
 type BootstrapResult = { key: string } | { key: null; reason: 'already-bootstrapped' | 'error' };
@@ -73,6 +74,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   const [bootstrapReason, setBootstrapReason] = useState<'already-bootstrapped' | 'error' | null>(null);
   const [retryCount, setRetryCount] = useState(0);
   const [forbiddenMessage, setForbiddenMessage] = useState<string | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loginError, setLoginError] = useState<string | null>(null);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -97,10 +102,24 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
       if (result.key) {
         setApiKey(result.key);
         setState('ready');
-      } else {
-        setBootstrapReason((result as { key: null; reason: 'already-bootstrapped' | 'error' }).reason);
-        setState('manual');
+        return;
       }
+      const { reason } = result as { key: null; reason: 'already-bootstrapped' | 'error' };
+      if (reason === 'error') {
+        setBootstrapReason(reason);
+        setState('manual');
+        return;
+      }
+      // Local-network clients are full admin without a key (THEMIS_LOCAL_NETWORKS).
+      getSession().then((session) => {
+        if (!alive) return;
+        if (session?.role) {
+          setState('ready');
+        } else {
+          setBootstrapReason(reason);
+          setState('manual');
+        }
+      });
     });
     return () => { alive = false; };
   }, [retryCount]);
@@ -138,6 +157,22 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     validateKey(trimmed);
   }
 
+  async function submitLogin(e: React.FormEvent) {
+    e.preventDefault();
+    if (!email.trim() || !password) return;
+    setLoginError(null);
+    setIsLoggingIn(true);
+    const result = await loginCustomer(email.trim(), password);
+    setIsLoggingIn(false);
+    if ('key' in result) {
+      setApiKey(result.key);
+      setPassword('');
+      setState('ready');
+    } else {
+      setLoginError(result.error);
+    }
+  }
+
   function handleRetry() {
     bootstrapPromise = null;
     setBootstrapReason(null);
@@ -167,6 +202,22 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     <div className="col" style={{
       alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg-0)',
     }}>
+      <form onSubmit={submitLogin} className="card" style={{ padding: 28, width: 360, maxWidth: '90vw', marginBottom: 16 }}>
+        <h2 style={{ margin: '0 0 12px', fontSize: 17, fontWeight: 600 }}>Sign in</h2>
+        <input className="input" type="email" autoComplete="username" value={email}
+               onChange={(e) => setEmail(e.target.value)} placeholder="Email"
+               style={{ width: '100%', marginBottom: 8 }} />
+        <input className="input" type="password" autoComplete="current-password" value={password}
+               onChange={(e) => setPassword(e.target.value)} placeholder="Password"
+               style={{ width: '100%', marginBottom: loginError ? 6 : 12 }} />
+        {loginError && (
+          <p className="muted small" style={{ color: 'var(--error)', margin: '0 0 12px' }}>{loginError}</p>
+        )}
+        <button type="submit" className="btn primary" disabled={!email.trim() || !password || isLoggingIn}
+                style={{ width: '100%' }}>
+          {isLoggingIn ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
       <form onSubmit={submitManualKey} className="card" style={{ padding: 28, width: 360, maxWidth: '90vw' }}>
         <h2 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600 }}>Enter your API key</h2>
         {bootstrapReason === 'error' ? (

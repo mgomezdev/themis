@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ipaddress
 import os
 import secrets
 from datetime import datetime, timezone
@@ -24,7 +25,38 @@ SCOPES: set[str] = {
     "tags:read", "tags:write",
     "maintenance:read", "maintenance:write",
     "apikeys:read", "apikeys:write",
+    "customers:read", "customers:write",
+    "customer",  # customer login sessions: only the /api/v1/customer/* portal
 }
+
+_DEFAULT_LOCAL_NETWORKS = "192.168.0.0/16"
+
+
+def is_local(host: str | None) -> bool:
+    """True when the client IP falls in THEMIS_LOCAL_NETWORKS (comma-separated CIDRs).
+    Local clients get full admin with no key. Only the socket peer address is trusted —
+    never proxy headers — so a reverse proxy's own IP must not be inside this range."""
+    if not host:
+        return False
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    for cidr in os.environ.get("THEMIS_LOCAL_NETWORKS", _DEFAULT_LOCAL_NETWORKS).split(","):
+        cidr = cidr.strip()
+        if not cidr:
+            continue
+        try:
+            if addr in ipaddress.ip_network(cidr, strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def local_admin_key() -> ApiKey:
+    return ApiKey(id=None, key_prefix=None, key_hash=None, scopes=sorted(SCOPES),
+                  enabled=True, revoked_at=None, expires_at=None, last_used_at=None)
 
 
 def _now() -> str:
@@ -82,6 +114,8 @@ def require_scope(scope: str):
         raise ValueError(f"unknown scope {scope!r}")
 
     async def _dep(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
+        if is_local(request.client.host if request.client else None):
+            return local_admin_key()
         if await _table_is_empty(session):
             return None  # bootstrap: open access until the first key is created
         key = await _resolve_key(request, session)
@@ -96,9 +130,19 @@ def require_scope(scope: str):
 
 async def require_any_key(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
     """For /ws — any valid key, no specific scope."""
+    if is_local(request.client.host if request.client else None):
+        return local_admin_key()
     if await _table_is_empty(session):
         return None
     key = await _resolve_key(request, session)
     if key is None:
         raise HTTPException(401, "Missing or invalid API key")
     return key
+
+
+async def require_customer(key: ApiKey | None = Depends(require_scope("customer"))) -> int:
+    """Customer portal routes: returns the logged-in customer's id. Staff/local/integration
+    keys carry no customer_id and are refused — the portal is always scoped to one customer."""
+    if key is None or key.customer_id is None:
+        raise HTTPException(403, "Customer account required")
+    return key.customer_id

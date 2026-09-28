@@ -8,8 +8,11 @@ import { fmtDate, fmtDuration } from '../data/helpers';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
-  type Project, type ProjectJob, type ProjectShare,
+  patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
+import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
+
+const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
 
 const STATUS_META: Record<string, { label: string; color: string }> = {
   queued:    { label: 'Queued',    color: 'var(--text-3)' },
@@ -39,6 +42,26 @@ export function ProjectDetailScreen() {
   const [showShare, setShowShare] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'regenerate' | 'revoke' | null>(null);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [stageError, setStageError] = useState('');
+
+  useEffect(() => { listCustomers().then(setCustomers).catch(() => setCustomers([])); }, []);
+
+  async function handlePromote() {
+    if (!project) return;
+    const next = NEXT_STAGE[project.stage];
+    if (!next) return;
+    setStageError('');
+    try { await promoteProject(project.id, next); reload(); }
+    catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function handleCustomerChange(value: string) {
+    if (!project) return;
+    setStageError('');
+    try { setProject(await patchProject(project.id, { customer_id: value ? Number(value) : null })); }
+    catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
+  }
 
   const reload = useCallback(() => {
     if (!projectId) return;
@@ -138,6 +161,12 @@ export function ProjectDetailScreen() {
               }}>
                 #{project.id}
               </span>
+              <span style={{
+                fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
+                background: project.stage === 'queued' ? 'rgba(34,197,94,0.15)' : 'rgba(239,160,0,0.15)',
+                color: project.stage === 'queued' ? 'var(--ok)' : 'var(--warn)',
+                textTransform: 'uppercase', letterSpacing: '0.04em',
+              }}>{STAGE_LABEL[project.stage] ?? project.stage}</span>
               {project.order_type === 'customer' && (
                 <span style={{
                   fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 10,
@@ -178,6 +207,15 @@ export function ProjectDetailScreen() {
               {project.filament_cost_total != null && (
                 <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
               )}
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                Account
+                <select className="input" style={{ fontSize: 12, padding: '1px 4px' }}
+                        value={project.customer_id ?? ''}
+                        onChange={e => handleCustomerChange(e.target.value)}>
+                  <option value="">None</option>
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
+                </select>
+              </label>
               {project.source_layout_id != null && (
                 <span title={`source_app: ${project.source_app ?? '?'}`}>
                   {Icons.link}
@@ -189,6 +227,11 @@ export function ProjectDetailScreen() {
           </div>
 
           <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+            {NEXT_STAGE[project.stage] && (
+              <button className="btn sm" onClick={handlePromote}>
+                Promote to {STAGE_LABEL[NEXT_STAGE[project.stage]!]}
+              </button>
+            )}
             <button className="btn sm" onClick={toggleShare}>
               Share
             </button>
@@ -198,12 +241,17 @@ export function ProjectDetailScreen() {
             <button
               className="btn primary sm"
               onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
-              disabled={generating || project.items.length === 0}
+              disabled={generating || project.items.length === 0 || project.stage === 'draft'}
+              title={project.stage === 'draft' ? 'Promote to planning before creating jobs' : undefined}
             >
               {generating ? 'Generating…' : 'Generate…'}
             </button>
           </div>
         </div>
+
+        {stageError && (
+          <div style={{ marginTop: 8, fontSize: 13, color: 'var(--err)' }}>{stageError}</div>
+        )}
 
         {/* Job progress bar */}
         {project.jobs_total > 0 && (
