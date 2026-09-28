@@ -64,7 +64,7 @@ async def websocket_endpoint(websocket: WebSocket, key: str | None = None) -> No
     # inlined since there's no request/response cycle to hang a dependency off.
     # Local import: avoids adding app.auth to this module's import-time surface
     # for a check that only runs once per connection.
-    from ..auth import _resolve_raw_key, _table_is_empty, is_local
+    from ..auth import _resolve_raw_key, local_admin_allowed
 
     session_dep = websocket.app.dependency_overrides.get(get_session, get_session)
     session_gen = session_dep()
@@ -79,14 +79,11 @@ async def websocket_endpoint(websocket: WebSocket, key: str | None = None) -> No
                 await websocket.close(code=4403)
                 return
             scopes = resolved.scopes
-        elif is_local(websocket.client.host if websocket.client else None):
+        elif await local_admin_allowed(websocket.client.host if websocket.client else None, session):
             scopes = sorted(required)
-        elif not await _table_is_empty(session):
+        else:
             await websocket.close(code=4401)
             return
-        else:
-            # Bootstrap: grant all three scopes so filtering logic is uniform.
-            scopes = sorted(required)
     finally:
         await session_gen.aclose()
 

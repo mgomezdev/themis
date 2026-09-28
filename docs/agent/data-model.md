@@ -5,14 +5,15 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (23)
+## Tables (24)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
                        printer_maintenance_state.printer_id
 customers           ← projects.customer_id (SET NULL), api_keys.customer_id (CASCADE)
+admin_account       (singleton id=1 — see its own section below)
 api_keys            (customer_id FK? — set only on customer login sessions)
-bootstrap_sentinel  (standalone — no FKs; see its own section below)
+bootstrap_sentinel  (retired — no longer read or written)
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -294,8 +295,17 @@ needing an explicit revoke.
 `enabled, created_at`. Staff-managed via `/api/v1/customers` (`customers:read`/`customers:write`); no
 self-signup.
 
+### admin_account
+Singleton (id=1), created by migration v022 on first boot: `username="admin", password_hash?`
+(PBKDF2, NULL until set), `allow_local_login: bool=true` (keyless local-network access is admin),
+`recovery_code_hash?, recovery_code_expires_at?, recovery_attempts` (log-delivered one-time code —
+`services/admin_account.py`). `auth.get_admin_account()` creates the row if missing (test DBs).
+`api_keys.admin_session` marks admin login sessions (hidden from `GET /api-keys`, revoked on
+admin password change/recovery).
+
 ### bootstrap_sentinel
-`id, created_at`. Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
+**Retired** (bootstrap hatch removed); table left in place, unused. Historical note: `id, created_at`.
+Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
 `SCOPES` regardless of requested scopes) whenever `api_keys` is empty; two racing requests (e.g. two
 browser tabs on first load) could otherwise both see it empty and both bootstrap. The handler inserts
 `BootstrapSentinel(id=1, ...)` inside the same flush — the fixed PK makes the second concurrent insert

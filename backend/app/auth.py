@@ -4,11 +4,11 @@ import os
 import secrets
 from datetime import datetime, timezone
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .database import get_session
-from .models import ApiKey
+from .models import AdminAccount, ApiKey
 from .services.api_key_service import hash_key
 
 SCOPES: set[str] = {
@@ -64,9 +64,20 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-async def _table_is_empty(session: AsyncSession) -> bool:
-    count = (await session.execute(select(func.count()).select_from(ApiKey))).scalar_one()
-    return count == 0
+async def get_admin_account(session: AsyncSession) -> AdminAccount:
+    """The admin singleton. Migration v022 creates it on first boot; created here too if missing
+    (tests build the schema with create_all, not migrations)."""
+    acct = await session.get(AdminAccount, 1)
+    if acct is None:
+        acct = AdminAccount(id=1, username="admin", allow_local_login=True, recovery_attempts=0)
+        session.add(acct)
+        await session.flush()
+    return acct
+
+
+async def local_admin_allowed(host: str | None, session: AsyncSession) -> bool:
+    """Keyless local-network access is admin only while the admin account allows it."""
+    return is_local(host) and (await get_admin_account(session)).allow_local_login
 
 
 async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | None:
@@ -118,10 +129,8 @@ def require_scope(scope: str):
         # A presented key wins over local mode, so a customer signed in on the LAN stays a customer.
         key = await _resolve_key(request, session)
         if key is None:
-            if is_local(request.client.host if request.client else None):
+            if await local_admin_allowed(request.client.host if request.client else None, session):
                 return local_admin_key()
-            if await _table_is_empty(session):
-                return None  # bootstrap: open access until the first key is created
             raise HTTPException(401, "Missing or invalid API key")
         if scope not in (key.scopes or []):
             raise HTTPException(403, f"API key lacks required scope: {scope}")
@@ -135,10 +144,8 @@ async def require_any_key(request: Request, session: AsyncSession = Depends(get_
     key = await _resolve_key(request, session)
     if key is not None:
         return key
-    if is_local(request.client.host if request.client else None):
+    if await local_admin_allowed(request.client.host if request.client else None, session):
         return local_admin_key()
-    if await _table_is_empty(session):
-        return None
     raise HTTPException(401, "Missing or invalid API key")
 
 

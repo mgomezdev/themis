@@ -69,6 +69,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/settings/fleet-backup',     label: 'Fleet backup' },
     { to: '/settings/api-keys',         label: 'API Keys' },
     { to: '/settings/customers',        label: 'Customers' },
+    { to: '/settings/admin-account',    label: 'Admin account' },
     { to: '/settings/about',            label: 'About' },
   ];
 

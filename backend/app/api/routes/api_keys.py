@@ -3,12 +3,11 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...auth import SCOPES, require_scope, _table_is_empty
+from ...auth import SCOPES, require_scope
 from ...database import get_session
-from ...models import ApiKey, BootstrapSentinel
+from ...models import ApiKey
 from ...services.api_key_service import generate_key, hash_key
 
 router = APIRouter(prefix="/api/v1/api-keys", tags=["api-keys"])
@@ -48,7 +47,7 @@ class ApiKeyCreate(BaseModel):
 @router.get("", dependencies=[Depends(require_scope("apikeys:read"))])
 async def list_keys(session: AsyncSession = Depends(get_session)):
     rows = (await session.execute(
-        select(ApiKey).where(ApiKey.customer_id.is_(None)).order_by(ApiKey.created_at.desc())
+        select(ApiKey).where(ApiKey.customer_id.is_(None), ApiKey.admin_session.is_(False)).order_by(ApiKey.created_at.desc())
     )).scalars().all()
     return [_to_dict(r) for r in rows]
 
@@ -60,17 +59,8 @@ async def get_scopes():
 
 @router.post("", dependencies=[Depends(require_scope("apikeys:write"))])
 async def create_key(body: ApiKeyCreate, session: AsyncSession = Depends(get_session)):
-    bootstrap = False
-    if await _table_is_empty(session):
-        try:
-            session.add(BootstrapSentinel(id=1, created_at=_now()))
-            await session.flush()
-            bootstrap = True
-        except IntegrityError:
-            await session.rollback()
-
-    scopes = sorted(SCOPES) if bootstrap else body.scopes
-    if not bootstrap and not scopes:
+    scopes = body.scopes
+    if not scopes:
         raise HTTPException(400, "At least one scope is required")
     unknown = set(scopes) - SCOPES
     if unknown:

@@ -46,8 +46,7 @@ export async function mockApi(page: Page, over: Partial<{
   // Must use addInitScript so the mock is installed before the page scripts run
   // after navigation — evaluateHandle only runs in the pre-navigation context.
   // Also seed localStorage with a fake API key BEFORE the app loads, so AuthGate
-  // finds a stored key on mount and renders children immediately instead of racing
-  // its bootstrap POST — keeps every existing spec working with no bootstrap step.
+  // finds a stored key on mount and renders children immediately.
   await page.addInitScript((key) => {
     window.localStorage.setItem('themis.apiKey', key);
     (window as any).WebSocket = class MockWebSocket {
@@ -68,15 +67,8 @@ export async function mockApi(page: Page, over: Partial<{
     const path = url.pathname.replace(/^\/api\/v1/, '');
     const method = req.method();
 
-    // In case AuthGate races the localStorage seed anyway (e.g. a test navigates
-    // before addInitScript settles), answer its bootstrap POST directly.
-    if (method === 'POST' && path === '/api-keys') {
-      return ok(route, {
-        id: 1, name: 'Browser', key_prefix: FAKE_KEY.slice(0, 12),
-        scopes: [], enabled: true, created_at: new Date().toISOString(),
-        last_used_at: null, revoked_at: null, key: FAKE_KEY,
-      });
-    }
+    // Session check (AuthGate/RoleSwitch): the seeded key is a staff key.
+    if (path === '/auth/me') return ok(route, { local: false, role: 'staff', customer: null });
 
     if (method !== 'GET') {
       let body: any = null;

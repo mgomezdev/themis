@@ -9,7 +9,7 @@ the three subsystems and connects enabled printers.
 
 Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the public contract.
 
-16 route modules, all registered in `main.py`.
+17 route modules, all registered in `main.py`.
 
 | Module | Prefix | Key endpoints (method path → purpose) |
 |---|---|---|
@@ -25,8 +25,9 @@ Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the pub
 | `settings.py` | `/api/v1/settings` | `GET/PUT /queue` (check interval, operator name, `estimates_enabled`), `GET/PUT /spoolman`, `POST /spoolman/test`, `GET/PUT /webhook`, `GET/PUT /notifications`, `POST /notifications/test`, `GET /fleet-backup` (JSON export of all printers, credentials redacted by default — `?include_credentials=true` to include), `POST /fleet-import` |
 | `spoolman.py` | `/api/v1/spoolman` | `GET /filaments`, `GET /spools` (proxy to Spoolman), `PATCH /filaments/{id}` (update `orca_profiles` extra field), `POST /sync-now` (manual sync, records outcome), `GET /sync-status` (sync health for the status-indicator bubble + settings page; never 503s) |
 | `tags.py` | `/api/v1/tags` | `GET ""`, `POST ""`, `PATCH /{id}`, `DELETE /{id}`, `POST /files/{file_id}/assign`, `POST /files/{file_id}/unassign` |
-| `api_keys.py` | `/api/v1/api-keys` | `GET ""` (list, never returns hash/raw key), `POST ""` (create — raw key in response **once**; while `api_keys` is empty, bootstrap: ignores requested scopes, grants all of `SCOPES`, guarded by `bootstrap_sentinel` — see `data-model.md`), `POST /{id}/revoke` (soft: `enabled=False`+`revoked_at`), `DELETE /{id}` (hard). Revoking/deleting the last enabled key holding `apikeys:write` → `400`. |
-| `session.py` | `/api/v1/auth` | Unauthenticated. `POST /login` (customer email+password → session key), `GET /me` (`{local, role: admin|staff|customer|null, customer}`) |
+| `api_keys.py` | `/api/v1/api-keys` | `GET ""` (list, never returns hash/raw key), `POST ""` (create — raw key in response **once**; grants exactly the requested scopes, ≥1 required; no bootstrap path), `POST /{id}/revoke` (soft: `enabled=False`+`revoked_at`), `DELETE /{id}` (hard). Revoking/deleting the last enabled key holding `apikeys:write` → `400`. |
+| `session.py` | `/api/v1/auth` | Unauthenticated. `POST /login` (customer email, or username `admin` → session key), `GET /me` (`{local, role: admin|staff|customer|null, customer}`), `POST /recover` (202; one-time code → server log), `POST /recover/confirm` (`{code, password}` → sets admin password, 400 bad/expired) |
+| `admin_account.py` | `/api/v1/admin-account` | `GET ""` (`apikeys:read`: `{username, password_set, allow_local_login}`), `PUT /password` + `PATCH ""` `{allow_local_login}` (`apikeys:write`; turning local login off without a password → 409; password change signs out other admin sessions) |
 | `customers.py` | `/api/v1/customers` | `GET ""`, `POST ""` (409 dup email), `PATCH /{id}` (name/email/password/enabled; password change or disable revokes sessions) |
 | `customer_portal.py` | `/api/v1/customer` | `require_customer`, scoped to own projects: `GET /projects`, `GET /projects/{id}`, `POST /projects` (draft), `PATCH /projects/{id}` + `POST /projects/{id}/files` (draft only, else 409) |
 
@@ -48,11 +49,11 @@ Pattern for a route: define Pydantic `*Create`/`*Patch` models, a `_to_dict(row)
 ## Auth (`app/auth.py`)
 
 `SCOPES: set[str]` — fixed, hardcoded registry, one `read`/`write` pair per route module above (plus
-`printers:control`, `apikeys:{read,write}`). `require_scope(scope)` — FastAPI dependency factory; while
-`api_keys` is empty, every request passes through unauthenticated (bootstrap hatch, closes permanently
-once any key is created); otherwise resolves `X-Api-Key` header or `?key=` query param → prefix lookup
+`printers:control`, `apikeys:{read,write}`). `require_scope(scope)` — FastAPI dependency factory;
+resolves `X-Api-Key` header or `?key=` query param → prefix lookup
 → hash compare (`services/api_key_service.py`: `generate_key()`→`(raw, prefix)`, `hash_key(raw)`→sha256
-hex) → 401 if missing/invalid, 403 if the key lacks the required scope. `require_any_key` — same
+hex) → 401 if missing/invalid (unless keyless local-network access is allowed — see conventions.md), 403 if
+the key lacks the required scope. Offline admin CLI: `app/admin.py` (`python -m app.admin reset-password|allow-local-login`). `require_any_key` — same
 resolution, no specific scope check; used by `/ws` (`app/api/websocket.py` resolves it manually before
 `websocket.accept()`, since a normal `Depends` chain doesn't apply to websocket handlers — closes with
 code `4401` on failure). `last_used_at` is touched on successful resolution, throttled to roughly

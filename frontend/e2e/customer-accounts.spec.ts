@@ -69,9 +69,6 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
       route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
     let m: RegExpMatchArray | null;
 
-    // Table already has keys → bootstrap refused, like a real, set-up install.
-    if (method === 'POST' && path === '/api-keys') return send(400, { detail: 'Bootstrap closed' });
-
     if (path === '/auth/login' && method === 'POST') {
       const c = fake.customers.find(x => x.email === body.email.toLowerCase() && x.password === body.password && x.enabled);
       if (!c) return send(401, { detail: 'Invalid email or password' });
@@ -307,7 +304,7 @@ test('customer creates a draft, edits it, uploads a file, and signs out', async 
   });
   await expect(page.getByText('housing.stl × 1')).toBeVisible();
 
-  expect(fake.captured.filter(c => c.path !== '/api-keys').map(c => `${c.method} ${c.path}`)).toEqual([
+  expect(fake.captured.map(c => `${c.method} ${c.path}`)).toEqual([
     'POST /auth/login',
     'POST /customer/projects',
     'PATCH /customer/projects/100',

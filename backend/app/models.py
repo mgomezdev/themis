@@ -374,6 +374,21 @@ class ApiKey(Base):
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="CASCADE"), nullable=True
     )
+    # True for admin login sessions: hidden from the key list, revoked on admin password change.
+    admin_session: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+
+
+class AdminAccount(Base):
+    """Singleton (id=1), created on first boot with no password. See docs/agent/conventions.md."""
+    __tablename__ = "admin_account"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), default="admin")
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    allow_local_login: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    recovery_code_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    recovery_code_expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    recovery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class BootstrapSentinel(Base):

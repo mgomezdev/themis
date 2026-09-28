@@ -109,14 +109,17 @@ def test_ws_accepts_with_valid_key(tmp_path):
         assert len(connection_manager.active_connections) == 1
 
 
-def test_ws_accepts_when_table_empty(tmp_path):
+def test_ws_closes_4401_when_table_empty(tmp_path):
+    """No bootstrap hatch: an empty key table doesn't open the live feed to remote clients."""
     db_path = tmp_path / "ws3.db"
-    _seed_db(db_path, scopes=None)  # schema only, no keys — bootstrap window
+    _seed_db(db_path, scopes=None)  # schema only, no keys
     _wire_app_to_db(db_path)
 
     client = TestClient(app)
-    with client.websocket_connect("/ws") as ws:
-        assert len(connection_manager.active_connections) == 1
+    with pytest.raises(WebSocketDisconnect) as exc_info:
+        with client.websocket_connect("/ws"):
+            pass
+    assert exc_info.value.code == 4401
 
 
 def test_ws_closes_4401_with_bad_key(tmp_path):

@@ -18,9 +18,8 @@ pytestmark = pytest.mark.asyncio
 
 @pytest_asyncio.fixture
 async def client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
-    """These tests exercise the real bootstrap-hatch behavior (empty api_keys
-    table grants unauthenticated access to the first POST), so — unlike the
-    shared `client` fixture in conftest.py — this one does NOT pre-seed a key.
+    """Starts with an EMPTY api_keys table (unlike conftest's `client`), so tests can check that
+    an empty table is not an open door (the old bootstrap hatch is gone) and seed their own key.
     Shadows conftest's `client` fixture for every test in this module.
 
     Backed by a real on-disk SQLite file rather than `:memory:`: an in-memory
@@ -52,22 +51,28 @@ async def client(tmp_path: Path) -> AsyncGenerator[AsyncClient, None]:
 
 
 async def _bootstrap(client: AsyncClient) -> tuple[str, dict[str, str]]:
-    """Create the first (bootstrap, full-access) key and return (raw_key, headers)
-    so subsequent calls in these tests — which now require apikeys:* scopes since
-    the table is no longer empty — can authenticate."""
-    resp = await client.post("/api/v1/api-keys", json={"name": "Bootstrap", "scopes": []})
-    raw = resp.json()["key"]
+    """Seed one full-scope key directly in the DB (there is no HTTP bootstrap any more) and
+    return (raw_key, headers)."""
+    from app.models import ApiKey
+    from app.services.api_key_service import generate_key, hash_key
+
+    raw, prefix = generate_key()
+    agen = app.dependency_overrides[get_session]()
+    session = await agen.__anext__()
+    session.add(ApiKey(name="Bootstrap", key_prefix=prefix, key_hash=hash_key(raw),
+                       scopes=sorted(SCOPES), enabled=True, created_at="2026-01-01T00:00:00"))
+    await session.commit()
+    await agen.aclose()
     return raw, {"X-Api-Key": raw}
 
 
-async def test_create_first_key_ignores_requested_scopes_grants_all(client: AsyncClient):
+async def test_empty_table_is_not_an_open_door(client: AsyncClient):
+    """Bootstrap hatch removed: with no keys at all, a remote unauthenticated caller can't
+    mint one or read anything."""
     resp = await client.post("/api/v1/api-keys", json={"name": "Browser", "scopes": ["jobs:read"]})
-    assert resp.status_code == 200
-    data = resp.json()
-    assert set(data["scopes"]) == SCOPES
-    assert data["name"] == "Browser"
-    assert "key" in data
-    assert data["key"].startswith("thm_")
+    assert resp.status_code == 401
+    assert (await client.get("/api/v1/api-keys")).status_code == 401
+    assert (await client.get("/api/v1/projects")).status_code == 401
 
 
 async def test_create_second_key_with_explicit_scopes(client: AsyncClient):
@@ -202,67 +207,9 @@ async def test_create_key_with_expires_at(client: AsyncClient):
     assert data["name"] == "ExpireTest"
 
 
-async def test_concurrent_bootstrap_race_condition(client: AsyncClient):
-    """Regression: two concurrent bootstrap POSTs (empty api_keys table, no scopes)
-    must result in exactly one 200 (with full scopes) and one 400 (scope required).
-    BootstrapSentinel insert should win on one request, causing the other to fail
-    bootstrap detection and reject due to zero scopes."""
-
-    async def make_bootstrap_request():
-        return await client.post("/api/v1/api-keys", json={"name": "Bootstrap", "scopes": []})
-
-    # Fire two requests concurrently; one wins the sentinel insert, one loses
-    resp1, resp2 = await asyncio.gather(make_bootstrap_request(), make_bootstrap_request())
-
-    # Exactly one 200, one 400
-    statuses = sorted([resp1.status_code, resp2.status_code])
-    assert statuses == [200, 400], f"Expected [200, 400], got {statuses}"
-
-    # The 200 response: full-scopes bootstrap key
-    success_resp = resp1 if resp1.status_code == 200 else resp2
-    success_data = success_resp.json()
-    assert set(success_data["scopes"]) == SCOPES
-    assert success_data["name"] == "Bootstrap"
-    assert "key" in success_data
-    assert success_data["key"].startswith("thm_")
-
-    # The 400 response: zero scopes not allowed (non-bootstrap path)
-    fail_resp = resp2 if resp1.status_code == 200 else resp1
-    fail_data = fail_resp.json()
-    assert "scope" in fail_data.get("detail", "").lower()
-
-    # Verify exactly 1 key in database by listing with the successful key
-    headers = {"X-Api-Key": success_data["key"]}
-    list_resp = await client.get("/api/v1/api-keys", headers=headers)
-    assert list_resp.status_code == 200
-    keys = list_resp.json()
-    assert len(keys) == 1
-    assert keys[0]["id"] == success_data["id"]
-
-
-async def test_create_key_with_empty_sentinel_but_existing_keys_respects_scopes(client: AsyncClient):
-    """Regression: bootstrap_sentinel starts empty on any fresh migration run,
-    including an upgraded deployment that already has rows in api_keys. Without
-    the _table_is_empty() precondition guarding the sentinel-insert attempt, the
-    first create_key call on such a system would still win the (empty) sentinel
-    insert and silently escalate a narrow-scope request to full access — this
-    reproduces that exact scenario by clearing bootstrap_sentinel back to empty
-    after a normal bootstrap, so api_keys is non-empty but the sentinel isn't."""
-    from sqlalchemy import text
-
-    _, headers = await _bootstrap(client)
-
-    session_gen = app.dependency_overrides[get_session]()
-    session = await session_gen.__anext__()
-    await session.execute(text("DELETE FROM bootstrap_sentinel"))
-    await session.commit()
-
-    resp = await client.post(
-        "/api/v1/api-keys",
-        json={"name": "Narrow", "scopes": ["files:read"]},
-        headers=headers,
-    )
+async def test_create_key_grants_only_requested_scopes(client: AsyncClient):
+    _raw, headers = await _bootstrap(client)
+    resp = await client.post("/api/v1/api-keys", json={"name": "Narrow", "scopes": ["files:read"]},
+                             headers=headers)
     assert resp.status_code == 200
-    data = resp.json()
-    assert data["scopes"] == ["files:read"]
-    assert set(data["scopes"]) != SCOPES
+    assert resp.json()["scopes"] == ["files:read"]

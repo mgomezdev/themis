@@ -31,7 +31,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     thumbnail_regen.set_session_factory(factory)
 
     try:
-        # Seed a full-scope API key so the bootstrap hatch closes deterministically
+        # Seed a full-scope API key so every call site has a credential
         # and every existing call site keeps working unmodified (auth is enforced
         # everywhere now — see Task 5).
         raw, prefix = generate_key()
