@@ -614,7 +614,7 @@
           "auth"
         ],
         "summary": "Customer or admin login",
-        "description": "Exchange email (or the admin username) + password for a session key (sent as X-Api-Key).",
+        "description": "Exchange email (or the admin username) + password for a session key (sent as X-Api-Key).\nFailed attempts are throttled per client IP (services/login_throttle.py).",
         "operationId": "login_api_v1_auth_login_post",
         "requestBody": {
           "content": {

@@ -64,6 +64,8 @@ async def create_customer(body: CustomerCreate, session: AsyncSession = Depends(
     email = body.email.strip().lower()
     if not email or not body.password:
         raise HTTPException(422, "email and password are required")
+    if "@" not in email:  # also keeps the admin username ("admin") from being a customer email
+        raise HTTPException(422, "email must be an email address")
     if await _email_taken(session, email):
         raise HTTPException(409, "Email already in use")
     c = Customer(name=body.name.strip() or email, email=email,
@@ -88,6 +90,8 @@ async def update_customer(customer_id: int, body: CustomerPatch,
         email = body.email.strip().lower()
         if not email:
             raise HTTPException(422, "email must not be empty")
+        if "@" not in email:
+            raise HTTPException(422, "email must be an email address")
         if await _email_taken(session, email, exclude_id=c.id):
             raise HTTPException(409, "Email already in use")
         c.email = email

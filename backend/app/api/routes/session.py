@@ -14,6 +14,7 @@ from ...database import get_session
 from ...models import ApiKey, Customer
 from ...services.api_key_service import generate_key, hash_key
 from ...services import admin_account as admin_svc
+from ...services import login_throttle
 from ...services.password import hash_password, verify_password
 
 _DUMMY_HASH = hash_password("")
@@ -30,6 +31,10 @@ def _fmt(dt: datetime) -> str:
 class LoginBody(BaseModel):
     email: str  # customer email, or the admin username ("admin")
     password: str
+
+
+def _ip(request: Request) -> str | None:
+    return request.client.host if request.client else None
 
 
 async def _admin_login(body: LoginBody, session: AsyncSession) -> dict:
@@ -50,8 +55,19 @@ async def _admin_login(body: LoginBody, session: AsyncSession) -> dict:
 
 
 @router.post("/login", summary="Customer or admin login")
-async def login(body: LoginBody, session: AsyncSession = Depends(get_session)) -> dict:
-    """Exchange email (or the admin username) + password for a session key (sent as X-Api-Key)."""
+async def login(body: LoginBody, request: Request, session: AsyncSession = Depends(get_session)) -> dict:
+    """Exchange email (or the admin username) + password for a session key (sent as X-Api-Key).
+    Failed attempts are throttled per client IP (services/login_throttle.py)."""
+    login_throttle.check(_ip(request))
+    try:
+        return await _login(body, session)
+    except HTTPException as e:
+        if e.status_code == 401:
+            login_throttle.record_failure(_ip(request))
+        raise
+
+
+async def _login(body: LoginBody, session: AsyncSession) -> dict:
     if body.email.strip().lower() == (await get_admin_account(session)).username.lower():
         return await _admin_login(body, session)
     cust = (await session.execute(
@@ -114,13 +130,18 @@ class RecoverConfirm(BaseModel):
 
 
 @router.post("/recover/confirm", summary="Set the admin password with a recovery code")
-async def recover_confirm(body: RecoverConfirm, session: AsyncSession = Depends(get_session)) -> dict:
-    if not body.password:
-        raise HTTPException(422, "password is required")
+async def recover_confirm(body: RecoverConfirm, request: Request,
+                          session: AsyncSession = Depends(get_session)) -> dict:
+    login_throttle.check(_ip(request))
+    try:
+        admin_svc.validate_password(body.password)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     acct = await get_admin_account(session)
     ok = admin_svc.check_recovery_code(acct, body.code)
     if not ok:
         await session.commit()  # persist the attempt count
+        login_throttle.record_failure(_ip(request))
         raise HTTPException(400, "Invalid or expired recovery code")
     await admin_svc.set_password(session, acct, body.password)
     await session.commit()

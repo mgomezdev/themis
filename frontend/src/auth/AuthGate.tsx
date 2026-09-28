@@ -145,7 +145,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
     setRecoveryError(null);
     const ok = await requestRecoveryCode();
     setRecoveryMessage(ok
-      ? 'A one-time code was written to the Themis server log (valid 15 minutes). Ask whoever runs the server, or run: docker logs themis'
+      ? 'A one-time code was written to the Themis server log (valid 15 minutes). On the server: docker compose logs themis'
       : null);
     if (!ok) setRecoveryError('Server unreachable');
   }
@@ -208,13 +208,17 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
                 onClick={() => { setRecovering(r => !r); setRecoveryError(null); }}>
           Forgot admin password?
         </button>
+        <p className="muted small" style={{ margin: '8px 0 0', lineHeight: 1.5 }}>
+          New install? The admin has no password yet — open Themis from the local network, or use
+          “Forgot admin password?” to set one.
+        </p>
       </form>
       {recovering && (
         <form onSubmit={submitRecovery} className="card" style={{ padding: 28, width: 360, maxWidth: '90vw', marginBottom: 16 }}>
           <h2 style={{ margin: '0 0 6px', fontSize: 17, fontWeight: 600 }}>Reset admin password</h2>
           <p className="muted small" style={{ marginTop: 0, marginBottom: 12, lineHeight: 1.5 }}>
             Works offline: the code goes to the server log, not over the network. Or, on the server:{' '}
-            <code style={{ fontSize: 'inherit' }}>docker exec themis python -m app.admin reset-password</code>
+            <code style={{ fontSize: 'inherit' }}>docker compose exec themis python -m app.admin reset-password</code>
           </p>
           <button type="button" className="btn sm" style={{ width: '100%', marginBottom: 8 }} onClick={sendRecoveryCode}>
             Write a one-time code to the server log

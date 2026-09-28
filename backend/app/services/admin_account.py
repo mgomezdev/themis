@@ -14,6 +14,7 @@ from .password import hash_password
 
 logger = logging.getLogger("app.admin")
 
+MIN_PASSWORD_LENGTH = 8
 RECOVERY_MINUTES = 15
 RECOVERY_MAX_ATTEMPTS = 5
 _CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"  # no 0/O/1/I
@@ -29,6 +30,11 @@ def _fmt(dt: datetime) -> str:
 
 def _code_hash(code: str) -> str:
     return hashlib.sha256(code.replace("-", "").strip().upper().encode()).hexdigest()
+
+
+def validate_password(password: str) -> None:
+    if len(password or "") < MIN_PASSWORD_LENGTH or not password.strip():
+        raise ValueError(f"Admin password must be at least {MIN_PASSWORD_LENGTH} characters")
 
 
 async def revoke_admin_sessions(session: AsyncSession, keep_key_id: int | None = None) -> None:

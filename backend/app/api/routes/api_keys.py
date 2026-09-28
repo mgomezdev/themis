@@ -34,7 +34,11 @@ async def _get_or_404(session: AsyncSession, key_id: int) -> ApiKey:
 
 
 async def _enabled_apikeys_write_count(session: AsyncSession, exclude_id: int | None = None) -> int:
-    rows = (await session.execute(select(ApiKey).where(ApiKey.enabled == True))).scalars().all()  # noqa: E712
+    # Real keys only: login sessions (admin/customer) expire and aren't managed here.
+    rows = (await session.execute(select(ApiKey).where(
+        ApiKey.enabled == True,  # noqa: E712
+        ApiKey.admin_session.is_(False), ApiKey.customer_id.is_(None),
+    ))).scalars().all()
     return sum(1 for r in rows if r.id != exclude_id and "apikeys:write" in (r.scopes or []))
 
 

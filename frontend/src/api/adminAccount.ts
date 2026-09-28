@@ -4,6 +4,8 @@ export interface AdminAccount {
   username: string;
   password_set: boolean;
   allow_local_login: boolean;
+  /** API keys (not login sessions) that can manage keys — still work when sign-in is required. */
+  full_access_keys: number;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

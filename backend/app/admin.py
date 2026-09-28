@@ -1,7 +1,10 @@
 """Offline admin recovery CLI — needs only a shell on the host running Themis.
 
-    docker exec -it themis python -m app.admin reset-password
-    docker exec -it themis python -m app.admin allow-local-login
+    docker compose exec themis python -m app.admin reset-password
+    docker compose exec themis python -m app.admin allow-local-login
+
+(run from the directory holding the compose file; `themis` is the compose *service* name — the
+container itself is e.g. `themis-themis-1`, so plain `docker exec` needs `docker ps` to find it)
 
 reset-password prints a new random admin password to this terminal (never to the log).
 allow-local-login re-enables "local network devices are admin without signing in".

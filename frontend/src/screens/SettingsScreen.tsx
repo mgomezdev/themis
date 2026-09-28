@@ -2052,6 +2052,7 @@ function AdminAccountPage() {
   }
 
   const mismatch = confirm !== '' && password !== confirm;
+  const tooShort = password !== '' && password.length < 8;
 
   return (
     <div className="card" style={{ padding: 28 }}>
@@ -2076,10 +2077,11 @@ function AdminAccountPage() {
                    value={password} onChange={e => setPassword(e.target.value)} />
             <input className="input" type="password" autoComplete="new-password" placeholder="Confirm password"
                    value={confirm} onChange={e => setConfirm(e.target.value)} />
-            <button className="btn primary sm" type="submit" disabled={!password || password !== confirm}>
+            <button className="btn primary sm" type="submit" disabled={!password || tooShort || password !== confirm}>
               {acct.password_set ? 'Change password' : 'Set password'}
             </button>
-            {mismatch && <span className="small" style={{ color: 'var(--err)' }}>Passwords don’t match</span>}
+            {tooShort && <span className="small" style={{ color: 'var(--err)' }}>At least 8 characters</span>}
+            {!tooShort && mismatch && <span className="small" style={{ color: 'var(--err)' }}>Passwords don’t match</span>}
           </form>
 
           <label className="row gap-2" style={{ alignItems: 'flex-start' }}>
@@ -2092,16 +2094,24 @@ function AdminAccountPage() {
               Local network devices are admin without signing in
               <div className="tiny muted">
                 {acct.password_set
-                  ? 'Unchecking requires everyone, including this device, to sign in as admin.'
+                  ? 'Unchecking makes local-network devices sign in like everyone else. Devices holding an API key keep working.'
                   : 'Set an admin password before turning this off.'}
               </div>
             </span>
           </label>
 
+          {acct.full_access_keys > 0 && (
+            <div className="small" style={{ color: 'var(--warn)', lineHeight: 1.5 }}>
+              {acct.full_access_keys} API key{acct.full_access_keys === 1 ? '' : 's'} with full access
+              (e.g. an older auto-created “Browser” key) still work without signing in. Review them
+              under <a href="/settings/api-keys">Settings → API Keys</a> and revoke any you don’t need.
+            </div>
+          )}
+
           <div className="tiny muted" style={{ lineHeight: 1.6 }}>
             Forgot the password? No internet needed: use “Forgot admin password?” on the sign-in screen (a one-time
             code is written to the server log), or run{' '}
-            <code>docker exec themis python -m app.admin reset-password</code> on the server.{' '}
+            <code>docker compose exec themis python -m app.admin reset-password</code> on the server.{' '}
             <code>… allow-local-login</code> turns local access back on.
           </div>
         </div>

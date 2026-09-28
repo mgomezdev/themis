@@ -37,7 +37,7 @@ async function install(page: Page, fake: Fake, opts: { local: boolean }) {
     const key = req.headers()['x-api-key'] ?? null;
     const signedIn = key != null && fake.sessions.has(key);
     const localAdmin = key == null && opts.local && fake.allowLocal;
-    const account = () => ({ username: 'admin', password_set: fake.password != null, allow_local_login: fake.allowLocal });
+    const account = () => ({ username: 'admin', password_set: fake.password != null, allow_local_login: fake.allowLocal, full_access_keys: 0 });
 
     if (path === '/auth/me') {
       if (signedIn) return send(200, { local: false, role: 'admin', customer: null });
@@ -132,10 +132,12 @@ test('local admin sets a password, then requires sign-in on the local network', 
   await expect(checkbox).toBeDisabled();  // no password yet → can't lock yourself out
   await expect(page.getByText('Set an admin password before turning this off.')).toBeVisible();
 
-  await page.getByPlaceholder('New admin password').fill('s3cret');
-  await page.getByPlaceholder('Confirm password').fill('s3cre');
+  await page.getByPlaceholder('New admin password').fill('short');
+  await expect(page.getByText('At least 8 characters')).toBeVisible();
+  await page.getByPlaceholder('New admin password').fill('s3cret-pw');
+  await page.getByPlaceholder('Confirm password').fill('s3cret-p');
   await expect(page.getByText('Passwords don’t match')).toBeVisible();
-  await page.getByPlaceholder('Confirm password').fill('s3cret');
+  await page.getByPlaceholder('Confirm password').fill('s3cret-pw');
   await page.getByRole('button', { name: 'Set password' }).click();
   await expect(page.getByText(/Admin password saved/)).toBeVisible();
 
@@ -143,12 +145,25 @@ test('local admin sets a password, then requires sign-in on the local network', 
   // Controlled input: it only flips once the server accepts the change.
   await checkbox.click();
   await expect.poll(() => fake.allowLocal).toBe(false);
-  expect(fake.captured).toContainEqual({ method: 'PUT', path: '/admin-account/password', body: { password: 's3cret' } });
+  expect(fake.captured).toContainEqual({ method: 'PUT', path: '/admin-account/password', body: { password: 's3cret-pw' } });
   expect(fake.captured).toContainEqual({ method: 'PATCH', path: '/admin-account', body: { allow_local_login: false } });
 
   // Same LAN device now has to sign in.
   await page.reload();
   await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
-  await signIn(page, 'admin', 's3cret');
+  await signIn(page, 'admin', 's3cret-pw');
   await expect(page.locator('a[href="/fleet"]').first()).toBeVisible();
+});
+
+test('admin account page warns about full-access API keys that bypass sign-in', async ({ page }) => {
+  const fake = newFake({ password: 's3cret-pw' });
+  await install(page, fake, { local: true });
+  await page.route('**/api/v1/admin-account', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(
+      { username: 'admin', password_set: true, allow_local_login: true, full_access_keys: 2 }) });
+  });
+  await page.goto('/settings/admin-account');
+  await expect(page.getByText(/2 API keys with full access/)).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Settings → API Keys' })).toHaveAttribute('href', '/settings/api-keys');
 });

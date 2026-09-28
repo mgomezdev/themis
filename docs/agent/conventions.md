@@ -43,10 +43,15 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   `100.64.0.0/10` for Tailscale) are full admin with no key **while `admin_account.allow_local_login`**
   (Settings → Admin account; can only be turned off once a password is set) —
   `auth.local_admin_allowed` → `local_admin_key()`. A valid presented key always wins, so a customer
-  signed in on the LAN stays a customer (HTTP and `/ws` alike). **Offline recovery**:
-  `python -m app.admin reset-password` (prints to the terminal) / `allow-local-login`, or
-  `/auth/recover` which writes a single-use 15-min code to the log (never over HTTP; a live code is
-  never replaced; 5 wrong guesses burn it). Only the peer IP is trusted, never proxy headers — a
+  signed in on the LAN stays a customer (HTTP and `/ws` alike). `/api/v1/admin-account` is admin-only
+  (local admin, `THEMIS_BOOTSTRAP_KEY`, or an admin session — not a scoped staff key). Admin password
+  ≥ 8 chars; failed `/auth/login` + `/auth/recover/confirm` are throttled per client IP
+  (`services/login_throttle.py`, 10 per 15 min, in-memory). **Offline recovery**:
+  `docker compose exec themis python -m app.admin reset-password` (prints to the terminal) /
+  `allow-local-login`, or `/auth/recover` which writes a single-use 15-min code to the log (read with
+  `docker compose logs themis`; never over HTTP; a live code is never replaced; 5 wrong guesses burn
+  it). Old full-access API keys (e.g. pre-upgrade "Browser" keys) keep working when local sign-in is
+  turned off — the Admin account page counts and warns about them. Only the peer IP is trusted, never proxy headers — a
   reverse proxy or Docker NAT gateway (e.g. Docker Desktop's `192.168.65.x`) whose own IP is in range
   makes every request local; check `request.client.host` in the deployed container before relying on it. **Customer sessions**
   are `api_keys` rows with `customer_id` set and scopes `["customer"]`; portal routes use
