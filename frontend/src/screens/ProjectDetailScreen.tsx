@@ -42,10 +42,14 @@ export function ProjectDetailScreen() {
   const [showShare, setShowShare] = useState(false);
   const [shareBusy, setShareBusy] = useState(false);
   const [confirmAction, setConfirmAction] = useState<'regenerate' | 'revoke' | null>(null);
-  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customers, setCustomers] = useState<Customer[] | null>(null);
   const [stageError, setStageError] = useState('');
 
-  useEffect(() => { listCustomers().then(setCustomers).catch(() => setCustomers([])); }, []);
+  // Loaded on first focus, not mount: a key without customers:read would otherwise get a 403
+  // toast every time any project opens.
+  function loadCustomers() {
+    if (customers === null) listCustomers().then(setCustomers).catch(() => setCustomers([]));
+  }
 
   async function handlePromote() {
     if (!project) return;
@@ -211,9 +215,13 @@ export function ProjectDetailScreen() {
                 Account
                 <select className="input" style={{ fontSize: 12, padding: '1px 4px' }}
                         value={project.customer_id ?? ''}
+                        onFocus={loadCustomers}
                         onChange={e => handleCustomerChange(e.target.value)}>
                   <option value="">None</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
+                  {project.customer_id != null && !customers?.some(c => c.id === project.customer_id) && (
+                    <option value={project.customer_id}>Customer #{project.customer_id}</option>
+                  )}
+                  {customers?.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
                 </select>
               </label>
               {project.source_layout_id != null && (

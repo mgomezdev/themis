@@ -1,6 +1,7 @@
 """Login + session introspection. Deliberately unauthenticated (like public.py): these are
 the routes a browser calls *before* it has a credential. Keep this file limited to that."""
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,7 +13,9 @@ from ...auth import _resolve_key, _table_is_empty, is_local
 from ...database import get_session
 from ...models import ApiKey, Customer
 from ...services.api_key_service import generate_key, hash_key
-from ...services.password import verify_password
+from ...services.password import hash_password, verify_password
+
+_DUMMY_HASH = hash_password("")
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -34,7 +37,10 @@ async def login(body: LoginBody, session: AsyncSession = Depends(get_session)) -
     cust = (await session.execute(
         select(Customer).where(func.lower(Customer.email) == body.email.strip().lower())
     )).scalar_one_or_none()
-    if cust is None or not cust.enabled or not verify_password(body.password, cust.password_hash):
+    # PBKDF2 is deliberately slow: run it off the event loop, and hash even for an unknown
+    # email so response timing doesn't reveal which accounts exist.
+    ok = await asyncio.to_thread(verify_password, body.password, cust.password_hash if cust else _DUMMY_HASH)
+    if cust is None or not cust.enabled or not ok:
         raise HTTPException(401, "Invalid email or password")
 
     now = datetime.now(timezone.utc)
@@ -52,12 +58,12 @@ async def login(body: LoginBody, session: AsyncSession = Depends(get_session)) -
 async def me(request: Request, session: AsyncSession = Depends(get_session)) -> dict:
     """`role`: "admin" (local network or bootstrap), "staff" (API key), "customer", or null
     when the request carries no valid credential."""
-    if is_local(request.client.host if request.client else None):
-        return {"local": True, "role": "admin", "customer": None}
-    if await _table_is_empty(session):
-        return {"local": False, "role": "admin", "customer": None}
     key = await _resolve_key(request, session)
     if key is None:
+        if is_local(request.client.host if request.client else None):
+            return {"local": True, "role": "admin", "customer": None}
+        if await _table_is_empty(session):
+            return {"local": False, "role": "admin", "customer": None}
         return {"local": False, "role": None, "customer": None}
     if key.customer_id is None:
         return {"local": False, "role": "staff", "customer": None}

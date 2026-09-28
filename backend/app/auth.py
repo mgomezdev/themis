@@ -35,7 +35,8 @@ _DEFAULT_LOCAL_NETWORKS = "192.168.0.0/16"
 def is_local(host: str | None) -> bool:
     """True when the client IP falls in THEMIS_LOCAL_NETWORKS (comma-separated CIDRs).
     Local clients get full admin with no key. Only the socket peer address is trusted —
-    never proxy headers — so a reverse proxy's own IP must not be inside this range."""
+    never proxy headers — so a reverse proxy's (or Docker NAT gateway's) own IP must not be inside
+    this range. A valid presented key always takes precedence over local mode."""
     if not host:
         return False
     try:
@@ -114,12 +115,13 @@ def require_scope(scope: str):
         raise ValueError(f"unknown scope {scope!r}")
 
     async def _dep(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
-        if is_local(request.client.host if request.client else None):
-            return local_admin_key()
-        if await _table_is_empty(session):
-            return None  # bootstrap: open access until the first key is created
+        # A presented key wins over local mode, so a customer signed in on the LAN stays a customer.
         key = await _resolve_key(request, session)
         if key is None:
+            if is_local(request.client.host if request.client else None):
+                return local_admin_key()
+            if await _table_is_empty(session):
+                return None  # bootstrap: open access until the first key is created
             raise HTTPException(401, "Missing or invalid API key")
         if scope not in (key.scopes or []):
             raise HTTPException(403, f"API key lacks required scope: {scope}")
@@ -130,14 +132,14 @@ def require_scope(scope: str):
 
 async def require_any_key(request: Request, session: AsyncSession = Depends(get_session)) -> ApiKey | None:
     """For /ws — any valid key, no specific scope."""
+    key = await _resolve_key(request, session)
+    if key is not None:
+        return key
     if is_local(request.client.host if request.client else None):
         return local_admin_key()
     if await _table_is_empty(session):
         return None
-    key = await _resolve_key(request, session)
-    if key is None:
-        raise HTTPException(401, "Missing or invalid API key")
-    return key
+    raise HTTPException(401, "Missing or invalid API key")
 
 
 async def require_customer(key: ApiKey | None = Depends(require_scope("customer"))) -> int:

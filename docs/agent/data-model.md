@@ -290,7 +290,7 @@ needing an explicit revoke.
   changes.
 
 ### customers
-`id, name, email` (unique; matched case-insensitively), `password_hash` (PBKDF2 — `services/password.py`),
+`id, name, email` (unique, stored lowercased), `password_hash` (PBKDF2 — `services/password.py`),
 `enabled, created_at`. Staff-managed via `/api/v1/customers` (`customers:read`/`customers:write`); no
 self-signup.
 

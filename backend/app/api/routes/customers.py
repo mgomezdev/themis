@@ -1,5 +1,6 @@
 """Staff management of customer accounts."""
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -60,13 +61,13 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> list[d
 @router.post("", status_code=201, summary="Create customer",
              dependencies=[Depends(require_scope("customers:write"))])
 async def create_customer(body: CustomerCreate, session: AsyncSession = Depends(get_session)) -> dict:
-    email = body.email.strip()
+    email = body.email.strip().lower()
     if not email or not body.password:
         raise HTTPException(422, "email and password are required")
     if await _email_taken(session, email):
         raise HTTPException(409, "Email already in use")
     c = Customer(name=body.name.strip() or email, email=email,
-                 password_hash=hash_password(body.password), enabled=True, created_at=_now())
+                 password_hash=await asyncio.to_thread(hash_password, body.password), enabled=True, created_at=_now())
     session.add(c)
     await session.commit()
     await session.refresh(c)
@@ -84,14 +85,14 @@ async def update_customer(customer_id: int, body: CustomerPatch,
     if body.name is not None:
         c.name = body.name.strip() or c.name
     if body.email is not None:
-        email = body.email.strip()
+        email = body.email.strip().lower()
         if not email:
             raise HTTPException(422, "email must not be empty")
         if await _email_taken(session, email, exclude_id=c.id):
             raise HTTPException(409, "Email already in use")
         c.email = email
     if body.password:
-        c.password_hash = hash_password(body.password)
+        c.password_hash = await asyncio.to_thread(hash_password, body.password)
         await _revoke_sessions(session, c.id)
     if body.enabled is not None:
         c.enabled = body.enabled

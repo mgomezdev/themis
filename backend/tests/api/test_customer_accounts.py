@@ -41,6 +41,16 @@ async def test_local_client_is_admin_without_key(client: AsyncClient, monkeypatc
     assert me == {"local": True, "role": "admin", "customer": None}
 
 
+async def test_customer_key_wins_over_local_mode(client: AsyncClient, monkeypatch):
+    await _customer(client)
+    headers = await _login(client)
+    monkeypatch.setenv("THEMIS_LOCAL_NETWORKS", "127.0.0.0/8")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
+        assert (await anon.get("/api/v1/auth/me", headers=headers)).json()["role"] == "customer"
+        assert (await anon.get("/api/v1/customer/projects", headers=headers)).status_code == 200
+        assert (await anon.get("/api/v1/projects", headers=headers)).status_code == 403
+
+
 async def test_remote_client_without_key_is_rejected(client: AsyncClient):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
         assert (await anon.get("/api/v1/projects")).status_code == 401

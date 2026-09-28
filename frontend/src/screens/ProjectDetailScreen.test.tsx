@@ -29,7 +29,7 @@ function mockFetch(shareState: { enabled: boolean; token: string | null; created
     if (url.includes('/share')) {
       return new Response(JSON.stringify(shareState), { status: 200 });
     }
-    if (url.includes('/jobs') || url.includes('/customers')) {
+    if (url.includes('/jobs')) {
       return new Response('[]', { status: 200 });
     }
     if (url.match(/\/api\/v1\/projects\/42$/)) {
