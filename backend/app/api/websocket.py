@@ -70,23 +70,23 @@ async def websocket_endpoint(websocket: WebSocket, key: str | None = None) -> No
     session_gen = session_dep()
     session = await session_gen.__anext__()
     try:
-        scopes = None
-        if is_local(websocket.client.host if websocket.client else None):
-            scopes = ["fleet:read", "jobs:read", "queue:read"]
-        elif not await _table_is_empty(session):
-            resolved = await _resolve_raw_key(key, session)
-            if resolved is None:
-                await websocket.close(code=4401)
-                return
-            # Check that the key has at least one of the required fleet/jobs/queue scopes.
-            required = {"fleet:read", "jobs:read", "queue:read"}
+        # Same precedence as HTTP (auth.require_scope): a presented valid key wins over local
+        # mode, so a customer signed in on the LAN doesn't get the staff live feed.
+        required = {"fleet:read", "jobs:read", "queue:read"}
+        resolved = await _resolve_raw_key(key, session) if key else None
+        if resolved is not None:
             if not (required & set(resolved.scopes or [])):
                 await websocket.close(code=4403)
                 return
             scopes = resolved.scopes
+        elif is_local(websocket.client.host if websocket.client else None):
+            scopes = sorted(required)
+        elif not await _table_is_empty(session):
+            await websocket.close(code=4401)
+            return
         else:
             # Bootstrap: grant all three scopes so filtering logic is uniform.
-            scopes = ["fleet:read", "jobs:read", "queue:read"]
+            scopes = sorted(required)
     finally:
         await session_gen.aclose()
 
