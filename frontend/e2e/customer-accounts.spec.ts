@@ -8,7 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 const STAFF_KEY = 'thm_e2e_staff_key';
 
 interface Customer { id: number; name: string; email: string; password: string; enabled: boolean }
-interface FakeProject { id: number; name: string; customer_id: number | null; stage: 'draft' | 'planning' | 'queued'; jobs: any[] }
+interface FakeProject { id: number; name: string; customer_id: number | null; stage: 'draft' | 'planning' | 'queued'; jobs: any[]; items?: any[] }  // items: staff ProjectItem shape (only used on the staff view)
 
 function fakeBackend() {
   const customers: Customer[] = [];
@@ -26,14 +26,14 @@ function portalProject(p: FakeProject) {
   return {
     id: p.id, name: p.name, notes: null, stage: p.stage, due_date: null,
     created_at: '2026-09-28T00:00:00Z', updated_at: '2026-09-28T00:00:00Z',
-    items: [], jobs: p.jobs, jobs_total: p.jobs.length,
+    items: p.items ?? [], jobs: p.jobs, jobs_total: p.jobs.length,
     jobs_complete: p.jobs.filter(j => j.status === 'complete').length,
   };
 }
 
 function staffProject(p: FakeProject) {
   return {
-    ...portalProject(p), customer: '', order_type: 'customer', on_hold: false, result_file_id: null,
+    ...(({ jobs: _jobs, ...rest }) => rest)(portalProject(p)), customer: '', order_type: 'customer', on_hold: false, result_file_id: null,
     source_app: null, source_user: null, source_layout_id: null, amount_paid: null,
     payment_status: 'unpaid', customer_id: p.customer_id, links: [], parts: [],
     estimate_filament_grams_total: null, estimate_seconds_total: null,
@@ -42,7 +42,9 @@ function staffProject(p: FakeProject) {
   };
 }
 
-async function install(page: Page, fake: Fake, opts: { staffKey?: boolean } = {}) {
+/** staffKey: browser holds a staff API key. localAdmin: keyless client on THEMIS_LOCAL_NETWORKS
+ *  (the real deployment's admin path — /auth/me says role "admin"). Neither: remote, signed out. */
+async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; localAdmin?: boolean } = {}) {
   await page.addInitScript(([key, seed]) => {
     if (seed) window.localStorage.setItem('themis.apiKey', key as string);
     (window as any).WebSocket = class {
@@ -75,13 +77,14 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean } = {}
       if (!c) return send(401, { detail: 'Invalid email or password' });
       const sessionKey = `thm_e2e_session_${c.id}_${fake.sessions.size}`;
       fake.sessions.set(sessionKey, c.id);
-      return send(200, { key: sessionKey, customer: publicCustomer(c) });
+      return send(200, { key: sessionKey, customer: { id: c.id, name: c.name, email: c.email } });
     }
     if (path === '/auth/me') {
       if (customerId != null) {
         const c = fake.customers.find(x => x.id === customerId)!;
         return send(200, { local: false, role: 'customer', customer: { id: c.id, name: c.name, email: c.email } });
       }
+      if (!key && opts.localAdmin) return send(200, { local: true, role: 'admin', customer: null });
       return send(200, { local: false, role: isStaff ? 'staff' : null, customer: null });
     }
 
@@ -94,7 +97,7 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean } = {}
     }
 
     // Everything else is staff-only.
-    if (!isStaff) return send(customerId != null ? 403 : 401, { detail: 'Forbidden' });
+    if (!isStaff && !(!key && opts.localAdmin)) return send(customerId != null ? 403 : 401, { detail: 'Forbidden' });
 
     if (path === '/customers' && method === 'GET') return send(200, fake.customers.map(publicCustomer));
     if (path === '/customers' && method === 'POST') {
@@ -110,6 +113,8 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean } = {}
     }
     if ((m = path.match(/^\/projects\/(\d+)\/promote$/)) && method === 'POST') {
       const p = fake.projects.find(x => x.id === +m![1])!;
+      const order = ['draft', 'planning', 'queued'];
+      if (order.indexOf(body.stage) <= order.indexOf(p.stage)) return send(409, { detail: 'Stage can only move forward' });
       p.stage = body.stage;
       return send(200, staffProject(p));
     }
@@ -181,8 +186,9 @@ test('wrong password shows an error and stays on the sign-in form', async ({ pag
 test('admin creates a customer account, and that customer can then sign in', async ({ browser }) => {
   const fake = fakeBackend();
 
+  // Admin on the local network: no key, no sign-in.
   const adminPage = await browser.newPage();
-  await install(adminPage, fake, { staffKey: true });
+  await install(adminPage, fake, { localAdmin: true });
   await adminPage.goto('/settings/customers');
   await adminPage.getByPlaceholder('Name').fill('Carol');
   await adminPage.getByPlaceholder('Email').fill('Carol@Example.com');
@@ -201,6 +207,8 @@ test('admin creates a customer account, and that customer can then sign in', asy
   await signIn(customerPage, 'carol@example.com', 'carol-pw');
   await expect(customerPage.getByRole('heading', { name: 'My projects' })).toBeVisible();
   await expect(customerPage.getByText('No projects yet')).toBeVisible();
+  await adminPage.close();
+  await customerPage.close();
 });
 
 test('admin disables a customer and the customer can no longer sign in', async ({ browser }) => {
@@ -218,20 +226,29 @@ test('admin disables a customer and the customer can no longer sign in', async (
   await install(customerPage, fake);
   await signIn(customerPage, 'dave@example.com', 'dave-pw');
   await expect(customerPage.getByText('Invalid email or password')).toBeVisible();
+  await adminPage.close();
+  await customerPage.close();
 });
 
 test('admin promotes a customer draft to planning, then to queued', async ({ page }) => {
   const fake = fakeBackend();
   fake.customers.push({ id: 1, name: 'Alice', email: 'alice@example.com', password: 'x', enabled: true });
-  fake.projects.push({ id: 11, name: 'Alice Draft', customer_id: 1, stage: 'draft', jobs: [] });
+  // Has a file, so Generate is disabled only because of the draft stage.
+  fake.projects.push({ id: 11, name: 'Alice Draft', customer_id: 1, stage: 'draft', jobs: [],
+                       items: [{ id: 1, project_id: 11, file_id: 1, file_name: 'part.stl', quantity: 1,
+                                 quantity_completed: 0, quantity_failed: 0, filament_type: 'PLA',
+                                 filament_color: '#ffffff', filament_id: null, sort_order: 0 }] });
   await install(page, fake, { staffKey: true });
 
   await page.goto('/projects/11');
   await expect(page.getByRole('heading', { name: 'Alice Draft' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Generate…' })).toBeDisabled();
+  const generate = page.getByRole('button', { name: 'Generate…' });
+  await expect(generate).toBeDisabled();
+  await expect(generate).toHaveAttribute('title', 'Promote to planning before creating jobs');
 
   await page.getByRole('button', { name: 'Promote to Planning' }).click();
   await expect(page.getByRole('button', { name: 'Promote to Queued' })).toBeVisible();
+  await expect(generate).toBeEnabled();  // planning: staff can now create jobs
 
   await page.getByRole('button', { name: 'Promote to Queued' }).click();
   await expect(page.getByRole('button', { name: /Promote to/ })).toHaveCount(0);

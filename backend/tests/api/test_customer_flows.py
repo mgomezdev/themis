@@ -28,18 +28,21 @@ async def _create_customer(admin: AsyncClient, name: str, email: str, password: 
 
 
 async def _login(email: str, password: str) -> AsyncClient:
-    async with _anon() as anon:
+    async with _keyless() as anon:
         r = await anon.post("/api/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test",
                        headers={"X-Api-Key": r.json()["key"]})
 
 
-def _anon() -> AsyncClient:
+def _keyless() -> AsyncClient:
+    # No key. Under the `admin` fixture's THEMIS_LOCAL_NETWORKS this is also local admin —
+    # harmless for /auth/login, which is unauthenticated anyway.
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
 async def _seed_job(project_id: int | None) -> int:
+    # Uses the test DB session override installed by the `client` fixture (pulled in via `admin`).
     agen = app.dependency_overrides[get_session]()
     session = await agen.__anext__()
     now = datetime.now(timezone.utc).isoformat()
@@ -165,7 +168,7 @@ async def test_customer_cannot_promote_generate_reassign_or_manage_accounts(admi
 
 
 async def test_login_only_works_for_accounts_the_admin_created(admin: AsyncClient):
-    async with _anon() as anon:
+    async with _keyless() as anon:
         r = await anon.post("/api/v1/auth/login", json={"email": "new@example.com", "password": "pw"})
         assert r.status_code == 401
         await _create_customer(admin, "New", "New@Example.com", "pw")
