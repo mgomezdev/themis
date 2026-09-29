@@ -49,3 +49,41 @@ export function openAuthedWebSocket(): WebSocket {
   const key = getApiKey();
   return new WebSocket(`${proto}//${window.location.host}/ws?key=${encodeURIComponent(key ?? '')}`);
 }
+
+const RECONNECT_MIN_MS = 1000;
+const RECONNECT_MAX_MS = 30_000;
+
+/** A live-data /ws connection that survives the server going away (restart, deploy, network blip).
+ *  Messages go to `onMessage`; when the socket drops it reconnects with 1 s, 2 s, 4 s ... (max 30 s)
+ *  back-off, and once a retried connection is open calls `onReconnect` so the caller can refetch whatever it
+ *  missed. Returns a function that closes the socket for good. */
+export function openLiveSocket(onMessage: (e: MessageEvent) => void, onReconnect?: () => void): () => void {
+  let ws: WebSocket | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let closedByCaller = false;
+  let attempts = 0;
+  let delay = RECONNECT_MIN_MS;
+
+  function connect() {
+    const socket = openAuthedWebSocket();
+    const isRetry = attempts++ > 0;   // anything after the first attempt may have missed events, even if the first never opened
+    ws = socket;
+    socket.onmessage = onMessage;
+    socket.onopen = () => {
+      delay = RECONNECT_MIN_MS;
+      if (isRetry) onReconnect?.();
+    };
+    socket.onclose = () => {
+      if (closedByCaller) return;
+      timer = setTimeout(connect, delay);
+      delay = Math.min(delay * 2, RECONNECT_MAX_MS);
+    };
+  }
+  connect();
+
+  return () => {
+    closedByCaller = true;
+    if (timer) clearTimeout(timer);
+    ws?.close();
+  };
+}

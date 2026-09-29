@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
-import { apiFetch, openAuthedWebSocket } from './client';
+import { apiFetch, openLiveSocket } from './client';
 
 export interface FleetPrinter {
   id: number;
@@ -111,8 +111,8 @@ export function useFleetData(): [Printer[], () => void] {
   }, [fetchTick]);
 
   useEffect(() => {
-    const ws = openAuthedWebSocket();
-    ws.onmessage = (e) => {
+    // After a reconnect, refetch: printer states pushed while the socket was down are gone.
+    return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
         if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
@@ -125,9 +125,8 @@ export function useFleetData(): [Printer[], () => void] {
       } catch {
         // ignore malformed frames
       }
-    };
-    return () => { ws.close(); };
-  }, []);
+    }, refetch);
+  }, [refetch]);
 
   return [raw.map(toFleetPrinter), refetch];
 }
