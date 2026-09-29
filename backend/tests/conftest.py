@@ -171,3 +171,33 @@ async def create_job(client, upload_3mf, create_printer):
         assert resp.status_code == 201, resp.text
         return resp.json()["id"]
     return _create
+
+
+@pytest.fixture
+def spoolman_upstream():
+    """Point every httpx client the Spoolman service opens at a fake upstream.
+
+    `up.handler = fn(request) -> httpx.Response` (or raise an httpx error) overrides the default,
+    which is the real `tests/spoolman_mock.py` ASGI app. `up.requests` records what the service sent.
+    Real httpx machinery runs either way, so URL building, headers and HTTP-status errors are genuine.
+    """
+    import httpx
+    from types import SimpleNamespace
+    from tests import spoolman_mock
+
+    real_client = httpx.AsyncClient
+    up = SimpleNamespace(handler=None, requests=[])
+
+    async def _record(request: httpx.Request) -> None:  # AsyncClient event hooks must be coroutines
+        up.requests.append(request)
+
+    def _factory(*args, **kwargs):
+        transport = httpx.MockTransport(up.handler) if up.handler else httpx.ASGITransport(app=spoolman_mock.app)
+        kwargs.pop("transport", None)
+        hooks = kwargs.pop("event_hooks", {}) or {}
+        hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
+        return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
+
+    with patch("app.services.spoolman_service.httpx.AsyncClient", _factory):
+        yield up
+
