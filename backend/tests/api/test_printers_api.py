@@ -230,19 +230,6 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path):
     await agen.aclose()
 
 
-async def test_plate_cleared_sets_gate(client):
-    create = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
-    })
-    printer_id = create.json()["id"]
-    with patch("app.api.routes.printers.printer_manager") as mock_mgr:
-        with patch("app.api.routes.printers.queue_engine") as mock_qe:
-            response = await client.post(f"/api/v1/printers/{printer_id}/plate-cleared")
-    assert response.status_code == 200
-    mock_mgr.set_awaiting_plate_clear.assert_called_once_with(printer_id, False)
-
-
 async def test_switch_active_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",

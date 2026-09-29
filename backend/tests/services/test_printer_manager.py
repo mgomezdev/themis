@@ -87,3 +87,74 @@ def test_get_all_printer_ids():
     mgr._clients[1] = _make_mock_client()
     mgr._clients[2] = _make_mock_client()
     assert sorted(mgr.get_all_printer_ids()) == [1, 2]
+
+
+# ---------------------------------------------------------------------------
+# The gate survives restarts (DB is the source of truth) and is set when a print completes
+# ---------------------------------------------------------------------------
+
+async def _session_factory_with_printers(flags: list[bool]):
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from app.database import Base
+    from app.models import Printer
+
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as s:
+        for i, flag in enumerate(flags, start=1):
+            s.add(Printer(id=i, name=f"P{i}", printer_type="bambu", connection_config={}, awaiting_plate_clear=flag))
+        await s.commit()
+    return factory, engine
+
+
+async def test_load_awaiting_plate_clear_from_db_restores_exactly_the_flagged_printers():
+    factory, engine = await _session_factory_with_printers([True, False, True])
+    mgr = PrinterManager()
+    mgr.set_session_factory(factory)
+    mgr.set_awaiting_plate_clear(99, True)  # stale entry from before the reload must not survive
+
+    await mgr.load_awaiting_plate_clear_from_db()
+
+    assert mgr._awaiting_plate_clear == {1, 3}
+    await engine.dispose()
+
+
+async def test_load_awaiting_plate_clear_from_db_without_session_factory_is_a_noop():
+    mgr = PrinterManager()
+    mgr.set_awaiting_plate_clear(7, True)
+
+    await mgr.load_awaiting_plate_clear_from_db()
+
+    assert mgr._awaiting_plate_clear == {7}
+
+
+async def test_on_print_complete_sets_gate_in_manager_and_db_then_notifies():
+    from app.models import Printer
+
+    factory, engine = await _session_factory_with_printers([False])
+    mgr = PrinterManager()
+    mgr.set_session_factory(factory)
+    mgr._clients[1] = _make_mock_client()
+    calls: list = []
+
+    async def on_job_complete(printer_id):
+        calls.append(("job_complete", printer_id))
+
+    async def broadcast(event, payload):
+        calls.append((event, payload))
+
+    mgr.set_job_complete_callback(on_job_complete)
+    mgr.set_broadcast_callback(broadcast)
+
+    await mgr.on_print_complete(1, vendor_state=None)
+
+    assert mgr.is_awaiting_plate_clear(1) is True
+    async with factory() as s:
+        assert (await s.get(Printer, 1)).awaiting_plate_clear is True
+    assert [c[0] for c in calls] == ["job_complete", "plate_clear_required", "printer_state"]
+    assert calls[0] == ("job_complete", 1)
+    assert calls[1] == ("plate_clear_required", {"printer_id": 1})
+    assert calls[2][1]["awaiting_plate_clear"] is True
+    await engine.dispose()
