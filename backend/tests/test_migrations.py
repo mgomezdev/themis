@@ -274,6 +274,7 @@ async def test_v017_up_down_roundtrip():
             text("SELECT name FROM sqlite_master WHERE type='table'")
         )).fetchall()}
         assert "notification_config" not in tables
+    await engine.dispose()
 
 
 @pytest.mark.asyncio

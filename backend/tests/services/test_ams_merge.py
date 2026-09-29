@@ -1,20 +1,11 @@
 import pytest
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from app.database import Base
 from app.models import Printer
 from app.services.printer_manager import PrinterManager
 
 
-async def _factory():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-
 @pytest.mark.asyncio
-async def test_on_ams_change_preserves_mappings_by_slot():
-    Session = await _factory()
+async def test_on_ams_change_preserves_mappings_by_slot(session_factory):
+    Session = session_factory
     async with Session() as s:
         s.add(Printer(
             name="P", printer_type="bambu", connection_config={},
@@ -47,8 +38,8 @@ async def test_on_ams_change_preserves_mappings_by_slot():
 
 
 @pytest.mark.asyncio
-async def test_on_ams_change_drops_orphaned_slots():
-    Session = await _factory()
+async def test_on_ams_change_drops_orphaned_slots(session_factory):
+    Session = session_factory
     async with Session() as s:
         s.add(Printer(
             name="P", printer_type="bambu", connection_config={},

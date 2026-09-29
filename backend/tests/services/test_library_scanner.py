@@ -1,17 +1,8 @@
 import pytest
 from pathlib import Path
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from app.database import Base
 from app.models import UploadedFile, Tag, FileTag
 from app.services.library_scanner import LibraryScanner
-
-
-async def _session(tmp_path):
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
 def _write(root: Path, rel: str, content: bytes = b"solid\nendsolid\n"):
@@ -22,11 +13,11 @@ def _write(root: Path, rel: str, content: bytes = b"solid\nendsolid\n"):
 
 
 @pytest.mark.asyncio
-async def test_scan_indexes_new_files(tmp_path):
+async def test_scan_indexes_new_files(tmp_path, session_factory):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "Customers/Vela/arm.stl")
-    Session = await _session(tmp_path)
+    Session = session_factory
     async with Session() as s:
         scanner = LibraryScanner(s, lib, cache)
         summary = await scanner.scan()
@@ -39,11 +30,11 @@ async def test_scan_indexes_new_files(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_is_idempotent(tmp_path):
+async def test_scan_is_idempotent(tmp_path, session_factory):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "a.stl")
-    Session = await _session(tmp_path)
+    Session = session_factory
     async with Session() as s:
         scanner = LibraryScanner(s, lib, cache)
         await scanner.scan()
@@ -54,11 +45,11 @@ async def test_scan_is_idempotent(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_detects_move_and_preserves_tags(tmp_path):
+async def test_scan_detects_move_and_preserves_tags(tmp_path, session_factory):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "old/part.stl", b"unique-bytes-123")
-    Session = await _session(tmp_path)
+    Session = session_factory
     async with Session() as s:
         scanner = LibraryScanner(s, lib, cache)
         await scanner.scan()
@@ -84,11 +75,11 @@ def _write_target(root: Path, rel: str) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_scan_marks_missing_when_job_references(tmp_path):
+async def test_scan_marks_missing_when_job_references(tmp_path, session_factory):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "x.stl")
-    Session = await _session(tmp_path)
+    Session = session_factory
     async with Session() as s:
         scanner = LibraryScanner(s, lib, cache)
         await scanner.scan()
@@ -104,11 +95,11 @@ async def test_scan_marks_missing_when_job_references(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_scan_deletes_unreferenced_vanished(tmp_path):
+async def test_scan_deletes_unreferenced_vanished(tmp_path, session_factory):
     lib, cache = tmp_path / "library", tmp_path / "filecache"
     lib.mkdir(); cache.mkdir()
     _write(lib, "y.stl")
-    Session = await _session(tmp_path)
+    Session = session_factory
     async with Session() as s:
         scanner = LibraryScanner(s, lib, cache)
         await scanner.scan()

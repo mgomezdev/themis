@@ -13,8 +13,6 @@ from app.database import Base, get_session
 from app.models import ApiKey
 from app.services.api_key_service import generate_key, hash_key
 
-pytestmark = pytest.mark.asyncio
-
 
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")

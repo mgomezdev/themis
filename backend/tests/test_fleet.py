@@ -2,14 +2,11 @@ import logging
 from dataclasses import asdict
 from types import SimpleNamespace
 
-import pytest
 from httpx import AsyncClient
 
 from app.models import Printer
 from app.services.abstract_printer_client import PrinterCapabilities
 from app.services.printer_manager import printer_manager
-
-pytestmark = pytest.mark.asyncio
 
 
 async def test_fleet_empty(client: AsyncClient) -> None:
