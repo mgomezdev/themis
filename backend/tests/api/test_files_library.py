@@ -119,37 +119,30 @@ async def test_rename_move_keeps_tags(client, lib):
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_by_active_job(client, lib):
+async def test_delete_blocked_by_active_job(client, lib, session_factory):
     up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
-    # Seed an active job referencing the file via the get_session override.
-    from app.main import app
-    from app.database import get_session
+    # Seed an active job referencing the file.
     from app.models import Job
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    session.add(Job(uploaded_file_id=up["id"], plate_number=1, status="printing",
-                    created_at="t", updated_at="t"))
-    await session.commit()
+    async with session_factory() as session:
+        session.add(Job(uploaded_file_id=up["id"], plate_number=1, status="printing",
+                        created_at="t", updated_at="t"))
+        await session.commit()
     r = await client.delete(f"/api/v1/files/{up['id']}")
     assert r.status_code == 409
 
 
 @pytest.mark.asyncio
-async def test_upload_does_not_persist_absolute_path(client, lib):
+async def test_upload_does_not_persist_absolute_path(client, lib, session_factory):
     """stored_path must stay blank for library-indexed files - an absolute path
     written by one execution context (local dev) is not valid read back in another
     (the container), so relative_path is the only path persisted."""
-    from app.main import app
-    from app.database import get_session
     from app.models import UploadedFile
 
     up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    row = await session.get(UploadedFile, up["id"])
-    assert row.stored_path == ""
-    assert row.relative_path == "Job Uploads/a.stl"
-    await agen.aclose()
+    async with session_factory() as session:
+        row = await session.get(UploadedFile, up["id"])
+        assert row.stored_path == ""
+        assert row.relative_path == "Job Uploads/a.stl"
 
 
 @pytest.mark.asyncio
@@ -183,21 +176,18 @@ async def test_delete_succeeds_and_removes_file_from_disk(client, lib):
 
 
 @pytest.mark.asyncio
-async def test_delete_blocked_by_project_item_reference_and_file_survives(client, lib):
+async def test_delete_blocked_by_project_item_reference_and_file_survives(client, lib, session_factory):
     # A file referenced by a ProjectItem is RESTRICT-protected at the DB level.
     # The route must reject with 409 up front, and must NOT delete the file off
     # disk first (that would strand the ProjectItem pointing at nothing).
     up = (await client.post("/api/v1/files/upload", files=_stl("a.stl"))).json()
-    from app.main import app
-    from app.database import get_session
     from app.models import Project, ProjectItem
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    project = Project(name="P", order_type="internal", created_at="t", updated_at="t")
-    session.add(project)
-    await session.flush()
-    session.add(ProjectItem(project_id=project.id, file_id=up["id"], quantity=1))
-    await session.commit()
+    async with session_factory() as session:
+        project = Project(name="P", order_type="internal", created_at="t", updated_at="t")
+        session.add(project)
+        await session.flush()
+        session.add(ProjectItem(project_id=project.id, file_id=up["id"], quantity=1))
+        await session.commit()
 
     r = await client.delete(f"/api/v1/files/{up['id']}")
     assert r.status_code == 409

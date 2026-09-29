@@ -128,11 +128,9 @@ async def _create_job(client, tmp_path, printer_id):
     return create.json()["id"]
 
 
-async def test_delete_printer_refuses_with_active_job(client, tmp_path):
+async def test_delete_printer_refuses_with_active_job(client, tmp_path, session_factory):
     """A printer physically running a job must not be deletable — removing the DB
     row can't stop the machine, and it would strand the job unresolved."""
-    from app.main import app
-    from app.database import get_session
     from app.models import Job
 
     create = await client.post("/api/v1/printers", json={
@@ -142,13 +140,11 @@ async def test_delete_printer_refuses_with_active_job(client, tmp_path):
     printer_id = create.json()["id"]
     job_id = await _create_job(client, tmp_path, printer_id)
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = "printing"
-    job.assigned_printer_id = printer_id
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        await session.commit()
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 409
@@ -178,10 +174,8 @@ async def test_delete_printer_disconnects_live_client(client):
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path):
+async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_factory):
     """Deleting a printer's GcodeFile rows must also remove the files they point at."""
-    from app.main import app
-    from app.database import get_session
     from app.models import GcodeFile
 
     create = await client.post("/api/v1/printers", json={
@@ -194,22 +188,18 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path):
     gcode_path = tmp_path / "out.gcode"
     gcode_path.write_text("G28")
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path=str(gcode_path)))
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path=str(gcode_path)))
+        await session.commit()
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 204
     assert not gcode_path.exists()
 
 
-async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path):
+async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path, session_factory):
     """A job whose only config pointed at the deleted printer must become visibly
     'blocked' rather than sitting in the queue unclaimable and invisible."""
-    from app.main import app
-    from app.database import get_session
     from app.models import Job
 
     create = await client.post("/api/v1/printers", json={
@@ -222,12 +212,10 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path):
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 204
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    assert job.status == "blocked"
-    assert job.block_reason
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "blocked"
+        assert job.block_reason
 
 
 async def test_switch_active_preset(client):

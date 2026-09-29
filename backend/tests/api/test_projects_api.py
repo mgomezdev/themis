@@ -389,10 +389,9 @@ async def test_project_estimate_rollup_keys(client):
     assert "estimated_seconds" not in data
 
 
-async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_path):
+async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_path, session_factory):
     """estimate_filament_grams_remaining excludes completed/cancelled/failed jobs."""
     from app.main import app
-    from app.database import get_session
     from app.models import Job
 
     resp = await client.post("/api/v1/projects", json={
@@ -433,14 +432,12 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
         })).json()
 
     # Set project_id and estimates on job via DB override
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, j1["id"])
-    job.project_id = proj_id
-    job.estimate_filament_grams = 10.0
-    job.status = "complete"  # terminal — excluded from remaining
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, j1["id"])
+        job.project_id = proj_id
+        job.estimate_filament_grams = 10.0
+        job.status = "complete"  # terminal — excluded from remaining
+        await session.commit()
 
     detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
     assert detail["estimate_filament_grams_total"] == pytest.approx(10.0)

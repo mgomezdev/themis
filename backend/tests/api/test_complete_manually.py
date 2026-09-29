@@ -64,7 +64,7 @@ def _fake_gcode_with_estimates(output_dir, grams: float = 12.5, time_str: str = 
     return str(gcode_file)
 
 
-async def test_complete_manually_happy_path(client, tmp_path):
+async def test_complete_manually_happy_path(client, tmp_path, session_factory):
     file_id = await _upload_file(client, tmp_path)
     printer_id = await _create_printer(client)
     job_id = await _create_job(client, file_id, printer_id)
@@ -98,16 +98,13 @@ async def test_complete_manually_happy_path(client, tmp_path):
 
     # lifetime_job_count/lifetime_print_seconds aren't exposed via the printers
     # API - check the DB directly, same pattern as the 409-terminal-status test.
-    from app.database import get_session
     from app.main import app
     from app.models import Printer
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    printer = await session.get(Printer, printer_id)
-    assert printer.lifetime_job_count == 1
-    assert printer.lifetime_print_seconds == 3930
-    await agen.aclose()
+    async with session_factory() as session:
+        printer = await session.get(Printer, printer_id)
+        assert printer.lifetime_job_count == 1
+        assert printer.lifetime_print_seconds == 3930
 
 
 async def test_complete_manually_404_unknown_job(client):
@@ -138,21 +135,17 @@ async def test_complete_manually_404_no_config_for_printer(client, tmp_path):
     assert resp.status_code == 404
 
 
-async def test_complete_manually_409_already_complete(client, tmp_path):
-    from app.database import get_session
-    from app.main import app
+async def test_complete_manually_409_already_complete(client, tmp_path, session_factory):
     from app.models import Job
 
     file_id = await _upload_file(client, tmp_path)
     printer_id = await _create_printer(client)
     job_id = await _create_job(client, file_id, printer_id)
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = "complete"
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "complete"
+        await session.commit()
 
     resp = await client.post(
         f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
@@ -160,21 +153,17 @@ async def test_complete_manually_409_already_complete(client, tmp_path):
     assert resp.status_code == 409
 
 
-async def _set_job_status(job_id, status, printer_id=None):
-    from app.database import get_session
-    from app.main import app
+async def _set_job_status(session_factory, job_id, status, printer_id=None):
     from app.models import Job
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = status
-    job.assigned_printer_id = printer_id
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = status
+        job.assigned_printer_id = printer_id
+        await session.commit()
 
 
-async def test_complete_manually_slice_failure_422_leaves_job_untouched(client, tmp_path):
+async def test_complete_manually_slice_failure_422_leaves_job_untouched(client, tmp_path, session_factory):
     from app.services.slicer_service import SliceError
 
     file_id = await _upload_file(client, tmp_path)
@@ -183,7 +172,7 @@ async def test_complete_manually_slice_failure_422_leaves_job_untouched(client, 
     job_id = await _create_job(client, file_id, printer_id)
     # A genuinely printing job on another printer: a failed manual slice must not
     # orphan the live print from its printer.
-    await _set_job_status(job_id, "printing", other_printer_id)
+    await _set_job_status(session_factory, job_id, "printing", other_printer_id)
 
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
@@ -224,11 +213,11 @@ async def test_complete_manually_409_when_already_in_flight(client, tmp_path):
     assert resp.status_code == 409
 
 
-async def test_complete_manually_from_printing_status_completes(client, tmp_path):
+async def test_complete_manually_from_printing_status_completes(client, tmp_path, session_factory):
     file_id = await _upload_file(client, tmp_path)
     printer_id = await _create_printer(client)
     job_id = await _create_job(client, file_id, printer_id)
-    await _set_job_status(job_id, "printing", printer_id)
+    await _set_job_status(session_factory, job_id, "printing", printer_id)
 
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
