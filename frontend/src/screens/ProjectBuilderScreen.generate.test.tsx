@@ -83,7 +83,6 @@ describe('ProjectBuilderScreen - generating a new project', () => {
 
     await userEvent.click(screen.getByRole('checkbox', { name: /Printer A/ }));
     await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
-    await screen.findByRole('option', { name: '0.28mm Draft' }).catch(() => null);
     await waitFor(() => expect(screen.getByTestId('process-preset-select').textContent).toContain('0.20mm Standard'));
     await userEvent.selectOptions(screen.getByTestId('process-preset-select'), '0.20mm Standard');
     await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
@@ -93,7 +92,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     expect(writes(api)).toEqual(['POST /api/v1/projects', 'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate']);
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
       name: 'Shelf set', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
-      amount_paid: null, payment_status: 'unpaid',
+      amount_paid: null, price: null, payment_status: 'unpaid', customer_id: null,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
       file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0,
@@ -142,6 +141,8 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     expect(await screen.findByText('1 job added to queue')).toBeTruthy();
     expect(screen.queryByText(/Orca sidecar is offline/)).toBeNull();
     expect(api.to('POST', '/api/v1/projects')).toHaveLength(1);                // retry must not create a second project
+    expect(api.to('POST', '/api/v1/projects/7/items')).toHaveLength(1);        // ...nor add the part a second time
+    expect(api.to('PUT', '/api/v1/projects/7/items/50')).toHaveLength(1);      // it updates the saved part instead
     expect(api.to('POST', '/api/v1/projects/7/generate')).toHaveLength(2);
   });
 });
@@ -154,6 +155,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.type(screen.getByPlaceholderText('Customer name'), 'Vela Robotics');
     await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'rush');
     await userEvent.click(screen.getByRole('checkbox', { name: 'On hold' }));
+    await userEvent.type(screen.getByLabelText('Price'), '99.5');
     await userEvent.type(screen.getByPlaceholderText('0.00'), '12.5');
     await userEvent.selectOptions(screen.getByDisplayValue('Unpaid'), 'partial');
     fireEvent.change(document.querySelector('input[type="date"]') as HTMLInputElement, { target: { value: '2026-12-01' } });
@@ -170,7 +172,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
 
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
       name: 'Vela order', customer: 'Vela Robotics', order_type: 'customer', on_hold: true, due_date: '2026-12-01',
-      notes: 'rush', amount_paid: 12.5, payment_status: 'partial',
+      notes: 'rush', amount_paid: 12.5, price: 99.5, payment_status: 'partial', customer_id: null,   // typed name, no account
     });
     expect(api.to('POST', '/api/v1/projects/7/items').map(c => (c.body as { file_id: number; sort_order: number })))
       .toEqual([expect.objectContaining({ file_id: 1, sort_order: 0 }), expect.objectContaining({ file_id: 2, sort_order: 1 })]);
@@ -191,7 +193,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
     await screen.findByText('2 jobs added to queue');
 
-    expect(api.to('POST', '/api/v1/projects')[0].body).toMatchObject({ order_type: 'internal', customer: '' });
+    expect(api.to('POST', '/api/v1/projects')[0].body).toMatchObject({ order_type: 'internal', customer: '', customer_id: null });
   });
 
   it('Retry generates for the same printers again', async () => {

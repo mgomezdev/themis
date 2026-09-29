@@ -61,6 +61,7 @@ class ProjectCreate(BaseModel):
     source_user: Optional[str] = None
     source_layout_id: Optional[int] = None
     amount_paid: Optional[float] = None
+    price: Optional[float] = None
     payment_status: str = "unpaid"
     # Staff/API-created projects default to "queued" (unchanged behavior); customer drafts
     # are created via the customer portal.
@@ -88,6 +89,7 @@ class ProjectPatch(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
+    price: Optional[float] = None  # send null to clear
     payment_status: Optional[str] = None
     customer_id: Optional[int] = None  # send null to unassign
 
@@ -325,6 +327,7 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         select(Job).where(Job.project_id == project.id)
     )).scalars().all()
     progress = _project_progress(job_rows)
+    customer = await session.get(Customer, project.customer_id) if project.customer_id else None
 
     return {
         "id": project.id,
@@ -339,9 +342,11 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
         "amount_paid": project.amount_paid,
+        "price": project.price,
         "payment_status": project.payment_status,
         "stage": project.stage,
         "customer_id": project.customer_id,
+        "customer_name": customer.name if customer else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
@@ -399,6 +404,7 @@ async def create_project(
         source_user=body.source_user,
         source_layout_id=body.source_layout_id,
         amount_paid=body.amount_paid,
+        price=body.price,
         payment_status=body.payment_status,
         stage=body.stage,
         customer_id=await _valid_customer_id(body.customer_id, session),
@@ -455,6 +461,8 @@ async def patch_project(
         proj.notes = body.notes
     if body.amount_paid is not None:
         proj.amount_paid = body.amount_paid
+    if "price" in body.model_fields_set:
+        proj.price = body.price
     if body.payment_status is not None:
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:

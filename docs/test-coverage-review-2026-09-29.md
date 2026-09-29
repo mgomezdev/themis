@@ -195,7 +195,7 @@ Most FE-consumed routes (fleet, queue, jobs, printers, projects, files) lack `re
 ## 11. Status — hardening pass (PR #66, 2026-09-29)
 
 Everything below is on branch `claude/test-coverage-review-qh5b2o`, one commit per task (sha = `git show <sha>`).
-Suites at hand-off: backend 1147 pass (was 814 + 4 skip; ~51 s, was ~70–80 s), frontend 573 (was 306), Playwright 17 (was 7);
+Suites at hand-off (after merging `develop` at 20b0e8b): backend 1161 pass (was 814 + 4 skip; ~51 s, was ~70–80 s), frontend 592 (was 306), Playwright 17 (was 7);
 backend coverage 86 % line+branch (greenlet-aware; CI floor `fail_under = 84`), frontend stmts 71.6 / branch 65.1 / funcs 67.8 / lines 74.7
 (floors 69 / 63 / 65 / 72). All 12 §1 mutants plus the M5b/M13/M14 variants are now **killed**.
 
@@ -217,7 +217,7 @@ backend coverage 86 % line+branch (greenlet-aware; CI floor `fail_under = 84`), 
 | §3 Spoolman / fleet import / fleet GET / camera / printers / laminus / thumbnails | done | ae637cb, ecc07f8, 043b3e1, ed68de9, bf2abff, 88eb909, 03f7a9a |
 | §3 files/tags misc | done (found the `?tags=` filter bug) | caf0037, e3103ff |
 | §4 status-only error tests | done (state re-read added) | 6499ae9, d9e5f4e |
-| §4 implicit-only tests | done: engine-queue order test rewritten to assert order; `_validate_file_id` accept test parametrized | (this branch's last commit) |
+| §4 implicit-only tests | done: slice-queue order test rewritten to assert order (pins the queue mechanics, not the 0/1/2 constants); `_validate_file_id` accept test parametrized | c2e829a |
 | §4 source-text tests | done (see O2) | 4caa0d7 |
 | §4 sleeps | done: `wait_until`, no sleeps in test_queue_engine | 2f8c69b, d7aa42e |
 | §4 whole-singleton mocks | **partly**: invariant tests (W1, W2, W9) use the real manager/engine; ~55 incidental `patch(...queue_engine)` in route tests remain (they now assert state, not just the mock call) | — |
@@ -267,8 +267,21 @@ backend restart (07ac76b). One flake root-caused (zip timestamps → dedupe miss
    `no_snapshots_while_idle`; import is additive (twice = doubled fleet).
 5. `PATCH /printers/{id}` with a new `connection_config` doesn't reconnect the live client; a failed reconnect leaves no client.
 6. FE `OverrideCheck` omits the backend's optional `error` key, so degraded override checks are invisible.
-7. Builder/list Generate buttons don't gate on a draft stage → the operator sees the raw 409 JSON; `Progress` ignores `tone="ok"` (dead prop);
+7. The builder's Generate button doesn't gate on a draft stage → the operator sees the raw 409 JSON (the list and detail screens now do gate it; develop a14cd5c); `Progress` ignores `tone="ok"` (dead prop);
    builder qty input snaps to 1 on clear; `SpoolmanMappingsPage` fetches while Spoolman is disabled; `ReadyForWorkButton` has no catch around `markPlateCleared`.
 8. Unknown `/api/*` GETs return `index.html` 200 via the SPA catch-all (not asserted). `GET /fleet` for a connected `mock` printer lacks state keys (test-only type).
 9. Settings pages other than Print defaults (webhook, notifications, Spoolman, maintenance, tags, API keys, customers, admin) keep their own
    error handling; only some of their failure paths are tested.
+10. From the single review pass (all minor, not changed): `GET /files?tags=` is now server-filtered, so `FilesScreen`'s tag counts become co-occurrence
+    counts and a zero-count tag stays clickable (decide whether counts should come from an unfiltered list); `contract.test.ts` scans only `src/api/*.ts`
+    (~14 raw URL literals in auth/screens/components are unchecked); the response-keys contract covers top-level keys only (nested `temperatures.*`,
+    filament slot keys are not); `fetchStub` installs a global `fetch` stub that nothing unstubs (harmless today, every test re-stubs first);
+    `openLiveSocket` retries every 30 s forever after an auth rejection and has no jitter; the generic migration-rollback test can prove a `down`
+    removes something and nothing else changes, but not that it removes everything its `up` added.
+
+### After the merge with `develop`
+
+`develop` moved while this branch was open (customer accounts/details, migration v023, `Project.price`/`customer_name`, CustomerPicker, draft-Generate
+gating, breadcrumbs). The merge fixed three things the drift exposed: the rollback test pinned "newest migration = v22" (now version-independent),
+`contracts/response-keys.json` + its FE type check gained `price`/`customer_name`, and a develop test inserted a job for a nonexistent uploaded file
+(the shared test DB now enforces foreign keys, so it seeds the file first).

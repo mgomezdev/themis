@@ -33,7 +33,7 @@ This codebase has no schema-sharing or codegen between backend and frontend — 
 `Sidebar.tsx`'s hand-duplicated settings nav) is kept in sync manually, which means it can drift
 silently and both sides' own tests can still pass (each side tests against what it assumes the other
 does, not what the other actually does). Partial safety net: `contracts/response-keys.json` lists the keys
-the FE reads for the main shapes — `tests/test_response_contracts.py` checks real backend responses against it and
+the FE reads for the main shapes — `tests/api/test_response_contracts.py` checks real backend responses against it and
 the FE's `responseKeys.contract.test.ts` checks its TS types; `frontend/src/api/contract.test.ts` checks every FE
 URL/method against `openapi.json`. Update the JSON when you rename or add a consumed field (still grep the FE).
 

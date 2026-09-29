@@ -6,29 +6,15 @@ import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select
 
 import app.main as main
 from app.api.websocket import connection_manager
-from app.database import Base, _set_sqlite_pragmas
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile
 from app.services.printer_manager import printer_manager
 from app.services.queue_engine import queue_engine
 
 PLACEHOLDER = "Elegoo Centauri Carbon (placeholder)"
-
-
-@pytest_asyncio.fixture
-async def session_factory(tmp_path):
-    """File-backed DB with the app's pragmas (foreign keys ON), like the real one."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'app.db'}")
-    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    await engine.dispose()
 
 
 @pytest.fixture
@@ -57,6 +43,7 @@ def boot(session_factory, tmp_path, monkeypatch):
     yield spies
     for key, value in saved.items():
         setattr(printer_manager, key, value)
+    monkeypatch.undo()             # first, so the patched start/stop don't get written back into the dict we clear next
     queue_engine.__dict__.clear()  # back to the uninitialized shell other tests expect
 
 

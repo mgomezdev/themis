@@ -4,6 +4,10 @@ export function fmtDate(iso: string | null): string | null {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
+export function fmtMoney(v: number): string {
+  return `$${v.toFixed(2)}`;
+}
+
 export function fmtDuration(s: number): string {
   const h = Math.floor(s / 3600);
   const m = Math.floor((s % 3600) / 60);

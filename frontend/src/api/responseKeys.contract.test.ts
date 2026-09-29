@@ -41,7 +41,8 @@ const JOB_DETAILS = {
 
 const PROJECT = {
   id: 1, name: 1, customer: 1, order_type: 1, on_hold: 1, due_date: 1, notes: 1, result_file_id: 1, source_app: 1,
-  source_user: 1, source_layout_id: 1, amount_paid: 1, payment_status: 1, stage: 1, customer_id: 1, created_at: 1,
+  source_user: 1, source_layout_id: 1, amount_paid: 1, price: 1, payment_status: 1, stage: 1, customer_id: 1,
+  customer_name: 1, created_at: 1,
   updated_at: 1, items: 1, links: 1, parts: 1, jobs_total: 1, jobs_complete: 1, estimate_filament_grams_total: 1,
   estimate_seconds_total: 1, estimate_filament_grams_remaining: 1, estimate_seconds_remaining: 1,
   actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1,

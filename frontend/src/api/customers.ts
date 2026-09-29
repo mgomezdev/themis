@@ -21,13 +21,96 @@ export interface Customer {
   email: string;
   enabled: boolean;
   created_at: string;
+  phone: string | null;
+  company: string | null;
+  notes: string | null;
+  has_password: boolean;  // false → account exists but can't sign in to the portal yet
 }
 
-export const listCustomers = () => request<Customer[]>('/api/v1/customers');
-export const createCustomer = (body: { name: string; email: string; password: string }) =>
+/** `GET /customers` row: the customer plus light project/balance rollups. */
+export interface CustomerListItem extends Customer {
+  project_count: number;
+  active_project_count: number;
+  outstanding: number;
+  last_project_at: string | null;
+}
+
+/** Same buckets as the Projects screen filter: no jobs yet / in progress / all jobs done. */
+export type CustomerProjectStatus = 'pending' | 'active' | 'completed';
+
+export interface CustomerProject {
+  id: number;
+  name: string;
+  stage: ProjectStage;
+  on_hold: boolean;
+  due_date: string | null;
+  created_at: string;
+  updated_at: string;
+  jobs_total: number;
+  jobs_complete: number;
+  status: CustomerProjectStatus;
+  price: number | null;
+  amount_paid: number | null;
+  payment_status: 'unpaid' | 'partial' | 'paid';
+  filament_cost_total: number | null;
+  outstanding: number;
+}
+
+export type FinancialWindow = '30d' | '60d' | '90d' | 'all';
+
+export interface FinancialSummary {
+  project_count: number;
+  revenue: number;      // amount paid
+  expenses: number;     // job filament cost
+  profit: number;
+  billed: number;       // quoted price
+  outstanding: number;  // price - paid, unpaid/partial projects only
+}
+
+export interface CustomerDetail extends Customer {
+  projects: CustomerProject[];
+  financials: {
+    windows: Record<FinancialWindow, FinancialSummary>;
+    unpriced_unpaid: number;  // unpaid projects with no price set (balance unknown)
+  };
+}
+
+export interface CustomerFields {
+  name: string;
+  email: string;
+  phone: string;
+  company: string;
+  notes: string;
+}
+
+export const listCustomers = () => request<CustomerListItem[]>('/api/v1/customers');
+export const getCustomer = (id: number) => request<CustomerDetail>(`/api/v1/customers/${id}`);
+export const createCustomer = (body: Partial<CustomerFields> & { name: string; email: string; password?: string }) =>
   request<Customer>('/api/v1/customers', json('POST', body));
-export const updateCustomer = (id: number, body: Partial<{ name: string; email: string; password: string; enabled: boolean }>) =>
+export const updateCustomer = (id: number, body: Partial<CustomerFields & { password: string; enabled: boolean }>) =>
   request<Customer>(`/api/v1/customers/${id}`, json('PATCH', body));
+export const deleteCustomer = (id: number) =>
+  request<{ deleted: number; projects_unlinked: number }>(`/api/v1/customers/${id}`, { method: 'DELETE' });
+
+/** A project with a typed customer name but no linked account (`GET /customers/unlinked-projects`). */
+export interface UnlinkedProject {
+  project_id: number;
+  project_name: string;
+  customer_text: string;
+  created_at: string;
+  suggested_customer_id: number | null;  // set when the name matches exactly one account
+}
+
+export const getUnlinkedProjects = () => request<UnlinkedProject[]>('/api/v1/customers/unlinked-projects');
+export const linkProjects = (links: { project_id: number; customer_id: number }[]) =>
+  request<{ linked: number }>('/api/v1/customers/link-projects', json('POST', { links }));
+
+/** Portal state shown on staff screens. */
+export function portalStatus(c: Pick<Customer, 'enabled' | 'has_password'>): { label: string; tone: 'ok' | '' } {
+  if (!c.enabled) return { label: 'Portal disabled', tone: '' };
+  if (!c.has_password) return { label: 'No sign-in yet', tone: '' };
+  return { label: 'Portal enabled', tone: 'ok' };
+}
 
 // ---- Staff: project stage ----
 

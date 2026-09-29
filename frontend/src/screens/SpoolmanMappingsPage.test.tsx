@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
 import { Reply, stubFetch } from '../test/fetchStub';
 
@@ -38,8 +38,6 @@ async function loaded(api: ReturnType<typeof stubFetch>) {
 }
 
 const card = (name: string) => within(screen.getByText(name).closest('div[style*="border-radius: 10px"]') as HTMLElement);
-
-afterEach(() => { /* stubFetch installs a fresh global each test */ });
 
 describe('SpoolmanMappingsPage', () => {
   it('asks the operator to configure Spoolman first instead of showing mappings', async () => {

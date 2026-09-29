@@ -164,16 +164,25 @@ describe('ProjectsScreen - generate', () => {
     expect(where()).toBe('/projects');                                          // the click did not open the project
   });
 
+  it('cannot generate a draft (promote it first), even with parts', async () => {
+    open([project(5, 'Draft with parts', { stage: 'draft' })]);
+    await screen.findByText('Draft with parts');
+
+    const generate = card('Draft with parts').getByRole('button', { name: 'Generate' });
+
+    expect(generate.hasAttribute('disabled')).toBe(true);
+    expect(generate.getAttribute('title')).toBe('Promote to planning before creating jobs');
+  });
+
   it('shows the failure on the card and lets the operator try again', async () => {
-    // a draft with parts (the Generate button is only disabled when there are none)
-    const api = open([project(5, 'Broken', { stage: 'draft' })], {
-      'POST /api/v1/projects/5/generate': new Reply(409, 'Promote the project to planning first'),
+    const api = open([project(5, 'Broken', { stage: 'planning' })], {
+      'POST /api/v1/projects/5/generate': new Reply(502, 'Orca sidecar down'),
     });
     await screen.findByText('Broken');
 
     await userEvent.click(card('Broken').getByRole('button', { name: 'Generate' }));
 
-    expect(await card('Broken').findByText('409 Promote the project to planning first')).toBeTruthy();
+    expect(await card('Broken').findByText('502 Orca sidecar down')).toBeTruthy();
     expect(card('Broken').getByRole('button', { name: 'Generate' }).hasAttribute('disabled')).toBe(false);
     expect(api.to('POST', '/api/v1/projects/5/generate')).toHaveLength(1);
   });

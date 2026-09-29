@@ -275,6 +275,7 @@
           "customers"
         ],
         "summary": "List customers",
+        "description": "Customers with per-customer project counts and outstanding balance.",
         "operationId": "list_customers_api_v1_customers_get",
         "responses": {
           "200": {
@@ -336,7 +337,119 @@
         }
       }
     },
+    "/api/v1/customers/unlinked-projects": {
+      "get": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Projects with a typed customer name but no customer account",
+        "description": "Projects whose free-text ``customer`` is set but ``customer_id`` isn't, each with a\nsuggested account when the text exactly matches (case/space-insensitive) one customer's\nname, company, or email. Staff confirm before anything is linked.",
+        "operationId": "unlinked_projects_api_v1_customers_unlinked_projects_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Unlinked Projects Api V1 Customers Unlinked Projects Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/customers/link-projects": {
+      "post": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Link projects to customer accounts",
+        "operationId": "link_projects_api_v1_customers_link_projects_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkProjectsBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Link Projects Api V1 Customers Link Projects Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customers/{customer_id}": {
+      "get": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Get customer with projects and financial summary",
+        "operationId": "get_customer_api_v1_customers__customer_id__get",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Customer Api V1 Customers  Customer Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "patch": {
         "tags": [
           "customers"
@@ -374,6 +487,49 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Customer Api V1 Customers  Customer Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Delete customer",
+        "description": "Removes the account and signs it out. Its projects are kept, unlinked, with the\ncustomer's name left as their typed customer label so history still reads correctly.",
+        "operationId": "delete_customer_api_v1_customers__customer_id__delete",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Customer Api V1 Customers  Customer Id  Delete"
                 }
               }
             }
@@ -6291,15 +6447,54 @@
             "title": "Email"
           },
           "password": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Password"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
           }
         },
         "type": "object",
         "required": [
           "name",
-          "email",
-          "password"
+          "email"
         ],
         "title": "CustomerCreate"
       },
@@ -6348,6 +6543,39 @@
               }
             ],
             "title": "Enabled"
+          },
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "company": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Company"
+          },
+          "notes": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notes"
           }
         },
         "type": "object",
@@ -6778,6 +7006,22 @@
           "on"
         ],
         "title": "LightBody"
+      },
+      "LinkProjectsBody": {
+        "properties": {
+          "links": {
+            "items": {
+              "$ref": "#/components/schemas/ProjectLink"
+            },
+            "type": "array",
+            "title": "Links"
+          }
+        },
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "title": "LinkProjectsBody"
       },
       "LoginBody": {
         "properties": {
@@ -7782,6 +8026,17 @@
             ],
             "title": "Amount Paid"
           },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
+          },
           "payment_status": {
             "type": "string",
             "title": "Payment Status",
@@ -7914,6 +8169,24 @@
         },
         "type": "object",
         "title": "ProjectItemUpdate"
+      },
+      "ProjectLink": {
+        "properties": {
+          "project_id": {
+            "type": "integer",
+            "title": "Project Id"
+          },
+          "customer_id": {
+            "type": "integer",
+            "title": "Customer Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "customer_id"
+        ],
+        "title": "ProjectLink"
       },
       "ProjectLinkCreate": {
         "properties": {
@@ -8139,6 +8412,17 @@
               }
             ],
             "title": "Amount Paid"
+          },
+          "price": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price"
           },
           "payment_status": {
             "anyOf": [

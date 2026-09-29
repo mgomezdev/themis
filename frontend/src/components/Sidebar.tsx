@@ -49,6 +49,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
     { to: '/projects',  label: 'Projects',    icon: Icons.layers },
+    { to: '/customers', label: 'Customers',   icon: Icons.user },
     { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/history',   label: 'History',     icon: Icons.clock },
   ];
@@ -68,7 +69,6 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/settings/notifications',    label: 'Notifications' },
     { to: '/settings/fleet-backup',     label: 'Fleet backup' },
     { to: '/settings/api-keys',         label: 'API Keys' },
-    { to: '/settings/customers',        label: 'Customers' },
     { to: '/settings/admin-account',    label: 'Admin account' },
     { to: '/settings/about',            label: 'About' },
   ];

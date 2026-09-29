@@ -266,11 +266,10 @@ async def test_customer_account_validation(admin: AsyncClient):
     r = await admin.patch(f"/api/v1/customers/{a['id']}", json={"email": "alice@example.com"})
     assert r.status_code == 200
 
-    # Missing / empty required fields.
-    for body in ({"name": "X", "email": "x@example.com"},
-                 {"email": "x@example.com", "password": "pw"},
+    # Missing / empty required fields. Password is optional (no password = no portal
+    # sign-in until staff set one); name and email aren't.
+    for body in ({"email": "x@example.com", "password": "pw"},
                  {"name": "X", "password": "pw"},
-                 {"name": "X", "email": "x@example.com", "password": ""},
                  {"name": "X", "email": "  ", "password": "pw"}):
         assert (await admin.post("/api/v1/customers", json=body)).status_code == 422, body
     r = await admin.patch(f"/api/v1/customers/{a['id']}", json={"email": " "})

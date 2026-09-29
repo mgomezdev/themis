@@ -415,33 +415,39 @@ async def test_upgrade_from_legacy_database_applies_every_version_in_order_and_k
     await engine.dispose()
 
 
-async def test_rollback_last_undoes_only_the_newest_migration():
+async def test_rollback_last_undoes_only_the_newest_migration(monkeypatch):
+    """Roll back the newest migration that has a `down`. A fresh DB is built by `create_all` from the current
+    models (v001), so it already has every later migration's columns; what we can pin generically is that the
+    rollback only REMOVES schema (never adds or alters), removes something, drops exactly its own
+    schema_migrations row, and that re-applying restores the original. Written against "the newest migration"
+    so adding one doesn't break it (migrations without a `down` are cut off the end of the chain)."""
+    from app.migrations import runner
+
+    chain = _MIGRATIONS[: max(i for i, m in enumerate(_MIGRATIONS) if hasattr(m, "down")) + 1]
+    monkeypatch.setattr(runner, "_MIGRATIONS", chain)
+
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
         await run_migrations(conn)
-        newest = _MIGRATIONS[-1]
-        assert (newest.version, newest.name) == (22, "admin_account")
         before = await _schema(conn)
-        assert "admin_account" in before and "admin_session" in before["api_keys"]
 
         await rollback_last(conn)
 
         after = await _schema(conn)
-        assert "admin_account" not in after
-        assert "admin_session" not in after["api_keys"]
-        # Everything else is untouched.
-        assert {t: c for t, c in after.items() if t != "api_keys"} == {
-            t: c for t, c in before.items() if t not in ("api_keys", "admin_account")
-        }
-        assert set(before["api_keys"]) - set(after["api_keys"]) == {"admin_session"}
+        removed = {(t, c) for t, cols in before.items() for c in cols if c not in after.get(t, {})}
+        assert removed, "rolling back did not remove any table or column"
+        for table, cols in after.items():
+            assert table in before, f"rollback created table {table}"
+            for col, definition in cols.items():
+                assert before[table][col] == definition, f"rollback altered {table}.{col}"
         versions = [r[0] for r in (await conn.execute(text("SELECT version FROM schema_migrations ORDER BY version"))).fetchall()]
-        assert versions == list(range(1, newest.version))
+        assert versions == [m.version for m in chain[:-1]]
 
         # The rolled-back version re-applies cleanly (column sets; create_all and ALTER spell defaults differently).
         await run_migrations(conn)
         reapplied = await _schema(conn)
         assert {t: set(c) for t, c in reapplied.items()} == {t: set(c) for t, c in before.items()}
-        assert (await conn.execute(text("SELECT COUNT(*) FROM schema_migrations"))).scalar() == newest.version
+        assert (await conn.execute(text("SELECT COUNT(*) FROM schema_migrations"))).scalar() == len(chain)
     await engine.dispose()
 
 

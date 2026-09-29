@@ -31,8 +31,8 @@ jobs:
 
       - run: pip install -e "backend[dev]"
 
-      # No services needed: backend/tests/conftest.py runs against in-memory
-      # SQLite over an ASGI transport, so there is no DB, network or sidecar.
+      # No services needed: backend/tests/conftest.py runs against a per-test SQLite
+      # file over an ASGI transport, so there is no DB server, network or sidecar.
       # --cov enforces the `fail_under` floor in backend/pyproject.toml ([tool.coverage.report]).
       - name: Run backend tests
         working-directory: backend

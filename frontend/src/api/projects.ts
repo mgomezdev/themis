@@ -63,9 +63,11 @@ export interface Project {
   source_user: string | null;
   source_layout_id: number | null;
   amount_paid: number | null;
+  price: number | null;     // quoted total; outstanding = price - amount_paid
   payment_status: PaymentStatus;
   stage: ProjectStage;
   customer_id: number | null;
+  customer_name: string | null;  // name of the linked customer account, if any
   created_at: string;
   updated_at: string;
   items: ProjectItem[];
@@ -113,6 +115,7 @@ export interface ProjectCreate {
   source_user?: string | null;
   source_layout_id?: number | null;
   amount_paid?: number | null;
+  price?: number | null;
   payment_status?: PaymentStatus;
   customer_id?: number | null;
 }

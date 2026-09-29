@@ -482,9 +482,11 @@ async def test_priority_queue_orders_production_before_estimate(db):
     assert results == ["production", "estimate"]
 
 
-async def test_slice_queue_serves_production_before_estimates_before_verify_and_fifo_within_a_priority(db):
-    """Priorities 0 (production) < 1 (estimate) < 2 (verify); equal priorities fall back to the engine's
-    `_slice_seq` counter, so two coroutines are never compared (TypeError) and arrival order is kept."""
+async def test_slice_queue_orders_by_priority_then_arrival_via_the_engines_counter(db):
+    """The slice queue is a PriorityQueue of (priority, seq, coroutine): lower priority numbers first, and equal
+    priorities fall back to the engine's `_slice_seq` counter, so two coroutines are never compared (TypeError)
+    and arrival order is kept. (The 0/1/2 values used are the ones the engine enqueues for production /
+    estimate / verify slices today; this test pins the queue mechanics, not those constants.)"""
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
