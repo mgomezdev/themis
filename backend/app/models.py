@@ -389,10 +389,3 @@ class AdminAccount(Base):
     recovery_code_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     recovery_code_expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     recovery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
-
-
-class BootstrapSentinel(Base):
-    __tablename__ = "bootstrap_sentinel"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(32))

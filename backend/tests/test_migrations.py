@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.exc import IntegrityError
 from app.database import Base
 from app.models import ApiKey, Printer
-from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v015_bootstrap_sentinel, v016_clear_stored_path, v017_notification_config
+from app.migrations import v012_api_keys, v013_filament_any_keyword, v014_api_key_expiration, v016_clear_stored_path, v017_notification_config
 from app.migrations.runner import _MIGRATIONS, rollback_last, run_migrations
 
 
@@ -198,36 +198,6 @@ async def test_v014_adds_nullable_expires_at_to_api_keys():
             INSERT INTO api_keys (name, key_prefix, key_hash, scopes, enabled, created_at, expires_at)
             VALUES ('key_with_exp', 'prefix3', 'hash3', '[]', 1, '2024-01-01T00:00:00', '2025-01-01T00:00:00')
         """))
-    await engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_v015_creates_bootstrap_sentinel_table():
-    """v015 creates bootstrap_sentinel table for atomic bootstrap-key minting.
-    Verify the table exists with expected columns and can round-trip data."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await v015_bootstrap_sentinel.up(conn)
-
-        tables = {r[0] for r in (await conn.execute(
-            text("SELECT name FROM sqlite_master WHERE type='table'")
-        )).fetchall()}
-        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(bootstrap_sentinel)"))).fetchall()}
-
-        assert "bootstrap_sentinel" in tables
-        assert {"id", "created_at"} <= cols
-
-        # Insert a row and verify round-trip
-        test_timestamp = "2024-01-01T12:34:56"
-        await conn.execute(text("""
-            INSERT INTO bootstrap_sentinel (id, created_at)
-            VALUES (1, :ts)
-        """), {"ts": test_timestamp})
-
-        rows = (await conn.execute(text("SELECT id, created_at FROM bootstrap_sentinel WHERE id = 1"))).fetchall()
-        assert len(rows) == 1
-        assert rows[0][0] == 1
-        assert rows[0][1] == test_timestamp
     await engine.dispose()
 
 
@@ -426,6 +396,10 @@ async def test_upgrade_from_legacy_database_applies_every_version_in_order_and_k
             "FROM queue_config WHERE id = 1"
         ))).one()
         assert tuple(queue) == (9, None, 2, 0)
+
+        # v015 still creates its (retired, model-less) table via raw SQL for fresh installs.
+        tables = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).fetchall()}
+        assert "bootstrap_sentinel" in tables
 
         # Later migrations' side effects landed too (seeded singleton rows).
         assert (await conn.execute(text("SELECT username FROM admin_account WHERE id = 1"))).scalar() == "admin"
