@@ -15,7 +15,7 @@ Nothing in the repo was changed except this file.
 | Frontend suite | 306 pass, ~27 s | |
 | Frontend cov | stmts 51.5 / branch 47.5 / funcs 46.8 / lines 54.4 % | |
 | Mutants (12) | 6 killed, **6 survived** | §1 |
-| Routes with no direct test call | 23 / 141 | static match; f-string URLs may hide ≤ a few |
+| Routes with no direct test call | 24 / 142 | static match (incl. `GET /printers/{id}/snapshot`, only a fake route in `test_auth.py`); f-string URLs may hide ≤ a few |
 
 Solid already (don't touch): slicer_service (99 %), notification_service, queue-engine cancel/estimate races,
 admin/customer account + auth flows, API-key CRUD, fleet backup redaction, websocket auth, override/filament-map pydantic validation.
@@ -51,13 +51,13 @@ Each new test: in-memory DB, no sleeps, < 50 ms.
 **W2 Print-end reconcile** (missed completion event) — `_reconcile_printing_jobs`, 36/81 lines untested, 2 mutants survived.
 Add (fake client, real engine + DB), parametrize where noted:
 - idle + normalized `FAILED` → job `failed`, `block_reason` set, `assigned_printer_id` None, `deduction_skipped` True, GcodeFile row **and file** removed, broadcast called.
-- idle + other state → `complete`, printer `awaiting_plate_clear` True, lifetime counters bumped (via `handle_print_complete`).
+- idle + other state → `complete` via `handle_print_complete`, lifetime counters bumped; assert `awaiting_plate_clear` is **unchanged** (seed True as print-start would — `handle_print_complete` never sets it; only `_do_upload_and_print` and `PrinterManager.on_print_complete` do).
 - parametrize `[disconnected, not idle/printing, paused]` → job untouched.
 - `get_normalized_state` raises → job stays `printing`, next job in loop still processed.
 - callback already resolved job (race) → no second transition / no double Spoolman deduct.
 
 **W3 Upload / start failure → `failed`** — `_do_upload_and_print` 23/68 missed; patched out in 2 tests; happy path uses `file_upload_supported=False`.
-Parametrize `[upload→False, upload raises, start_print→False, start_print raises]` → job `failed`, `block_reason` contains `"Gcode upload failed: …"` / `"Start print reported failure by printer"`, printer NOT flagged awaiting-clear. Plus success with `file_upload_supported=True`: `upload_file(bytes, filename)` then `start_print(filename, opts)` with `plate_id`, `ams_mapping=[tray]`. Plus cancelled-during-upload → not set `printing`.
+Parametrize `[upload→False, upload raises, start_print→False, start_print raises]` → job `failed`, `block_reason` per case: `"Gcode upload reported failure by printer"` / `"Gcode upload failed: {e}"` / `"Start print reported failure by printer"` / `"Start print failed: {e}"`; printer NOT flagged awaiting-clear. Plus success with `file_upload_supported=True`: `upload_file(bytes, filename)` then `start_print(filename, opts)` with `plate_id`, `ams_mapping=[tray]`. Plus cancelled-during-upload → not set `printing`.
 
 **W4 Queue ordering / head-of-line / no double claim** — no engine test seeds >1 job via `_seed_job`; invariant "head-of-line" has zero pins.
 - A blocked (filament mismatch) ahead of runnable B → B stays `queued`, A `blocked`.
@@ -81,10 +81,10 @@ Parametrize `[upload→False, upload raises, start_print→False, start_print ra
 **W7 App lifespan / SPA** — `main.lifespan` 35/108 missed; SPA block `main.py:184-211` incl. `_within_static_dir` (path-traversal guard) never runs under test (only defined if the static dir exists at import); `_remove_placeholder_printer_from_db` 12/21.
 - `with TestClient(app)` w/ tmp `THEMIS_DATA_DIR` + patched sidecar/manager: DB migrated to latest, autoconnect called, engine `start`/`stop` called, shutdown disconnects.
 - placeholder cleanup deletes only the named placeholder printer.
-- traversal: `/../../etc/passwd`, `//etc/passwd`, `%2e%2e/` → index.html or 404, never file contents; `/api/nope` → JSON 404 not SPA. Needs `_within_static_dir` hoisted out of the `if STATIC_DIR.exists()` block (currently untestable without import-time env).
+- traversal: `/../../etc/passwd`, `//etc/passwd`, `%2e%2e/` → `index.html` (current catch-all behavior), never file contents. Note `serve_spa` also returns `index.html` 200 for unknown `/api/*` paths — decide if a JSON 404 is intended before asserting it. Needs `_within_static_dir` hoisted out of the `if STATIC_DIR.exists()` block (currently untestable without import-time env).
 
-**W8 Auth scope wiring** — default `client` fixture holds an all-scope key, so per-route `require_scope` wiring is never exercised; only a fake `/protected` route is.
-- one parametrized test walking `app.routes`: every `/api/v1/*` route (allowlist: `public`, `session`, `health`, ws) has a `require_scope` dependency whose scope ∈ `SCOPES` (turns conventions.md "mandatory auth" into CI).
+**W8 Auth scope wiring** — default `client` fixture holds an all-scope key, so per-route `require_scope` wiring is mostly unexercised (a few restricted-scope checks exist: `test_customer_accounts.py:80-81`, `test_project_share.py:79-81`, `test_admin_account.py:134-138`; otherwise only a fake `/protected` route).
+- one parametrized test walking `app.routes`: every `/api/v1/*` route (allowlist: `public`, `session`, `health`, ws; `customer_portal` uses `require_customer`; `admin_account` nests `require_scope` inside `_admin_only` — walker must recurse into sub-dependencies) has a scope guard whose scope ∈ `SCOPES` (turns conventions.md "mandatory auth" into CI).
 - one sampled `401 (no key)` + `403 (key w/ unrelated scope)` per router (~25 requests, <1 s).
 - FE↔BE mirror: backend test reads `frontend/src/api/apiKeys.ts`, extracts scope strings, asserts == `auth.SCOPES` (review-doc-listed drift point; 10 lines).
 
@@ -105,11 +105,11 @@ Routes with no direct test: `PUT /jobs/{id}/outcome`, `GET /jobs/history`, `POST
 `GET /spoolman/{filaments,spools,sync-status}`, `DELETE /projects/{id}`, `GET /projects/{id}/{jobs,items,links,parts}`,
 `PUT/DELETE /projects/{id}/items/{item}`, `PUT /projects/{id}/items/reorder`, `PUT/DELETE /projects/{id}/links/{link}`.
 
-- **check-overrides** (43/71 missed; documented workflow in `docs/slicing-flow.md`): patched inspector → returns diff list; unknown file 404; non-3MF → empty/422.
+- **check-overrides** (43/71 missed; documented workflow in `docs/slicing-flow.md`): patched inspector → returns diff list; unknown file 404; non-3MF/bare upload → 200 with empty findings, `has_embedded_settings: False`.
 - **Project child CRUD**: one parametrized lifecycle for `items` and `links` (create → update → reorder → delete → 404 on wrong project). `DELETE /projects/{id}`: assert jobs/order link behavior (nulled vs cascaded). `promote` backward → 4xx (forward-only), `generate` while draft → 409 (partly covered via customer flows; add direct).
 - **Jobs**: `reorder` demote/back/edge (single job, first-promote no-op); cancel `sliced` job removes GcodeFile row **and** file (route code at jobs.py:530, no test); cancel `slicing`/`uploading` mid-flight.
 - **Spoolman**: `spoolman_sync._tick/_loop` 49 %, `spoolman_service` 62 % (HTTP wrappers), 3 GET routes → use existing `tests/spoolman_mock.py`: sync tick records success/error status (`sync-status` route shows it); unreachable → error string via `_describe_error`; deduction on complete already tested.
-- **Fleet import**: `fleet_import` 17 lines missed — invalid JSON, unknown `printer_type`, duplicate name, non-object file → 400/422 with report; assert DB unchanged on failure.
+- **Fleet import**: `fleet_import` 17 lines missed. 400s: invalid JSON, non-object / missing `printers`, `themis_backup_version` < 1 (assert DB unchanged). 200: unknown `printer_type` → skipped + warning, other printers still imported; duplicate names are imported as-is (`Printer.name` not unique — decide if intended).
 - **Fleet `GET /fleet`** connected branch (lines 44-48): fake connected client → `state/progress/temps` populated (only offline shape tested).
 - **Camera**: `snapshot_camera` 15/29, `camera_proxy` 39 % (`grab_jpeg_frame`, `grab_rtsp_frame`) → patched `httpx`/subprocess: success bytes, timeout → 504/503, no capability.
 - **Printers**: `reconnect` (404, 503 on failure, success updates state), `update_printer` branches, `orca-machine-catalog`.
@@ -125,37 +125,37 @@ Routes with no direct test: `PUT /jobs/{id}/outcome`, `GET /jobs/history`, `POST
   `test_expired_recovery_code_is_rejected` (password unchanged).
 - **Implicit-only ("didn't raise") tests**: `test_equal_priority_no_type_error` (assert the claim order), `test_validate_file_id_accepts_normal_filename` (assert the returned value).
 - **Source-text tests** (3): `inspect.getsource(...)` + substring → see O2.
-- **Sleep-based waits**: 21 `asyncio.sleep(0.05–0.15)` in `test_queue_engine.py` (~2.5 s + flake risk under CI load). Replace with awaiting the engine's spawned tasks or a `wait_until(pred, timeout)` poll (5 ms step).
+- **Sleep-based waits**: 19 `asyncio.sleep(0.05–0.15)` in `test_queue_engine.py` (~2 s + flake risk under CI load). Replace with awaiting the engine's spawned tasks or a `wait_until(pred, timeout)` poll (5 ms step).
 - **Whole-singleton mocks**: `patch("…printers.printer_manager")` / `queue_engine` in W1-style tests assert *implementation calls*, not state. Prefer real `PrinterManager` + `MockPrinterClient`.
-- **Frontend weak**: `QueueScreen › cancel button calls cancelJob` (`toHaveBeenCalled()` with no id — which job?), `filter chips are clickable` (asserts one chip vanished, not the filtered list), `FleetScreen › ignores non-printer_state WS events` and `ui.test › renders without crashing` ("didn't crash" only).
+- **Frontend weak**: `QueueScreen › cancel button calls cancelJob` (`toHaveBeenCalled()` with no id — which job?), `filter chips are clickable` (asserts one chip vanished, not the filtered list), `FleetScreen › ignores non-printer_state WS events` and `ui.test › Progress › renders without crashing` (asserts only that `.progress` exists).
 
 ## 5. Duplicates (merge / delete)
 
 | # | Tests | Action |
 |---|---|---|
-| D1 | `test_printers.py::test_test_connection_known_type_returns_ok_field` (real MQTT attempt, 22 s, asserts `"ok" in body`) ⊂ `test_printers_api.py::test_test_connection_success/unreachable` | **delete**; move `…unknown_type` 422 to api file; fold rest of `test_printers.py` (loaded_filaments ×4) into one parametrized round-trip in `test_printers_api.py`; delete file |
+| D1 | `test_printers.py::test_test_connection_known_type_returns_ok_field` (real MQTT attempt, 22 s, asserts `"ok" in body`) ⊂ `test_printers_api.py::test_test_connection_success/unreachable` | **delete**; move `…unknown_type` 422 to api file; fold the rest of `test_printers.py` (loaded_filaments ×4, and `test_list_printers_includes_connected_field` — the only `GET /printers` `connected` test) into `test_printers_api.py`; delete file |
 | D2 | camera 404/503/no-capability in `test_camera_stream.py` **and** `test_printers_api.py:283-355` (404 bodies AST-identical) | delete the 3 in `test_printers_api.py` |
 | D3 | `test_migrations::test_v012_adds_api_keys_table` ⊂ `…_with_unique_prefix_index`; `services/test_migrate_library.py` re-tests runner adds columns | keep one; replace with W10 parametrized idempotency |
 | D4 | "no bootstrap hatch": `test_auth::test_no_key_empty_table_401`, `…nonempty_table_401`, `…deleting_every_key…`, `test_api_keys::test_empty_table_is_not_an_open_door`, `test_websocket::…4401_when_table_empty` | same behavior (no key ⇒ 401 regardless of table). Keep the api-keys one (real app, 3 routes) + ws one; collapse the three in `test_auth` into one param `[empty, other-key, emptied]` |
 | D5 | `test_jobs_tool_index.py` + `test_filament_map_plumbing.py::test_printer_config_input_*` | merge into one file |
-| D6 | `test_printer_factory.py` ⊂ `services/test_factory.py` + `test_snapmaker_registry.py`; `test_factory::test_registry_has_*` ×3 + `test_get_printer_types_returns_list` ⊂ `…_fields` tests | delete file + 4 one-liners; keep negative "unknown type" once |
+| D6 | `test_printer_factory.py` tests `create_client_from_config` (unknown type, extra fields ignored) — only partly overlapped (`test_snapmaker_registry.py` calls it once; `test_factory.py` tests `create_client(printer)`). `test_factory::test_registry_has_*` ×3 + `test_get_printer_types_returns_list` ⊂ `…_fields` tests | delete the 4 one-liners; fold the 2 `create_client_from_config` checks into `test_factory.py`, then delete `test_printer_factory.py` (that function backs the test-connection route) |
 | D7 | `test_fleet.py::test_fleet_awaiting_plate_clear_field_present` ⊂ offline-state test | add the one assert there, delete |
 | D8 | ORM insert/select smoke: `test_models::{create_printer, create_uploaded_file, create_gcode_file}`, `services/test_models_library.py` | every API test exercises these; keep only behavior tests (`share_token` unique, JSON round-trip). (`test_models::test_create_printer` also name-clashes with the API test.) |
 | D9 | FE `e2e/smoke.spec.ts` ⊂ `e2e/fleet.spec.ts`; and weaker: regex `/printers online\|Workshop\|Fleet/` matches the **nav label "Fleet"**, passes even if data never loads | delete |
-| D10 | helpers re-implemented per file: `_make_3mf` ×6, `_upload_file` ×4, `_create_printer` ×6, `_create_job` ×4, raw-session hack `agen = app.dependency_overrides[get_session]()` ×~50 | move to `conftest.py` factories (`make_3mf`, `upload_3mf`, `make_printer`, `make_job`, `db` fixture) |
+| D10 | helpers re-implemented per file: `_make_3mf` ×9 defs, `_upload_file` ×4, `_create_printer` ×6, `_create_job` ×4, raw-session hack `agen = app.dependency_overrides[get_session]()` ×28 | move to `conftest.py` factories (`make_3mf`, `upload_3mf`, `make_printer`, `make_job`, `db` fixture) |
 
 ## 6. Obsolete / dead
 
 - **O1** `test_main_lifespan.py` (both tests): docstring says lifespan cleanup; actually inserts/deletes a `Printer` with SQLAlchemy — never imports `app.main`. Zero coverage of `_remove_placeholder_printer_from_db`. → replace with W7.
 - **O2** `inspect.getsource` tests: `test_jobs_tool_index_roundtrip.py` (×2), `test_filament_map_plumbing::test_job_routes_round_trip_filament_map`. Pass if the string sits in a comment; fail on harmless refactor. → one real round-trip: `POST /jobs` with `tool_index` + `filament_map` → `GET /jobs/{id}/details` returns both → `PATCH` configs persists changes. (Multi-material is a headline feature; backend API round-trip is currently untested.)
-- **O3** 4 skipped tests (`snapmaker/test_paint_remap.py` ×3, `test_filament_map_e2e.py`) hardcode `C:/Users/mgome/Downloads/Hausdeko…3mf` → **never run in CI or on any other machine**. Build a tiny synthetic painted 3MF in-test (or use `docs/reference 3mfs/`), else delete.
+- **O3** 4 skipped tests (`snapmaker/test_paint_remap.py` ×3, `test_filament_map_e2e.py`) hardcode `C:/Users/mgome/Downloads/Hausdeko…3mf` → **never run in CI or on any other machine**. The 3 `test_paint_remap.py` tests need a synthetic 3MF with `paint_color` attributes built in-test (the 4 blank files in `docs/reference 3mfs/` have none, so they don't work). `test_filament_map_e2e.py` also needs the real OrcaSlicer executable + `scripts/spike_filament_remap` — keep skipped or delete.
 - **O4** `BootstrapSentinel` model + v015 test: hatch removed (`v022`, "drop bootstrap hatch"); table unused by app code. Migration stays (history); drop the model and `test_v015_creates_bootstrap_sentinel_table` (or keep only inside W10 param).
-- **O5** `app/services/project_pack_builder.py`: 100 stmts, 0 % cov, **no importers**, no tests; `generate_project` now uses sidecar `pack_stls`. `docs/agent/backend.md` still documents it. → delete module + doc row (or test if resurrecting).
+- **O5** `app/services/project_pack_builder.py`: 100 stmts, 0 % cov, **no importers**, no tests; `generate_project` now uses sidecar `pack_stls`. `docs/agent/backend.md:19,94` and `README.md:164` still document it. → delete module + those doc references (or test if resurrecting).
 - **O6** `services/test_legacy_migration.py`, `test_migrate_library.py`: pre-library upload layout / pre-migration-runner schema. Keep only if that upgrade path is still supported (`migrate_legacy_uploads` 13 lines uncovered on the real path).
-- **O7** FE `data/mock.ts` + `mock.test.ts` (only consumer is its own test; production code never imports it), `data/types.test.ts` (`expectTypeOf` is compile-time; vitest without `--typecheck` runs **zero** assertions → cannot fail), `icons.test.tsx › has all required icons`, `App.test.tsx` (negative check for a removed "Filaments" link).
+- **O7** FE `data/mock.ts` + `mock.test.ts` (only consumer is its own test; production code never imports it), `data/types.test.ts` (`expectTypeOf` is compile-time only: zero runtime assertions under vitest; it is type-checked by `tsc -b` in the CI build, so it can only fail on a type rename — low value, delete if `types.ts` is exercised by consumers), `icons.test.tsx › has all required icons`, `App.test.tsx` (negative check for a removed "Filaments" link).
 - **O8** Misleading names: `test_slice_failure_requeues_when_other_printers_available` asserts `blocked` and printer 2 is never ready (no rescue exercised); `test_download_and_model_filaments_work_without_stored_path` only hits `/download`.
-- **O9** Doc/behavior drift: CLAUDE.md + `docs/agent/conventions.md` say a job goes `failed` when slicing failed on **all** configs; `_handle_slice_failure` only ever sets `blocked` (no exhausted→`failed` path exists in `queue_engine.py`). Decide intended behavior, pin it (W4), fix the doc.
-- **O10** `@pytest.mark.asyncio` on a sync test (`test_auth.py:286`, PytestWarning); `pytestmark = asyncio` / per-test markers are no-ops under `asyncio_mode=auto`.
+- **O9** Doc/behavior drift: CLAUDE.md + `docs/agent/conventions.md` say a job goes `failed` when slicing failed on **all** configs; `_handle_slice_failure` only ever sets `blocked` (no exhausted→`failed` path exists in `queue_engine.py`). Decide intended behavior, pin it (W4), fix the docs (`CLAUDE.md:68`, `conventions.md:7-9`, `docs/agent/backend.md:86`, `docs/agent/recipes.md:87`).
+- **O10** module-level `pytestmark = pytest.mark.asyncio` (`test_auth.py:16`) hits the sync `test_projects_share_scope_is_registered` (PytestWarning); asyncio markers are no-ops under `asyncio_mode=auto` everywhere.
 
 ## 7. Frontend gaps
 
@@ -172,7 +172,7 @@ Files < 50 % lines: `App.tsx` 13 %, `CustomerPortal` 2 %, `RemapModal` 1 %, `Out
 
 ## 8. Contract drift (FE ↔ BE) — highest systemic risk per review docs
 
-Routes lack `response_model`, so `openapi.json` (drift-checked in CI) doesn't describe response fields; both sides test against their own assumptions.
+Most FE-consumed routes (fleet, queue, jobs, printers, projects, files) lack `response_model` (~13 routes have one: settings, spoolman sync-status, project share, fleet-import), so `openapi.json` (drift-checked in CI) doesn't describe response fields; both sides test against their own assumptions.
 - **C1** vitest: extract every URL literal from `src/api/*.ts`; assert each (method, path) exists in repo-root `openapi.json`. One test replaces ~40 hand-written "POSTs to /api/v1/…" assertions and catches renamed routes for free.
 - **C2** backend key-set tests for the FE-consumed shapes (`/fleet` item, `/queue` job, `/jobs/{id}/details`, `/printers`, `/projects/{id}`, `/files`): `assert FE_KEYS <= set(resp.json())`, where `FE_KEYS` is a small JSON checked in and also imported by the FE mapper tests / `e2e/mock-api.ts` fixtures (so fixtures can't invent fields).
 - **C3** scope mirror (W8).
@@ -181,8 +181,8 @@ Routes lack `response_model`, so `openapi.json` (drift-checked in CI) doesn't de
 
 - **H1 Coverage config missing; CI never measures coverage.** Default coverage.py loses code after SQLAlchemy greenlet switches (64 % vs true 76 %). Add `pytest-cov` to dev deps and
   `[tool.coverage.run] branch=true, source=["app"], concurrency=["greenlet","thread"]`; add a ratchet (`--cov-fail-under=75`) in CI. Frontend: add `@vitest/coverage-v8` config (already a devDep) + threshold.
-- **H2** 22 s test (D1) = 27 % of backend wall time. Everything else ≈ 50 s; sleeps ≈ 2.5 s of that.
-- **H3** aiosqlite worker-thread `Event loop is closed` warnings (`test_maintenance_service` ×6, `test_notification_service` ×2): engines/sessions not disposed. Add `await engine.dispose()` to those fixtures; these warnings can mask real leaks.
+- **H2** 22 s test (D1) = 27 % of backend wall time. Everything else ≈ 50 s; sleeps ≈ 2 s of that.
+- **H3** aiosqlite worker-thread `Event loop is closed` warnings surface in `test_maintenance_service` ×6 / `test_notification_service` ×2, but those files already dispose (or use no DB). The leaking engines are in neighbouring files that create one without `dispose()`: `test_legacy_migration.py`, `test_migrate_library.py`, `test_ams_merge.py`, `test_library_scanner.py`, `test_models_library.py`, one of two in `api/test_websocket.py` — fix there (GC of leaked engines fires the warning in later tests). These warnings can mask real leaks.
 
 ## 10. Suggested order (effort ≈ tests added)
 
