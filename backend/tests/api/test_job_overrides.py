@@ -146,3 +146,155 @@ def test_slice_raises_without_sidecar():
             assert False, "expected SliceError"
         except SliceError as e:
             assert "LAMINUS_SIDECAR_URL" in str(e)
+
+
+# ---------------------------------------------------------------------------
+# POST /jobs/check-overrides — embedded 3MF settings vs the chosen presets
+# ---------------------------------------------------------------------------
+
+import io
+import json
+import zipfile
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.services.laminus_sidecar_client import SidecarError
+
+_KEYS = {"has_embedded_settings", "has_findings", "setting_changes", "slot_warning"}  # what the frontend reads
+_CATALOG = {
+    "machine": [{"name": "Bambu Lab P1S 0.4", "uuid": "m-1"}],
+    "process": [{"name": "0.20mm Standard", "uuid": "p-1"}],
+    "filament": [
+        {"name": "Generic PLA", "uuid": "f-generic", "compatible_printers": []},
+        {"name": "Bambu PLA Basic", "uuid": "f-bambu", "compatible_printers": ["Bambu Lab P1S 0.4"]},
+    ],
+}
+
+
+def _project_3mf(settings: dict, model_xml: str | None = None) -> bytes:
+    """A 3MF that carries embedded slicer settings (what makes the override check run)."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]}))
+        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
+        zf.writestr("Metadata/project_settings.config", json.dumps(settings))
+        if model_xml is not None:
+            zf.writestr("Metadata/model_settings.config", model_xml)
+    return buf.getvalue()
+
+
+@pytest.fixture
+def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
+    """`await check(data=..., printer=..., sidecar=..., catalog=..., merged=..., **body)` -> (response, client_mock)."""
+    async def _check(*, data: bytes | None = None, sidecar: str | None = "http://laminus.test",
+                     catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None, **body):
+        file_id = await upload_3mf(data=data)
+        printer_id = await create_printer(**(printer or {}))
+        payload = {"uploaded_file_id": file_id, "printer_id": printer_id, "print_profile": "0.20mm Standard",
+                   "filament_profile": "Bambu PLA Basic", **body}
+        catalog_mock = AsyncMock(side_effect=catalog) if isinstance(catalog, Exception) else AsyncMock(return_value=catalog)
+        sidecar_client = MagicMock()
+        if isinstance(merged, Exception):
+            sidecar_client.get_merged_config.side_effect = merged
+        else:
+            sidecar_client.get_merged_config.return_value = merged if merged is not None else {}
+        with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+             patch("app.config.get_laminus_sidecar_url", return_value=sidecar), \
+             patch("app.api.routes.laminus.get_cached_catalog", catalog_mock), \
+             patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=sidecar_client):
+            resp = await client.post("/api/v1/jobs/check-overrides", json=payload)
+        return resp, sidecar_client
+    return _check
+
+
+async def test_check_overrides_404_for_unknown_file_and_printer(client: AsyncClient, upload_3mf, create_printer):
+    printer_id = await create_printer()
+    resp = await client.post("/api/v1/jobs/check-overrides", json={
+        "uploaded_file_id": 424242, "printer_id": printer_id, "print_profile": "0.20mm Standard"})
+    assert (resp.status_code, resp.json()["detail"]) == (404, "File 424242 not found")
+
+    file_id = await upload_3mf()
+    resp = await client.post("/api/v1/jobs/check-overrides", json={
+        "uploaded_file_id": file_id, "printer_id": 424243, "print_profile": "0.20mm Standard"})
+    assert (resp.status_code, resp.json()["detail"]) == (404, "Printer 424243 not found")
+
+
+async def test_check_overrides_bare_3mf_has_nothing_to_lose_and_never_calls_the_sidecar(check):
+    resp, sidecar = await check()  # default fixture 3MF has no project_settings.config
+
+    assert resp.status_code == 200
+    assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
+                           "has_embedded_settings": False}
+    sidecar.get_merged_config.assert_not_called()
+
+
+async def test_check_overrides_printer_without_active_preset_skips_the_diff(check):
+    resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}),
+                                printer={"current_orca_printer_profile": None})
+
+    assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
+                           "has_embedded_settings": True}
+    sidecar.get_merged_config.assert_not_called()
+
+
+@pytest.mark.parametrize("case, kwargs, error", [
+    ("no sidecar configured", {"sidecar": None}, "Override check requires Laminus sidecar"),
+    ("catalog unavailable", {"catalog": RuntimeError("boom")}, "Catalog unavailable: boom"),
+    ("machine preset not in catalog", {"catalog": {**_CATALOG, "machine": []}},
+     "Profile not found in sidecar: machine='Bambu Lab P1S 0.4' process='0.20mm Standard'"),
+    ("process preset not in catalog", {"print_profile": "0.28mm Draft"},
+     "Profile not found in sidecar: machine='Bambu Lab P1S 0.4' process='0.28mm Draft'"),
+    ("catalog has no filaments", {"catalog": {**_CATALOG, "filament": []}},
+     "No filament profiles found in sidecar catalog"),
+    ("sidecar rejects the merge", {"merged": SidecarError("merge failed")}, "merge failed"),
+])
+async def test_check_overrides_degrades_to_an_error_note_instead_of_blocking(check, case, kwargs, error):
+    resp, _sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), **kwargs)
+
+    assert resp.status_code == 200, case
+    assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
+                           "has_embedded_settings": True, "error": error}
+
+
+async def test_check_overrides_reports_only_curated_settings_the_presets_would_change(check):
+    embedded = {"layer_height": "0.2", "enable_support": "1", "wall_loops": ["3"], "fan_speed": "10"}
+    merged = {"layer_height": "0.16", "enable_support": "1", "wall_loops": ["4"], "fan_speed": "99"}
+
+    resp, sidecar = await check(data=_project_3mf(embedded), merged=merged)
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert set(body) == _KEYS
+    assert body["has_embedded_settings"] is True and body["has_findings"] is True
+    assert body["slot_warning"] is None
+    # unchanged (enable_support) and non-curated (fan_speed) keys are not reported; list values are joined
+    assert sorted(body["setting_changes"], key=lambda c: c["key"]) == [
+        {"key": "layer_height", "from": "0.2", "to": "0.16"},
+        {"key": "wall_loops", "from": "3", "to": "4"},
+    ]
+    sidecar.get_merged_config.assert_called_once_with("m-1", "p-1", ["f-bambu"])
+
+
+async def test_check_overrides_clean_when_presets_agree_with_the_file(check):
+    resp, _ = await check(data=_project_3mf({"layer_height": "0.2"}), merged={"layer_height": "0.2"})
+
+    assert resp.json() == {"has_embedded_settings": True, "setting_changes": [], "slot_warning": None,
+                           "has_findings": False}
+
+
+async def test_check_overrides_unknown_filament_falls_back_to_one_compatible_with_the_printer(check):
+    _resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), filament_profile="Not A Filament")
+
+    sidecar.get_merged_config.assert_called_once_with("m-1", "p-1", ["f-bambu"])  # not the first-listed generic one
+
+
+async def test_check_overrides_warns_when_the_file_uses_more_slots_than_the_printer_has(check):
+    model_xml = '<config><metadata key="extruder" value="1"/><metadata key="extruder" value="3"/></config>'
+
+    resp, _ = await check(data=_project_3mf({"layer_height": "0.2"}, model_xml=model_xml),
+                          merged={"layer_height": "0.2"})
+
+    body = resp.json()
+    assert body["slot_warning"] == {"used_slots": 3, "printer_slots": 1}  # printer has no loaded slots -> 1
+    assert (body["has_findings"], body["setting_changes"]) == (True, [])
