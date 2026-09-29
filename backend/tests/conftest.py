@@ -1,5 +1,11 @@
-import pytest_asyncio
+import io
+import json
+import zipfile
 from collections.abc import AsyncGenerator
+from unittest.mock import patch
+
+import pytest
+import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
@@ -15,12 +21,21 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+    """Session factory bound to the per-test in-memory DB (the same DB the `client` fixture serves).
+    Use it to seed or inspect rows directly: `async with session_factory() as s: ...`."""
     engine = create_async_engine(TEST_DB_URL)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    try:
+        yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    finally:
+        await engine.dispose()
 
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+@pytest_asyncio.fixture
+async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
+    factory = session_factory
 
     async def override_get_session() -> AsyncGenerator[AsyncSession, None]:
         async with factory() as s:
@@ -51,7 +66,6 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     finally:
         app.dependency_overrides.clear()
         thumbnail_regen.set_session_factory(original_thumbnail_factory)
-        await engine.dispose()
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -80,3 +94,78 @@ async def _isolate_printer_manager():
     finally:
         printer_manager.__dict__.pop("connect_printer", None)
         _clear()
+
+
+# ---------------------------------------------------------------------------
+# Shared factories for API tests (previously copy-pasted per test file)
+# ---------------------------------------------------------------------------
+
+def make_3mf_bytes() -> bytes:
+    """Smallest 3MF the upload route accepts: one plate with a 60s / 5g estimate and a thumbnail."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("Metadata/slice_info.config", json.dumps({
+            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
+        }))
+        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
+    return buf.getvalue()
+
+
+@pytest.fixture
+def make_3mf():
+    return make_3mf_bytes
+
+
+@pytest_asyncio.fixture
+async def upload_3mf(client, tmp_path):
+    """`await upload_3mf(filename="m.3mf", data=None)` -> uploaded file id (library dirs point at tmp_path)."""
+    async def _upload(filename: str = "m.3mf", data: bytes | None = None) -> int:
+        with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
+             patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
+            (tmp_path / "library").mkdir(exist_ok=True)
+            (tmp_path / "filecache").mkdir(exist_ok=True)
+            resp = await client.post(
+                "/api/v1/files/upload",
+                files={"file": (filename, data if data is not None else make_3mf_bytes(), "application/octet-stream")},
+            )
+        assert resp.status_code in (200, 201), resp.text
+        return resp.json()["id"]
+    return _upload
+
+
+@pytest_asyncio.fixture
+async def create_printer(client):
+    """`await create_printer(**overrides)` -> printer id (a Bambu with an active OrcaSlicer preset)."""
+    async def _create(**overrides) -> int:
+        body = {
+            "name": "P1S", "printer_type": "bambu",
+            "connection_config": {},
+            "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
+            "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+        }
+        body.update(overrides)
+        resp = await client.post("/api/v1/printers", json=body)
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+    return _create
+
+
+@pytest_asyncio.fixture
+async def create_job(client, upload_3mf, create_printer):
+    """`await create_job(file_id=None, printer_id=None, **config_overrides)` -> job id.
+    Uploads a file / creates a printer when not given. The queue engine is patched out (no wake side effects)."""
+    async def _create(file_id: int | None = None, printer_id: int | None = None, **config_overrides) -> int:
+        file_id = file_id if file_id is not None else await upload_3mf()
+        printer_id = printer_id if printer_id is not None else await create_printer()
+        config = {
+            "printer_id": printer_id, "print_profile": "0.20mm",
+            "filament_type": "any", "filament_color": "any",
+        }
+        config.update(config_overrides)
+        with patch("app.api.routes.jobs.queue_engine"):
+            resp = await client.post("/api/v1/jobs", json={
+                "uploaded_file_id": file_id, "plate_number": 1, "printer_configs": [config],
+            })
+        assert resp.status_code == 201, resp.text
+        return resp.json()["id"]
+    return _create
