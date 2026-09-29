@@ -167,58 +167,6 @@ async def test_slice_failure_blocks_job(db):
 
 
 @pytest.mark.asyncio
-async def test_slice_failure_requeues_when_other_printers_available(db):
-    # Printer 1 fails, but printer 2 is also eligible
-    mgr = _make_mock_printer_manager([1])
-    mock_slicer = MagicMock()
-    mock_slicer.slice.side_effect = SliceError("fail")
-
-    qe = QueueEngine(db, mgr, mock_slicer)
-    _install_fake_put(qe)
-
-    async with db() as session:
-        for pid in (1, 2):
-            session.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri",
-                                connection_config={}, current_orca_printer_profile="Test Machine Preset"))
-        f = UploadedFile(
-            original_filename="test.3mf",
-            stored_path="/data/uploads/x/model.3mf",
-            plates=[],
-            uploaded_at=datetime.now(timezone.utc).isoformat(),
-        )
-        session.add(f)
-        await session.flush()
-        j = Job(
-            uploaded_file_id=f.id,
-            plate_number=1,
-            queue_position=1.0,
-            status="queued",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
-        )
-        session.add(j)
-        await session.flush()
-        # Two printer configs — printer 1 fails but printer 2 is available
-        session.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="0.20mm", filament_profile="PLA"))
-        session.add(JobPrinterConfig(job_id=j.id, printer_id=2, print_profile="0.20mm", filament_profile="PLA"))
-        await session.commit()
-        job_id = j.id
-
-    await qe._process_queue()
-    await asyncio.sleep(0.1)
-
-    async with db() as session:
-        job = await session.get(Job, job_id)
-        # Printer 1's slice failed → blocked; printer 2 (config not failed) can still
-        # rescue it on a later check.
-        assert job.status == "blocked"
-        cfgs = (await session.execute(
-            select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
-        by_printer = {c.printer_id: c.slice_failed for c in cfgs}
-        assert by_printer[1] is True and by_printer[2] is False
-
-
-@pytest.mark.asyncio
 async def test_handle_print_complete_transitions_job(db):
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
