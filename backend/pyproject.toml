@@ -33,9 +33,12 @@ branch = true
 source = ["app"]
 concurrency = ["greenlet", "thread"]
 
+# fail_under is a ratchet: measured 80% (line+branch) when it was set, floor left 2 points below for
+# interpreter/version noise. Raise it as coverage grows; never lower it to make a change pass.
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
+fail_under = 78
 
 [build-system]
 requires = ["setuptools>=68"]
