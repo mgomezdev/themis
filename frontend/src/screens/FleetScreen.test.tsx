@@ -104,37 +104,36 @@ describe('FleetScreen', () => {
     await waitFor(() => expect(screen.getByText(/0 printers/i)).toBeInTheDocument());
   });
 
-  it('reflects WebSocket printer_state update', async () => {
+  it('applies a WebSocket printer_state update to the matching printer', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
 
     act(() => {
       MockWS.instances[0].onmessage?.({
-        data: JSON.stringify({
-          type: 'printer_state',
-          data: { ...PRINTER_1, state: 'IDLE', progress: 0, remaining_time: 0 },
-        }),
+        data: JSON.stringify({ type: 'printer_state', data: { ...PRINTER_1, name: 'Forge II' } }),
       });
     });
 
-    // After update to IDLE, timeRemaining becomes 0 — verify no crash and Forge still shows
-    expect(screen.getByText('Forge')).toBeInTheDocument();
+    expect(screen.getByText('Forge II')).toBeInTheDocument();
+    expect(screen.queryByText('Forge')).toBeNull();                     // replaced in place, not duplicated
+    expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();
   });
 
-  it('ignores non-printer_state WebSocket events', async () => {
+  it('ignores WebSocket events that are not printer_state, even if they carry printer-shaped data', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
 
     act(() => {
       MockWS.instances[0].onmessage?.({
-        data: JSON.stringify({ type: 'plate_clear_required', data: { printer_id: 1 } }),
+        data: JSON.stringify({ type: 'plate_clear_required', data: { ...PRINTER_1, name: 'Hijacked' } }),
       });
     });
 
-    // Component should still render without crashing
     expect(screen.getByText('Forge')).toBeInTheDocument();
+    expect(screen.queryByText('Hijacked')).toBeNull();
+    expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();       // and it did not add a printer either
   });
 
   it('closes WebSocket on unmount', async () => {
