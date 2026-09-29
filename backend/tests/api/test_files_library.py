@@ -53,8 +53,15 @@ async def test_delete_nonempty_folder_409(client, lib):
 
 @pytest.mark.asyncio
 async def test_delete_root_folder_rejected(client, lib):
+    await client.post("/api/v1/files/upload", data={"folder": "/Keep"}, files=_stl("a.stl"))
+    before = (await client.get("/api/v1/files/dirs")).json()
+
     r = await client.delete("/api/v1/files/folders", params={"path": "/"})
+
     assert r.status_code == 400
+    assert lib.is_dir() and (lib / "Keep" / "a.stl").is_file()  # library untouched
+    assert (await client.get("/api/v1/files/dirs")).json() == before
+    assert [f["original_filename"] for f in (await client.get("/api/v1/files")).json()] == ["a.stl"]
 
 
 @pytest.mark.asyncio

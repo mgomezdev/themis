@@ -63,8 +63,12 @@ async def test_set_job_cost_to_null_clears_it(client, create_job):
 
 async def test_set_job_cost_rejects_negative(client, create_job):
     job_id = await create_job(filament_profile="PLA")
+    assert (await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 2.5})).status_code == 200
+
     resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": -1})
+
     assert resp.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["filament_cost"] == 2.5  # rejected value not stored
 
 
 async def test_set_job_cost_404_for_missing_job(client):
@@ -121,6 +125,20 @@ async def test_cancel_complete_job_fails(client, upload_3mf, create_printer):
     await client.post(f"/api/v1/jobs/{job_id}/cancel")   # transitions to "cancelled"
     response = await client.post(f"/api/v1/jobs/{job_id}/cancel")  # "cancelled" not in _CANCELLABLE_STATUSES
     assert response.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["status"] == "cancelled"
+
+
+async def test_cancel_completed_job_is_rejected_and_leaves_it_complete(client, session_factory, create_job):
+    from app.models import Job
+    job_id = await create_job()
+    async with session_factory() as session:
+        (await session.get(Job, job_id)).status = "complete"
+        await session.commit()
+
+    response = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+
+    assert response.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["status"] == "complete"
 
 
 async def test_get_slice_failures(client, upload_3mf, create_printer):
@@ -555,7 +573,10 @@ async def test_reorder_rejects_non_queued_job(client, session_factory):
         j_id = j.id
 
     resp = await client.post(f"/api/v1/jobs/{j_id}/reorder", json={"action": "promote"})
+
     assert resp.status_code == 422
+    job = (await client.get(f"/api/v1/jobs/{j_id}")).json()
+    assert (job["status"], job["queue_position"]) == ("printing", 1.0)  # untouched
 
 
 async def _seed_spool_warning_fixture(session_factory, estimate_grams):

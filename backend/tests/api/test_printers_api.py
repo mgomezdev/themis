@@ -117,6 +117,8 @@ async def test_delete_printer_refuses_with_active_job(client, session_factory, c
 
     response = await client.get(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 200
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()  # the job it was running is undisturbed
+    assert (job["status"], job["assigned_printer_id"]) == ("printing", printer_id)
 
 
 async def test_delete_printer_disconnects_live_client(client):

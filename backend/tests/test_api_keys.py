@@ -136,42 +136,79 @@ async def test_delete_removes_row(client: AsyncClient):
     assert second_id not in ids
 
 
-async def test_cannot_revoke_last_apikeys_write_key(client: AsyncClient):
-    raw, headers = await _bootstrap(client)
-    list_resp = await client.get("/api/v1/api-keys", headers=headers)
-    key_id = list_resp.json()[0]["id"]
+# The "last apikeys:write key" guard can only fire when the caller is NOT that key (a caller holding
+# apikeys:write is itself one, so revoking any other key always leaves it). The env bootstrap key is
+# such a caller: it authenticates without being a row in api_keys.
 
-    resp = await client.post(f"/api/v1/api-keys/{key_id}/revoke", headers=headers)
+@pytest.fixture
+def env_admin_headers(monkeypatch) -> dict[str, str]:
+    monkeypatch.setenv("THEMIS_BOOTSTRAP_KEY", "bootstrap-secret-not-in-db")
+    return {"X-Api-Key": "bootstrap-secret-not-in-db"}
+
+
+async def _only_key(client: AsyncClient, headers: dict[str, str]) -> dict:
+    rows = (await client.get("/api/v1/api-keys", headers=headers)).json()
+    assert len(rows) == 1
+    return rows[0]
+
+
+async def test_cannot_revoke_last_apikeys_write_key(client: AsyncClient, env_admin_headers):
+    _raw, own_headers = await _bootstrap(client)
+    key = await _only_key(client, own_headers)
+
+    resp = await client.post(f"/api/v1/api-keys/{key['id']}/revoke", headers=env_admin_headers)
+
     assert resp.status_code == 400
+    assert "last key" in resp.json()["detail"]
+    after = await _only_key(client, own_headers)  # still there, still enabled, not revoked
+    assert (after["enabled"], after["revoked_at"]) == (True, None)
 
 
-async def test_cannot_delete_last_apikeys_write_key(client: AsyncClient):
-    raw, headers = await _bootstrap(client)
-    list_resp = await client.get("/api/v1/api-keys", headers=headers)
-    key_id = list_resp.json()[0]["id"]
+async def test_cannot_delete_last_apikeys_write_key(client: AsyncClient, env_admin_headers):
+    _raw, own_headers = await _bootstrap(client)
+    key = await _only_key(client, own_headers)
 
-    resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
+    resp = await client.delete(f"/api/v1/api-keys/{key['id']}", headers=env_admin_headers)
+
     assert resp.status_code == 400
+    assert "last key" in resp.json()["detail"]
+    assert (await _only_key(client, own_headers))["id"] == key["id"]
+
+
+async def test_can_revoke_a_apikeys_write_key_while_another_remains(client: AsyncClient, env_admin_headers):
+    """The guard is about the LAST one: with a second apikeys:write key present, revoking works."""
+    _raw, own_headers = await _bootstrap(client)
+    second = (await client.post(
+        "/api/v1/api-keys", json={"name": "Second", "scopes": ["apikeys:write"]}, headers=own_headers,
+    )).json()
+
+    resp = await client.post(f"/api/v1/api-keys/{second['id']}/revoke", headers=env_admin_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["enabled"] is False
 
 
 async def test_cannot_revoke_own_api_key(client: AsyncClient):
     raw, headers = await _bootstrap(client)
-    list_resp = await client.get("/api/v1/api-keys", headers=headers)
-    key_id = list_resp.json()[0]["id"]
+    key = await _only_key(client, headers)
 
-    resp = await client.post(f"/api/v1/api-keys/{key_id}/revoke", headers=headers)
+    resp = await client.post(f"/api/v1/api-keys/{key['id']}/revoke", headers=headers)
+
     assert resp.status_code == 400
     assert "own" in resp.json().get("detail", "").lower()
+    after = await _only_key(client, headers)
+    assert (after["enabled"], after["revoked_at"]) == (True, None)
 
 
 async def test_cannot_delete_own_api_key(client: AsyncClient):
     raw, headers = await _bootstrap(client)
-    list_resp = await client.get("/api/v1/api-keys", headers=headers)
-    key_id = list_resp.json()[0]["id"]
+    key = await _only_key(client, headers)
 
-    resp = await client.delete(f"/api/v1/api-keys/{key_id}", headers=headers)
+    resp = await client.delete(f"/api/v1/api-keys/{key['id']}", headers=headers)
+
     assert resp.status_code == 400
     assert "own" in resp.json().get("detail", "").lower()
+    assert (await _only_key(client, headers))["id"] == key["id"]
 
 
 async def test_create_second_key_with_zero_scopes_rejects_400(client: AsyncClient):
