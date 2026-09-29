@@ -6,19 +6,23 @@ import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy import select
+from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.database import Base
+from app.database import Base, _set_sqlite_pragmas
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
+from tests.waiting import wait_until
 
 
 @pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+async def db(tmp_path):
+    # File-backed, not :memory: — an in-memory DB shares ONE connection across sessions, so a
+    # polling reader would see (and on close roll back) the engine's uncommitted writes.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'queue.db'}")
+    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -105,11 +109,16 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)  # allow background task to run through to printing
 
-    async with db() as session:
-        job = await session.get(Job, job_id)
-        assert job.status == "printing"
+    async def _status():
+        async with db() as session:
+            return (await session.get(Job, job_id)).status
+
+    async def _is_printing():
+        return await _status() == "printing"
+
+    await wait_until(_is_printing, what="job to reach printing")  # background slice+upload task
+    assert await _status() == "printing"
 
 
 @pytest.mark.asyncio
@@ -771,6 +780,9 @@ async def test_run_estimate_fails_when_printer_missing(db):
     job_id = await _seed_job(db, printer_id)
 
     async with db() as session:
+        # FKs are ON (as in prod), which forbids this state; turn them off on this connection to
+        # exercise the defensive branch for a dangling config.
+        await session.execute(text("PRAGMA foreign_keys=OFF"))
         job = await session.get(Job, job_id)
         job.estimate_status = "pending"
         job.estimate_token = 1
