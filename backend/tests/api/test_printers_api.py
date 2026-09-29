@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy import select
 from app.models import Printer
 from app.services.abstract_printer_client import PrinterCapabilities
@@ -94,41 +94,7 @@ async def test_delete_printer(client):
     assert response.status_code == 404
 
 
-def _make_3mf() -> bytes:
-    import io, zipfile, json
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
-
-
-async def _upload_file(client, tmp_path):
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        resp = await client.post(
-            "/api/v1/files/upload",
-            files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
-        )
-    return resp.json()["id"]
-
-
-async def _create_job(client, tmp_path, printer_id):
-    """Create a job whose only printer config points at printer_id."""
-    file_id = await _upload_file(client, tmp_path)
-    with patch("app.api.routes.jobs.queue_engine"):
-        create = await client.post("/api/v1/jobs", json={
-            "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
-        })
-    return create.json()["id"]
-
-
-async def test_delete_printer_refuses_with_active_job(client, tmp_path, session_factory):
+async def test_delete_printer_refuses_with_active_job(client, session_factory, create_job):
     """A printer physically running a job must not be deletable — removing the DB
     row can't stop the machine, and it would strand the job unresolved."""
     from app.models import Job
@@ -138,7 +104,7 @@ async def test_delete_printer_refuses_with_active_job(client, tmp_path, session_
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
     async with session_factory() as session:
         job = await session.get(Job, job_id)
@@ -174,7 +140,7 @@ async def test_delete_printer_disconnects_live_client(client):
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_factory):
+async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_factory, create_job):
     """Deleting a printer's GcodeFile rows must also remove the files they point at."""
     from app.models import GcodeFile
 
@@ -183,7 +149,7 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
     gcode_path = tmp_path / "out.gcode"
     gcode_path.write_text("G28")
@@ -197,7 +163,7 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_
     assert not gcode_path.exists()
 
 
-async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path, session_factory):
+async def test_delete_printer_blocks_job_left_with_no_config(client, session_factory, create_job):
     """A job whose only config pointed at the deleted printer must become visibly
     'blocked' rather than sitting in the queue unclaimable and invisible."""
     from app.models import Job
@@ -207,7 +173,7 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path, s
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 204

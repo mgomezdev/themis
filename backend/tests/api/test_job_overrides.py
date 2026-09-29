@@ -1,6 +1,3 @@
-import io
-import json
-import zipfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,41 +6,9 @@ from httpx import AsyncClient
 from app.services.slicer_service import SliceError, SliceRequest, SlicerService
 
 
-def _make_3mf() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
-
-
-async def _upload_file(client, tmp_path):
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        resp = await client.post(
-            "/api/v1/files/upload",
-            files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
-        )
-    return resp.json()["id"]
-
-
-async def _create_printer(client):
-    resp = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
-    })
-    return resp.json()["id"]
-
-
-async def test_create_job_stores_overrides(client: AsyncClient, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_create_job_stores_overrides(client: AsyncClient, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post("/api/v1/jobs", json={
@@ -65,10 +30,10 @@ async def test_create_job_stores_overrides(client: AsyncClient, tmp_path):
     assert detail.json()["overrides"] == {"sparse_infill_pattern": "grid", "layer_height": "0.15"}
 
 
-async def test_create_job_strips_non_curated_override_keys(client: AsyncClient, tmp_path):
+async def test_create_job_strips_non_curated_override_keys(client: AsyncClient, upload_3mf, create_printer):
     """Non-curated keys (e.g. post_process) are silently dropped at the API boundary."""
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post("/api/v1/jobs", json={
@@ -82,9 +47,9 @@ async def test_create_job_strips_non_curated_override_keys(client: AsyncClient, 
     assert detail.json()["overrides"] == {"layer_height": "0.15"}
 
 
-async def test_create_job_without_overrides_is_null(client: AsyncClient, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_create_job_without_overrides_is_null(client: AsyncClient, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post("/api/v1/jobs", json={
@@ -98,10 +63,10 @@ async def test_create_job_without_overrides_is_null(client: AsyncClient, tmp_pat
     assert detail.json()["overrides"] is None
 
 
-async def test_update_job_configs_clears_overrides_when_omitted(client: AsyncClient, tmp_path):
+async def test_update_job_configs_clears_overrides_when_omitted(client: AsyncClient, upload_3mf, create_printer):
     """PATCH /configs without overrides field clears any previously-stored overrides."""
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     # Create job with overrides
     with patch("app.api.routes.jobs.queue_engine"):

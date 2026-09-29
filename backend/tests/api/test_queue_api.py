@@ -1,46 +1,6 @@
 # backend/tests/api/test_queue_api.py
-import json
-import io
-import zipfile
 import pytest
 from unittest.mock import patch
-
-
-def _make_3mf() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
-
-
-async def _create_job(client, tmp_path) -> int:
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        upload = await client.post(
-            "/api/v1/files/upload",
-            files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
-        )
-    file_id = upload.json()["id"]
-    printer = await client.post("/api/v1/printers", json={
-        "name": "P", "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": [], "current_orca_printer_profile": None,
-    })
-    printer_id = printer.json()["id"]
-    with patch("app.api.routes.jobs.queue_engine"):
-        create = await client.post("/api/v1/jobs", json={
-            "uploaded_file_id": file_id,
-            "plate_number": 1,
-            "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
-            ],
-        })
-    return create.json()["id"]
 
 
 async def test_queue_empty(client):
@@ -49,15 +9,15 @@ async def test_queue_empty(client):
     assert response.json() == []
 
 
-async def test_queue_shows_active_jobs(client, tmp_path):
-    job_id = await _create_job(client, tmp_path)
+async def test_queue_shows_active_jobs(client, create_job):
+    job_id = await create_job(filament_profile="PLA")
     response = await client.get("/api/v1/queue")
     assert response.status_code == 200
     ids = [j["id"] for j in response.json()]
     assert job_id in ids
 
 
-async def test_queue_shows_sliced_jobs(client, tmp_path, session_factory):
+async def test_queue_shows_sliced_jobs(client, session_factory, create_job):
     """A parked "sliced" job (production gcode ready, printer not yet ready to
     receive) must appear in GET /api/v1/queue with its full enriched fields —
     otherwise the frontend only learns about it via the queue_update websocket
@@ -65,7 +25,7 @@ async def test_queue_shows_sliced_jobs(client, tmp_path, session_factory):
     mostly-empty job entry ("Plate undefined")."""
     from app.models import Job
 
-    job_id = await _create_job(client, tmp_path)
+    job_id = await create_job(filament_profile="PLA")
     async with session_factory() as session:
         job = await session.get(Job, job_id)
         job.status = "sliced"
@@ -77,9 +37,9 @@ async def test_queue_shows_sliced_jobs(client, tmp_path, session_factory):
     assert job_id in ids
 
 
-async def test_queue_reorder(client, tmp_path):
-    job1 = await _create_job(client, tmp_path)
-    job2 = await _create_job(client, tmp_path)
+async def test_queue_reorder(client, create_job):
+    job1 = await create_job(filament_profile="PLA")
+    job2 = await create_job(filament_profile="PLA")
     response = await client.patch("/api/v1/queue/reorder", json={
         "positions": [{"job_id": job1, "queue_position": 5.0}, {"job_id": job2, "queue_position": 3.0}]
     })
