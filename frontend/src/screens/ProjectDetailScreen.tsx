@@ -77,13 +77,15 @@ export function ProjectDetailScreen() {
   useEffect(() => { reload(); }, [reload]);
 
   // Breadcrumbs end with the customer (linked when it's a customer account) and the project name.
-  const customerCrumb: Crumb | null = !project ? null
-    : project.customer_id != null && project.customer_name
-      ? { label: project.customer_name, to: `/customers/${project.customer_id}` }
-      : project.customer || null;
+  // Ignore a still-loaded previous project while navigating between projects in place.
+  const current = project?.id === projectId ? project : null;
+  const customerCrumb: Crumb | null = !current ? null
+    : current.customer_id != null && current.customer_name
+      ? { label: current.customer_name, to: `/customers/${current.customer_id}` }
+      : current.customer || null;
   useTopbarOverride(
-    project?.name,
-    project ? ['Workshop', { label: 'Projects', to: '/projects' }, ...(customerCrumb ? [customerCrumb] : [])] : undefined,
+    current?.name,
+    current ? ['Workshop', { label: 'Projects', to: '/projects' }, ...(customerCrumb ? [customerCrumb] : [])] : undefined,
   );
 
   const loadShare = useCallback(() => {

@@ -84,12 +84,19 @@ def _project_status(jobs_total: int, jobs_complete: int) -> str:
     return "completed" if jobs_complete == jobs_total else "active"
 
 
+def _paid(p: Project) -> float:
+    """Amount received. A project marked paid with no amount entered counts as paid in full."""
+    if p.amount_paid is None and p.payment_status == "paid":
+        return p.price or 0.0
+    return p.amount_paid or 0.0
+
+
 def _outstanding(p: Project) -> float:
     """Unpaid balance against the quoted price. A project marked paid owes nothing; one
     without a price has no known balance (counted separately as ``unpriced_unpaid``)."""
     if p.price is None or p.payment_status == "paid":
         return 0.0
-    return max(p.price - (p.amount_paid or 0.0), 0.0)
+    return max(p.price - _paid(p), 0.0)
 
 
 async def _customer_projects(session: AsyncSession, customer_ids: list[int]) -> tuple[list[Project], dict[int, list[Job]]]:
@@ -143,7 +150,7 @@ def _financials(projects: list[Project], jobs_by_project: dict[int, list[Job]], 
         cutoff = now - timedelta(days=days) if days is not None else None
         in_window = [p for p in projects
                      if cutoff is None or ((ts := _parse_ts(p.created_at)) is not None and ts >= cutoff)]
-        revenue = sum(p.amount_paid or 0.0 for p in in_window)
+        revenue = sum(_paid(p) for p in in_window)
         expenses = sum(j.filament_cost for p in in_window for j in jobs_by_project.get(p.id, [])
                        if j.filament_cost is not None)
         windows[key] = {

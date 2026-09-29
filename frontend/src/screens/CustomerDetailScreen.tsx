@@ -187,8 +187,11 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
   const [notice, setNotice] = useState<string | null>(null);
   const saved = toFields(customer);
   const dirty = (Object.keys(form) as (keyof CustomerFields)[]).some(k => form[k] !== saved[k]);
+  const savedKey = JSON.stringify(saved);
 
-  useEffect(() => { setForm(toFields(customer)); }, [customer]);
+  // Reset only when the saved details change — not on a reload after Enable/Set password,
+  // which would otherwise wipe unsaved edits.
+  useEffect(() => { setForm(JSON.parse(savedKey)); }, [savedKey]);
 
   async function run(fn: () => Promise<unknown>, ok: string) {
     setSaving(true);
@@ -273,7 +276,8 @@ export function CustomerDetailScreen() {
 
   useEffect(() => { reload(); }, [reload]);
 
-  useTopbarOverride(customer?.name, customer ? ['Workshop', { label: 'Customers', to: '/customers' }] : undefined);
+  const current = customer?.id === customerId ? customer : null;
+  useTopbarOverride(current?.name, current ? ['Workshop', { label: 'Customers', to: '/customers' }] : undefined);
 
   if (error && !customer) {
     return <div style={{ padding: 24, color: 'var(--err)' }}>{error}</div>;

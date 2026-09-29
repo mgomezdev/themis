@@ -5,6 +5,7 @@ import { FilamentRequirementPicker } from '../components/FilamentRequirementPick
 import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
+import { getCustomer } from '../api/customers';
 import { useFiles } from '../api/files';
 import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
 import type { LibraryFile, FolderNode } from '../data/types';
@@ -154,7 +155,14 @@ export function ProjectBuilderScreen() {
   const { id } = useParams<{ id: string }>();
   // "New project" from a customer's page links here with ?customer=<id>; used on create only.
   const [searchParams] = useSearchParams();
-  const newForCustomerId = Number(searchParams.get('customer')) || null;
+  const newForCustomerId = id ? null : Number(searchParams.get('customer')) || null;
+  const [newForCustomerName, setNewForCustomerName] = useState<string | null>(null);
+  useEffect(() => {
+    if (!newForCustomerId) return;
+    let alive = true;
+    getCustomer(newForCustomerId).then(c => { if (alive) setNewForCustomerName(c.name); }).catch(() => {});
+    return () => { alive = false; };
+  }, [newForCustomerId]);
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
@@ -448,7 +456,9 @@ export function ProjectBuilderScreen() {
       }
       return projectId;
     } else {
-      const proj = await createProject({ ...projectFields, customer_id: newForCustomerId });
+      const proj = await createProject({
+        ...projectFields, customer_id: orderType === 'customer' ? newForCustomerId : null,
+      });
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         await addProjectItem(proj.id, {
@@ -615,6 +625,13 @@ export function ProjectBuilderScreen() {
             </div>
           </div>
         </div>
+
+        {newForCustomerId && orderType === 'customer' && (
+          <div className="small muted">
+            Will be linked to customer account{' '}
+            <strong style={{ color: 'var(--text-2)' }}>{newForCustomerName ?? `#${newForCustomerId}`}</strong>
+          </div>
+        )}
 
         {/* Customer + notes row */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>

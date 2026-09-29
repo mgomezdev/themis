@@ -92,6 +92,13 @@ async def test_get_customer_404(client: AsyncClient):
     assert (await client.get("/api/v1/customers/999")).status_code == 404
 
 
+def test_paid_without_amount_counts_price_as_revenue():
+    now = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    p = Project(id=1, name="x", created_at="2026-08-30T00:00:00Z", price=80, amount_paid=None, payment_status="paid")
+    w = _financials([p], {}, now)["windows"]["all"]
+    assert (w["revenue"], w["outstanding"]) == (80, 0)
+
+
 def test_financial_windows_bucket_by_project_created_at():
     now = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
