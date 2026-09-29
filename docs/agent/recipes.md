@@ -37,7 +37,7 @@ Verify symbols against current code before relying on them ("code wins").
    detail route (`:id`), add a path-normalization case; add a Sidebar link if top-level.
 3. `frontend/src/api/<x>.ts` — typed client + hook (`apiFetch` on mount via `api/client.ts`, merge `/ws`
    with `?key=` from `withKeyParam` if live).
-4. If adding a required field to a shared `data/types.ts` type used by mocks, update `data/mock.ts`.
+4. If the screen reads a new API response field, add it to `contracts/response-keys.json` (checked against real backend responses and the FE types — see `conventions.md` § Tests).
 5. Style with token-driven classes from `app.css` + shared `components/ui.tsx` — no new CSS framework.
    See `styling.md`.
 6. Type-check with `npm run build` (`tsc -b`), NOT `tsc --noEmit`.
@@ -91,7 +91,7 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
 
 1. Broadcast from the backend hub (the WS manager `main.py` exposes; `printer_manager`/`queue_engine`
    call it). Message shape `{type, data}`.
-2. Frontend: handle the new `type` in the relevant hook's WS `onmessage` (`useQueue`/`useOrders`/
+2. Frontend: handle the new `type` in the `openLiveSocket` message handler of the relevant hook (`useQueue`/`useOrders`/
    `useFleetData`). Existing types: `job_update`, `queue_update`, `printer_state`, `plate_clear_required`.
 
 ## Add a per-printer print option (e.g. a new calibration toggle)

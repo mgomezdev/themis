@@ -329,7 +329,7 @@ fixtures). To add a column or table:
    ```
 2. Register it in `runner.py`: `from . import ..., v00N_your_name`; add to `_MIGRATIONS`.
 
-CLI: `cd backend && python -m app.migrations.migrate up|down`.
+CLI: `cd backend && python -m app.migrations.migrate up|down` (v001 imports `app.models` so `create_all` sees the tables on a fresh DB; `down` is only reliable for the newest migration — several older `down()`s can't run on SQLite).
 
 ## Frontend ↔ backend shape contracts
 

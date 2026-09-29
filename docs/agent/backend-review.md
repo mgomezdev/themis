@@ -32,7 +32,10 @@ This codebase has no schema-sharing or codegen between backend and frontend — 
 (API response field names, the `SCOPES` registry mirrored by hand in `frontend/src/api/apiKeys.ts`,
 `Sidebar.tsx`'s hand-duplicated settings nav) is kept in sync manually, which means it can drift
 silently and both sides' own tests can still pass (each side tests against what it assumes the other
-does, not what the other actually does).
+does, not what the other actually does). Partial safety net: `contracts/response-keys.json` lists the keys
+the FE reads for the main shapes — `tests/test_response_contracts.py` checks real backend responses against it and
+the FE's `responseKeys.contract.test.ts` checks its TS types; `frontend/src/api/contract.test.ts` checks every FE
+URL/method against `openapi.json`. Update the JSON when you rename or add a consumed field (still grep the FE).
 
 If a change adds or renames a response field the frontend consumes, grep the frontend for where it's
 read and confirm the key matches byte-for-byte — don't trust a plan, a negotiated contract, or "I
@@ -110,7 +113,8 @@ code that touches one of these areas, not just before review.
 
 TDD: a test that failed for the right reason before the fix, for every behavior change — not just
 coverage added after the fact. Full suite green (`pytest -v` from `backend/`) before calling anything
-done.
+done. Assert state (re-read the row / response body), not just a status code; prefer `wait_until` over
+`asyncio.sleep`; a test you can't make fail by breaking the code is not a test (mutate the line and check).
 
 ## 10. Public (unauthenticated) routes
 

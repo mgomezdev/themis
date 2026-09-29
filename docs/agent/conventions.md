@@ -82,13 +82,14 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 ```
 # Backend (from backend/, python.org venv active)
 uvicorn app.main:app --reload --port 8001
-pytest -v                       # all
+pytest -v                       # all (CI: `pytest -v -ra --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
 pytest tests/services/test_bambu_mqtt.py -v
 
 # Frontend (from frontend/)
 npm run dev                     # :5173, proxies /api + /ws → :8001
 npm run build                   # tsc -b && vite build  (this is the real type-check)
-npx vitest run                  # tests
+npx vitest run                  # tests (CI: `npm run test:cov`, thresholds in vitest.config.ts)
+npx playwright test             # e2e specs (mocked API; `e2e/mock-api.ts`)
 ```
 
 ## Style conventions
@@ -99,8 +100,15 @@ npx vitest run                  # tests
 - Frontend: TS strict + `noUnusedLocals`/`noUnusedParameters` — unused imports fail the build. Cast job
   status to `StatusKey`/`as never` at `StatusPill` sites (job statuses exceed the styled `StatusKey`
   set). Guard post-await `setState` with an `alive`/unmount flag in hooks.
-- Tests: pytest-asyncio with the `client` fixture (per-test SQLite file) backend; Vitest + Testing Library
-  with `vi.stubGlobal('fetch', …)` and a `FakeWS` stub frontend.
+- Route order: Starlette matches in declaration order, so a literal path (`/items/reorder`) must be declared
+  before its `/{param}` sibling (`/items/{item_id}`) or the param route swallows it (was a real bug). A list query
+  param on a GET needs `Query()`; `tests/test_openapi_contract.py` fails any GET/HEAD/DELETE with a request body.
+- Tests: pytest-asyncio with the `client` fixture; the shared `session_factory` is a per-test SQLite **file** with
+  the app's connect pragmas (FKs on, separate connection per session) — never `:memory:` (one shared connection,
+  no FKs). Factories in `tests/conftest.py` (`create_printer`, `create_job`, `upload_3mf`, `make_3mf`; `make_3mf_bytes`
+  uses fixed zip timestamps so content hashes are stable); `tests/waiting.py` `wait_until` instead of `sleep`.
+  Frontend: Vitest + Testing Library with `src/test/fetchStub.ts` (or `vi.stubGlobal('fetch', …)`) and a `FakeWS` stub.
+  A response field the FE reads goes in `contracts/response-keys.json` (checked by both suites).
 
 ## Git
 

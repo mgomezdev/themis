@@ -3,7 +3,10 @@
 FastAPI app at `backend/app/main.py`. Routes under `app/api/routes/`, business logic under
 `app/services/`, ORM in `app/models.py`, engine/session/migrate in `app/database.py`, env config in
 `app/config.py`. All routers + the `/ws` endpoint are registered in `main.py`; the `lifespan` wires
-the three subsystems and connects enabled printers.
+the three subsystems and connects enabled printers. `main.py` also serves the built SPA when `STATIC_DIR` exists:
+`register_spa(app, static_dir)` mounts `/assets` and falls every other GET back to `index.html` (no-cache);
+`_resolve_within(root, path)` rejects `..`/absolute/symlink escapes before a file is served. Unknown `/api/*` GETs
+fall through to that catch-all too (200 + index.html, not 404).
 
 ## Routes (`app/api/routes/`)
 
@@ -13,7 +16,7 @@ Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the pub
 
 | Module | Prefix | Key endpoints (method path → purpose) |
 |---|---|---|
-| `files.py` | `/api/v1/files` | `POST /upload` (store 3MF/STL, parse plates), `GET /{id}/plates`, `GET /{id}/model-filaments` (→ `parse_model_filaments`; returns `[{index,color,type}]`), `GET /{id}/thumbnails/{name}` |
+| `files.py` | `/api/v1/files` | `GET ""` (library list; filters `folder`, `tags` (repeat `?tags=a&tags=b`, all must match; MUST be declared `Query()` — a bare `list[str]` on a GET is read as a JSON body and silently ignored), `search`; `sort`), `POST /upload` (store 3MF/STL, parse plates), `GET /{id}/plates`, `GET /{id}/model-filaments` (→ `parse_model_filaments`; returns `[{index,color,type}]`), `GET /{id}/thumbnails/{name}` |
 | `jobs.py` | `/api/v1/jobs` | `POST ""` create, `GET ""`/`GET /{id}`, `GET /{id}/details` (full: file/plate/per-printer configs incl. `tool_index`/`filament_map`/assigned/`estimate_*`/`actual_*`; each `printer_configs[]` entry carries `low_stock_warning` — see **Spool preflight & notifications** below), `POST /check-overrides`, `PATCH /{id}/configs` (replace configs + re-queue; persists `tool_index`+`filament_map`), `PATCH /{id}/cost` (set manually-entered `filament_cost`, any status), `POST /{id}/unblock` (clear slice_failed + re-queue top), `POST /{id}/cancel` (→ stops printer if running), `GET /{id}/slice-failures` |
 | `orders.py` | `/api/v1/orders` | CRUD; list/get carry derived `status`+`progress`+`job_count`; `GET /{id}` adds linked `jobs`; `DELETE` nulls `order_id` on jobs |
 | `projects.py` | `/api/v1/projects` | CRUD (`GET ""`/`POST ""`/`GET`/`PATCH`/`DELETE /{id}`), `GET /{id}/jobs`; child resources `items`/`links`/`parts` each get `GET`/`POST /{project_id}/<child>` + `PUT`/`DELETE /{project_id}/<child>/{child_id}` (items also: `PUT /{project_id}/items/reorder`); `POST /{id}/generate` — packs `project_items` into plates (sidecar `pack_stls` / `pack_stls_by_uuid` via `laminus_sidecar_client`), creates the jobs + a linked internal `orders` row (409 while `stage=draft`); `POST /{id}/promote` `{stage}` (forward-only). See `data-model.md` § projects/project_items/project_links/project_parts. |
