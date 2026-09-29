@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -38,6 +38,8 @@ function open(path: string, over: Record<string, unknown> = {}) {
     'GET /api/v1/projects/7': EXISTING,
     'POST /api/v1/projects': { ...EXISTING, id: 7, items: [] },
     'POST /api/v1/projects/7/items': { id: 51 },
+    'POST /api/v1/projects/7/links': { id: 70 },
+    'POST /api/v1/projects/7/parts': { id: 80 },
     'PATCH /api/v1/projects/7': EXISTING,
     'PUT /api/v1/projects/7/items/50': EXISTING.items[0],
     'POST /api/v1/projects/7/generate': generated(2),
@@ -87,6 +89,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
 
     await screen.findByText('2 jobs added to queue');
+    expect(screen.queryByText('Eligible printers')).toBeNull();      // the picker does not pop back open when generation ends
     expect(writes(api)).toEqual(['POST /api/v1/projects', 'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate']);
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
       name: 'Shelf set', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
@@ -140,5 +143,198 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     expect(screen.queryByText(/Orca sidecar is offline/)).toBeNull();
     expect(api.to('POST', '/api/v1/projects')).toHaveLength(1);                // retry must not create a second project
     expect(api.to('POST', '/api/v1/projects/7/generate')).toHaveLength(2);
+  });
+});
+
+describe('ProjectBuilderScreen - what gets saved before generating', () => {
+  it('sends every header field, part order, links and non-printed parts for a customer project', async () => {
+    const api = open('/projects/new');
+    await userEvent.type(screen.getByLabelText(/Project name/), 'Vela order');
+    await userEvent.selectOptions(screen.getAllByRole('combobox').find(el => within(el as HTMLElement).queryByRole('option', { name: 'Customer' }))!, 'customer');
+    await userEvent.type(screen.getByPlaceholderText('Customer name'), 'Vela Robotics');
+    await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'rush');
+    await userEvent.click(screen.getByRole('checkbox', { name: 'On hold' }));
+    await userEvent.type(screen.getByPlaceholderText('0.00'), '12.5');
+    await userEvent.selectOptions(screen.getByDisplayValue('Unpaid'), 'partial');
+    fireEvent.change(document.querySelector('input[type="date"]') as HTMLInputElement, { target: { value: '2026-12-01' } });
+    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
+    await userEvent.click(await screen.findByTitle('Add Widget.stl'));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add link' }));
+    await userEvent.type(screen.getByPlaceholderText('https://...'), 'https://example.test/spec');
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), '3mm magnet');
+
+    await openPicker();
+    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('2 jobs added to queue');
+
+    expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
+      name: 'Vela order', customer: 'Vela Robotics', order_type: 'customer', on_hold: true, due_date: '2026-12-01',
+      notes: 'rush', amount_paid: 12.5, payment_status: 'partial',
+    });
+    expect(api.to('POST', '/api/v1/projects/7/items').map(c => (c.body as { file_id: number; sort_order: number })))
+      .toEqual([expect.objectContaining({ file_id: 1, sort_order: 0 }), expect.objectContaining({ file_id: 2, sort_order: 1 })]);
+    expect(api.to('POST', '/api/v1/projects/7/links').map(c => c.body)).toEqual([{ url: 'https://example.test/spec', label: null }]);
+    expect(api.to('POST', '/api/v1/projects/7/parts').map(c => c.body)).toEqual([{ name: '3mm magnet', quantity: 1, allocated: false }]);
+  });
+
+  it('does not send a customer name for an internal project, even if one was typed then switched away', async () => {
+    const api = open('/projects/new');
+    await userEvent.type(screen.getByLabelText(/Project name/), 'Internal');
+    const type = screen.getAllByRole('combobox').find(el => within(el as HTMLElement).queryByRole('option', { name: 'Customer' }))!;
+    await userEvent.selectOptions(type, 'customer');
+    await userEvent.type(screen.getByPlaceholderText('Customer name'), 'Vela Robotics');
+    await userEvent.selectOptions(type, 'internal');
+    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
+    await openPicker();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('2 jobs added to queue');
+
+    expect(api.to('POST', '/api/v1/projects')[0].body).toMatchObject({ order_type: 'internal', customer: '' });
+  });
+
+  it('Retry generates for the same printers again', async () => {
+    let attempts = 0;
+    const api = open('/projects/new', {
+      'POST /api/v1/projects/7/generate': () => (++attempts === 1 ? new Reply(504, 'slow') : generated(1)),
+    });
+    await newProjectWithBracket();
+    await openPicker();
+    await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await screen.findByText('Generation timed out. Try fewer parts or reduce quantities.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await screen.findByText('1 job added to queue');
+    expect(api.to('POST', '/api/v1/projects/7/generate').map(c => c.body)).toEqual([
+      { eligible_printer_ids: [2], process_preset: null }, { eligible_printer_ids: [2], process_preset: null },
+    ]);
+  });
+});
+
+describe('ProjectBuilderScreen - generating an existing project', () => {
+  it('saves edits first (project, existing part, new part) and then generates', async () => {
+    const api = open('/projects/7/edit');
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await userEvent.click(await screen.findByTitle('Add Widget.stl'));
+    const spinbuttons = screen.getAllByRole('spinbutton');
+    const bracketQty = spinbuttons[spinbuttons.length - 2];   // item rows are last; "Amount paid" is a spinbutton too
+    fireEvent.change(bracketQty, { target: { value: '5' } });   // (clearing snaps the field back to 1, so type-over would give 15)
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+
+    await screen.findByText('2 jobs added to queue');
+    expect(writes(api)).toEqual([
+      'PATCH /api/v1/projects/7', 'PUT /api/v1/projects/7/items/50',
+      'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate',
+    ]);
+    expect(api.to('PUT', '/api/v1/projects/7/items/50')[0].body).toEqual({
+      quantity: 5, filament_type: 'PLA', filament_color: 'any', filament_id: null, sort_order: 0,
+    });
+    expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
+      file_id: 2, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 1,
+    });
+    expect(where()).toBe('/projects/7/edit');
+  });
+
+  it('opens the project from the result banner', async () => {
+    open('/projects/7/edit');
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('2 jobs added to queue');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Details' }));
+    expect(where()).toBe('/projects/7');
+  });
+
+  it('opens the queue from the result banner', async () => {
+    open('/projects/7/edit');
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await screen.findByText('2 jobs added to queue');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Queue' }));
+    expect(where()).toBe('/queue');
+  });
+
+  it('does not generate when saving the edits fails, and says so', async () => {
+    const api = open('/projects/7/edit', { 'PATCH /api/v1/projects/7': new Reply(500, 'disk full') });
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+
+    expect(await screen.findByText('Generation failed: 500 disk full')).toBeTruthy();
+    expect(api.to('POST', '/api/v1/projects/7/generate')).toEqual([]);
+  });
+});
+
+describe('ProjectBuilderScreen - generate errors', () => {
+  async function failWith(reply: Reply) {
+    const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/generate': reply });
+    await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    return api;
+  }
+
+  it.each([
+    [422, 'nothing to pack', 'Add at least one part before generating.'],
+    [502, 'bad gateway', 'Orca sidecar is offline. Check the container.'],
+    [504, 'timeout', 'Generation timed out. Try fewer parts or reduce quantities.'],
+    [500, 'no STL data for file 3', 'One or more STL files are missing. Remove and re-add them.'],
+  ])('%i is explained in plain words', async (status, body, message) => {
+    await failWith(new Reply(status, body));
+
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(screen.queryByText('2 jobs added to queue')).toBeNull();
+  });
+
+  it('shows the server response for a status it has no wording for (a draft project gets a raw 409)', async () => {
+    await failWith(new Reply(409, { detail: 'Promote the project to planning before creating jobs' }));
+
+    expect(await screen.findByText(
+      'Generation failed: 409 {"detail":"Promote the project to planning before creating jobs"}')).toBeTruthy();
+  });
+
+  it('clears the error when the picker is reopened', async () => {
+    await failWith(new Reply(502, 'down'));
+    await screen.findByText('Orca sidecar is offline. Check the container.');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+
+    expect(screen.queryByText('Orca sidecar is offline. Check the container.')).toBeNull();
+  });
+});
+
+describe('ProjectBuilderScreen - generate guards', () => {
+  it('cannot generate without a name or without parts', async () => {
+    open('/projects/new');
+    const generate = await screen.findByRole('button', { name: 'Generate…' });
+    expect(generate.hasAttribute('disabled')).toBe(true);           // nothing yet
+
+    await userEvent.type(screen.getByLabelText(/Project name/), 'Named only');
+    expect(generate.hasAttribute('disabled')).toBe(true);           // no parts
+
+    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
+    expect(generate.hasAttribute('disabled')).toBe(false);
+
+    await userEvent.clear(screen.getByLabelText(/Project name/));
+    expect(generate.hasAttribute('disabled')).toBe(true);           // parts but no name
+  });
+
+  it('Cancel closes the printer picker without generating', async () => {
+    const api = open('/projects/new');
+    await newProjectWithBracket();
+    await openPicker();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Cancel' })[0]);   // the picker's, before the footer's
+
+    expect(screen.queryByText('Eligible printers')).toBeNull();
+    expect(writes(api)).toEqual([]);
   });
 });
