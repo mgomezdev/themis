@@ -2027,6 +2027,25 @@
             }
           },
           {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tags"
+            }
+          },
+          {
             "name": "search",
             "in": "query",
             "required": false,
@@ -2053,26 +2072,6 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "anyOf": [
-                  {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ],
-                "title": "Tags"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4566,6 +4565,64 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/items/reorder": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Reorder project items",
+        "description": "Set explicit sort_order values for project items. Returns the full updated item list.",
+        "operationId": "reorder_items_api_v1_projects__project_id__items_reorder_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReorderEntry"
+                },
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Reorder Items Api V1 Projects  Project Id  Items Reorder Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "One or more item IDs do not belong to this project"
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/items/{item_id}": {
       "put": {
         "tags": [
@@ -4682,64 +4739,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v1/projects/{project_id}/items/reorder": {
-      "put": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Reorder project items",
-        "description": "Set explicit sort_order values for project items. Returns the full updated item list.",
-        "operationId": "reorder_items_api_v1_projects__project_id__items_reorder_put",
-        "parameters": [
-          {
-            "name": "project_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Project Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/components/schemas/ReorderEntry"
-                },
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": true
-                  },
-                  "title": "Response Reorder Items Api V1 Projects  Project Id  Items Reorder Put"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Project not found"
-          },
-          "422": {
-            "description": "One or more item IDs do not belong to this project"
           }
         }
       }
