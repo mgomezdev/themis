@@ -75,8 +75,10 @@ async def _login(body: LoginBody, session: AsyncSession) -> dict:
     )).scalar_one_or_none()
     # PBKDF2 is deliberately slow: run it off the event loop, and hash even for an unknown
     # email so response timing doesn't reveal which accounts exist.
-    ok = await asyncio.to_thread(verify_password, body.password, cust.password_hash if cust else _DUMMY_HASH)
-    if cust is None or not cust.enabled or not ok:
+    # A customer with no password set (empty hash) can't sign in; still hash for equal timing.
+    stored = cust.password_hash if cust is not None and cust.password_hash else _DUMMY_HASH
+    ok = await asyncio.to_thread(verify_password, body.password, stored)
+    if cust is None or not cust.password_hash or not cust.enabled or not ok:
         raise HTTPException(401, "Invalid email or password")
 
     now = datetime.now(timezone.utc)

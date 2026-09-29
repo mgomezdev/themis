@@ -100,3 +100,31 @@ describe('ProjectBuilderScreen', () => {
     expect(screen.getByRole('button', { name: 'Generate without dispatch' })).toBeTruthy();
   });
 });
+
+describe('ProjectBuilderScreen draft stage', () => {
+  it('disables Generate… for a draft project', async () => {
+    const { Routes, Route } = await import('react-router-dom');
+    mockFetch.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url === '/api/v1/projects/5') return jsonResponse({
+        id: 5, name: 'Customer Request', customer: '', order_type: 'customer', on_hold: false, due_date: null,
+        notes: null, amount_paid: null, price: null, payment_status: 'unpaid', stage: 'draft',
+        customer_id: null, customer_name: null, links: [], parts: [],
+        items: [{ id: 1, file_id: 1, file_name: 'Bracket.stl', quantity: 1, quantity_completed: 0, quantity_failed: 0,
+                  filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0 }],
+      });
+      if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
+      if (url === '/api/v1/settings/spoolman') return jsonResponse({ enabled: false });
+      return jsonResponse([]);
+    });
+    render(
+      <MemoryRouter initialEntries={['/projects/5/edit']}>
+        <Routes><Route path="/projects/:id/edit" element={<ProjectBuilderScreen />} /></Routes>
+      </MemoryRouter>,
+    );
+    await screen.findByDisplayValue('Customer Request');
+    const btn = screen.getByRole('button', { name: 'Generate…' }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe('Promote to planning before creating jobs');
+  });
+});

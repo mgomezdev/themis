@@ -31,7 +31,6 @@ import {
   type ApiKeyOut, type ApiKeyCreated,
 } from '../api/apiKeys';
 import { StatusPill, Empty } from '../components/ui';
-import { listCustomers, createCustomer, updateCustomer, type Customer } from '../api/customers';
 import { getAdminAccount, setAdminPassword, setAllowLocalLogin, type AdminAccount } from '../api/adminAccount';
 import type { StatusKey } from '../data/types';
 
@@ -1974,66 +1973,6 @@ function ApiKeysPage() {
   );
 }
 
-function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
-
-  const refetch = useCallback(() => {
-    listCustomers().then(setCustomers).catch(e => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
-  useEffect(() => { refetch(); }, [refetch]);
-
-  async function run(fn: () => Promise<unknown>) {
-    setError(null);
-    try { await fn(); refetch(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }
-
-  function resetPassword(c: Customer) {
-    const pw = window.prompt(`New password for ${c.email} (signs them out everywhere):`);
-    if (pw) run(() => updateCustomer(c.id, { password: pw }));
-  }
-
-  const canCreate = form.name.trim() && form.email.trim() && form.password;
-
-  return (
-    <div className="card" style={{ padding: 28 }}>
-      <PageHeader title="Customers" sub="Customer accounts sign in with email + password and see only their own projects." />
-      {error && <div className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{error}</div>}
-      <form className="row gap-2" style={{ marginBottom: 16, flexWrap: 'wrap' }}
-            onSubmit={e => {
-              e.preventDefault();
-              if (canCreate) run(async () => { await createCustomer(form); setForm({ name: '', email: '', password: '' }); });
-            }}>
-        <input className="input" placeholder="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-        <input className="input" placeholder="Email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-        <input className="input" placeholder="Password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-        <button className="btn primary sm" type="submit" disabled={!canCreate}>{Icons.plus} Add customer</button>
-      </form>
-      {customers.length === 0 ? <Empty title="No customers yet" sub="Add one to give a customer portal access." icon={SettingsIcons.apikey} /> : (
-        <table className="tbl">
-          <thead><tr><th>Name</th><th>Email</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
-          <tbody>
-            {customers.map(c => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td>{c.email}</td>
-                <td>{c.enabled ? 'Enabled' : 'Disabled'}</td>
-                <td style={{ textAlign: 'right' }}>
-                  <button className="btn ghost sm" onClick={() => resetPassword(c)}>Reset password</button>
-                  <button className="btn ghost sm" onClick={() => run(() => updateCustomer(c.id, { enabled: !c.enabled }))}>
-                    {c.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
 function AdminAccountPage() {
   const [acct, setAcct] = useState<AdminAccount | null>(null);
   const [password, setPassword] = useState('');
@@ -2124,7 +2063,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'customers' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -2138,7 +2077,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'customers', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -2181,7 +2120,6 @@ export function SettingsScreen() {
       label: 'Security',
       items: [
         { id: 'api-keys',      label: 'API Keys',       icon: SettingsIcons.apikey,  sub: 'Manage app access & scopes' },
-        { id: 'customers',     label: 'Customers',      icon: SettingsIcons.apikey,  sub: 'Customer portal accounts' },
         { id: 'admin-account', label: 'Admin account',  icon: SettingsIcons.apikey,  sub: 'Password, local sign-in, recovery' },
       ],
     },
@@ -2217,7 +2155,6 @@ export function SettingsScreen() {
       {activePage === 'notifications'     && <NotificationsPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}
       {activePage === 'api-keys'          && <ApiKeysPage />}
-      {activePage === 'customers'         && <CustomersPage />}
       {activePage === 'admin-account'     && <AdminAccountPage />}
       {activePage === 'about'             && <AboutPage />}
     </div>

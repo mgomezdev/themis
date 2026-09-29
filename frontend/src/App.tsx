@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { Sidebar } from './components/Sidebar';
 import { Topbar } from './components/Topbar';
+import { TopbarOverrideContext, type Crumb, type TopbarOverride } from './components/topbarOverride';
 import { Icons } from './components/icons';
 import { SearchModal } from './components/SearchModal';
 import { useQueue, useQueueConfig } from './api/queue';
@@ -25,6 +26,8 @@ import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 import { ProjectDetailScreen }  from './screens/ProjectDetailScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
 import { SharedProjectScreen }  from './screens/SharedProjectScreen';
+import { CustomersScreen }      from './screens/CustomersScreen';
+import { CustomerDetailScreen } from './screens/CustomerDetailScreen';
 
 type SvcStatus = 'up' | 'down' | 'unconfigured';
 
@@ -106,6 +109,7 @@ function AppShell() {
   const location = useLocation();
   const navigate = useNavigate();
   const { laminusStatus } = useServicesHealth();
+  const [topbarOverride, setTopbarOverride] = useState<TopbarOverride | null>(null);
 
   useEffect(() => {
     if (location.pathname.startsWith('/settings')) {
@@ -124,7 +128,7 @@ function AppShell() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const screenConfig: Record<string, { title: string; crumbs: string[]; actions?: React.ReactNode }> = {
+  const screenConfig: Record<string, { title: string; crumbs: Crumb[]; actions?: React.ReactNode }> = {
     '/queue':      { title: 'Job queue',        crumbs: ['Workshop'],
                      actions: <><button className="btn sm">{Icons.refresh} Resync</button>
                                 <button className="btn primary sm" onClick={() => navigate('/queue/new')}>{Icons.plus} New job</button></> },
@@ -141,9 +145,12 @@ function AppShell() {
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/projects':        { title: 'Projects',      crumbs: ['Workshop'],
                          actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
-    '/projects/new':    { title: 'New project',  crumbs: ['Workshop', 'Projects'] },
-    '/projects/detail': { title: 'Project',      crumbs: ['Workshop', 'Projects'] },
-    '/projects/edit':   { title: 'Edit project', crumbs: ['Workshop', 'Projects'] },
+    '/projects/new':    { title: 'New project',  crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
+    '/projects/detail': { title: 'Project',      crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
+    '/projects/edit':   { title: 'Edit project', crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
+    '/customers':        { title: 'Customers', crumbs: ['Workshop'],
+                           actions: <button className="btn primary sm" onClick={() => navigate('/customers?new=1')}>{Icons.plus} New customer</button> },
+    '/customers/detail': { title: 'Customer',  crumbs: ['Workshop', { label: 'Customers', to: '/customers' }] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
@@ -159,8 +166,16 @@ function AppShell() {
     ? (segments[1] === 'new' ? '/projects/new'
        : segments.length >= 3 && segments[2] === 'edit' ? '/projects/edit'
        : '/projects/detail')
+    : segments[0] === 'customers' && segments.length >= 2
+    ? '/customers/detail'
     : '/' + segments.slice(0, 2).join('/');
-  const cfg = screenConfig[path] ?? screenConfig['/queue'];
+  const baseCfg = screenConfig[path] ?? screenConfig['/queue'];
+  const override = topbarOverride?.path === location.pathname ? topbarOverride : null;
+  const cfg = {
+    ...baseCfg,
+    title: override?.title ?? baseCfg.title,
+    crumbs: override?.crumbs ?? baseCfg.crumbs,
+  };
 
   return (
     <div className="app" data-nav={navCollapsed ? 'collapsed' : 'expanded'}>
@@ -171,6 +186,7 @@ function AppShell() {
       <BottomNav queueCounts={queueCounts} />
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">
+          <TopbarOverrideContext.Provider value={setTopbarOverride}>
           <Routes>
             <Route path="/"             element={<Navigate to="/queue" replace />} />
             <Route path="/queue"        element={<QueueScreen />} />
@@ -186,10 +202,15 @@ function AppShell() {
             <Route path="/projects/new"        element={<ProjectBuilderScreen />} />
             <Route path="/projects/:id"        element={<ProjectDetailScreen />} />
             <Route path="/projects/:id/edit"   element={<ProjectBuilderScreen />} />
+            <Route path="/customers"      element={<CustomersScreen />} />
+            <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
+            {/* Customers used to live under Settings. */}
+            <Route path="/settings/customers" element={<Navigate to="/customers" replace />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />
             <Route path="*"               element={<Navigate to="/queue" replace />} />
           </Routes>
+          </TopbarOverrideContext.Provider>
         </div>
         <div style={{
           display: 'flex', alignItems: 'center', gap: 16,
