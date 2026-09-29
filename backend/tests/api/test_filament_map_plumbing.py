@@ -1,8 +1,8 @@
-import inspect
+from unittest.mock import patch
+
 import pytest
 from pydantic import ValidationError
 from app.services.slicer_service import SliceRequest
-from app.api.routes import jobs
 from app.api.routes.jobs import PrinterConfigInput
 
 
@@ -62,7 +62,53 @@ def test_printer_config_input_accepts_any_or_real_value():
     assert (c2.filament_type, c2.filament_color) == ("PLA", "#FFFFFF")
 
 
-def test_job_routes_round_trip_filament_map():
-    assert "filament_map=cfg.filament_map" in inspect.getsource(jobs.create_job)
-    assert "filament_map=cfg.filament_map" in inspect.getsource(jobs.update_job_configs)
-    assert '"filament_map"' in inspect.getsource(jobs.get_job_details)
+def _routing(filament_map):
+    """(model_filament, tool_index) pairs; the API normalises entries with extra null keys."""
+    return [(e["model_filament"], e["tool_index"]) for e in filament_map]
+
+
+async def test_tool_index_and_filament_map_round_trip_through_create_details_and_edit(client, upload_3mf, create_printer):
+    """Multi-material routing must survive HTTP create -> details -> edit (both fields are stored on the
+    per-printer config; a route that forgets to copy one silently drops it)."""
+    printer_id = await create_printer()
+    file_id = await upload_3mf()
+    first_map = [{"model_filament": 1, "tool_index": 2}, {"model_filament": 2, "tool_index": 0}]
+    config = {"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        created = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": file_id, "plate_number": 1,
+            "printer_configs": [{**config, "tool_index": 3, "filament_map": first_map}],
+        })
+    assert created.status_code == 201, created.text
+    job_id = created.json()["id"]
+
+    (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert stored["tool_index"] == 3
+    assert _routing(stored["filament_map"]) == [(1, 2), (2, 0)]
+
+    second_map = [{"model_filament": 1, "tool_index": 1}]
+    with patch("app.api.routes.jobs.queue_engine"):
+        edited = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
+            "printer_configs": [{**config, "tool_index": 0, "filament_map": second_map}],
+        })
+    assert edited.status_code == 200, edited.text
+
+    (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert stored["tool_index"] == 0
+    assert _routing(stored["filament_map"]) == [(1, 1)]
+
+    catalog_map = [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#FFFFFF"}]  # resolved to a slot at slice time
+    with patch("app.api.routes.jobs.queue_engine"):
+        await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
+            "printer_configs": [{**config, "filament_map": catalog_map}],
+        })
+    (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert stored["tool_index"] is None
+    assert [(e["model_filament"], e["tool_index"], e["filament_type"], e["filament_color"]) for e in stored["filament_map"]] \
+        == [(1, None, "PETG", "#FFFFFF")]
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [config]})
+    (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert stored["tool_index"] is None and stored["filament_map"] is None  # clearing works too
