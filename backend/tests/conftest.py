@@ -205,3 +205,15 @@ def spoolman_upstream():
     with patch("app.services.spoolman_service.httpx.AsyncClient", _factory):
         yield up
 
+
+@pytest.fixture(autouse=True)
+def _reset_laminus_module_state():
+    """laminus.py keeps the catalog cache, health memo and pending remap in module globals that outlive a
+    test; restore them so a test that warms the cache (or parks a remap) cannot leak into the next one."""
+    import app.api.routes.laminus as laminus
+    names = ("_catalog_dict", "_catalog_bytes", "_catalog_fetched_at", "_pending_sync", "_health_memo", "_health_memo_at")
+    saved = {n: getattr(laminus, n) for n in names}
+    yield
+    for n, v in saved.items():
+        setattr(laminus, n, v)
+
