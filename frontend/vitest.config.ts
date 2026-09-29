@@ -19,9 +19,10 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}'],
       exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/main.tsx', 'src/**/*.d.ts'],
       reporter: ['text-summary', 'json-summary'],
-      // Floors sit ~2 points under the measured baseline (2026-09-29) so a regression fails CI;
+      // Floors sit ~2 points under the measured coverage (2026-09-29, after the test-hardening pass:
+      // statements 71.6, branches 65.1, functions 67.8, lines 74.7) so a regression fails CI;
       // raise them as coverage improves.
-      thresholds: { statements: 50, branches: 45, functions: 44, lines: 53 },
+      thresholds: { statements: 69, branches: 63, functions: 65, lines: 72 },
     },
   },
 });

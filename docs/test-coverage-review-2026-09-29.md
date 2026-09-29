@@ -191,3 +191,84 @@ Most FE-consumed routes (fleet, queue, jobs, printers, projects, files) lack `re
 3. W9 (one integration test) + W4 + W8 (route walk).
 4. O1/O2 replacements, D2–D10 cleanup, weak-assert fixes (§4).
 5. W7, W10, §3 route gaps, FE F1–F8, C1–C3.
+
+## 11. Status — hardening pass (PR #66, 2026-09-29)
+
+Everything below is on branch `claude/test-coverage-review-qh5b2o`, one commit per task (sha = `git show <sha>`).
+Suites at hand-off: backend 1147 pass (was 814 + 4 skip; ~51 s, was ~70–80 s), frontend 573 (was 306), Playwright 17 (was 7);
+backend coverage 86 % line+branch (greenlet-aware; CI floor `fail_under = 84`), frontend stmts 71.6 / branch 65.1 / funcs 67.8 / lines 74.7
+(floors 69 / 63 / 65 / 72). All 12 §1 mutants plus the M5b/M13/M14 variants are now **killed**.
+
+### Findings
+
+| Finding | Status | Commit(s) |
+|---|---|---|
+| W1 plate-clear gate | done (BE + FE F1) | 68c7864, 19dbef8 |
+| W2 reconcile | done | 8799289 |
+| W3 upload/start failure | done | c87fa3a |
+| W4 queue ordering / head-of-line / no double claim | done; O9 behaviour pinned | 80d1816 |
+| W5 outcome accounting + history (BE, FE F2) | done | 26617d4, fe47c15 |
+| W6 webhook delivery + HMAC | done | 5bb3e47 |
+| W7 lifespan / SPA | done (`_resolve_within` hoisted, `register_spa`) | 4f90866 |
+| W8 route-walk scope guard + SCOPES mirror | done | a65673f |
+| W9 cross-layer happy path | done | 71a7d5f |
+| W10 migrations chain | done (found the fresh-DB CLI bug) | 48cb4ac, a580088 |
+| §3 check-overrides / project children / jobs reorder+cancel | done (found the reorder route bug) | 85eca71, 392e1fb, 7e8af92, 1566625 |
+| §3 Spoolman / fleet import / fleet GET / camera / printers / laminus / thumbnails | done | ae637cb, ecc07f8, 043b3e1, ed68de9, bf2abff, 88eb909, 03f7a9a |
+| §3 files/tags misc | done (found the `?tags=` filter bug) | caf0037, e3103ff |
+| §4 status-only error tests | done (state re-read added) | 6499ae9, d9e5f4e |
+| §4 implicit-only tests | done: engine-queue order test rewritten to assert order; `_validate_file_id` accept test parametrized | (this branch's last commit) |
+| §4 source-text tests | done (see O2) | 4caa0d7 |
+| §4 sleeps | done: `wait_until`, no sleeps in test_queue_engine | 2f8c69b, d7aa42e |
+| §4 whole-singleton mocks | **partly**: invariant tests (W1, W2, W9) use the real manager/engine; ~55 incidental `patch(...queue_engine)` in route tests remain (they now assert state, not just the mock call) | — |
+| §4 frontend weak asserts | done | 10331ef |
+| D1–D9 duplicates | done | b2b9508, 211646b, d30841f, 0d0c5a3, 2e4c887, d5d17d6, 043b3e1, 0fdcc87, 2520258 |
+| D10 shared factories | done | c508ab1, 0d272e2, bcc7b8f, e252fa9 |
+| O1 fake lifespan test | done | 4f90866 |
+| O2 `inspect.getsource` tests | done | 4caa0d7 |
+| O3 skipped tests | done (synthetic 3MF; dead e2e deleted) | f29c0be |
+| O4 / O5 dead code | done | 45d7db0, 89c8d47 |
+| O6 legacy migration tests | kept `test_legacy_migration.py` (upgrade path still supported); deleted `test_migrate_library.py` | d30841f |
+| O7 dead FE data/tests | done | 21d97f0 |
+| O8 misleading names | done (rescue case now really exercised) | 80d1816 |
+| O9 failed-vs-blocked doc drift | pinned in tests; **docs left for owner** (CLAUDE.md not edited, see below) | 80d1816 |
+| O10 asyncio markers | done | 9b8c044 |
+| F1–F2 | done | 19dbef8, fe47c15 |
+| F3 RemapModal + SpoolmanMappingsPage | done | 1d228ee |
+| F4 CustomerPortal | done | 0c3982a |
+| F5 project generate / promote | done (found the unmount bug) | 1a9f586, 2d7b7e0 |
+| F6 App routing | done (found the settings title bug) | 8f85dc7, e8e42d5 |
+| F7 alternate flows | done (found 4 bugs) | fddf6e9, 5ea28a2, 593da55, 07ac76b |
+| F8 e2e golden path | done | c9f0001 |
+| C1 URL ⊂ openapi | done | 1367af0 |
+| C2 response-key contract | done | fc0777a |
+| C3 scope mirror | done | a65673f |
+| H1 coverage config + ratchets | done | d999ad6, 3f95706, 6b93a6a, ratchet commit |
+| H2 22 s test | done | b2b9508 |
+| H3 leaked engines | done; file-backed per-test DB adopted as the shared fixture | 9b8c044, 36d1ca3 |
+
+### Product bugs the new tests found (all fixed, each in its own commit with regression tests)
+
+`migrate up` on a fresh DB (a580088) · project-items reorder route shadowed, always 422 (7e8af92) · `GET /files?tags=` ignored (e3103ff) ·
+dead FE hook calling a nonexistent route (32c0e44) · new-project Generate dropped its result/errors (1a9f586) · every Settings sub-page titled
+"Job queue" (8f85dc7) · retry after a partial multi-plate failure queued plates twice (fddf6e9) · queue cancel/unblock/reorder failures were silent
+(5ea28a2) · refused Print-defaults saves left the unsaved value on screen (593da55) · queue/fleet/orders sockets never reconnected, tabs froze after a
+backend restart (07ac76b). One flake root-caused (zip timestamps → dedupe miss, f5362fe).
+
+### Left for the owner (not changed; behaviour pinned where noted)
+
+1. **Open product bug — filament matching** (`queue_engine._matching_loaded_filament`): a half-specified ask (type=PETG, colour=any, or the reverse)
+   never matches a loaded slot that has both, so the job blocks forever; only both-specific or both-any match. `_find_slot_for_filament`
+   (filament_map path) handles the wildcard correctly. Fix idea: skip the comparison for an empty requirement field.
+2. Doc drift for the owner to decide (CLAUDE.md untouched): CLAUDE.md:68, conventions.md:7-9, backend.md, recipes.md say a job goes `failed` when slicing
+   fails on all configs; the code only ever sets `blocked`.
+3. `migrate down` only reliably rolls back the newest migration (v21/v18/v5 `down()` can't run on SQLite; v9 has none).
+4. Fleet import: JSON-valid but malformed input 500s (version string/null, `printers` null, non-object entry); backup omits `bed_x_mm`/`bed_y_mm`/
+   `no_snapshots_while_idle`; import is additive (twice = doubled fleet).
+5. `PATCH /printers/{id}` with a new `connection_config` doesn't reconnect the live client; a failed reconnect leaves no client.
+6. FE `OverrideCheck` omits the backend's optional `error` key, so degraded override checks are invisible.
+7. Builder/list Generate buttons don't gate on a draft stage → the operator sees the raw 409 JSON; `Progress` ignores `tone="ok"` (dead prop);
+   builder qty input snaps to 1 on clear; `SpoolmanMappingsPage` fetches while Spoolman is disabled; `ReadyForWorkButton` has no catch around `markPlateCleared`.
+8. Unknown `/api/*` GETs return `index.html` 200 via the SPA catch-all (not asserted). `GET /fleet` for a connected `mock` printer lacks state keys (test-only type).
+9. Settings pages other than Print defaults (webhook, notifications, Spoolman, maintenance, tags, API keys, customers, admin) keep their own
+   error handling; only some of their failure paths are tested.

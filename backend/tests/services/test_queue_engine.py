@@ -482,28 +482,28 @@ async def test_priority_queue_orders_production_before_estimate(db):
     assert results == ["production", "estimate"]
 
 
-@pytest.mark.asyncio
-async def test_equal_priority_no_type_error(db):
-    """Two equal-priority items with seq tiebreaker don't raise TypeError."""
-    import itertools
+async def test_slice_queue_serves_production_before_estimates_before_verify_and_fifo_within_a_priority(db):
+    """Priorities 0 (production) < 1 (estimate) < 2 (verify); equal priorities fall back to the engine's
+    `_slice_seq` counter, so two coroutines are never compared (TypeError) and arrival order is kept."""
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
-    mgr = _make_mock_printer_manager([])
-    slicer = MagicMock(spec=SlicerService)
-    engine = QueueEngine(db, mgr, slicer)
-    seq = itertools.count()
+    engine = QueueEngine(db, _make_mock_printer_manager([]), MagicMock(spec=SlicerService))
+    ran: list[str] = []
 
-    async def noop():
-        pass
+    def job(label: str):
+        async def run():
+            ran.append(label)
+        return run()
 
-    await engine._slice_queue.put((1, next(seq), noop()))
-    await engine._slice_queue.put((1, next(seq), noop()))
-    # Should not raise — drain without error
-    for _ in range(2):
-        _, _s, c = await engine._slice_queue.get()
-        await c
+    for priority, label in [(2, "verify"), (1, "estimate-a"), (0, "prod-a"), (1, "estimate-b"), (0, "prod-b")]:
+        await engine._slice_queue.put((priority, next(engine._slice_seq), job(label)))
+    for _ in range(5):
+        _, _seq, coro = await engine._slice_queue.get()
+        await coro
         engine._slice_queue.task_done()
+
+    assert ran == ["prod-a", "prod-b", "estimate-a", "estimate-b", "verify"]
 
 
 @pytest.mark.asyncio
