@@ -1,18 +1,4 @@
 # backend/tests/api/test_orders_api.py
-import io
-import json
-import zipfile
-from unittest.mock import patch
-
-
-def _make_3mf() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
 
 
 async def _create_order(client, **over):
@@ -23,25 +9,6 @@ async def _create_order(client, **over):
     }
     body.update(over)
     return await client.post("/api/v1/orders", json=body)
-
-
-async def _make_job(client, tmp_path, order_id, status="queued"):
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        f = await client.post("/api/v1/files/upload",
-                              files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")})
-    file_id = f.json()["id"]
-    p = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu", "connection_config": {},
-        "orca_printer_profiles": ["X"], "current_orca_printer_profile": "X"})
-    printer_id = p.json()["id"]
-    with patch("app.api.routes.jobs.queue_engine"):
-        j = await client.post("/api/v1/jobs", json={
-            "uploaded_file_id": file_id, "plate_number": 1, "order_id": order_id,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}]})
-    return j.json()["id"]
 
 
 async def test_create_order(client):
@@ -67,9 +34,9 @@ async def test_get_order_not_found(client):
     assert (await client.get("/api/v1/orders/9999")).status_code == 404
 
 
-async def test_status_in_progress_with_job(client, tmp_path):
+async def test_status_in_progress_with_job(client, create_job):
     oid = (await _create_order(client)).json()["id"]
-    await _make_job(client, tmp_path, oid)
+    await create_job(order_id=oid)
     data = (await client.get(f"/api/v1/orders/{oid}")).json()
     assert data["status"] == "in_progress"
     assert data["job_count"] == 1
@@ -78,10 +45,10 @@ async def test_status_in_progress_with_job(client, tmp_path):
     assert data["jobs"][0]["plate_number"] == 1
 
 
-async def test_jobs_ordered_by_queue_position(client, tmp_path):
+async def test_jobs_ordered_by_queue_position(client, create_job):
     oid = (await _create_order(client)).json()["id"]
-    await _make_job(client, tmp_path, oid)
-    await _make_job(client, tmp_path, oid)
+    await create_job(order_id=oid)
+    await create_job(order_id=oid)
     data = (await client.get(f"/api/v1/orders/{oid}")).json()
     assert len(data["jobs"]) == 2
     positions = [j["queue_position"] for j in data["jobs"]]
@@ -107,9 +74,9 @@ async def test_patch_replaces_parts(client):
     assert len(parts) == 1 and parts[0]["name"] == "Clamp" and parts[0]["id"]
 
 
-async def test_delete_nulls_job_link(client, tmp_path):
+async def test_delete_nulls_job_link(client, create_job):
     oid = (await _create_order(client)).json()["id"]
-    job_id = await _make_job(client, tmp_path, oid)
+    job_id = await create_job(order_id=oid)
     assert (await client.delete(f"/api/v1/orders/{oid}")).status_code == 204
     assert (await client.get(f"/api/v1/orders/{oid}")).status_code == 404
     job = (await client.get(f"/api/v1/jobs/{job_id}")).json()
@@ -142,20 +109,20 @@ async def test_invalid_payment_status_rejected(client):
     assert resp.status_code == 422
 
 
-async def test_filament_cost_total_aggregates_jobs(client, tmp_path):
+async def test_filament_cost_total_aggregates_jobs(client, create_job):
     oid = (await _create_order(client)).json()["id"]
-    job1 = await _make_job(client, tmp_path, oid)
-    job2 = await _make_job(client, tmp_path, oid)
+    job1 = await create_job(order_id=oid)
+    job2 = await create_job(order_id=oid)
     await client.patch(f"/api/v1/jobs/{job1}/cost", json={"filament_cost": 3.5})
     await client.patch(f"/api/v1/jobs/{job2}/cost", json={"filament_cost": 1.25})
     data = (await client.get(f"/api/v1/orders/{oid}")).json()
     assert data["filament_cost_total"] == 4.75
 
 
-async def test_filament_cost_total_zero_is_not_null(client, tmp_path):
+async def test_filament_cost_total_zero_is_not_null(client, create_job):
     """A job explicitly costed at $0 must report a $0.00 total, not '—' (no data)."""
     oid = (await _create_order(client)).json()["id"]
-    job_id = await _make_job(client, tmp_path, oid)
+    job_id = await create_job(order_id=oid)
     await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 0})
     data = (await client.get(f"/api/v1/orders/{oid}")).json()
     assert data["filament_cost_total"] == 0.0

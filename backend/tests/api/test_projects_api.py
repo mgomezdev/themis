@@ -238,21 +238,11 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
     assert job_pack_dir.is_dir()
 
 
-async def _create_printer(client, name="P1S"):
-    resp = await client.post("/api/v1/printers", json={
-        "name": name, "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
-    })
-    return resp.json()["id"]
-
-
-async def test_generate_printer_configs_use_process_preset_not_machine_preset(client, tmp_path):
+async def test_generate_printer_configs_use_process_preset_not_machine_preset(client, tmp_path, create_printer):
     """JobPrinterConfig.print_profile must be the user-supplied process_preset —
     never current_orca_printer_profile (a machine preset, wrong namespace entirely)."""
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    printer_id = await _create_printer(client)
+    printer_id = await create_printer()
 
     lib = tmp_path / "library"
     fake_3mf = _make_3mf_bytes(plate_count=1)
@@ -282,11 +272,11 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
     assert cfg["print_profile"] != "Bambu Lab P1S 0.4"  # never the machine preset
 
 
-async def test_generate_without_process_preset_does_not_invent_one(client, tmp_path):
+async def test_generate_without_process_preset_does_not_invent_one(client, tmp_path, create_printer):
     """Omitting process_preset leaves print_profile unset (empty) — no silent default,
     no machine-preset fallback. The job fails cleanly at slice time instead."""
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    printer_id = await _create_printer(client)
+    printer_id = await create_printer()
 
     lib = tmp_path / "library"
     fake_3mf = _make_3mf_bytes(plate_count=1)
@@ -315,7 +305,7 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
     assert cfg["print_profile"] == ""
 
 
-async def test_generate_carries_filament_requirement_to_printer_config(client, tmp_path):
+async def test_generate_carries_filament_requirement_to_printer_config(client, tmp_path, create_printer):
     """The project item's filament_type/filament_color/filament_id must reach the
     generated JobPrinterConfig verbatim — otherwise the mismatch gate no-ops and
     parts print in whatever is loaded, ignoring the requirement."""
@@ -342,7 +332,7 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
         )
         assert item_resp.status_code == 201
 
-    printer_id = await _create_printer(client)
+    printer_id = await create_printer()
     fake_3mf = _make_3mf_bytes(plate_count=1)
 
     with (
@@ -391,7 +381,6 @@ async def test_project_estimate_rollup_keys(client):
 
 async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_path, session_factory):
     """estimate_filament_grams_remaining excludes completed/cancelled/failed jobs."""
-    from app.main import app
     from app.models import Job
 
     resp = await client.post("/api/v1/projects", json={

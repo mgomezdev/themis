@@ -28,3 +28,18 @@ async def test_session_factory_sees_the_same_db_as_the_client(session_factory, c
     async with session_factory() as s:
         assert (await s.get(Printer, printer_id)).name == "P1S"
         assert (await s.get(Job, job_id)).status == "queued"
+
+
+async def test_create_job_links_the_order_when_given(client, create_job):
+    resp = await client.post("/api/v1/orders", json={
+        "order_type": "customer", "customer": "Vela Robotics", "title": "Brackets", "due_date": "2026-06-01",
+        "notes": "", "parts": [{"name": "Arm L", "qty": 8, "material": "PA-CF", "est_minutes": 78}],
+    })
+    assert resp.status_code == 201, resp.text
+    order = resp.json()
+
+    job_id = await create_job(order_id=order["id"])
+    unlinked_id = await create_job()
+
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["order_id"] == order["id"]
+    assert (await client.get(f"/api/v1/jobs/{unlinked_id}")).json()["order_id"] is None

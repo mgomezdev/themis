@@ -1,14 +1,14 @@
 import pytest
+import pytest_asyncio
 from unittest.mock import MagicMock, patch
 from app.services.printer_manager import printer_manager
 
 
-async def _create_printer(client) -> int:
-    resp = await client.post("/api/v1/printers", json={
-        "name": "Test", "printer_type": "elegoo_centauri",
-        "connection_config": {"ip_address": "192.168.1.20"},
-    })
-    return resp.json()["id"]
+@pytest_asyncio.fixture
+async def printer_id(create_printer) -> int:
+    """An Elegoo printer registered with the manager but never connected (conftest stub)."""
+    return await create_printer(name="Test", printer_type="elegoo_centauri",
+                                connection_config={"ip_address": "192.168.1.20"})
 
 
 def _camera_client(*, connected=True, camera=True, mjpeg=None, rtsp=None) -> MagicMock:
@@ -31,15 +31,13 @@ async def test_camera_404_on_missing_printer(client):
     assert resp.json()["detail"] == "Printer 999 not found"
 
 
-async def test_camera_503_when_not_connected(client):
-    printer_id = await _create_printer(client)  # registered with the manager but never connected
+async def test_camera_503_when_not_connected(client, printer_id):
     resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
     assert resp.status_code == 503
     assert resp.json()["detail"] == "Printer not connected"
 
 
-async def test_camera_503_when_camera_capable_printer_is_disconnected_and_no_stream_is_started(client):
-    printer_id = await _create_printer(client)
+async def test_camera_503_when_camera_capable_printer_is_disconnected_and_no_stream_is_started(client, printer_id):
     fake = _camera_client(connected=False, mjpeg="http://fake/stream")
     printer_manager._clients[printer_id] = fake
 
@@ -49,8 +47,7 @@ async def test_camera_503_when_camera_capable_printer_is_disconnected_and_no_str
     fake.start_video_stream.assert_not_called()
 
 
-async def test_camera_404_when_no_camera_capability_and_no_stream_is_started(client):
-    printer_id = await _create_printer(client)
+async def test_camera_404_when_no_camera_capability_and_no_stream_is_started(client, printer_id):
     fake = _camera_client(camera=False)
     printer_manager._clients[printer_id] = fake
 
@@ -61,8 +58,7 @@ async def test_camera_404_when_no_camera_capability_and_no_stream_is_started(cli
     fake.start_video_stream.assert_not_called()
 
 
-async def test_camera_404_when_the_printer_has_a_camera_but_no_url_configured(client):
-    printer_id = await _create_printer(client)
+async def test_camera_404_when_the_printer_has_a_camera_but_no_url_configured(client, printer_id):
     printer_manager._clients[printer_id] = _camera_client()
 
     resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
@@ -71,8 +67,7 @@ async def test_camera_404_when_the_printer_has_a_camera_but_no_url_configured(cl
     assert resp.json()["detail"] == "No camera URL configured"
 
 
-async def test_camera_503_when_rtsp_needs_ffmpeg_and_it_is_missing(client):
-    printer_id = await _create_printer(client)
+async def test_camera_503_when_rtsp_needs_ffmpeg_and_it_is_missing(client, printer_id):
     printer_manager._clients[printer_id] = _camera_client(rtsp="rtsp://192.168.1.20/live")
 
     with patch("app.api.routes.printers.shutil.which", return_value=None):
@@ -82,8 +77,7 @@ async def test_camera_503_when_rtsp_needs_ffmpeg_and_it_is_missing(client):
     assert resp.json()["detail"] == "ffmpeg not available for RTSP streaming"
 
 
-async def test_camera_streams_mjpeg_as_multipart_after_activating_the_printer_stream(client):
-    printer_id = await _create_printer(client)
+async def test_camera_streams_mjpeg_as_multipart_after_activating_the_printer_stream(client, printer_id):
     fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
     printer_manager._clients[printer_id] = fake
     opened: list[str] = []

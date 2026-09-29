@@ -152,9 +152,10 @@ async def create_printer(client):
 
 @pytest_asyncio.fixture
 async def create_job(client, upload_3mf, create_printer):
-    """`await create_job(file_id=None, printer_id=None, **config_overrides)` -> job id.
+    """`await create_job(file_id=None, printer_id=None, order_id=None, **config_overrides)` -> job id.
     Uploads a file / creates a printer when not given. The queue engine is patched out (no wake side effects)."""
-    async def _create(file_id: int | None = None, printer_id: int | None = None, **config_overrides) -> int:
+    async def _create(file_id: int | None = None, printer_id: int | None = None, order_id: int | None = None,
+                      **config_overrides) -> int:
         file_id = file_id if file_id is not None else await upload_3mf()
         printer_id = printer_id if printer_id is not None else await create_printer()
         config = {
@@ -162,10 +163,11 @@ async def create_job(client, upload_3mf, create_printer):
             "filament_type": "any", "filament_color": "any",
         }
         config.update(config_overrides)
+        body = {"uploaded_file_id": file_id, "plate_number": 1, "printer_configs": [config]}
+        if order_id is not None:
+            body["order_id"] = order_id
         with patch("app.api.routes.jobs.queue_engine"):
-            resp = await client.post("/api/v1/jobs", json={
-                "uploaded_file_id": file_id, "plate_number": 1, "printer_configs": [config],
-            })
+            resp = await client.post("/api/v1/jobs", json=body)
         assert resp.status_code == 201, resp.text
         return resp.json()["id"]
     return _create
