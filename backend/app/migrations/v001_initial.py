@@ -55,6 +55,7 @@ _ALTERS: list[tuple[str, list[tuple[str, str]]]] = [
 async def up(conn) -> None:
     # Create all ORM-managed tables (idempotent via checkfirst=True default)
     from ..database import Base
+    from .. import models  # noqa: F401 — registers every table on Base.metadata (the CLI never imports them)
     await conn.run_sync(Base.metadata.create_all)
 
     # ADD COLUMN alters for columns added after initial release
