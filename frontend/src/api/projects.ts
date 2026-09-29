@@ -1,6 +1,5 @@
 import type { ProjectStage } from './customers';
 import { useCallback, useEffect, useState } from 'react';
-import type { LibraryFile } from '../data/types';
 import { apiFetch } from './client';
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -226,18 +225,4 @@ export function useProjects() {
     return () => { alive = false; };
   }, [tick]);
   return { projects, refetch };
-}
-
-export function useProjectFiles(id: number) {
-  const [file, setFile] = useState<LibraryFile | null>(null);
-  useEffect(() => {
-    if (!id) return;
-    let alive = true;
-    apiFetch(`/api/v1/files/${id}`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => { if (alive) setFile(d); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, [id]);
-  return file;
 }
