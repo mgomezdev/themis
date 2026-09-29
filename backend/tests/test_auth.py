@@ -67,17 +67,26 @@ async def env():
     await engine.dispose()
 
 
-async def test_no_key_empty_table_401(env):
-    """No bootstrap hatch: an empty api_keys table does not grant open access."""
-    client, _seed_key, _factory = env
-    resp = await client.get("/protected")
-    assert resp.status_code == 401
+@pytest.mark.parametrize("table_state", ["empty", "unrelated_key_exists", "every_key_deleted"])
+async def test_no_key_is_401_whatever_the_key_table_holds(env, table_state):
+    """No bootstrap hatch: a keyless request is rejected whether the api_keys table is empty,
+    holds some other key, or was just emptied by deleting every key."""
+    client, seed_key, factory = env
+    if table_state == "unrelated_key_exists":
+        await seed_key(["jobs:read"])
+    elif table_state == "every_key_deleted":
+        await seed_key(["files:read"])
+        from sqlalchemy import delete
+        async with factory() as s:
+            await s.execute(delete(ApiKey))
+            await s.commit()
+    async with factory() as s:
+        expected_rows = {"empty": 0, "unrelated_key_exists": 1, "every_key_deleted": 0}[table_state]
+        from sqlalchemy import func, select
+        assert (await s.execute(select(func.count()).select_from(ApiKey))).scalar_one() == expected_rows
 
-
-async def test_no_key_nonempty_table_401(env):
-    client, seed_key, _factory = env
-    await seed_key(["jobs:read"])  # some unrelated key exists, table non-empty
     resp = await client.get("/protected")
+
     assert resp.status_code == 401
 
 
@@ -272,16 +281,6 @@ async def test_no_bootstrap_key_arbitrary_string_401(env, monkeypatch):
     # Request with arbitrary string should be rejected
     resp = await client.get("/protected", headers={"X-Api-Key": "thm_arbitrary_key"})
     assert resp.status_code == 401
-
-
-async def test_deleting_every_key_does_not_reopen_access(env):
-    client, seed_key, factory = env
-    raw = await seed_key(["files:read"])
-    from sqlalchemy import delete
-    async with factory() as s:
-        await s.execute(delete(ApiKey).where(ApiKey.key_prefix == raw[:12]))
-        await s.commit()
-    assert (await client.get("/protected")).status_code == 401
 
 
 def test_projects_share_scope_is_registered():
