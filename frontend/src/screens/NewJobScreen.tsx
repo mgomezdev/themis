@@ -917,6 +917,7 @@ export function NewJobScreen() {
     setSubmitting(true);
     setError(null);
     const count = selectedPlateIds.length;
+    const created: string[] = [];
     try {
       for (const id of selectedPlateIds) {
         const plate = plates.find(p => p.id === id)!;
@@ -938,11 +939,22 @@ export function NewJobScreen() {
           })),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
         });
+        created.push(id);
       }
       clearFile();
       setSuccessMsg(`${count} job${count === 1 ? '' : 's'} added to queue`);
     } catch (err) {
-      setError(`Failed to create job: ${err instanceof Error ? err.message : String(err)}`);
+      // Plates that already went through must not be queued a second time when the operator retries:
+      // take them out of the selection (they show as SKIP) and say so.
+      if (created.length > 0) {
+        setPlateConfigs(prev => {
+          const next = { ...prev };
+          for (const id of created) next[id] = { ...next[id], selected: false };
+          return next;
+        });
+      }
+      const already = created.length > 0 ? ` (${created.length} of ${count} already added; those plates are now skipped)` : '';
+      setError(`Failed to create job: ${err instanceof Error ? err.message : String(err)}${already}`);
     } finally {
       setSubmitting(false);
     }
