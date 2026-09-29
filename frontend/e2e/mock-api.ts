@@ -31,10 +31,14 @@ type Json = (route: Route, body?: any) => Promise<void>;
 const ok: Json = (route, body = {}) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
 
 export async function mockApi(page: Page, over: Partial<{
-  printers: any[]; fleet: any[]; profiles: any; files: any[]; plates: any[]; modelFilaments: any[]; jobDetails: any;
+  printers: any[]; fleet: any[] | (() => any[]); profiles: any; files: any[]; plates: any[]; modelFilaments: any[]; jobDetails: any;
+  /** GET /queue body (a function so a test can make it change as the journey progresses). */
+  queue: () => any[];
+  /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
+  respond: (method: string, path: string, body: any) => any;
 }> = {}): Promise<Mocks> {
   const printers = over.printers ?? [MONO, U1];
-  const fleet = over.fleet ?? [MONO, U1];
+  const fleetOf = () => (typeof over.fleet === 'function' ? over.fleet() : over.fleet) ?? [MONO, U1];
   const profiles = over.profiles ?? PROFILES;
   const files = over.files ?? [FILE];
   const plates = over.plates ?? PLATES;
@@ -74,11 +78,12 @@ export async function mockApi(page: Page, over: Partial<{
       let body: any = null;
       try { body = req.postDataJSON(); } catch { /* no body */ }
       mocks.captured.push({ url: path, method, body });
-      return ok(route, { id: 123, status: 'queued' });
+      const answer = over.respond?.(method, path, body);
+      return ok(route, answer !== undefined ? answer : { id: 123, status: 'queued' });
     }
     if (path === '/printers' || path === '/printers/') return ok(route, printers);
     if (path === '/printers/types') return ok(route, []);
-    if (path === '/fleet') return ok(route, fleet);
+    if (path === '/fleet') return ok(route, fleetOf());
     let m;
     if ((m = path.match(/^\/printers\/(\d+)\/profiles$/))) return ok(route, profiles);
     if ((m = path.match(/^\/printers\/(\d+)$/))) return ok(route, printers.find(p => p.id === +m[1]) ?? {});
@@ -93,7 +98,8 @@ export async function mockApi(page: Page, over: Partial<{
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
     if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5 });
-    if (path === '/queue' || path === '/jobs') return ok(route, []);
+    if (path === '/queue') return ok(route, over.queue ? over.queue() : []);
+    if (path === '/jobs') return ok(route, []);
     if (path === '/orders') return ok(route, []);
     if (path === '/machine-catalog') return ok(route, []);
     return ok(route, {});  // permissive default for any unlisted GET
