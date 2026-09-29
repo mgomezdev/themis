@@ -375,3 +375,60 @@ async def test_test_connection_unreachable_gives_hint(client, monkeypatch):
     body = r.json()
     assert body["ok"] is False
     assert "Couldn't reach" in body["error"]
+
+
+async def test_test_connection_unknown_type_is_rejected(client):
+    resp = await client.post(
+        "/api/v1/printers/test-connection",
+        json={"printer_type": "not_a_real_type", "connection_config": {}},
+    )
+    assert resp.status_code == 422
+
+
+def _bambu(name: str, **extra) -> dict:
+    return {
+        "name": name,
+        "printer_type": "bambu",
+        "connection_config": {"ip_address": "192.168.1.10", "access_code": "12345678", "serial_number": name},
+        **extra,
+    }
+
+
+async def test_list_printers_reports_disconnected_when_no_live_client(client):
+    created = await client.post("/api/v1/printers", json=_bambu("SN001"))
+    assert created.status_code == 201
+
+    printers = (await client.get("/api/v1/printers")).json()
+    assert [p["id"] for p in printers] == [created.json()["id"]]
+    assert printers[0]["connected"] is False
+
+
+async def test_loaded_filaments_default_to_empty_list(client):
+    resp = await client.post("/api/v1/printers", json=_bambu("SN1"))
+    assert resp.status_code == 201
+    assert resp.json()["loaded_filaments"] == []
+
+
+async def test_loaded_filaments_round_trip_on_create_including_null_filament_id(client):
+    slots = [
+        {"slot": 0, "filament_id": None, "name": "Bambu PLA Matte", "type": "PLA", "color": "#ff0000"},
+        {"slot": 1, "filament_id": "GFA00", "name": "Generic PLA", "type": "PLA", "color": "#cccccc"},
+    ]
+    created = await client.post("/api/v1/printers", json=_bambu("SN2", loaded_filaments=slots))
+    assert created.status_code == 201
+    assert created.json()["loaded_filaments"] == slots
+
+    fetched = (await client.get(f"/api/v1/printers/{created.json()['id']}")).json()
+    assert fetched["loaded_filaments"] == slots
+    assert fetched["loaded_filaments"][0]["filament_id"] is None
+
+
+async def test_patch_loaded_filaments_replaces_and_persists(client):
+    created = await client.post("/api/v1/printers", json=_bambu("SN3"))
+    printer_id = created.json()["id"]
+    slots = [{"slot": 0, "filament_id": None, "name": "Bambu PETG HF", "type": "PETG", "color": "#00aaff"}]
+
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"loaded_filaments": slots})
+    assert resp.status_code == 200
+    assert resp.json()["loaded_filaments"] == slots
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == slots
