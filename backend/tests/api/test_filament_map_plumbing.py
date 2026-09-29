@@ -12,6 +12,13 @@ def test_slice_request_has_prepare_hook_default_none():
     assert req.prepare_hook is None
 
 
+def test_printer_config_input_accepts_tool_index():
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any", tool_index=2)
+    assert c.tool_index == 2
+    # default is None (single-tool / legacy)
+    assert PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any").tool_index is None
+
+
 def test_printer_config_input_accepts_filament_map():
     c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
                            filament_map=[{"model_filament": 1, "tool_index": 2}])
@@ -35,9 +42,12 @@ def test_printer_config_input_coerces_numeric_string_tool_index():
 
 
 def test_printer_config_input_rejects_non_numeric_tool_index():
-    with pytest.raises(ValidationError):
-        PrinterConfigInput(printer_id=1, print_profile="p",
+    # filament_type/color are supplied so the ONLY thing wrong is the tool_index (a missing ask
+    # would raise ValidationError too and let a broken filament_map validator pass unnoticed).
+    with pytest.raises(ValidationError) as exc:
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
                            filament_map=[{"tool_index": "not-a-number"}])
+    assert [e["loc"][0] for e in exc.value.errors()] == ["filament_map"]
 
 
 def test_printer_config_input_requires_filament_type_and_color():
