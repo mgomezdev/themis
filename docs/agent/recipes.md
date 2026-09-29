@@ -25,7 +25,7 @@ Verify symbols against current code before relying on them ("code wins").
    (import from `...auth`) — add the scope(s) to `SCOPES` in `app/auth.py` if new. See `backend.md`'s
    Auth section.
 2. `backend/app/main.py` — `app.include_router(<x>.router)`.
-3. `backend/tests/` — use the `client` fixture (httpx + in-memory SQLite; already sends a full-scope
+3. `backend/tests/` — use the `client` fixture (httpx + per-test SQLite file; already sends a full-scope
    `X-Api-Key` by default).
 4. Frontend client: add to the matching `frontend/src/api/*.ts` (typed `request<T>` wrapper, calling
    `apiFetch` from `api/client.ts` — never raw `fetch`).

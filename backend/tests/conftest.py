@@ -10,23 +10,43 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
 from app.main import app
-from app.database import Base, get_session
+from sqlalchemy import event
+from app.database import Base, get_session, _set_sqlite_pragmas
 from app.auth import SCOPES
 from app.models import ApiKey
 from app.services import thumbnail_regen
 from app.services.printer_manager import printer_manager
 from app.services.api_key_service import generate_key, hash_key
 
-TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+@pytest.fixture(scope="session")
+def _schema_template(tmp_path_factory):
+    """A migrated-schema SQLite file created once per run; each test gets its own copy (cheap)."""
+    import asyncio
+    path = tmp_path_factory.mktemp("schema") / "template.db"
+
+    async def build():
+        engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(build())
+    return path
 
 
 @pytest_asyncio.fixture
-async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
-    """Session factory bound to the per-test in-memory DB (the same DB the `client` fixture serves).
+async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+    """Session factory bound to a per-test SQLite FILE (the same DB the `client` fixture serves), set up the
+    way production is: the app's connect pragmas (foreign keys ON, busy_timeout) and a separate connection per
+    session, so uncommitted writes are isolated and the queue loop can run alongside a request as it does for
+    real. (`sqlite+aiosqlite:///:memory:` shares ONE connection between all sessions: a polling reader sees
+    and rolls back another session's uncommitted writes, and FKs are off.)
     Use it to seed or inspect rows directly: `async with session_factory() as s: ...`."""
-    engine = create_async_engine(TEST_DB_URL)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    import shutil
+    db_file = tmp_path / "test.db"
+    shutil.copyfile(_schema_template, db_file)
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
+    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
     try:
         yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     finally:

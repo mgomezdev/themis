@@ -130,6 +130,6 @@ touch.
 
 ## Tests
 
-`backend/tests/` (pytest-asyncio). `conftest.py` `client` fixture = httpx + in-memory SQLite +
-`get_session` override. Unit tests for services in `tests/services/`. To seed DB state inside an API
+`backend/tests/` (pytest-asyncio). `conftest.py` `client` fixture = httpx + a per-test SQLite file (same connect pragmas as production: FKs on,
+separate connection per session; see `session_factory`) + `get_session` override. Unit tests for services in `tests/services/`. To seed DB state inside an API
 test, reuse the override: `agen = app.dependency_overrides[get_session](); session = await agen.__anext__()`.

@@ -1,16 +1,13 @@
 # backend/tests/services/test_queue_engine.py
 import asyncio
 import os
-import shutil
 import pytest
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy import create_engine, event, select, text
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import select, text
 
-from app.database import Base, _set_sqlite_pragmas
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
@@ -18,28 +15,10 @@ from app.services.slicer_service import SliceError, SlicerService
 from tests.waiting import settle_background_tasks, wait_until
 
 
-@pytest.fixture(scope="module")
-def _schema_template(tmp_path_factory):
-    """One migrated-schema SQLite file, built once per module and copied per test (create_all per test
-    costs ~60ms x 48 tests)."""
-    path = tmp_path_factory.mktemp("queue_engine") / "template.db"
-    sync_engine = create_engine(f"sqlite:///{path}")
-    Base.metadata.create_all(sync_engine)
-    sync_engine.dispose()
-    return path
-
-
 @pytest_asyncio.fixture
-async def db(tmp_path, _schema_template):
-    # File-backed, not :memory: — an in-memory DB shares ONE connection across sessions, so a
-    # polling reader would see (and on close roll back) the engine's uncommitted writes.
-    db_file = tmp_path / "queue.db"
-    shutil.copyfile(_schema_template, db_file)
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
-    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    yield factory
-    await engine.dispose()
+async def db(session_factory):
+    """The shared per-test SQLite file (see conftest.session_factory) under the name this module uses."""
+    return session_factory
 
 
 def _make_mock_printer_manager(printer_ids_ready: list[int]) -> PrinterManager:

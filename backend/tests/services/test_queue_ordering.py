@@ -5,28 +5,12 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-import pytest_asyncio
-from sqlalchemy import event, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select
 
-from app.database import Base, _set_sqlite_pragmas
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
 from app.services.slicer_service import SliceError
-
-
-@pytest_asyncio.fixture
-async def session_factory(tmp_path):
-    """File-backed SQLite with the app's real connect pragmas (WAL, busy_timeout, FKs) and a pool of separate
-    connections, like production. The default in-memory DB shares ONE connection between all sessions, so
-    the concurrent slice/print tasks a two-printer cycle spawns would roll each other's transactions back."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'queue.db'}")
-    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    await engine.dispose()
 
 
 class World:

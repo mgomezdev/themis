@@ -99,7 +99,7 @@ npx vitest run                  # tests
 - Frontend: TS strict + `noUnusedLocals`/`noUnusedParameters` — unused imports fail the build. Cast job
   status to `StatusKey`/`as never` at `StatusPill` sites (job statuses exceed the styled `StatusKey`
   set). Guard post-await `setState` with an `alive`/unmount flag in hooks.
-- Tests: pytest-asyncio with the `client` fixture (in-memory SQLite) backend; Vitest + Testing Library
+- Tests: pytest-asyncio with the `client` fixture (per-test SQLite file) backend; Vitest + Testing Library
   with `vi.stubGlobal('fetch', …)` and a `FakeWS` stub frontend.
 
 ## Git

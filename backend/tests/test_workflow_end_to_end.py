@@ -6,28 +6,12 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
 import pytest_asyncio
-from sqlalchemy import event
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.database import Base, _set_sqlite_pragmas
 from app.services.printer_manager import printer_manager
 from app.services.queue_engine import QueueEngine
 
 GCODE = "; filament used [g] = 12.5\n; estimated printing time (normal mode) = 1h 5m 30s\nG28\n"
-
-
-@pytest_asyncio.fixture
-async def session_factory(tmp_path):
-    """File-backed SQLite with the app's connect pragmas: the slice/print tasks run concurrently with
-    requests, and the shared-connection in-memory default lets sessions roll each other back."""
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'e2e.db'}")
-    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    await engine.dispose()
 
 
 @pytest_asyncio.fixture
