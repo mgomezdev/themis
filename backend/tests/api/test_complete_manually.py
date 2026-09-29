@@ -99,6 +99,9 @@ async def test_complete_manually_409_already_complete(client, session_factory, u
         f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
     )
     assert resp.status_code == 409
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()  # the rejected call recorded nothing
+    assert (job["status"], job["assigned_printer_id"]) == ("complete", None)
+    assert (job["completed_at"], job["actual_seconds"], job["actual_filament_grams"]) == (None, None, None)
 
 
 async def _set_job_status(session_factory, job_id, status, printer_id=None):
@@ -159,6 +162,8 @@ async def test_complete_manually_409_when_already_in_flight(client, upload_3mf, 
     finally:
         jobs_route._manual_complete_in_flight.discard(job_id)
     assert resp.status_code == 409
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()  # the in-flight completion's job is untouched
+    assert (job["status"], job["assigned_printer_id"], job["completed_at"]) == ("queued", None, None)
 
 
 async def test_complete_manually_from_printing_status_completes(client, tmp_path, session_factory, upload_3mf, create_printer, create_job):

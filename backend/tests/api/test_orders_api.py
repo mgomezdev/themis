@@ -107,6 +107,7 @@ async def test_patch_payment_status(client):
 async def test_invalid_payment_status_rejected(client):
     resp = await _create_order(client, payment_status="paid_in_full")
     assert resp.status_code == 422
+    assert (await client.get("/api/v1/orders")).json() == []  # no order was created
 
 
 async def test_filament_cost_total_aggregates_jobs(client, create_job):

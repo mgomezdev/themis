@@ -181,15 +181,20 @@ async def test_recovery_code_burns_after_five_wrong_guesses(remote: AsyncClient,
     assert "RECOVERY CODE" in caplog.text
 
 
-async def test_expired_recovery_code_is_rejected(remote: AsyncClient, caplog, session_factory):
+async def test_expired_recovery_code_is_rejected(local: AsyncClient, remote: AsyncClient, caplog, session_factory):
     caplog.set_level(logging.WARNING, logger="app.admin")
+    await local.put("/api/v1/admin-account/password", json={"password": "old-password"})
     await remote.post("/api/v1/auth/recover")
     code = _logged_code(caplog)
     async with session_factory() as session:
         await session.execute(update(AdminAccount).values(recovery_code_expires_at="2000-01-01T00:00:00"))
         await session.commit()
+
     r = await remote.post("/api/v1/auth/recover/confirm", json={"code": code, "password": "long-enough"})
+
     assert r.status_code == 400
+    assert (await _login(remote, "admin", "long-enough")).status_code == 401  # password was not changed
+    assert (await _login(remote, "admin", "old-password")).status_code == 200
 
 
 async def test_recovery_signs_out_existing_admin_sessions(local: AsyncClient, remote: AsyncClient, caplog):
@@ -276,3 +281,5 @@ async def test_full_access_keys_count_excludes_login_sessions(local: AsyncClient
 async def test_admin_username_cannot_be_a_customer_email(local: AsyncClient):
     r = await local.post("/api/v1/customers", json={"name": "X", "email": "admin", "password": "pw"})
     assert r.status_code == 422
+    assert (await local.get("/api/v1/customers")).json() == []  # no customer was created
+    assert (await local.get("/api/v1/admin-account")).json()["username"] == "admin"

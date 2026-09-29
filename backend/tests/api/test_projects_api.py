@@ -114,6 +114,7 @@ async def test_project_invalid_payment_status_rejected(client):
         "name": "Widget batch", "payment_status": "not-a-status",
     })
     assert resp.status_code == 422
+    assert (await client.get("/api/v1/projects")).json() == []  # no project was created
 
 
 async def test_patch_project_payment_status(client):
@@ -470,6 +471,7 @@ async def test_add_part_rejects_nonpositive_quantity(client):
         json={"name": "M3 screw", "quantity": 0},
     )
     assert resp.status_code == 422
+    assert (await client.get(f"/api/v1/projects/{proj_id}")).json()["parts"] == []  # no part created
 
 
 async def test_add_part_404_for_missing_project(client):

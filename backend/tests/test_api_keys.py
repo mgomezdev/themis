@@ -93,6 +93,8 @@ async def test_create_unknown_scope_422(client: AsyncClient):
         "/api/v1/api-keys", json={"name": "Bad", "scopes": ["not:a:scope"]}, headers=headers,
     )
     assert resp.status_code == 422
+    rows = (await client.get("/api/v1/api-keys", headers=headers)).json()
+    assert [r["name"] for r in rows] == ["Bootstrap"]  # no key was minted
 
 
 async def test_list_never_includes_raw_key_or_hash(client: AsyncClient):

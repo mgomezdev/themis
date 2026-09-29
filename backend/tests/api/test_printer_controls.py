@@ -229,6 +229,7 @@ async def test_fan_422_on_invalid_fan_name(client, printer_id):
             json={"fan": "turbo", "speed_pct": 100},
         )
     assert resp.status_code == 422
+    mock.set_fan_speeds.assert_not_called()  # nothing was sent to the printer
 
 
 async def test_fan_404_on_missing_printer(client):

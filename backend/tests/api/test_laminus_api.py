@@ -181,11 +181,14 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
 async def test_confirm_remap_no_pending_returns_409(client: AsyncClient):
     """No pending slot → 409."""
     lmod._pending_sync = None
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "any-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
+    assert lmod._pending_sync is None
+    assert lmod._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
@@ -195,11 +198,14 @@ async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "wrong-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "correct-id"  # still parked
+    assert lmod._catalog_bytes == catalog_before  # not committed
 
 
 async def test_confirm_remap_missing_required_printer_resolution_returns_422(client: AsyncClient):
@@ -215,15 +221,25 @@ async def test_confirm_remap_missing_required_printer_resolution_returns_422(cli
         },
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-1",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 422
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-1"  # operator can retry
+    assert lmod._catalog_bytes == catalog_before
 
 
-async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient):
+async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient, session_factory, create_job):
     """A job resolution value not present in the new catalog is rejected, not applied blindly."""
+    from sqlalchemy import select
+    from app.models import JobPrinterConfig
+
+    job_id = await create_job(print_profile="Old Process")
+    async with session_factory() as s:
+        config_id = (await s.execute(
+            select(JobPrinterConfig.id).where(JobPrinterConfig.job_id == job_id))).scalar_one()
     lmod._pending_sync = {
         "sync_id": "sync-job",
         "raw": b"{}",
@@ -232,11 +248,12 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
             "printers": [],
             "jobs": [{"field": "print_profile", "stale_value": "Old Process",
                       "options_kind": "process", "required": False,
-                      "affected_config_ids": [1], "affected_file_names": ["job#1"]}],
+                      "affected_config_ids": [config_id], "affected_file_names": [f"job#{job_id}"]}],
             "spoolman_filaments": [],
         },
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-job",
         "resolutions": {
@@ -247,6 +264,10 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
         },
     })
     assert resp.status_code == 422
+    async with session_factory() as s:  # nothing was applied
+        assert (await s.get(JobPrinterConfig, config_id)).print_profile == "Old Process"
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-job"
+    assert lmod._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: AsyncClient):
@@ -263,6 +284,7 @@ async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: A
         "resolutions": {"printers": "not-a-list", "jobs": [], "spoolman_filaments": []},
     })
     assert resp.status_code == 422
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-malformed"
 
 
 async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncClient):

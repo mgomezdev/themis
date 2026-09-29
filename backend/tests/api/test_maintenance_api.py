@@ -91,6 +91,7 @@ async def test_create_item_invalid_trigger_type_422(client):
         "triggers": [{"trigger_type": "weekly", "amount": 1, "unit": None}],
     })
     assert r.status_code == 422
+    assert (await client.get("/api/v1/maintenance/items")).json() == []  # nothing half-created
 
 
 @pytest.mark.asyncio
@@ -141,6 +142,8 @@ async def test_replace_triggers_rejects_invalid_trigger_type(client):
         "triggers": [{"trigger_type": "weekly", "amount": 1, "unit": None}]
     })
     assert r.status_code == 422
+    (item,) = (await client.get("/api/v1/maintenance/items")).json()  # original trigger kept, not wiped
+    assert [(t["trigger_type"], t["amount"]) for t in item["triggers"]] == [("job_count", 10)]
 
 
 @pytest.mark.asyncio
