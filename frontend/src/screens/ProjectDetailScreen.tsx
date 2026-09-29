@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Progress } from '../components/ui';
+import { useTopbarOverride, type Crumb } from '../components/topbarOverride';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
-import { fmtDate, fmtDuration } from '../data/helpers';
+import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
 import {
   getProject, getProjectJobs, generateProject, updateProjectPart,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
@@ -74,6 +75,16 @@ export function ProjectDetailScreen() {
   }, [projectId]);
 
   useEffect(() => { reload(); }, [reload]);
+
+  // Breadcrumbs end with the customer (linked when it's a customer account) and the project name.
+  const customerCrumb: Crumb | null = !project ? null
+    : project.customer_id != null && project.customer_name
+      ? { label: project.customer_name, to: `/customers/${project.customer_id}` }
+      : project.customer || null;
+  useTopbarOverride(
+    project?.name,
+    project ? ['Workshop', { label: 'Projects', to: '/projects' }, ...(customerCrumb ? [customerCrumb] : [])] : undefined,
+  );
 
   const loadShare = useCallback(() => {
     if (!projectId) return;
@@ -196,7 +207,13 @@ export function ProjectDetailScreen() {
                 {project.payment_status}{project.amount_paid != null ? ` · $${project.amount_paid.toFixed(2)}` : ''}
               </span>
             </div>
-            {project.customer && (
+            {project.customer_id != null && project.customer_name ? (
+              <div style={{ fontSize: 13, marginTop: 3 }}>
+                <Link to={`/customers/${project.customer_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                  {project.customer_name}
+                </Link>
+              </div>
+            ) : project.customer && (
               <div style={{ fontSize: 13, color: 'var(--text-3)', marginTop: 3 }}>
                 {project.customer}
               </div>
@@ -208,6 +225,16 @@ export function ProjectDetailScreen() {
                 </span>
               )}
               {project.notes && <span>{project.notes}</span>}
+              {project.price != null && (
+                <span>
+                  Price: {fmtMoney(project.price)}
+                  {project.payment_status !== 'paid' && project.price > (project.amount_paid ?? 0) && (
+                    <span style={{ color: 'var(--warn)' }}>
+                      {' '}· {fmtMoney(project.price - (project.amount_paid ?? 0))} outstanding
+                    </span>
+                  )}
+                </span>
+              )}
               {project.filament_cost_total != null && (
                 <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
               )}
@@ -219,7 +246,7 @@ export function ProjectDetailScreen() {
                         onChange={e => handleCustomerChange(e.target.value)}>
                   <option value="">None</option>
                   {project.customer_id != null && !customers?.some(c => c.id === project.customer_id) && (
-                    <option value={project.customer_id}>Customer #{project.customer_id}</option>
+                    <option value={project.customer_id}>{project.customer_name ?? `Customer #${project.customer_id}`}</option>
                   )}
                   {customers?.map(c => <option key={c.id} value={c.id}>{c.name} ({c.email})</option>)}
                 </select>

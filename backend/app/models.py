@@ -185,6 +185,9 @@ class Customer(Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[str] = mapped_column(String(32))
+    phone: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    company: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 PROJECT_STAGES = ("draft", "planning", "queued")
@@ -216,6 +219,8 @@ class Project(Base):
     share_token_created_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # Payment tracking, for future profit/loss reporting.
     amount_paid: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # Quoted total for the project; outstanding balance = price - amount_paid.
+    price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
     stage: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
     customer_id: Mapped[Optional[int]] = mapped_column(

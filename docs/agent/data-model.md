@@ -189,7 +189,7 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
 bool, due_date?, machine_uuid?, process_uuid?, notes?, result_file_id FK?, order_id FK?, source_app?,
 source_user?, source_layout_id?, share_token? (unique), share_token_created_at?, amount_paid: float?,
-payment_status: str="unpaid"` (`unpaid|partial|paid`), `stage: str="queued"` (`draft|planning|queued`),
+price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `stage: str="queued"` (`draft|planning|queued`),
 `customer_id FK?` (owning customer account), `created_at, updated_at`.
 - `stage`: `draft` (customer request; `generate` → 409) → `planning` (staff can generate jobs; queue
   engine won't claim them) → `queued` (jobs claimable). Forward-only via `POST /{id}/promote`. Staff/API
@@ -203,6 +203,9 @@ payment_status: str="unpaid"` (`unpaid|partial|paid`), `stage: str="queued"` (`d
   order's own copy (a project isn't required to have one) — for future profit/loss reporting.
   `filament_cost_total` (derived, not stored — `projects.py::_project_progress`) sums `jobs.filament_cost`
   across the project's jobs, alongside the existing `actual_filament_grams`/`actual_seconds` aggregates.
+- `price` (v023): quoted total. Outstanding balance = `max(price - amount_paid, 0)` unless
+  `payment_status == "paid"`; no price → no known balance. Responses also carry derived
+  `customer_name` (the linked `customers.name`, or null).
 - `order_id`: set by `generate_project` — the internal `orders` row that groups all generated jobs for
   fulfillment tracking. `NULL` until the project is first generated. Not the same thing as the
   project's own `order_type` field above.
@@ -292,8 +295,9 @@ needing an explicit revoke.
 
 ### customers
 `id, name, email` (unique, stored lowercased), `password_hash` (PBKDF2 — `services/password.py`),
-`enabled, created_at`. Staff-managed via `/api/v1/customers` (`customers:read`/`customers:write`); no
-self-signup.
+`enabled, created_at, phone?, company?, notes?` (contact fields, v023). Staff-managed via
+`/api/v1/customers` (`customers:read`/`customers:write`); no self-signup. Password is optional on create —
+without one the hash is of a random secret, so the account can't sign in until staff set one.
 
 ### admin_account
 Singleton (id=1), created by migration v022 on first boot: `username="admin", password_hash?`

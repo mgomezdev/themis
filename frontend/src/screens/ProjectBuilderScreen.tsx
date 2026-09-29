@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
 import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
@@ -152,6 +152,9 @@ function parseGenerateError(msg: string): string {
 
 export function ProjectBuilderScreen() {
   const { id } = useParams<{ id: string }>();
+  // "New project" from a customer's page links here with ?customer=<id>; used on create only.
+  const [searchParams] = useSearchParams();
+  const newForCustomerId = Number(searchParams.get('customer')) || null;
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
@@ -163,11 +166,12 @@ export function ProjectBuilderScreen() {
   // Project header fields
   const [name, setName] = useState('');
   const [customer, setCustomer] = useState('');
-  const [orderType, setOrderType] = useState<'internal' | 'customer'>('internal');
+  const [orderType, setOrderType] = useState<'internal' | 'customer'>(newForCustomerId ? 'customer' : 'internal');
   const [onHold, setOnHold] = useState(false);
   const [dueDate, setDueDate] = useState('');
   const [notes, setNotes] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
+  const [price, setPrice] = useState('');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('unpaid');
 
   // Part items
@@ -232,11 +236,11 @@ export function ProjectBuilderScreen() {
   function computeSnap(
     n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
     its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
-    ap: string = amountPaid, ps: PaymentStatus = paymentStatus,
+    ap: string = amountPaid, ps: PaymentStatus = paymentStatus, pr: string = price,
   ) {
     return JSON.stringify({
       name: n, customer: ot === 'customer' ? c : '', orderType: ot,
-      onHold: oh, dueDate: dd, notes: no, amountPaid: ap, paymentStatus: ps,
+      onHold: oh, dueDate: dd, notes: no, amountPaid: ap, paymentStatus: ps, price: pr,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
         ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
@@ -274,6 +278,7 @@ export function ProjectBuilderScreen() {
       const no = p.notes ?? '';
       const ap = p.amount_paid != null ? String(p.amount_paid) : '';
       const ps = p.payment_status ?? 'unpaid';
+      const pr = p.price != null ? String(p.price) : '';
       const its: LocalItem[] = p.items.map(it => ({
         localId: newLocalId(),
         serverId: it.id,
@@ -299,12 +304,12 @@ export function ProjectBuilderScreen() {
         allocated: pt.allocated,
       }));
       setName(n); setCustomer(c); setOrderType(ot); setOnHold(oh);
-      setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps);
+      setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps); setPrice(pr);
       setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts, ap, ps));
+      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts, ap, ps, pr));
     }).catch(console.error);
   }, [projectId]);
 
@@ -390,6 +395,7 @@ export function ProjectBuilderScreen() {
       due_date: dueDate || null,
       notes: notes || null,
       amount_paid: amountPaid.trim() ? Number(amountPaid) : null,
+      price: price.trim() ? Number(price) : null,
       payment_status: paymentStatus,
     };
     if (projectId) {
@@ -442,7 +448,7 @@ export function ProjectBuilderScreen() {
       }
       return projectId;
     } else {
-      const proj = await createProject(projectFields);
+      const proj = await createProject({ ...projectFields, customer_id: newForCustomerId });
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         await addProjectItem(proj.id, {
@@ -646,6 +652,17 @@ export function ProjectBuilderScreen() {
 
         {/* Payment row */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <label className="label" htmlFor="proj-price">Price</label>
+            <input
+              id="proj-price"
+              type="number" min="0" step="0.01"
+              className="input"
+              placeholder="Quoted total"
+              value={price}
+              onChange={e => setPrice(e.target.value)}
+            />
+          </div>
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
             <label className="label">Amount paid</label>
             <input
