@@ -43,3 +43,26 @@ async def test_create_job_links_the_order_when_given(client, create_job):
 
     assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["order_id"] == order["id"]
     assert (await client.get(f"/api/v1/jobs/{unlinked_id}")).json()["order_id"] is None
+
+
+def test_make_3mf_bytes_is_identical_whatever_the_clock_says():
+    """Same bytes => same content hash => the upload route deduplicates instead of suffixing "(2)"."""
+    import time
+    from unittest.mock import patch
+    from tests.conftest import make_3mf_bytes
+
+    with patch("zipfile.time.localtime", return_value=time.struct_time((2030, 5, 5, 5, 5, 5, 0, 0, 0))):
+        later = make_3mf_bytes()
+    with patch("zipfile.time.localtime", return_value=time.struct_time((2031, 6, 6, 6, 6, 6, 0, 0, 0))):
+        much_later = make_3mf_bytes()
+
+    assert later == much_later == make_3mf_bytes()
+
+
+async def test_uploading_the_same_factory_3mf_twice_reuses_one_file(client, upload_3mf):
+    first = await upload_3mf()
+    second = await upload_3mf()
+
+    assert first == second
+    assert [f["original_filename"] for f in (await client.get("/api/v1/files")).json()] == ["m.3mf"]
+

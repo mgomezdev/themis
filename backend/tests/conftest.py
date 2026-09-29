@@ -102,12 +102,16 @@ async def _isolate_printer_manager():
 
 def make_3mf_bytes() -> bytes:
     """Smallest 3MF the upload route accepts: one plate with a 60s / 5g estimate and a thumbnail."""
+    # Entries carry a FIXED timestamp: zipfile stamps "now" (2-second resolution) by default, so two
+    # calls straddling a clock tick produced different bytes -> different content hashes -> the upload
+    # route stored the second copy as "m (2).3mf" instead of deduplicating (an intermittent test failure).
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
+        for name, data in (
+            ("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]})),
+            ("Metadata/plate_1.png", b"\x89PNG"),
+        ):
+            zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)
     return buf.getvalue()
 
 
