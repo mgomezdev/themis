@@ -59,8 +59,9 @@ jobs:
       - name: Type-check and build
         run: npm run build
 
+      # Fails if coverage drops below the floors in vitest.config.ts.
       - name: Run unit tests
-        run: npm run test:run
+        run: npm run test:cov
 
   frontend-e2e:
     runs-on: ubuntu-latest
