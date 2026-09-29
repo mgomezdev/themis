@@ -5,7 +5,7 @@ import { FilamentRequirementPicker } from '../components/FilamentRequirementPick
 import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
-import { getCustomer } from '../api/customers';
+import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
 import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
 import type { LibraryFile, FolderNode } from '../data/types';
@@ -156,13 +156,6 @@ export function ProjectBuilderScreen() {
   // "New project" from a customer's page links here with ?customer=<id>; used on create only.
   const [searchParams] = useSearchParams();
   const newForCustomerId = id ? null : Number(searchParams.get('customer')) || null;
-  const [newForCustomerName, setNewForCustomerName] = useState<string | null>(null);
-  useEffect(() => {
-    if (!newForCustomerId) return;
-    let alive = true;
-    getCustomer(newForCustomerId).then(c => { if (alive) setNewForCustomerName(c.name); }).catch(() => {});
-    return () => { alive = false; };
-  }, [newForCustomerId]);
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
@@ -174,6 +167,7 @@ export function ProjectBuilderScreen() {
   // Project header fields
   const [name, setName] = useState('');
   const [customer, setCustomer] = useState('');
+  const [customerId, setCustomerId] = useState<number | null>(newForCustomerId);
   const [orderType, setOrderType] = useState<'internal' | 'customer'>(newForCustomerId ? 'customer' : 'internal');
   const [onHold, setOnHold] = useState(false);
   const [dueDate, setDueDate] = useState('');
@@ -245,9 +239,10 @@ export function ProjectBuilderScreen() {
     n: string, c: string, ot: string, oh: boolean, dd: string, no: string,
     its: LocalItem[], lks: LocalLink[], prts: LocalPart[],
     ap: string = amountPaid, ps: PaymentStatus = paymentStatus, pr: string = price,
+    cid: number | null = customerId,
   ) {
     return JSON.stringify({
-      name: n, customer: ot === 'customer' ? c : '', orderType: ot,
+      name: n, customer: ot === 'customer' ? c : '', customerId: ot === 'customer' ? cid : null, orderType: ot,
       onHold: oh, dueDate: dd, notes: no, amountPaid: ap, paymentStatus: ps, price: pr,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
@@ -287,6 +282,9 @@ export function ProjectBuilderScreen() {
       const ap = p.amount_paid != null ? String(p.amount_paid) : '';
       const ps = p.payment_status ?? 'unpaid';
       const pr = p.price != null ? String(p.price) : '';
+      const cid = p.customer_id;
+      // A linked account's current name wins over whatever was typed before it was linked.
+      const cName = cid != null && p.customer_name ? p.customer_name : c;
       const its: LocalItem[] = p.items.map(it => ({
         localId: newLocalId(),
         serverId: it.id,
@@ -311,13 +309,13 @@ export function ProjectBuilderScreen() {
         quantity: pt.quantity,
         allocated: pt.allocated,
       }));
-      setName(n); setCustomer(c); setOrderType(ot); setOnHold(oh);
+      setName(n); setCustomer(cName); setCustomerId(cid); setOrderType(ot); setOnHold(oh);
       setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps); setPrice(pr);
       setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
       setServerItems(new Map(p.items.map(it => [it.id, it])));
-      setCleanSnap(computeSnap(n, c, ot, oh, dd, no, its, lks, prts, ap, ps, pr));
+      setCleanSnap(computeSnap(n, cName, ot, oh, dd, no, its, lks, prts, ap, ps, pr, cid));
     }).catch(console.error);
   }, [projectId]);
 
@@ -405,6 +403,8 @@ export function ProjectBuilderScreen() {
       amount_paid: amountPaid.trim() ? Number(amountPaid) : null,
       price: price.trim() ? Number(price) : null,
       payment_status: paymentStatus,
+      // Switching to Internal unlinks the customer account too.
+      customer_id: orderType === 'customer' ? customerId : null,
     };
     if (projectId) {
       await patchProject(projectId, projectFields);
@@ -456,9 +456,7 @@ export function ProjectBuilderScreen() {
       }
       return projectId;
     } else {
-      const proj = await createProject({
-        ...projectFields, customer_id: orderType === 'customer' ? newForCustomerId : null,
-      });
+      const proj = await createProject(projectFields);
       for (let i = 0; i < items.length; i++) {
         const it = items[i];
         await addProjectItem(proj.id, {
@@ -626,23 +624,14 @@ export function ProjectBuilderScreen() {
           </div>
         </div>
 
-        {newForCustomerId && orderType === 'customer' && (
-          <div className="small muted">
-            Will be linked to customer account{' '}
-            <strong style={{ color: 'var(--text-2)' }}>{newForCustomerName ?? `#${newForCustomerId}`}</strong>
-          </div>
-        )}
-
         {/* Customer + notes row */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'end' }}>
           {orderType === 'customer' && (
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 4 }}>
               <label className="label">Customer</label>
-              <input
-                className="input"
-                placeholder="Customer name"
-                value={customer}
-                onChange={e => setCustomer(e.target.value)}
+              <CustomerPicker
+                value={{ customerId, customerText: customer }}
+                onChange={v => { setCustomerId(v.customerId); setCustomer(v.customerText); }}
               />
             </div>
           )}

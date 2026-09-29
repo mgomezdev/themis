@@ -1,11 +1,22 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useMemo, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Empty, Progress } from '../components/ui';
 import { useProjects, deleteProject, generateProject, type Project } from '../api/projects';
 import { fmtDate as formatDate } from '../data/helpers';
 
 type Filter = 'all' | 'pending' | 'active' | 'completed';
+
+/** Customer filter key: a linked account, a typed-only name, or no customer at all. */
+function customerKey(p: Project): string {
+  if (p.customer_id != null) return `id:${p.customer_id}`;
+  const t = p.customer.trim().toLowerCase();
+  return t ? `text:${t}` : 'none';
+}
+
+function customerLabel(p: Project): string {
+  return p.customer_id != null && p.customer_name ? p.customer_name : p.customer.trim();
+}
 
 function projectFilter(p: Project, f: Filter): boolean {
   switch (f) {
@@ -92,7 +103,14 @@ function ProjectCard({
       {/* Name + customer */}
       <div style={{ flex: 1 }}>
         <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-1)' }}>{project.name}</div>
-        {project.customer && (
+        {project.customer_id != null && project.customer_name ? (
+          <div style={{ fontSize: 12, marginTop: 1 }}>
+            <Link to={`/customers/${project.customer_id}`} onClick={e => e.stopPropagation()}
+                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+              {project.customer_name}
+            </Link>
+          </div>
+        ) : project.customer && (
           <div style={{ fontSize: 12, color: 'var(--text-3)', marginTop: 1 }}>{project.customer}</div>
         )}
         <div style={{ fontSize: 12, color: 'var(--text-4)', marginTop: 3 }}>{summarise(project)}</div>
@@ -141,14 +159,25 @@ export function ProjectsScreen() {
   const navigate = useNavigate();
   const { projects, refetch } = useProjects();
   const [filter, setFilter] = useState<Filter>('all');
+  const [customerFilter, setCustomerFilter] = useState('');
 
-  const visible = projects.filter(p => projectFilter(p, filter));
+  const customerOptions = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const p of projects) {
+      const k = customerKey(p);
+      if (k !== 'none' && !seen.has(k)) seen.set(k, customerLabel(p));
+    }
+    return [...seen].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [projects]);
+
+  const forCustomer = customerFilter ? projects.filter(p => customerKey(p) === customerFilter) : projects;
+  const visible = forCustomer.filter(p => projectFilter(p, filter));
 
   const filterCounts: Record<Filter, number> = {
-    all:       projects.length,
-    pending:   projects.filter(p => projectFilter(p, 'pending')).length,
-    active:    projects.filter(p => projectFilter(p, 'active')).length,
-    completed: projects.filter(p => projectFilter(p, 'completed')).length,
+    all:       forCustomer.length,
+    pending:   forCustomer.filter(p => projectFilter(p, 'pending')).length,
+    active:    forCustomer.filter(p => projectFilter(p, 'active')).length,
+    completed: forCustomer.filter(p => projectFilter(p, 'completed')).length,
   };
 
   async function handleDelete(id: number) {
@@ -165,7 +194,7 @@ export function ProjectsScreen() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       {/* Filter tabs */}
-      <div style={{ display: 'flex', gap: 4 }}>
+      <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         {(['all', 'pending', 'active', 'completed'] as Filter[]).map(f => (
           <button
             key={f}
@@ -179,6 +208,15 @@ export function ProjectsScreen() {
             )}
           </button>
         ))}
+        {customerOptions.length > 0 && (
+          <select className="select" aria-label="Filter by customer" value={customerFilter}
+                  onChange={e => setCustomerFilter(e.target.value)}
+                  style={{ marginLeft: 'auto', maxWidth: 240 }}>
+            <option value="">All customers</option>
+            {customerOptions.map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+            <option value="none">No customer</option>
+          </select>
+        )}
       </div>
 
       {visible.length === 0 ? (
@@ -189,7 +227,7 @@ export function ProjectsScreen() {
           />
         ) : (
           <div style={{ padding: '40px 0', textAlign: 'center', color: 'var(--text-4)', fontSize: 13 }}>
-            No {filter} projects
+            No {filter === 'all' ? '' : `${filter} `}projects{customerFilter ? ' for this customer' : ''}
           </div>
         )
       ) : (

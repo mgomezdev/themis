@@ -112,3 +112,63 @@ def test_financial_windows_bucket_by_project_created_at():
     assert [w[k]["revenue"] for k in ("30d", "60d", "90d", "all")] == [1, 3, 7, 15]
     assert [w[k]["expenses"] for k in ("30d", "60d", "90d", "all")] == [0, 0, 1, 1]
     assert [w[k]["outstanding"] for k in ("30d", "60d", "90d", "all")] == [10, 20, 30, 40]
+
+
+async def test_has_password_and_no_password_login_rejected(client: AsyncClient):
+    c = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test"})).json()
+    assert c["has_password"] is False
+    for pw in ("", "anything"):
+        r = await client.post("/api/v1/auth/login", json={"email": "a@x.test", "password": pw})
+        assert r.status_code in (401, 422)
+    r = await client.patch(f"/api/v1/customers/{c['id']}", json={"password": "pw12345"})
+    assert r.json()["has_password"] is True
+    r = await client.post("/api/v1/auth/login", json={"email": "a@x.test", "password": "pw12345"})
+    assert r.status_code == 200
+
+
+async def test_delete_customer_keeps_projects_unlinked_with_label(client: AsyncClient):
+    c = (await client.post("/api/v1/customers", json={"name": "Acme", "email": "a@x.test", "password": "pw"})).json()
+    p = (await client.post("/api/v1/projects", json={"name": "P", "customer_id": c["id"]})).json()
+    headers = {"X-Api-Key": (await client.post("/api/v1/auth/login",
+                                               json={"email": "a@x.test", "password": "pw"})).json()["key"]}
+    r = await client.delete(f"/api/v1/customers/{c['id']}")
+    assert r.status_code == 200 and r.json()["projects_unlinked"] == 1
+    assert (await client.get(f"/api/v1/customers/{c['id']}")).status_code == 404
+    proj = (await client.get(f"/api/v1/projects/{p['id']}")).json()
+    assert proj["customer_id"] is None and proj["customer"] == "Acme"
+    # Their portal session is gone too.
+    assert (await client.get("/api/v1/customer/projects", headers=headers)).status_code == 401
+    assert (await client.delete(f"/api/v1/customers/{c['id']}")).status_code == 404
+
+
+async def test_unlinked_projects_suggestions_and_link(client: AsyncClient):
+    acme = (await client.post("/api/v1/customers", json={"name": "Acme Corp", "email": "ops@acme.test",
+                                                         "company": "Acme Inc"})).json()
+    await client.post("/api/v1/customers", json={"name": "Dup", "email": "d1@x.test"})
+    await client.post("/api/v1/customers", json={"name": "dup", "email": "d2@x.test"})
+    by_name = (await client.post("/api/v1/projects", json={"name": "P1", "customer": "  acme   corp "})).json()
+    by_company = (await client.post("/api/v1/projects", json={"name": "P2", "customer": "ACME INC"})).json()
+    ambiguous = (await client.post("/api/v1/projects", json={"name": "P3", "customer": "Dup"})).json()
+    unknown = (await client.post("/api/v1/projects", json={"name": "P4", "customer": "Stranger"})).json()
+    await client.post("/api/v1/projects", json={"name": "Internal"})
+    await client.post("/api/v1/projects", json={"name": "Linked", "customer": "Acme Corp", "customer_id": acme["id"]})
+
+    rows = {r["project_id"]: r for r in (await client.get("/api/v1/customers/unlinked-projects")).json()}
+    assert set(rows) == {by_name["id"], by_company["id"], ambiguous["id"], unknown["id"]}
+    assert rows[by_name["id"]]["suggested_customer_id"] == acme["id"]
+    assert rows[by_company["id"]]["suggested_customer_id"] == acme["id"]
+    assert rows[ambiguous["id"]]["suggested_customer_id"] is None
+    assert rows[unknown["id"]]["suggested_customer_id"] is None
+
+    r = await client.post("/api/v1/customers/link-projects", json={"links": [
+        {"project_id": by_name["id"], "customer_id": acme["id"]},
+        {"project_id": by_company["id"], "customer_id": acme["id"]}]})
+    assert r.status_code == 200 and r.json() == {"linked": 2}
+    p = (await client.get(f"/api/v1/projects/{by_name['id']}")).json()
+    assert p["customer_id"] == acme["id"] and p["order_type"] == "customer"
+    assert {r["project_id"] for r in (await client.get("/api/v1/customers/unlinked-projects")).json()} \
+        == {ambiguous["id"], unknown["id"]}
+
+    r = await client.post("/api/v1/customers/link-projects",
+                          json={"links": [{"project_id": unknown["id"], "customer_id": 999}]})
+    assert r.status_code == 404

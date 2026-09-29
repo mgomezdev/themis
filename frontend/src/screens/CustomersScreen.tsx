@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
 import { Empty } from '../components/ui';
 import { fmtMoney } from '../data/helpers';
-import { listCustomers, createCustomer, type CustomerListItem } from '../api/customers';
+import {
+  listCustomers, createCustomer, getUnlinkedProjects, linkProjects, portalStatus,
+  type CustomerListItem, type UnlinkedProject,
+} from '../api/customers';
 
 const EMPTY_FORM = { name: '', email: '', phone: '', company: '', password: '' };
 
@@ -56,6 +59,84 @@ function NewCustomerForm({ onCancel, onCreated }: { onCancel: () => void; onCrea
   );
 }
 
+/**
+ * Projects that name a customer in their free-text field but aren't linked to an account —
+ * e.g. created before customer accounts existed. Exact name/company/email matches are
+ * pre-selected; staff confirm before anything is linked.
+ */
+function LinkProjectsPanel({ unlinked, customers, onLinked }: {
+  unlinked: UnlinkedProject[]; customers: CustomerListItem[]; onLinked: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [choice, setChoice] = useState<Record<number, number | null>>(
+    () => Object.fromEntries(unlinked.map(u => [u.project_id, u.suggested_customer_id])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const suggested = unlinked.filter(u => u.suggested_customer_id != null).length;
+  const selected = unlinked.filter(u => choice[u.project_id] != null);
+
+  async function link() {
+    setSaving(true);
+    setError(null);
+    try {
+      await linkProjects(selected.map(u => ({ project_id: u.project_id, customer_id: choice[u.project_id]! })));
+      onLinked();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--warn)' }}>{Icons.alert}</span>
+        <span style={{ fontSize: 13, flex: 1 }}>
+          {unlinked.length} project{unlinked.length !== 1 ? 's name a customer' : ' names a customer'} but
+          {unlinked.length !== 1 ? ' aren’t' : ' isn’t'} linked to an account, so {unlinked.length !== 1 ? 'they' : 'it'} won’t
+          show in customer totals.{suggested > 0 && ` ${suggested} match${suggested !== 1 ? '' : 'es'} an existing customer.`}
+        </span>
+        <button className="btn sm" onClick={() => setOpen(o => !o)}>{open ? 'Hide' : 'Review'}</button>
+      </div>
+      {open && (
+        <>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead><tr><th>Project</th><th>Customer name on project</th><th>Link to account</th></tr></thead>
+              <tbody>
+                {unlinked.map(u => (
+                  <tr key={u.project_id} style={{ cursor: 'default' }}>
+                    <td><Link to={`/projects/${u.project_id}`} style={{ color: 'var(--text-1)' }}>{u.project_name}</Link></td>
+                    <td>{u.customer_text}</td>
+                    <td>
+                      <select className="select" aria-label={`Customer for ${u.project_name}`}
+                              value={choice[u.project_id] ?? ''}
+                              onChange={e => setChoice({ ...choice, [u.project_id]: e.target.value ? Number(e.target.value) : null })}>
+                        <option value="">Don’t link</option>
+                        {customers.map(c => <option key={c.id} value={c.id}>{c.name}{c.company ? ` (${c.company})` : ''}</option>)}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="small muted">
+            No match? Create the customer first with “New customer”, then pick them here.
+          </div>
+          {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+          <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
+            <button className="btn primary sm" disabled={saving || selected.length === 0} onClick={link}>
+              {saving ? 'Linking…' : `Link ${selected.length} project${selected.length !== 1 ? 's' : ''}`}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function CustomersScreen() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -64,13 +145,15 @@ export function CustomersScreen() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
 
-  useEffect(() => {
-    let alive = true;
+  const [unlinked, setUnlinked] = useState<UnlinkedProject[]>([]);
+
+  const reload = useCallback(() => {
     listCustomers()
-      .then(c => { if (alive) setCustomers(c); })
-      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
-    return () => { alive = false; };
+      .then(setCustomers)
+      .catch(e => setError(e instanceof Error ? e.message : String(e)));
+    getUnlinkedProjects().then(setUnlinked).catch(() => setUnlinked([]));
   }, []);
+  useEffect(() => { reload(); }, [reload]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -102,6 +185,12 @@ export function CustomersScreen() {
       </div>
 
       {error && <div className="small" style={{ color: 'var(--err)' }}>{error}</div>}
+
+      {customers && customers.length > 0 && unlinked.length > 0 && (
+        // Keyed on the row set so a reload after linking resets the pre-selections.
+        <LinkProjectsPanel key={unlinked.map(u => u.project_id).join(',')}
+                           unlinked={unlinked} customers={customers} onLinked={reload} />
+      )}
 
       {customers === null ? (
         !error && <div style={{ padding: 24, color: 'var(--text-3)' }}>Loading…</div>
@@ -136,7 +225,7 @@ export function CustomersScreen() {
                   <td style={{ textAlign: 'right', color: c.outstanding > 0 ? 'var(--warn)' : undefined }}>
                     {c.outstanding > 0 ? fmtMoney(c.outstanding) : <span className="muted">—</span>}
                   </td>
-                  <td>{c.enabled ? 'Enabled' : <span className="muted">Disabled</span>}</td>
+                  <td>{(() => { const s = portalStatus(c); return s.tone === 'ok' ? s.label : <span className="muted">{s.label}</span>; })()}</td>
                 </tr>
               ))}
             </tbody>

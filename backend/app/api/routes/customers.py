@@ -1,13 +1,12 @@
 """Staff management of customer accounts."""
 from __future__ import annotations
 import asyncio
-import secrets
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -24,7 +23,9 @@ def _now() -> str:
 
 def _to_dict(c: Customer) -> dict:
     return {"id": c.id, "name": c.name, "email": c.email, "enabled": c.enabled, "created_at": c.created_at,
-            "phone": c.phone, "company": c.company, "notes": c.notes}
+            "phone": c.phone, "company": c.company, "notes": c.notes,
+            # False until staff set a password — the account exists but can't sign in to the portal.
+            "has_password": bool(c.password_hash)}
 
 
 def _clean(v: str | None) -> str | None:
@@ -188,6 +189,69 @@ async def list_customers(session: AsyncSession = Depends(get_session)) -> list[d
     return out
 
 
+def _norm(s: str | None) -> str:
+    return " ".join((s or "").split()).lower()
+
+
+@router.get("/unlinked-projects", summary="Projects with a typed customer name but no customer account",
+            dependencies=[Depends(require_scope("customers:read"))])
+async def unlinked_projects(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Projects whose free-text ``customer`` is set but ``customer_id`` isn't, each with a
+    suggested account when the text exactly matches (case/space-insensitive) one customer's
+    name, company, or email. Staff confirm before anything is linked."""
+    customers = (await session.execute(select(Customer))).scalars().all()
+    index: dict[str, set[int]] = defaultdict(set)
+    for c in customers:
+        for key in (c.name, c.company, c.email):
+            if _norm(key):
+                index[_norm(key)].add(c.id)
+    projects = (await session.execute(
+        select(Project).where(Project.customer_id.is_(None), Project.customer != "")
+        .order_by(Project.created_at.desc())
+    )).scalars().all()
+    out = []
+    for p in projects:
+        if not _norm(p.customer):
+            continue
+        matches = index.get(_norm(p.customer), set())
+        out.append({
+            "project_id": p.id, "project_name": p.name, "customer_text": p.customer,
+            "created_at": p.created_at,
+            "suggested_customer_id": next(iter(matches)) if len(matches) == 1 else None,
+        })
+    return out
+
+
+class ProjectLink(BaseModel):
+    project_id: int
+    customer_id: int
+
+
+class LinkProjectsBody(BaseModel):
+    links: list[ProjectLink]
+
+
+@router.post("/link-projects", summary="Link projects to customer accounts",
+             dependencies=[Depends(require_scope("customers:write")), Depends(require_scope("projects:write"))])
+async def link_projects(body: LinkProjectsBody, session: AsyncSession = Depends(get_session)) -> dict:
+    customer_ids = {c for (c,) in (await session.execute(
+        select(Customer.id).where(Customer.id.in_({l.customer_id for l in body.links}))
+    )).all()}
+    missing = {l.customer_id for l in body.links} - customer_ids
+    if missing:
+        raise HTTPException(404, f"Customer(s) not found: {sorted(missing)}")
+    linked = 0
+    for link in body.links:
+        p = await session.get(Project, link.project_id)
+        if p is None:
+            raise HTTPException(404, f"Project {link.project_id} not found")
+        p.customer_id = link.customer_id
+        p.order_type = "customer"
+        linked += 1
+    await session.commit()
+    return {"linked": linked}
+
+
 @router.get("/{customer_id}", summary="Get customer with projects and financial summary",
             dependencies=[Depends(require_scope("customers:read"))])
 async def get_customer(customer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
@@ -212,10 +276,10 @@ async def create_customer(body: CustomerCreate, session: AsyncSession = Depends(
         raise HTTPException(422, "email must be an email address")
     if await _email_taken(session, email):
         raise HTTPException(409, "Email already in use")
-    # No password → hash of a random secret nobody knows, so the account can't sign in.
-    password = body.password or secrets.token_urlsafe(32)
+    # No password → empty hash, which login always rejects (see session.py).
+    password_hash = await asyncio.to_thread(hash_password, body.password) if body.password else ""
     c = Customer(name=body.name.strip() or email, email=email,
-                 password_hash=await asyncio.to_thread(hash_password, password), enabled=True, created_at=_now(),
+                 password_hash=password_hash, enabled=True, created_at=_now(),
                  phone=_clean(body.phone), company=_clean(body.company), notes=_clean(body.notes))
     session.add(c)
     await session.commit()
@@ -255,3 +319,22 @@ async def update_customer(customer_id: int, body: CustomerPatch,
     await session.commit()
     await session.refresh(c)
     return _to_dict(c)
+
+
+@router.delete("/{customer_id}", summary="Delete customer",
+               dependencies=[Depends(require_scope("customers:write"))])
+async def delete_customer(customer_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """Removes the account and signs it out. Its projects are kept, unlinked, with the
+    customer's name left as their typed customer label so history still reads correctly."""
+    c = await session.get(Customer, customer_id)
+    if c is None:
+        raise HTTPException(404, "Customer not found")
+    projects = (await session.execute(select(Project).where(Project.customer_id == c.id))).scalars().all()
+    for p in projects:
+        p.customer_id = None
+        if not (p.customer or "").strip():
+            p.customer = c.name
+    await session.execute(delete(ApiKey).where(ApiKey.customer_id == c.id))
+    await session.delete(c)
+    await session.commit()
+    return {"deleted": customer_id, "projects_unlinked": len(projects)}

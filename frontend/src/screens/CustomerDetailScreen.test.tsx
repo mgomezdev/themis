@@ -15,7 +15,7 @@ const project = (o: object) => ({
 });
 const CUSTOMER = {
   id: 7, name: 'Acme Corp', email: 'ops@acme.test', enabled: true, created_at: '2026-01-01T00:00:00',
-  phone: '555-1234', company: 'Acme Inc', notes: null,
+  phone: '555-1234', company: 'Acme Inc', notes: null, has_password: false,
   projects: [
     project({ id: 1, name: 'Brackets', status: 'active', jobs_total: 2, jobs_complete: 1,
               price: 50, amount_paid: 20, payment_status: 'partial', outstanding: 30 }),
@@ -48,6 +48,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 beforeEach(() => {
   vi.restoreAllMocks();
   fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (init?.method === 'DELETE') return new Response('{"deleted":7,"projects_unlinked":2}', { status: 200 });
     if (init?.method === 'PATCH') return new Response(JSON.stringify({ ...CUSTOMER, ...JSON.parse(init.body as string) }), { status: 200 });
     if (url.endsWith('/api/v1/customers/7')) return new Response(JSON.stringify(CUSTOMER), { status: 200 });
     return new Response('{}', { status: 404 });
@@ -76,6 +77,28 @@ describe('CustomerDetailScreen', () => {
     expect(screen.queryByText('Brackets')).toBeNull();
     await userEvent.click(screen.getByText('Old Order'));
     expect(await screen.findByText('project page')).toBeTruthy();
+  });
+
+  it('flags a customer who has no password yet', async () => {
+    renderScreen();
+    expect(await screen.findByText('No sign-in yet')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Set password' })).toBeTruthy();
+  });
+
+  it('deletes after confirmation and returns to the list', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    render(
+      <MemoryRouter initialEntries={['/customers/7']}>
+        <Routes>
+          <Route path="/customers/:id" element={<CustomerDetailScreen />} />
+          <Route path="/customers" element={<div>customer list</div>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: /delete/i }));
+    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('2 projects are kept but unlinked'));
+    expect(await screen.findByText('customer list')).toBeTruthy();
+    expect(fetchMock.mock.calls.some(([u, i]) => u === '/api/v1/customers/7' && i?.method === 'DELETE')).toBe(true);
   });
 
   it('saves edited details with PATCH', async () => {

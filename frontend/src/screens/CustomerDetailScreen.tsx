@@ -5,7 +5,7 @@ import { Progress } from '../components/ui';
 import { useTopbarOverride } from '../components/topbarOverride';
 import { fmtDate, fmtMoney } from '../data/helpers';
 import {
-  getCustomer, updateCustomer,
+  getCustomer, updateCustomer, deleteCustomer, portalStatus,
   type CustomerDetail, type CustomerFields, type CustomerProject, type FinancialSummary, type FinancialWindow,
 } from '../api/customers';
 
@@ -181,6 +181,8 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
 }
 
 function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved: () => void }) {
+  const navigate = useNavigate();
+  const status = portalStatus(customer);
   const [form, setForm] = useState<CustomerFields>(() => toFields(customer));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -209,8 +211,22 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
   }
 
   function resetPassword() {
-    const pw = window.prompt(`New portal password for ${customer.email} (signs them out everywhere):`);
+    const pw = window.prompt(customer.has_password
+      ? `New portal password for ${customer.email} (signs them out everywhere):`
+      : `Portal password for ${customer.email} (lets them sign in):`);
     if (pw) run(() => updateCustomer(customer.id, { password: pw }), 'Password updated');
+  }
+
+  async function remove() {
+    const n = customer.projects.length;
+    const msg = `Delete ${customer.name}? This can't be undone.` + (n > 0
+      ? `\n\nTheir ${n} project${n !== 1 ? 's are' : ' is'} kept but unlinked (the name stays on each project).`
+      : '');
+    if (!window.confirm(msg)) return;
+    setSaving(true);
+    setError(null);
+    try { await deleteCustomer(customer.id); navigate('/customers'); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); setSaving(false); }
   }
 
   const field = (k: keyof CustomerFields) => ({
@@ -222,15 +238,19 @@ function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved:
     <form className="card" style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }} onSubmit={save}>
       <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>Details</div>
-        <span className={`pill ${customer.enabled ? 'ok' : ''}`} style={{ fontSize: 10 }}>
-          {customer.enabled ? 'Portal enabled' : 'Portal disabled'}
-        </span>
+        <span className={`pill ${status.tone}`} style={{ fontSize: 10 }}>{status.label}</span>
         <div style={{ flex: 1 }} />
-        <button type="button" className="btn ghost sm" disabled={saving} onClick={resetPassword}>Set password</button>
+        <button type="button" className="btn ghost sm" disabled={saving} onClick={resetPassword}>
+          {customer.has_password ? 'Reset password' : 'Set password'}
+        </button>
         <button type="button" className="btn ghost sm" disabled={saving}
                 onClick={() => run(() => updateCustomer(customer.id, { enabled: !customer.enabled }),
                                    customer.enabled ? 'Portal access disabled' : 'Portal access enabled')}>
           {customer.enabled ? 'Disable' : 'Enable'}
+        </button>
+        <button type="button" className="btn ghost sm" disabled={saving} onClick={remove}
+                style={{ color: 'var(--err)' }}>
+          {Icons.trash} Delete
         </button>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>

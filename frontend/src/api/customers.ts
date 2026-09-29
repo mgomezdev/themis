@@ -24,6 +24,7 @@ export interface Customer {
   phone: string | null;
   company: string | null;
   notes: string | null;
+  has_password: boolean;  // false → account exists but can't sign in to the portal yet
 }
 
 /** `GET /customers` row: the customer plus light project/balance rollups. */
@@ -88,6 +89,28 @@ export const createCustomer = (body: Partial<CustomerFields> & { name: string; e
   request<Customer>('/api/v1/customers', json('POST', body));
 export const updateCustomer = (id: number, body: Partial<CustomerFields & { password: string; enabled: boolean }>) =>
   request<Customer>(`/api/v1/customers/${id}`, json('PATCH', body));
+export const deleteCustomer = (id: number) =>
+  request<{ deleted: number; projects_unlinked: number }>(`/api/v1/customers/${id}`, { method: 'DELETE' });
+
+/** A project with a typed customer name but no linked account (`GET /customers/unlinked-projects`). */
+export interface UnlinkedProject {
+  project_id: number;
+  project_name: string;
+  customer_text: string;
+  created_at: string;
+  suggested_customer_id: number | null;  // set when the name matches exactly one account
+}
+
+export const getUnlinkedProjects = () => request<UnlinkedProject[]>('/api/v1/customers/unlinked-projects');
+export const linkProjects = (links: { project_id: number; customer_id: number }[]) =>
+  request<{ linked: number }>('/api/v1/customers/link-projects', json('POST', { links }));
+
+/** Portal state shown on staff screens. */
+export function portalStatus(c: Pick<Customer, 'enabled' | 'has_password'>): { label: string; tone: 'ok' | '' } {
+  if (!c.enabled) return { label: 'Portal disabled', tone: '' };
+  if (!c.has_password) return { label: 'No sign-in yet', tone: '' };
+  return { label: 'Portal enabled', tone: 'ok' };
+}
 
 // ---- Staff: project stage ----
 

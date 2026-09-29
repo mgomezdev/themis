@@ -22,7 +22,7 @@ type Fake = ReturnType<typeof fakeBackend>;
 // Shapes mirror backend/app/api/routes/customers.py (_to_dict, list rollups, get_customer).
 const publicCustomer = (c: Customer) =>
   ({ id: c.id, name: c.name, email: c.email, enabled: c.enabled, created_at: '2026-09-28T00:00:00Z',
-     phone: null, company: null, notes: null });
+     phone: null, company: null, notes: null, has_password: !!c.password });
 const emptyWindow = { project_count: 0, revenue: 0, expenses: 0, profit: 0, billed: 0, outstanding: 0 };
 const customerListItem = (c: Customer) =>
   ({ ...publicCustomer(c), project_count: 0, active_project_count: 0, outstanding: 0, last_project_at: null });
@@ -132,6 +132,7 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
     if (!isStaff && !(!key && opts.localAdmin)) return send(customerId != null ? 403 : 401, { detail: 'Forbidden' });
 
     if (path === '/customers' && method === 'GET') return send(200, fake.customers.map(customerListItem));
+    if (path === '/customers/unlinked-projects' && method === 'GET') return send(200, []);
     if ((m = path.match(/^\/customers\/(\d+)$/)) && method === 'GET') {
       const c = fake.customers.find(x => x.id === +m![1]);
       return c ? send(200, customerDetail(c)) : send(404, { detail: 'Customer not found' });

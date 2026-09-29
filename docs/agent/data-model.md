@@ -297,7 +297,8 @@ needing an explicit revoke.
 `id, name, email` (unique, stored lowercased), `password_hash` (PBKDF2 — `services/password.py`),
 `enabled, created_at, phone?, company?, notes?` (contact fields, v023). Staff-managed via
 `/api/v1/customers` (`customers:read`/`customers:write`); no self-signup. Password is optional on create —
-without one the hash is of a random secret, so the account can't sign in until staff set one.
+without one `password_hash` is `""`, which login always rejects (exposed as `has_password: false`) until
+staff set one.
 
 ### admin_account
 Singleton (id=1), created by migration v022 on first boot: `username="admin", password_hash?`
