@@ -149,7 +149,9 @@ function AppShell() {
   };
 
   const segments = location.pathname.split('/').filter(Boolean);
-  const path = segments[0] === 'orders' && segments[2] === 'edit'
+  const path = segments[0] === 'settings'
+    ? '/settings'                       // every settings sub-page shares one top-bar config
+    : segments[0] === 'orders' && segments[2] === 'edit'
     ? '/orders/edit'
     : segments[0] === 'jobs' && segments[2] === 'edit'
     ? '/jobs/edit'
