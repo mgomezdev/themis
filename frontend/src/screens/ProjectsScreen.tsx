@@ -142,7 +142,8 @@ function ProjectCard({
         <button
           className="btn primary sm"
           onClick={handleGenerate}
-          disabled={generating || project.items.length === 0}
+          disabled={generating || project.items.length === 0 || project.stage === 'draft'}
+          title={project.stage === 'draft' ? 'Promote to planning before creating jobs' : undefined}
           style={{ flex: 1 }}
         >
           {generating ? 'Generating…' : 'Generate'}

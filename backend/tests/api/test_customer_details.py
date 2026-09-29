@@ -172,3 +172,8 @@ async def test_unlinked_projects_suggestions_and_link(client: AsyncClient):
     r = await client.post("/api/v1/customers/link-projects",
                           json={"links": [{"project_id": unknown["id"], "customer_id": 999}]})
     assert r.status_code == 404
+    # Never silently moves a project off another customer.
+    other = (await client.post("/api/v1/customers", json={"name": "Other", "email": "o@x.test"})).json()
+    r = await client.post("/api/v1/customers/link-projects",
+                          json={"links": [{"project_id": by_name["id"], "customer_id": other["id"]}]})
+    assert r.status_code == 409

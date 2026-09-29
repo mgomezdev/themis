@@ -194,7 +194,7 @@ def _norm(s: str | None) -> str:
 
 
 @router.get("/unlinked-projects", summary="Projects with a typed customer name but no customer account",
-            dependencies=[Depends(require_scope("customers:read"))])
+            dependencies=[Depends(require_scope("customers:read")), Depends(require_scope("projects:read"))])
 async def unlinked_projects(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """Projects whose free-text ``customer`` is set but ``customer_id`` isn't, each with a
     suggested account when the text exactly matches (case/space-insensitive) one customer's
@@ -245,6 +245,8 @@ async def link_projects(body: LinkProjectsBody, session: AsyncSession = Depends(
         p = await session.get(Project, link.project_id)
         if p is None:
             raise HTTPException(404, f"Project {link.project_id} not found")
+        if p.customer_id is not None and p.customer_id != link.customer_id:
+            raise HTTPException(409, f"Project {link.project_id} is already linked to another customer")
         p.customer_id = link.customer_id
         p.order_type = "customer"
         linked += 1

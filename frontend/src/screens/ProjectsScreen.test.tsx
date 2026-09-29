@@ -45,4 +45,17 @@ describe('ProjectsScreen customers', () => {
     expect(screen.getByText('Shop Jig')).toBeTruthy();
     expect(screen.queryByText('Acme Brackets')).toBeNull();
   });
+
+  it('disables Generate for a draft project', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => new Response(url === '/api/v1/projects' ? JSON.stringify([
+      project(1, 'Draft Request', { stage: 'draft', items: [{ id: 1 }] }),
+      project(2, 'Ready', { stage: 'planning', items: [{ id: 2 }] }),
+    ]) : '[]', { status: 200 })));
+    render(<MemoryRouter><ProjectsScreen /></MemoryRouter>);
+    await screen.findByText('Draft Request');
+    const [draftBtn, readyBtn] = screen.getAllByRole('button', { name: 'Generate' }) as HTMLButtonElement[];
+    expect(draftBtn.disabled).toBe(true);
+    expect(draftBtn.title).toBe('Promote to planning before creating jobs');
+    expect(readyBtn.disabled).toBe(false);
+  });
 });

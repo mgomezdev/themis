@@ -37,7 +37,7 @@ export function CustomerPicker({ value, onChange }: { value: CustomerChoice; onC
     return (
       <input className="input" placeholder="Customer name" aria-label="Customer name"
              value={value.customerText}
-             onChange={e => onChange({ customerId: null, customerText: e.target.value })} />
+             onChange={e => onChange({ customerId: value.customerId, customerText: e.target.value })} />
     );
   }
 
@@ -72,7 +72,8 @@ export function CustomerPicker({ value, onChange }: { value: CustomerChoice; onC
     }
   }
 
-  const linkedMissing = value.customerId != null && customers !== null && !customers.some(c => c.id === value.customerId);
+  // Also covers the moment before the list loads, so a linked project never flashes as unset.
+  const linkedMissing = value.customerId != null && !customers?.some(c => c.id === value.customerId);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>

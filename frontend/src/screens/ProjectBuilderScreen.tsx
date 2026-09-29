@@ -174,6 +174,8 @@ export function ProjectBuilderScreen() {
   const [notes, setNotes] = useState('');
   const [amountPaid, setAmountPaid] = useState('');
   const [price, setPrice] = useState('');
+  // Loaded, not edited here: a draft (customer request) can't generate jobs until promoted.
+  const [isDraft, setIsDraft] = useState(false);
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus>('unpaid');
 
   // Part items
@@ -275,7 +277,9 @@ export function ProjectBuilderScreen() {
     getProject(projectId).then(p => {
       const n = p.name;
       const c = p.customer ?? '';
-      const ot = (p.order_type as 'internal' | 'customer') ?? 'internal';
+      // A project linked to an account is a customer project, whatever its old type said —
+      // otherwise an unrelated save would unlink it.
+      const ot = p.customer_id != null ? 'customer' : (p.order_type as 'internal' | 'customer') ?? 'internal';
       const oh = p.on_hold ?? false;
       const dd = p.due_date ?? '';
       const no = p.notes ?? '';
@@ -310,7 +314,7 @@ export function ProjectBuilderScreen() {
         allocated: pt.allocated,
       }));
       setName(n); setCustomer(cName); setCustomerId(cid); setOrderType(ot); setOnHold(oh);
-      setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps); setPrice(pr);
+      setDueDate(dd); setNotes(no); setAmountPaid(ap); setPaymentStatus(ps); setPrice(pr); setIsDraft(p.stage === 'draft');
       setItems(its); setLinks(lks); setParts(prts);
       setDeletedLinkIds([]);
       setDeletedPartIds([]);
@@ -964,7 +968,8 @@ export function ProjectBuilderScreen() {
           <button
             className="btn primary sm"
             onClick={() => { setShowPrinterPicker(v => !v); setGenerateError(''); setGenerateResult(null); }}
-            disabled={!canSave || items.length === 0}
+            disabled={!canSave || items.length === 0 || isDraft}
+            title={isDraft ? 'Promote to planning before creating jobs' : undefined}
           >
             {generating ? 'Generating…' : 'Generate…'}
           </button>
