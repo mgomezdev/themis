@@ -1,4 +1,4 @@
-﻿import pytest_asyncio
+import pytest_asyncio
 from collections.abc import AsyncGenerator
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
@@ -8,6 +8,7 @@ from app.database import Base, get_session
 from app.auth import SCOPES
 from app.models import ApiKey
 from app.services import thumbnail_regen
+from app.services.printer_manager import printer_manager
 from app.services.api_key_service import generate_key, hash_key
 
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
@@ -60,3 +61,22 @@ async def _reset_login_throttle():
     login_throttle.reset()
     yield
     login_throttle.reset()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _isolate_printer_manager():
+    """The module-level printer_manager singleton outlives every test, and printer ids collide
+    (each test's in-memory DB starts at id 1). Routes call printer_manager.connect_printer(), which
+    would start a REAL vendor client (threads + LAN connection attempts) and leak it into later tests.
+    Register clients without connecting them, and reset the singleton around every test."""
+    def _clear():
+        printer_manager._clients.clear()
+        printer_manager._awaiting_plate_clear.clear()
+
+    _clear()
+    printer_manager.connect_printer = lambda printer_id, client: printer_manager.register_client(printer_id, client)  # type: ignore[method-assign]
+    try:
+        yield
+    finally:
+        printer_manager.__dict__.pop("connect_printer", None)
+        _clear()
