@@ -127,12 +127,13 @@ sufficient — check that each test could fail:
   assertions flaky — `make_3mf_bytes` fixes them.
 - **Contracts.** A renamed/added field the frontend reads → `contracts/response-keys.json` (checked by
   `tests/api/test_response_contracts.py` and the FE); a changed route or param → regenerate `openapi.json`
-  (`python scripts/export_openapi.py`; CI diffs it). Endpoints not in the JSON are protected only by a hand
+  (`python scripts/export_openapi.py` from the repo root; CI diffs it). Endpoints not in the JSON are protected only by a hand
   grep of both sides — do it.
 - **Ratchets.** `fail_under` in `pyproject.toml` only goes up. A diff that lowers it, adds `# pragma: no
   cover`, skips/xfails a test, or deletes one without a replacement needs a stated reason in the PR.
-- **Run it.** Full suite green (`pytest -v -ra --cov` from `backend/`, as CI does) before calling anything
-  done; don't rely on the author's word.
+- **Run it.** Author: full suite green (`pytest -v -ra --cov` from `backend/`, as CI does) before calling
+  anything done — that is what the marker's `checks` attests. Reviewer: don't re-run everything; run the
+  tests you're judging, and mutate the code they cover to see them go red.
 
 ## 10. Public (unauthenticated) routes
 

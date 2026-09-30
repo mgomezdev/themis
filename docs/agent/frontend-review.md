@@ -82,5 +82,7 @@ sufficient — check that each test could fail:
   `vi.unstubAllGlobals()` in `afterEach`.
 - **Ratchets.** `vitest.config.ts` thresholds only go up. A diff that lowers one, adds `.skip`/`.todo`, or
   deletes a test without a replacement needs a stated reason in the PR.
-- **Run it.** `npm run build` (`tsc -b`) clean, `npm run test:cov` green (as CI does), and `npm run test:e2e`
-  when a screen or `e2e/mock-api.ts` changed, before calling anything done; don't rely on the author's word.
+- **Run it.** Author: `npm run build` (`tsc -b`) clean, `npm run test:cov` green (as CI does), and
+  `npm run test:e2e` when a screen or `e2e/mock-api.ts` changed, before calling anything done — that is what
+  the marker's `checks` attests. Reviewer: don't re-run everything; run the tests you're judging, and mutate
+  the code they cover to see them go red.

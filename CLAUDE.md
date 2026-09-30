@@ -99,7 +99,7 @@ that have already bitten this project:
 - **Contracts:** `contracts/response-keys.json` lists the response keys the frontend reads; the backend
   (`tests/api/test_response_contracts.py`) and frontend (`src/api/responseKeys.contract.test.ts`) both check
   it, and `src/api/contract.test.ts` checks every API URL against `openapi.json`. Update the JSON when you
-  rename or add a consumed field; regenerate `openapi.json` (`python scripts/export_openapi.py`) when routes
+  rename or add a consumed field; regenerate `openapi.json` (`python scripts/export_openapi.py`, from the repo root) when routes
   or params change (CI diffs it).
 - **Coverage floors are ratchets** (`fail_under` in `backend/pyproject.toml`, thresholds in
   `frontend/vitest.config.ts`, both ~2 points under measured): raise them when coverage grows, never lower
@@ -149,8 +149,8 @@ writes the marker, and a raw `gh api ... pulls` call isn't mechanically caught (
 against the policy this section describes).
 
 Before dispatching a reviewer, check `.claude/review-state.json` against current `HEAD` yourself — if it
-already matches with `verdict: "clean"`, nothing changed since the last review, skip straight to
-`gh pr create`. Only spawn a reviewer when the marker is missing, stale (SHA mismatch), or not clean.
+already matches with `verdict: "clean"` and `checks` set, nothing changed since the last review, skip straight
+to `gh pr create`. Only spawn a reviewer when the marker is missing, stale (SHA mismatch), or not clean.
 Write the marker yourself once Critical/Important findings are addressed and the suites are green; a new
 commit after that naturally invalidates it and requires a fresh review, which is correct, not a duplicate.
 The reviewer covers the tests too: a test-only diff still gets a review (a weak or unfalsifiable test is a
