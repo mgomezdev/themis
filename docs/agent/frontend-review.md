@@ -66,7 +66,23 @@ pill-tone mapping. A new styled status needs an entry there, not an ad-hoc inlin
 
 ## 8. Tests
 
-TDD: a test that failed for the right reason before the fix, for every behavior change. `npx vitest
-run` full suite green and `npm run build` clean before calling anything done. If a screen consumes a
-new/changed API field, check whether `e2e/mock-api.ts`'s canned data needs the same update — it's a
-separate fixture source from the unit test mocks and can drift independently.
+The test suite is part of the diff under review, including a test-only one. A green run is necessary, not
+sufficient — check that each test could fail:
+
+- **Falsifiable.** TDD: a test that failed for the right reason before the fix, for every behavior change. If
+  the diff doesn't show it, mutate the changed line and confirm a test goes red. Assert what the user sees or
+  what was sent (`api.to('POST', url)` bodies, rendered text/roles), not just "rendered without throwing".
+- **API doubles.** `src/test/fetchStub.ts` (`stubFetch` + `Reply`) for API-level tests; shapes copied from the
+  real backend route/model (§6). If a screen consumes a new/changed field, update `contracts/response-keys.json`
+  and check `e2e/mock-api.ts`'s canned data too — a separate fixture source that drifts independently.
+  `contract.test.ts` only scans `src/api`, and nested keys aren't in the JSON, so grep both sides.
+- **Timers and effects.** Don't fake `setInterval`/`setTimeout` around Testing Library `waitFor` (it hangs or
+  never polls) — spy on them and fire the captured callback. Flush passive effects
+  (`await act(async () => {})`) before firing window key events. `fetchStub` never unstubs: call
+  `vi.unstubAllGlobals()` in `afterEach`.
+- **Ratchets.** `vitest.config.ts` thresholds only go up. A diff that lowers one, adds `.skip`/`.todo`, or
+  deletes a test without a replacement needs a stated reason in the PR.
+- **Run it.** Author: `npm run build` (`tsc -b`) clean, `npm run test:cov` green (as CI does), and
+  `npm run test:e2e` when a screen or `e2e/mock-api.ts` changed, before calling anything done — that is what
+  the marker's `checks` attests. Reviewer: don't re-run everything; run the tests you're judging, and mutate
+  the code they cover to see them go red.
