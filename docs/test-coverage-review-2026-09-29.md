@@ -231,7 +231,7 @@ backend coverage 86 % line+branch (greenlet-aware; CI floor `fail_under = 84`), 
 | O6 legacy migration tests | kept `test_legacy_migration.py` (upgrade path still supported); deleted `test_migrate_library.py` | d30841f |
 | O7 dead FE data/tests | done | 21d97f0 |
 | O8 misleading names | done (rescue case now really exercised) | 80d1816 |
-| O9 failed-vs-blocked doc drift | pinned in tests; **docs left for owner** (CLAUDE.md not edited, see below) | 80d1816 |
+| O9 failed-vs-blocked doc drift | done: behaviour pinned in tests (blocked, never failed, on slice failure); CLAUDE.md and `docs/agent/{conventions,recipes,backend}.md` now match the code | 80d1816, docs commit after the merge |
 | O10 asyncio markers | done | 9b8c044 |
 | F1–F2 | done | 19dbef8, fe47c15 |
 | F3 RemapModal + SpoolmanMappingsPage | done | 1d228ee |
@@ -260,8 +260,7 @@ backend restart (07ac76b). One flake root-caused (zip timestamps → dedupe miss
 1. **Open product bug — filament matching** (`queue_engine._matching_loaded_filament`): a half-specified ask (type=PETG, colour=any, or the reverse)
    never matches a loaded slot that has both, so the job blocks forever; only both-specific or both-any match. `_find_slot_for_filament`
    (filament_map path) handles the wildcard correctly. Fix idea: skip the comparison for an empty requirement field.
-2. Doc drift for the owner to decide (CLAUDE.md untouched): CLAUDE.md:68, conventions.md:7-9, backend.md, recipes.md say a job goes `failed` when slicing
-   fails on all configs; the code only ever sets `blocked`.
+2. ~~Doc drift on failed vs blocked~~ — resolved: CLAUDE.md and `docs/agent/*` now say a slice failure blocks the job (never fails it); `failed` is only for upload/start errors after slicing.
 3. `migrate down` only reliably rolls back the newest migration (v21/v18/v5 `down()` can't run on SQLite; v9 has none).
 4. Fleet import: JSON-valid but malformed input 500s (version string/null, `printers` null, non-object entry); backup omits `bed_x_mm`/`bed_y_mm`/
    `no_snapshots_while_idle`; import is additive (twice = doubled fleet).

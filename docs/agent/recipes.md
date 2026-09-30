@@ -83,9 +83,10 @@ migrations — this is why a model-level constraint (e.g. `UniqueConstraint`) mu
   shape. AMS mapping flows from the matched slot's `ams_tray_id` into `StartPrintOptions.ams_mapping`.
 - **Slice→upload→print sequence**: `queue_engine._run_slice_and_print`. Sets `awaiting_plate_clear=True`
   at `status=printing`.
-- **Block vs fail**: `_handle_slice_failure` marks `config.slice_failed`, re-blocks while eligible
-  printers remain, fails only when exhausted. Unblock = `jobs.unblock_job` (clears `slice_failed` + re-
-  queues at top).
+- **Block vs fail**: `_handle_slice_failure` marks `config.slice_failed` and always blocks the job (another
+  printer whose config isn't failed can still rescue it on a later cycle; with none left it stays blocked).
+  `failed` is only for upload/start errors after slicing. Unblock = `jobs.unblock_job` (clears `slice_failed`
+  + re-queues at top).
 
 ## Wire a new live (`/ws`) event
 

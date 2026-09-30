@@ -5,9 +5,10 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 ## Invariants (don't violate these)
 
 - **blocked vs failed**: `blocked` is *transient* — the queue re-evaluates it every cycle (filament
-  mismatch or a `slice_failed` config). `failed` is *terminal* — set only when slicing failed on **all**
-  eligible printer configs, or an upload/start error post-slice. Never set `failed` for a recoverable
-  filament/slice issue.
+  mismatch, or a slice failure: `_handle_slice_failure` marks that printer's config `slice_failed` and blocks
+  the job, even when every config has failed — it then waits for an unblock). `failed` is *terminal* — set
+  only by an upload/start error after slicing (`_fail_job_post_slice`), never by a slice failure. Never set
+  `failed` for a recoverable filament/slice issue.
 - **awaiting_plate_clear**: set `True` the moment a print **starts** (`status=printing`), not when it
   finishes. A printer is eligible only when `is_idle AND not awaiting_plate_clear AND queue_on`. Cleared
   only by `POST /printers/{id}/plate-cleared` (the Fleet "Ready for new work" button). Lives in the DB
