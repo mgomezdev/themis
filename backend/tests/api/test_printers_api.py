@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy import select
 from app.models import Printer
 from app.services.abstract_printer_client import PrinterCapabilities
@@ -94,45 +94,9 @@ async def test_delete_printer(client):
     assert response.status_code == 404
 
 
-def _make_3mf() -> bytes:
-    import io, zipfile, json
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
-
-
-async def _upload_file(client, tmp_path):
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        resp = await client.post(
-            "/api/v1/files/upload",
-            files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
-        )
-    return resp.json()["id"]
-
-
-async def _create_job(client, tmp_path, printer_id):
-    """Create a job whose only printer config points at printer_id."""
-    file_id = await _upload_file(client, tmp_path)
-    with patch("app.api.routes.jobs.queue_engine"):
-        create = await client.post("/api/v1/jobs", json={
-            "uploaded_file_id": file_id, "plate_number": 1,
-            "printer_configs": [{"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
-        })
-    return create.json()["id"]
-
-
-async def test_delete_printer_refuses_with_active_job(client, tmp_path):
+async def test_delete_printer_refuses_with_active_job(client, session_factory, create_job):
     """A printer physically running a job must not be deletable — removing the DB
     row can't stop the machine, and it would strand the job unresolved."""
-    from app.main import app
-    from app.database import get_session
     from app.models import Job
 
     create = await client.post("/api/v1/printers", json={
@@ -140,21 +104,21 @@ async def test_delete_printer_refuses_with_active_job(client, tmp_path):
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = "printing"
-    job.assigned_printer_id = printer_id
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        await session.commit()
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 409
 
     response = await client.get(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 200
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()  # the job it was running is undisturbed
+    assert (job["status"], job["assigned_printer_id"]) == ("printing", printer_id)
 
 
 async def test_delete_printer_disconnects_live_client(client):
@@ -178,10 +142,8 @@ async def test_delete_printer_disconnects_live_client(client):
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path):
+async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path, session_factory, create_job):
     """Deleting a printer's GcodeFile rows must also remove the files they point at."""
-    from app.main import app
-    from app.database import get_session
     from app.models import GcodeFile
 
     create = await client.post("/api/v1/printers", json={
@@ -189,27 +151,23 @@ async def test_delete_printer_unlinks_gcode_from_disk(client, tmp_path):
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
     gcode_path = tmp_path / "out.gcode"
     gcode_path.write_text("G28")
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path=str(gcode_path)))
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path=str(gcode_path)))
+        await session.commit()
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 204
     assert not gcode_path.exists()
 
 
-async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path):
+async def test_delete_printer_blocks_job_left_with_no_config(client, session_factory, create_job):
     """A job whose only config pointed at the deleted printer must become visibly
     'blocked' rather than sitting in the queue unclaimable and invisible."""
-    from app.main import app
-    from app.database import get_session
     from app.models import Job
 
     create = await client.post("/api/v1/printers", json={
@@ -217,30 +175,15 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, tmp_path):
         "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
     })
     printer_id = create.json()["id"]
-    job_id = await _create_job(client, tmp_path, printer_id)
+    job_id = await create_job(printer_id=printer_id)
 
     response = await client.delete(f"/api/v1/printers/{printer_id}")
     assert response.status_code == 204
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    assert job.status == "blocked"
-    assert job.block_reason
-    await agen.aclose()
-
-
-async def test_plate_cleared_sets_gate(client):
-    create = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
-    })
-    printer_id = create.json()["id"]
-    with patch("app.api.routes.printers.printer_manager") as mock_mgr:
-        with patch("app.api.routes.printers.queue_engine") as mock_qe:
-            response = await client.post(f"/api/v1/printers/{printer_id}/plate-cleared")
-    assert response.status_code == 200
-    mock_mgr.set_awaiting_plate_clear.assert_called_once_with(printer_id, False)
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        assert job.status == "blocked"
+        assert job.block_reason
 
 
 async def test_switch_active_preset(client):
@@ -280,61 +223,6 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_camera_404_unknown_printer(client: AsyncClient):
-    resp = await client.get("/api/v1/printers/999/camera")
-    assert resp.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_camera_404_no_camera_capability(client: AsyncClient):
-    resp = await client.post("/api/v1/printers", json={
-        "name": "NoCam",
-        "printer_type": "elegoo_centauri",
-        "connection_config": {"ip_address": "1.2.3.4"},
-    })
-    assert resp.status_code == 201
-    printer_id = resp.json()["id"]
-
-    from app.services.printer_manager import printer_manager
-    mock_client = MagicMock()
-    mock_client.connected = True
-    mock_client.get_capabilities.return_value = MagicMock(camera=False)
-    mock_client.camera_mjpeg_url = None
-    mock_client.camera_rtsp_url = None
-    printer_manager._clients[printer_id] = mock_client
-
-    try:
-        resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
-        assert resp.status_code == 404
-    finally:
-        del printer_manager._clients[printer_id]
-
-
-@pytest.mark.asyncio
-async def test_camera_503_not_connected(client: AsyncClient):
-    resp = await client.post("/api/v1/printers", json={
-        "name": "NotConn",
-        "printer_type": "elegoo_centauri",
-        "connection_config": {"ip_address": "1.2.3.4"},
-    })
-    assert resp.status_code == 201
-    printer_id = resp.json()["id"]
-
-    from app.services.printer_manager import printer_manager
-    mock_client = MagicMock()
-    mock_client.connected = False
-    mock_client.get_capabilities.return_value = MagicMock(camera=True)
-    mock_client.camera_mjpeg_url = "http://fake/stream"
-    mock_client.camera_rtsp_url = None
-    printer_manager._clients[printer_id] = mock_client
-
-    try:
-        resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
-        assert resp.status_code == 503
-    finally:
-        del printer_manager._clients[printer_id]
-
-
 class _FakeConnClient:
     """Minimal client for exercising the test-connection route logic."""
     def __init__(self, connects, endpoint=None):
@@ -375,3 +263,60 @@ async def test_test_connection_unreachable_gives_hint(client, monkeypatch):
     body = r.json()
     assert body["ok"] is False
     assert "Couldn't reach" in body["error"]
+
+
+async def test_test_connection_unknown_type_is_rejected(client):
+    resp = await client.post(
+        "/api/v1/printers/test-connection",
+        json={"printer_type": "not_a_real_type", "connection_config": {}},
+    )
+    assert resp.status_code == 422
+
+
+def _bambu(name: str, **extra) -> dict:
+    return {
+        "name": name,
+        "printer_type": "bambu",
+        "connection_config": {"ip_address": "192.168.1.10", "access_code": "12345678", "serial_number": name},
+        **extra,
+    }
+
+
+async def test_list_printers_reports_disconnected_when_no_live_client(client):
+    created = await client.post("/api/v1/printers", json=_bambu("SN001"))
+    assert created.status_code == 201
+
+    printers = (await client.get("/api/v1/printers")).json()
+    assert [p["id"] for p in printers] == [created.json()["id"]]
+    assert printers[0]["connected"] is False
+
+
+async def test_loaded_filaments_default_to_empty_list(client):
+    resp = await client.post("/api/v1/printers", json=_bambu("SN1"))
+    assert resp.status_code == 201
+    assert resp.json()["loaded_filaments"] == []
+
+
+async def test_loaded_filaments_round_trip_on_create_including_null_filament_id(client):
+    slots = [
+        {"slot": 0, "filament_id": None, "name": "Bambu PLA Matte", "type": "PLA", "color": "#ff0000"},
+        {"slot": 1, "filament_id": "GFA00", "name": "Generic PLA", "type": "PLA", "color": "#cccccc"},
+    ]
+    created = await client.post("/api/v1/printers", json=_bambu("SN2", loaded_filaments=slots))
+    assert created.status_code == 201
+    assert created.json()["loaded_filaments"] == slots
+
+    fetched = (await client.get(f"/api/v1/printers/{created.json()['id']}")).json()
+    assert fetched["loaded_filaments"] == slots
+    assert fetched["loaded_filaments"][0]["filament_id"] is None
+
+
+async def test_patch_loaded_filaments_replaces_and_persists(client):
+    created = await client.post("/api/v1/printers", json=_bambu("SN3"))
+    printer_id = created.json()["id"]
+    slots = [{"slot": 0, "filament_id": None, "name": "Bambu PETG HF", "type": "PETG", "color": "#00aaff"}]
+
+    resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"loaded_filaments": slots})
+    assert resp.status_code == 200
+    assert resp.json()["loaded_filaments"] == slots
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == slots

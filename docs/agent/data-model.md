@@ -13,7 +13,7 @@ printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id
 customers           ← projects.customer_id (SET NULL), api_keys.customer_id (CASCADE)
 admin_account       (singleton id=1 — see its own section below)
 api_keys            (customer_id FK? — set only on customer login sessions)
-bootstrap_sentinel  (retired — no longer read or written)
+bootstrap_sentinel  (retired — no model, created by v015 only; never read or written)
 uploaded_files      ← jobs.uploaded_file_id, file_tags.file_id, project_items.file_id,
                        projects.result_file_id
 tags                ← file_tags.tag_id
@@ -309,13 +309,10 @@ Singleton (id=1), created by migration v022 on first boot: `username="admin", pa
 admin password change/recovery).
 
 ### bootstrap_sentinel
-**Retired** (bootstrap hatch removed); table left in place, unused. Historical note: `id, created_at`.
-Not a config table — a concurrency guard. `POST /api-keys` bootstraps (grants full
-`SCOPES` regardless of requested scopes) whenever `api_keys` is empty; two racing requests (e.g. two
-browser tabs on first load) could otherwise both see it empty and both bootstrap. The handler inserts
-`BootstrapSentinel(id=1, ...)` inside the same flush — the fixed PK makes the second concurrent insert
-raise `IntegrityError`, so only one request wins the bootstrap path; the loser falls through to the
-normal (non-bootstrap, caller-specified-scopes) create-key flow. Never has more than one row.
+**Retired** (bootstrap hatch removed): no ORM model, never read or written by app code. The table is still
+created by migration v015 (raw SQL, `id, created_at`) so migration history stays linear; fresh and existing
+databases both carry an empty unused table. It used to be a concurrency guard for the old "bootstrap when
+`api_keys` is empty" flow of `POST /api-keys`.
 
 ## Migrations
 
@@ -337,7 +334,7 @@ fixtures). To add a column or table:
    ```
 2. Register it in `runner.py`: `from . import ..., v00N_your_name`; add to `_MIGRATIONS`.
 
-CLI: `cd backend && python -m app.migrations.migrate up|down`.
+CLI: `cd backend && python -m app.migrations.migrate up|down` (v001 imports `app.models` so `create_all` sees the tables on a fresh DB; `down` is only reliable for the newest migration — several older `down()`s can't run on SQLite).
 
 ## Frontend ↔ backend shape contracts
 

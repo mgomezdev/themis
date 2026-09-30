@@ -181,11 +181,14 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
 async def test_confirm_remap_no_pending_returns_409(client: AsyncClient):
     """No pending slot → 409."""
     lmod._pending_sync = None
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "any-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
+    assert lmod._pending_sync is None
+    assert lmod._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
@@ -195,11 +198,14 @@ async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "wrong-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "correct-id"  # still parked
+    assert lmod._catalog_bytes == catalog_before  # not committed
 
 
 async def test_confirm_remap_missing_required_printer_resolution_returns_422(client: AsyncClient):
@@ -215,15 +221,25 @@ async def test_confirm_remap_missing_required_printer_resolution_returns_422(cli
         },
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-1",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 422
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-1"  # operator can retry
+    assert lmod._catalog_bytes == catalog_before
 
 
-async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient):
+async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient, session_factory, create_job):
     """A job resolution value not present in the new catalog is rejected, not applied blindly."""
+    from sqlalchemy import select
+    from app.models import JobPrinterConfig
+
+    job_id = await create_job(print_profile="Old Process")
+    async with session_factory() as s:
+        config_id = (await s.execute(
+            select(JobPrinterConfig.id).where(JobPrinterConfig.job_id == job_id))).scalar_one()
     lmod._pending_sync = {
         "sync_id": "sync-job",
         "raw": b"{}",
@@ -232,11 +248,12 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
             "printers": [],
             "jobs": [{"field": "print_profile", "stale_value": "Old Process",
                       "options_kind": "process", "required": False,
-                      "affected_config_ids": [1], "affected_file_names": ["job#1"]}],
+                      "affected_config_ids": [config_id], "affected_file_names": [f"job#{job_id}"]}],
             "spoolman_filaments": [],
         },
         "created_at": 0,
     }
+    catalog_before = lmod._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-job",
         "resolutions": {
@@ -247,6 +264,10 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
         },
     })
     assert resp.status_code == 422
+    async with session_factory() as s:  # nothing was applied
+        assert (await s.get(JobPrinterConfig, config_id)).print_profile == "Old Process"
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-job"
+    assert lmod._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: AsyncClient):
@@ -263,6 +284,7 @@ async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: A
         "resolutions": {"printers": "not-a-list", "jobs": [], "spoolman_filaments": []},
     })
     assert resp.status_code == 422
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-malformed"
 
 
 async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncClient):
@@ -355,3 +377,246 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
     assert resp.status_code == 200
     assert lmod._pending_sync is None
     assert lmod._catalog_dict is original_catalog  # NOT swapped
+
+
+# ---- confirm-remap: applying each resolution type -------------------------------------------
+
+from sqlalchemy import select
+
+from app.models import JobPrinterConfig, Printer, SpoolmanConfig
+
+_NEW_CATALOG = {
+    "machine": [{"name": "New Machine", "uuid": "m2"}],
+    "process": [{"name": "0.20mm New", "uuid": "p2"}],
+    "filament": [{"name": "New PLA", "uuid": "f2"}],
+}
+
+
+def _park(pending: dict, *, raw: bytes | None = b'{"new": true}', catalog: dict | None = _NEW_CATALOG, sync_id="sync-x"):
+    lmod._pending_sync = {"sync_id": sync_id, "raw": raw, "catalog": catalog, "pending": pending, "created_at": 0}
+    return sync_id
+
+
+def _pending(printers=(), jobs=(), spoolman=()):
+    return {"printers": list(printers), "jobs": list(jobs), "spoolman_filaments": list(spoolman)}
+
+
+async def _confirm(client, sync_id, *, printers=(), jobs=(), spoolman=()):
+    return await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": sync_id,
+        "resolutions": {"printers": list(printers), "jobs": list(jobs), "spoolman_filaments": list(spoolman)},
+    })
+
+
+async def _printer_row(session_factory, printer_id):
+    async with session_factory() as s:
+        return await s.get(Printer, printer_id)
+
+
+async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles(client, create_printer, session_factory):
+    a = await create_printer(name="A", current_orca_printer_profile="Old Machine",
+                             loaded_filaments=[{"slot": 0, "filament_profile": "Old PLA", "type": "PLA"},
+                                               {"slot": 1, "filament_profile": "Keep Me", "type": "PETG"}])
+    b = await create_printer(name="B", current_orca_printer_profile="Old Machine")
+    sync = _park(_pending(printers=[
+        {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+         "options_kind": "machine", "affected_printer_ids": [a, b, 9999], "affected_printer_names": ["A", "B", "?"],
+         "affected_slots": [None, None, None]},
+        {"field": "filament_profile", "stale_value": "Old PLA", "required": False, "options_kind": "filament",
+         "affected_printer_ids": [a, a], "affected_printer_names": ["A", "A"], "affected_slots": [0, 5]},
+    ]))
+
+    resp = await _confirm(client, sync, printers=[
+        {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "new_value": "New Machine"},
+        {"field": "filament_profile", "stale_value": "Old PLA", "new_value": "New PLA"},
+    ])
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"status": "ok", "applied": {"printers": 3, "jobs": 0, "spoolman_filaments": 0},
+                           "spoolman_failures": []}  # a, b machine + a slot 0; missing printer & out-of-range slot skipped
+    row_a, row_b = await _printer_row(session_factory, a), await _printer_row(session_factory, b)
+    assert row_a.current_orca_printer_profile == row_b.current_orca_printer_profile == "New Machine"
+    assert [s["filament_profile"] for s in row_a.loaded_filaments] == ["New PLA", "Keep Me"]
+    assert row_a.loaded_filaments[0]["type"] == "PLA"  # the rest of the slot survives
+    assert lmod._catalog_dict == _NEW_CATALOG and lmod._catalog_bytes == b'{"new": true}'
+    assert lmod._pending_sync is None
+
+
+async def test_confirm_remap_optional_printer_entry_without_a_resolution_clears_the_field(client, create_printer, session_factory):
+    pid = await create_printer(current_orca_printer_profile="Gone Machine")
+    sync = _park(_pending(printers=[
+        {"field": "current_orca_printer_profile", "stale_value": "Gone Machine", "required": False,
+         "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"],
+         "affected_slots": [None]}]))
+
+    resp = await _confirm(client, sync)
+
+    assert resp.status_code == 200 and resp.json()["applied"]["printers"] == 1
+    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile is None
+
+
+async def test_confirm_remap_rewrites_job_configs_and_clears_a_dropped_filament(client, create_job, session_factory):
+    j1 = await create_job(print_profile="Old Process", filament_profile="Old PLA")
+    j2 = await create_job(print_profile="Old Process", filament_profile="Old PLA")
+    async with session_factory() as s:
+        ids = [c.id for c in (await s.execute(select(JobPrinterConfig).order_by(JobPrinterConfig.id))).scalars()]
+    sync = _park(_pending(jobs=[
+        {"field": "print_profile", "stale_value": "Old Process", "options_kind": "process", "required": False,
+         "affected_config_ids": ids + [9999], "affected_file_names": ["a", "b", "?"]},
+        {"field": "filament_profile", "stale_value": "Old PLA", "options_kind": "filament", "required": False,
+         "affected_config_ids": [ids[0]], "affected_file_names": ["a"]},
+    ]))
+
+    resp = await _confirm(client, sync, jobs=[
+        {"field": "print_profile", "stale_value": "Old Process", "new_value": "0.20mm New"},
+        {"field": "filament_profile", "stale_value": "Old PLA", "new_value": None},   # no replacement: drop it
+    ])
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["applied"] == {"printers": 0, "jobs": 3, "spoolman_filaments": 0}
+    async with session_factory() as s:
+        first, second = (await s.get(JobPrinterConfig, ids[0]), await s.get(JobPrinterConfig, ids[1]))
+    assert (first.print_profile, first.filament_profile) == ("0.20mm New", None)
+    assert (second.print_profile, second.filament_profile) == ("0.20mm New", "Old PLA")  # untouched by entry 2
+
+
+async def test_confirm_remap_lists_every_unresolved_or_invalid_entry_and_changes_nothing(client, create_printer, session_factory):
+    pid = await create_printer(current_orca_printer_profile="Old Machine")
+    sync = _park(_pending(
+        printers=[
+            {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+             "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"], "affected_slots": [None]},
+            {"field": "filament_profile", "stale_value": "Old PLA", "required": False, "options_kind": "filament",
+             "affected_printer_ids": [pid], "affected_printer_names": ["P"], "affected_slots": [0]},
+        ],
+        jobs=[{"field": "print_profile", "stale_value": "Old Process", "options_kind": "process", "required": False,
+               "affected_config_ids": [1], "affected_file_names": ["x"]}],
+    ))
+
+    resp = await _confirm(client, sync,
+                          printers=[{"field": "filament_profile", "stale_value": "Old PLA", "new_value": "Ghost PLA"}],
+                          jobs=[{"field": "print_profile", "stale_value": "Old Process", "new_value": "Ghost Process"}])
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"]["unresolved"] == [
+        "Printer current_orca_printer_profile=Old Machine",   # required, no resolution
+        "Invalid value 'Ghost PLA' for filament_profile",     # not in the new catalog
+        "Invalid value 'Ghost Process' for job print_profile",
+    ]
+    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"
+    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-x"  # operator can retry
+
+
+async def test_confirm_remap_failure_midway_rolls_back_every_change_and_keeps_the_pending_remap(client, create_printer, session_factory):
+    pid = await create_printer(current_orca_printer_profile="Old Machine")
+    sync = _park(_pending(
+        printers=[{"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+                   "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"],
+                   "affected_slots": [None]}],
+        jobs=[{"field": "print_profile", "stale_value": "Old Process", "options_kind": "process", "required": False,
+               "affected_config_ids": None, "affected_file_names": []}],   # malformed: blows up after the printer update
+    ))
+    catalog_before = lmod._catalog_dict
+
+    with pytest.raises(TypeError):
+        await _confirm(client, sync, printers=[
+            {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "new_value": "New Machine"}])
+
+    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"  # not half-applied
+    assert lmod._catalog_dict is catalog_before
+    assert lmod._pending_sync is not None
+
+
+# ---- confirm-remap: Spoolman follow-up (best effort, after the DB commit) ----------------------
+
+def _spoolman_entry(*ids, preset="Bambu X1C 0.4 nozzle", stale="Old PLA"):
+    return {"printer_preset": preset, "stale_name": stale, "required": False,
+            "affected_filament_ids": list(ids), "affected_filament_names": [f"fil{i}" for i in ids]}
+
+
+def _orca_extra(profiles: dict) -> dict:
+    return {"extra": {"orca_profiles": json.dumps(json.dumps(profiles))}}  # Spoolman stores it double-encoded
+
+
+async def _enable_spoolman(session_factory):
+    async with session_factory() as s:
+        s.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key="k"))
+        await s.commit()
+
+
+async def test_confirm_remap_patches_spoolman_filaments_and_reports_the_ones_that_failed(client, session_factory):
+    await _enable_spoolman(session_factory)
+    preset = "Bambu X1C 0.4 nozzle"
+    stored = {
+        5: {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]},
+        6: {preset: ["Old PLA"]},
+        7: {preset: ["Old PLA"]},
+    }
+
+    async def fake_fetch(url, key, fil_id):
+        if fil_id == 7:
+            raise RuntimeError("spoolman down")
+        return _orca_extra(stored[fil_id])
+
+    patched = {}
+    async def fake_patch(url, key, fil_id, profiles):
+        patched[fil_id] = profiles
+
+    sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, 7)]))
+    with patch("app.services.spoolman_service.fetch_filament", new=fake_fetch), \
+         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+        resp = await _confirm(client, sync, spoolman=[
+            {"printer_preset": preset, "stale_name": "Old PLA", "new_name": "New PLA"}])
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["applied"]["spoolman_filaments"] == 2
+    assert body["spoolman_failures"] == ["filament 7: spoolman down"]
+    # stale name swapped for the new one on this preset only; other presets and other names untouched
+    assert patched[5] == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
+    assert patched[6] == {preset: ["New PLA"]}
+    assert 7 not in patched
+    assert lmod._catalog_dict == _NEW_CATALOG and lmod._pending_sync is None  # a Spoolman failure never blocks the commit
+
+
+async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client, session_factory):
+    await _enable_spoolman(session_factory)
+    preset = "Bambu X1C 0.4 nozzle"
+    patched = {}
+
+    async def fake_patch(url, key, fil_id, profiles):
+        patched[fil_id] = profiles
+
+    sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
+    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock(return_value=_orca_extra({preset: ["Old PLA"]}))), \
+         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+        resp = await _confirm(client, sync, spoolman=[{"printer_preset": preset, "stale_name": "Old PLA", "new_name": None}])
+
+    assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 1
+    assert patched == {5: {}}  # the preset key is removed rather than left as an empty list
+
+
+async def test_confirm_remap_skips_spoolman_entirely_when_it_is_not_configured(client):
+    sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
+    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock()) as fetch:
+        resp = await _confirm(client, sync)
+
+    assert resp.status_code == 200
+    assert resp.json()["applied"]["spoolman_filaments"] == 0
+    fetch.assert_not_called()
+    assert lmod._pending_sync is None
+
+
+async def test_confirm_remap_job_print_profile_without_a_replacement_becomes_blank_not_null(client, create_job, session_factory):
+    await create_job(print_profile="Old Process")
+    async with session_factory() as s:
+        cfg_id = (await s.execute(select(JobPrinterConfig.id))).scalar_one()
+    sync = _park(_pending(jobs=[{"field": "print_profile", "stale_value": "Old Process", "options_kind": "process",
+                                 "required": False, "affected_config_ids": [cfg_id], "affected_file_names": ["a"]}]))
+
+    resp = await _confirm(client, sync)  # operator picked no replacement for an optional entry
+
+    assert resp.status_code == 200 and resp.json()["applied"]["jobs"] == 1
+    async with session_factory() as s:
+        assert (await s.get(JobPrinterConfig, cfg_id)).print_profile == ""  # the column is NOT NULL
+

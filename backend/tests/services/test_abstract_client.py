@@ -119,9 +119,10 @@ def test_validate_file_id_rejects_windows_drive():
         client._validate_file_id("C:/windows/system32")
 
 
-def test_validate_file_id_accepts_normal_filename():
-    client = MinimalClient()
-    client._validate_file_id("my_model.3mf")  # should not raise
+@pytest.mark.parametrize("name", ["my_model.3mf", "Plate 1 (v2).gcode", "sub-dir/model.3mf", "100%25 done.3mf", "modèle.3mf"])
+def test_validate_file_id_accepts_ordinary_filenames(name):
+    """Companion to the rejection tests below: a validator that rejects everything would pass those."""
+    assert MinimalClient()._validate_file_id(name) is None
 
 
 def test_validate_file_id_rejects_unc_path():

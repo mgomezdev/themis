@@ -508,7 +508,9 @@ export function ProjectBuilderScreen() {
     setShowPrinterPicker(false);
     try {
       const pid = await saveProject();
-      if (!projectId) navigate(`/projects/${pid}`, { replace: true });
+      // Stay in the builder (its /edit route keeps this component mounted) so the generate result or
+      // error is shown here and a retry reuses the saved project instead of creating a second one.
+      if (!projectId) navigate(`/projects/${pid}/edit`, { replace: true });
       setGenerating(true);
       const result = await generateProject(pid, printerIds, processPreset);
       setGenerateResult({ jobCount: result.jobs.length });

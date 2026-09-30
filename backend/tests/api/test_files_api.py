@@ -53,6 +53,9 @@ async def test_upload_rejects_unsupported_type(client, tmp_path):
             files={"file": ("model.obj", b"# obj file", "application/octet-stream")},
         )
     assert response.status_code == 422
+    assert (await client.get("/api/v1/files")).json() == []  # nothing indexed
+    library = tmp_path / "library"
+    assert not library.exists() or not any(p.is_file() for p in library.rglob("*"))  # nothing written
 
 
 async def test_upload_stl_returns_single_plate(client, tmp_path):

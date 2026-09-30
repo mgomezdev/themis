@@ -11,7 +11,9 @@ This codebase has no schema-sharing or codegen between backend and frontend — 
 kept in sync by hand and can drift silently, with both sides' own tests still passing (each side tests
 against what it assumes the other does, not what the other actually does). Known hand-synced spots:
 `api/apiKeys.ts`'s `SCOPES` (mirrors `app/auth.py`), `Sidebar.tsx`'s `settingsSubItems` (mirrors
-`SettingsScreen.tsx`'s own nav).
+`SettingsScreen.tsx`'s own nav). Safety net: `contracts/response-keys.json` (keys the FE reads; checked against the
+real backend by `backend/tests/api/test_response_contracts.py` and against the TS interfaces by
+`src/api/responseKeys.contract.test.ts`) and `src/api/contract.test.ts` (every URL/method exists in `openapi.json`).
 
 When a screen or hook reads a field from an API response, grep the backend route that actually returns
 it and confirm the key matches byte-for-byte — don't trust a plan or a negotiated contract, verify it

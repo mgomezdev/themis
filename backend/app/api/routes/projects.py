@@ -692,6 +692,42 @@ async def add_item(
     return _item_dict(item, f.original_filename)
 
 
+# NOTE: declared before PUT /{project_id}/items/{item_id} on purpose — Starlette matches routes in
+# declaration order, so "/items/reorder" would otherwise be captured by {item_id} and always 422.
+@router.put(
+    "/{project_id}/items/reorder",
+    summary="Reorder project items",
+    responses={
+        404: {"description": "Project not found"},
+        422: {"description": "One or more item IDs do not belong to this project"},
+    },
+    dependencies=[Depends(require_scope("projects:write"))],
+)
+async def reorder_items(
+    project_id: int,
+    body: list[ReorderEntry],
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Set explicit sort_order values for project items. Returns the full updated item list."""
+    await _get_project_or_404(project_id, session)
+    item_ids = [e.id for e in body]
+    rows = (
+        await session.execute(
+            select(ProjectItem).where(
+                ProjectItem.id.in_(item_ids),
+                ProjectItem.project_id == project_id,
+            )
+        )
+    ).scalars().all()
+    if len(rows) != len(body):
+        raise HTTPException(422, "One or more item IDs do not belong to this project")
+    order_map = {e.id: e.sort_order for e in body}
+    for item in rows:
+        item.sort_order = order_map[item.id]
+    await session.commit()
+    return await _load_items(session, project_id)
+
+
 @router.put(
     "/{project_id}/items/{item_id}",
     summary="Update project item",
@@ -747,40 +783,6 @@ async def delete_item(
     await session.delete(item)
     await session.commit()
     return {"deleted": item_id}
-
-
-@router.put(
-    "/{project_id}/items/reorder",
-    summary="Reorder project items",
-    responses={
-        404: {"description": "Project not found"},
-        422: {"description": "One or more item IDs do not belong to this project"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def reorder_items(
-    project_id: int,
-    body: list[ReorderEntry],
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    """Set explicit sort_order values for project items. Returns the full updated item list."""
-    await _get_project_or_404(project_id, session)
-    item_ids = [e.id for e in body]
-    rows = (
-        await session.execute(
-            select(ProjectItem).where(
-                ProjectItem.id.in_(item_ids),
-                ProjectItem.project_id == project_id,
-            )
-        )
-    ).scalars().all()
-    if len(rows) != len(body):
-        raise HTTPException(422, "One or more item IDs do not belong to this project")
-    order_map = {e.id: e.sort_order for e in body}
-    for item in rows:
-        item.sort_order = order_map[item.id]
-    await session.commit()
-    return await _load_items(session, project_id)
 
 
 # ---------------------------------------------------------------------------

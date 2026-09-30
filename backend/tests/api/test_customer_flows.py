@@ -41,23 +41,21 @@ def _keyless() -> AsyncClient:
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-async def _seed_job(project_id: int | None) -> int:
+async def _seed_job(session_factory, project_id: int | None) -> int:
     # Uses the test DB session override installed by the `client` fixture (pulled in via `admin`).
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    now = datetime.now(timezone.utc).isoformat()
-    f = UploadedFile(original_filename="m.3mf", stored_path="/x/m.3mf", plates=[], uploaded_at=now)
-    session.add(f)
-    await session.flush()
-    j = Job(uploaded_file_id=f.id, plate_number=1, status="queued", queue_position=1.0,
-            project_id=project_id, created_at=now, updated_at=now)
-    session.add(j)
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc).isoformat()
+        f = UploadedFile(original_filename="m.3mf", stored_path="/x/m.3mf", plates=[], uploaded_at=now)
+        session.add(f)
+        await session.flush()
+        j = Job(uploaded_file_id=f.id, plate_number=1, status="queued", queue_position=1.0,
+                project_id=project_id, created_at=now, updated_at=now)
+        session.add(j)
+        await session.commit()
     return j.id
 
 
-async def test_admin_creates_customers_who_log_in_and_see_only_their_projects_and_jobs(admin: AsyncClient):
+async def test_admin_creates_customers_who_log_in_and_see_only_their_projects_and_jobs(admin: AsyncClient, session_factory):
     # Admin creates two customer accounts.
     alice = await _create_customer(admin, "Alice", "alice@example.com", "alice-pw")
     bob = await _create_customer(admin, "Bob", "bob@example.com", "bob-pw")
@@ -74,9 +72,9 @@ async def test_admin_creates_customers_who_log_in_and_see_only_their_projects_an
     a2 = await project("Alice Brackets", alice["id"])
     b1 = await project("Bob Hinges", bob["id"])
     internal = await project("Internal Jig", None)
-    alice_job = await _seed_job(a1["id"])
-    bob_job = await _seed_job(b1["id"])
-    internal_job = await _seed_job(internal["id"])
+    alice_job = await _seed_job(session_factory, a1["id"])
+    bob_job = await _seed_job(session_factory, b1["id"])
+    internal_job = await _seed_job(session_factory, internal["id"])
 
     # Alice logs in and sees only her projects and only their jobs.
     async with await _login("alice@example.com", "alice-pw") as ac:
@@ -197,7 +195,7 @@ async def test_password_reset_signs_customer_out_and_only_new_password_works(cli
         assert (await ac.get("/api/v1/customer/projects")).status_code == 200
 
 
-async def test_expired_session_is_rejected(client: AsyncClient):
+async def test_expired_session_is_rejected(client: AsyncClient, session_factory):
     """Remote client (no local mode): a session past its 30-day expiry gets 401."""
     from sqlalchemy import update
     from app.models import ApiKey
@@ -207,12 +205,10 @@ async def test_expired_session_is_rejected(client: AsyncClient):
     async with await _login("a@example.com", "pw") as ac:
         assert (await ac.get("/api/v1/customer/projects")).status_code == 200
 
-        agen = app.dependency_overrides[get_session]()
-        session = await agen.__anext__()
-        await session.execute(update(ApiKey).where(ApiKey.customer_id.is_not(None))
-                              .values(expires_at="2000-01-01T00:00:00+00:00"))
-        await session.commit()
-        await agen.aclose()
+        async with session_factory() as session:
+            await session.execute(update(ApiKey).where(ApiKey.customer_id.is_not(None))
+                                  .values(expires_at="2000-01-01T00:00:00+00:00"))
+            await session.commit()
 
         assert (await ac.get("/api/v1/customer/projects")).status_code == 401
         assert (await ac.get("/api/v1/auth/me")).json()["role"] is None

@@ -6,7 +6,7 @@ from httpx import AsyncClient
 from app.api.routes.customers import _financials
 from app.database import get_session
 from app.main import app
-from app.models import Job, Project
+from app.models import Job, Project, UploadedFile
 
 
 async def _db_session():
@@ -17,7 +17,10 @@ async def _db_session():
 async def _add_job(project_id: int, status: str, cost: float | None) -> None:
     gen, session = await _db_session()
     now = datetime.now(timezone.utc).isoformat()
-    session.add(Job(uploaded_file_id=1, plate_number=1, status=status, created_at=now, updated_at=now,
+    uploaded = UploadedFile(original_filename="m.3mf", stored_path="/x/m.3mf", plates=[], uploaded_at=now)
+    session.add(uploaded)
+    await session.flush()                                   # jobs.uploaded_file_id is a real FK (the test DB enforces it)
+    session.add(Job(uploaded_file_id=uploaded.id, plate_number=1, status=status, created_at=now, updated_at=now,
                     project_id=project_id, filament_cost=cost))
     await session.commit()
     await gen.aclose()

@@ -1,43 +1,37 @@
-import zipfile
-import re
-from pathlib import Path
 import pytest
 
 from app.services.snapmaker.paint_remap import remap_paint_color, decode_nodes, encode_nodes
 
-_FIXTURE = Path(r"C:/Users/mgome/Downloads/Hausdeko+#41+-+Welcome+Home+-+Türschild+-+Makerworld.3mf")
+# paint_color strings in OrcaSlicer's TriangleSelector format, encoded BY HAND from the bit layout in
+# paint_remap.py (nibbles read right-to-left, LSB-first) so these are independent of encode_nodes:
+#   LEAF(state>=3) = 8 bits: split_sides 00, code 11, nibble n=state-3   -> "<n>C"
+#   LEAF(ENFORCER)  = "4",  LEAF(BLOCKER) = "8",  LEAF(NONE) = "0"
+#   SPLIT(2 sides, special 0, children [filament1, filament2])           -> "0C1C1"
+REAL_PAINT = ["0", "4", "8", "0C", "1C", "2C", "0C1C1"]
 
 
-def _fixture_paint_colors():
-    with zipfile.ZipFile(_FIXTURE) as z:
-        for n in z.namelist():
-            if n.endswith(".model"):
-                pcs = re.findall(r'paint_color="([^"]+)"', z.read(n).decode("utf-8", "ignore"))
-                if pcs:
-                    return pcs
-    return []
+@pytest.mark.parametrize("pc", REAL_PAINT)
+def test_roundtrip_byte_exact_on_real_paint(pc):
+    assert encode_nodes(decode_nodes(pc)) == pc
 
 
-@pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture 3MF not present")
-def test_roundtrip_byte_exact_on_all_real_paint():
-    pcs = [p for p in _fixture_paint_colors() if p]
-    assert pcs
-    for pc in pcs:                                   # ALL — byte-exact
-        assert encode_nodes(decode_nodes(pc)) == pc
+@pytest.mark.parametrize("pc", REAL_PAINT)
+def test_identity_remap_byte_exact_on_real_paint(pc):
+    assert remap_paint_color(pc, {}) == pc
 
 
-@pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture 3MF not present")
-def test_identity_remap_byte_exact_on_all_real_paint():
-    for pc in [p for p in _fixture_paint_colors() if p]:
-        assert remap_paint_color(pc, {}) == pc
+def test_decode_split_of_two_filaments():
+    assert decode_nodes("0C1C1") == ("S", 1, 0, [("L", 3), ("L", 4)])
 
 
-@pytest.mark.skipif(not _FIXTURE.exists(), reason="fixture 3MF not present")
-def test_remap_swaps_filament_state():
-    pcs = [p for p in _fixture_paint_colors() if p]
-    after = remap_paint_color(pcs[0], {1: 2})
-    assert isinstance(after, str)
-    assert encode_nodes(decode_nodes(after)) == after
+def test_remap_moves_filament_1_to_tool_1_inside_a_split():
+    # filament 1 -> tool_index 1 (state 4); filament 2 untouched: children become [state 4, state 4]
+    assert remap_paint_color("0C1C1", {1: 1}) == "1C1C1"
+
+
+def test_remap_swaps_two_filaments_simultaneously():
+    # {1: tool 1, 2: tool 0}: leaves swap states 3<->4 (must not chain 1->2->1)
+    assert remap_paint_color("0C1C1", {1: 1, 2: 0}) == "1C0C1"
 
 
 # ---------------------------------------------------------------------------

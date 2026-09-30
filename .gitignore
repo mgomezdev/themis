@@ -26,3 +26,7 @@ frontend/dist/
 .claude/worktrees/
 .claude/review-state.json
 test-results/
+
+# Coverage output
+frontend/coverage/
+backend/.coverage

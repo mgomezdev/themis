@@ -1,8 +1,10 @@
 import pytest
-from unittest.mock import MagicMock
+from app.services.abstract_printer_client import ConnectionField
+from app.services.mock_printer_client import MockPrinterClient
 from app.services.printer_client_factory import (
     get_printer_types_for_ui,
     create_client,
+    create_client_from_config,
     REGISTRY,
 )
 from app.models import Printer
@@ -21,26 +23,12 @@ def _printer(printer_type: str, config: dict) -> Printer:
     return p
 
 
-def test_registry_has_bambu():
-    assert "bambu" in REGISTRY
-
-
-def test_registry_has_elegoo():
-    assert "elegoo_centauri" in REGISTRY
-
-
-def test_registry_does_not_have_moonraker():
-    assert "moonraker" not in REGISTRY
-
-
-def test_registry_has_mock():
-    assert "mock" in REGISTRY
-
-
-def test_get_printer_types_returns_list():
+def test_ui_type_list_covers_every_registry_entry():
     types = get_printer_types_for_ui()
-    assert isinstance(types, list)
-    assert len(types) >= 1
+    assert [t["printer_type"] for t in types] == list(REGISTRY)
+    for t in types:
+        assert isinstance(t["display_name"], str) and t["display_name"]
+        assert all({"name", "label", "field_type", "required"} <= set(f) for f in t["connection_fields"])
 
 
 def test_get_printer_types_bambu_fields():
@@ -60,22 +48,59 @@ def test_get_printer_types_elegoo_fields():
     assert "camera_url" not in field_names
 
 
-def test_create_client_bambu():
-    from app.services.bambu_mqtt import BambuMQTTClient
-    printer = _printer("bambu", {
-        "ip_address": "1.2.3.4",
-        "serial_number": "ABC",
-        "access_code": "secret",
-    })
-    client = create_client(printer)
-    assert isinstance(client, BambuMQTTClient)
+def _minimal_config(cls) -> dict:
+    """Every required connection field, filled from its default or a placeholder."""
+    return {f.name: (f.default if f.default is not None else "1.2.3.4")
+            for f in cls.connection_fields() if f.required}
 
 
-def test_create_client_elegoo():
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
-    printer = _printer("elegoo_centauri", {"ip_address": "1.2.3.5"})
-    client = create_client(printer)
-    assert isinstance(client, ElegooCentauriClient)
+@pytest.mark.parametrize("printer_type", list(REGISTRY))
+def test_create_client_builds_the_registered_class_for_every_type(printer_type):
+    cls = REGISTRY[printer_type]
+    assert type(create_client(_printer(printer_type, _minimal_config(cls)))) is cls
+    assert type(create_client_from_config(printer_type, _minimal_config(cls))) is cls
+
+
+class _SpyClient(MockPrinterClient):
+    """Records exactly what the factory hands its constructor."""
+    calls: list[dict] = []
+
+    def __init__(self, ip_address, on_state=None, **kwargs):
+        type(self).calls.append({"ip_address": ip_address, "on_state": on_state, **kwargs})
+        super().__init__()
+
+    @classmethod
+    def connection_fields(cls):
+        return [ConnectionField(name="ip_address", label="IP", field_type="text")]
+
+
+@pytest.fixture
+def spy_type(monkeypatch):
+    _SpyClient.calls = []
+    monkeypatch.setitem(REGISTRY, "spy", _SpyClient)
+    return _SpyClient
+
+
+def test_create_client_forwards_only_declared_fields_and_accepted_callbacks(spy_type):
+    printer = _printer("spy", {"ip_address": "9.9.9.9", "stray": "dropped", "on_state": "not-a-callback"})
+    on_state, on_other = object(), object()
+
+    create_client(printer, on_state=on_state, on_other=on_other)
+
+    # 'stray' / config-supplied 'on_state' are not declared fields; the on_state callback is
+    # accepted by the constructor, on_other is not -> only ip_address + the real callback arrive.
+    assert spy_type.calls == [{"ip_address": "9.9.9.9", "on_state": on_state}]
+
+
+def test_create_client_from_config_forwards_only_declared_fields(spy_type):
+    create_client_from_config("spy", {"ip_address": "9.9.9.9", "extra": "ignored"})
+
+    assert spy_type.calls == [{"ip_address": "9.9.9.9", "on_state": None}]
+
+
+def test_create_client_from_config_unknown_type_raises():
+    with pytest.raises(ValueError, match="Unknown printer type"):
+        create_client_from_config("unknown_type", {})
 
 
 def test_create_client_unknown_type_raises():

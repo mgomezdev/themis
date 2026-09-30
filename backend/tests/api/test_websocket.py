@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
@@ -68,7 +69,9 @@ def _seed_db(db_path: Path, scopes: list[str] | None) -> str | None:
 
 
 def _wire_app_to_db(db_path: Path) -> None:
-    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+    # NullPool: the TestClient serves requests on its own loop; pooled aiosqlite connections
+    # would outlive it and their worker threads would blow up when that loop closes.
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async def override_get_session():

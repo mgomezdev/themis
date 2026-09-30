@@ -181,34 +181,41 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-if STATIC_DIR.exists():
-    # Serve hashed assets with long cache; index.html with no-cache so browsers
-    # always revalidate and pick up new deploys without a hard refresh.
-    app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+def _resolve_within(root_dir: Path, full_path: str) -> Path | None:
+    """Resolve full_path under root_dir, or None if it escapes.
 
-    def _within_static_dir(full_path: str) -> Path | None:
-        """Resolve full_path under STATIC_DIR, or None if it escapes.
+    `root_dir / full_path` is a lexical join: pathlib discards the base
+    entirely when the right operand is absolute ("/etc/passwd"), and does not
+    normalise "..". Both (and symlinks pointing outside) must be rejected before
+    the file is served.
+    """
+    root = root_dir.resolve()
+    try:
+        candidate = (root / full_path).resolve()
+    except (OSError, ValueError):
+        return None
+    if candidate != root and root not in candidate.parents:
+        return None
+    return candidate
 
-        `STATIC_DIR / full_path` is a lexical join: pathlib discards the base
-        entirely when the right operand is absolute ("/etc/passwd"), and does not
-        normalise "..". Both must be rejected before the file is served.
-        """
-        root = STATIC_DIR.resolve()
-        try:
-            candidate = (root / full_path).resolve()
-        except (OSError, ValueError):
-            return None
-        if candidate != root and root not in candidate.parents:
-            return None
-        return candidate
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+def register_spa(target: FastAPI, static_dir: Path) -> None:
+    """Serve the built React app from static_dir: hashed assets with long cache; every other
+    path falls back to index.html with no-cache so browsers always revalidate and pick up new
+    deploys without a hard refresh."""
+    target.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+    @target.get("/{full_path:path}", include_in_schema=False)
     async def serve_spa(_: Request, full_path: str):
         if full_path:
-            file = _within_static_dir(full_path)
+            file = _resolve_within(static_dir, full_path)
             if file is not None and file.is_file():
                 return FileResponse(file)
         return FileResponse(
-            STATIC_DIR / "index.html",
+            static_dir / "index.html",
             headers={"Cache-Control": "no-cache, must-revalidate"},
         )
+
+
+if STATIC_DIR.exists():
+    register_spa(app, STATIC_DIR)

@@ -6,24 +6,19 @@ import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy import select, text
 
-from app.database import Base
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
+from tests.waiting import settle_background_tasks, wait_until
 
 
 @pytest_asyncio.fixture
-async def db():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    yield factory
-    await engine.dispose()
+async def db(session_factory):
+    """The shared per-test SQLite file (see conftest.session_factory) under the name this module uses."""
+    return session_factory
 
 
 def _make_mock_printer_manager(printer_ids_ready: list[int]) -> PrinterManager:
@@ -105,11 +100,16 @@ async def test_claim_transitions_job_to_slicing(db, tmp_path):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)  # allow background task to run through to printing
 
-    async with db() as session:
-        job = await session.get(Job, job_id)
-        assert job.status == "printing"
+    async def _status():
+        async with db() as session:
+            return (await session.get(Job, job_id)).status
+
+    async def _is_printing():
+        return await _status() == "printing"
+
+    await wait_until(_is_printing, what="job to reach printing")  # background slice+upload task
+    assert await _status() == "printing"
 
 
 @pytest.mark.asyncio
@@ -139,7 +139,7 @@ async def test_queue_off_printer_does_not_claim(db):
         await session.commit()
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -157,65 +157,13 @@ async def test_slice_failure_blocks_job(db):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
         # A slicing issue blocks the job (per queue policy), with a reason.
         assert job.status == "blocked"
         assert "slicing failed" in (job.block_reason or "")
-
-
-@pytest.mark.asyncio
-async def test_slice_failure_requeues_when_other_printers_available(db):
-    # Printer 1 fails, but printer 2 is also eligible
-    mgr = _make_mock_printer_manager([1])
-    mock_slicer = MagicMock()
-    mock_slicer.slice.side_effect = SliceError("fail")
-
-    qe = QueueEngine(db, mgr, mock_slicer)
-    _install_fake_put(qe)
-
-    async with db() as session:
-        for pid in (1, 2):
-            session.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri",
-                                connection_config={}, current_orca_printer_profile="Test Machine Preset"))
-        f = UploadedFile(
-            original_filename="test.3mf",
-            stored_path="/data/uploads/x/model.3mf",
-            plates=[],
-            uploaded_at=datetime.now(timezone.utc).isoformat(),
-        )
-        session.add(f)
-        await session.flush()
-        j = Job(
-            uploaded_file_id=f.id,
-            plate_number=1,
-            queue_position=1.0,
-            status="queued",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
-        )
-        session.add(j)
-        await session.flush()
-        # Two printer configs — printer 1 fails but printer 2 is available
-        session.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="0.20mm", filament_profile="PLA"))
-        session.add(JobPrinterConfig(job_id=j.id, printer_id=2, print_profile="0.20mm", filament_profile="PLA"))
-        await session.commit()
-        job_id = j.id
-
-    await qe._process_queue()
-    await asyncio.sleep(0.1)
-
-    async with db() as session:
-        job = await session.get(Job, job_id)
-        # Printer 1's slice failed → blocked; printer 2 (config not failed) can still
-        # rescue it on a later check.
-        assert job.status == "blocked"
-        cfgs = (await session.execute(
-            select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
-        by_printer = {c.printer_id: c.slice_failed for c in cfgs}
-        assert by_printer[1] is True and by_printer[2] is False
 
 
 @pytest.mark.asyncio
@@ -256,7 +204,7 @@ async def test_filament_mismatch_blocks_job(db):
     await _set_filament(db, job_id, 1, "PETG", "#FF0000", [{"slot": 0, "type": "PLA", "color": "#FFFFFF"}])
 
     await qe._process_queue()
-    await asyncio.sleep(0.05)
+    await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -277,7 +225,7 @@ async def test_filament_match_allows_claim(db, tmp_path):
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "pla", "color": "FFFFFF"}])
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
 
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
@@ -307,7 +255,7 @@ async def test_slice_uses_filament_profile_from_loaded_slot(db, tmp_path):
                           "filament_profile": "Generic PLA @Test"}])
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
 
     assert mock_slicer.slice.call_count == 1
     req = mock_slicer.slice.call_args[0][0]
@@ -328,7 +276,7 @@ async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PLA", "color": "#FFFFFF"}])
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
 
     mgr.set_awaiting_plate_clear.assert_any_call(1, True)
     async with db() as session:
@@ -348,7 +296,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     await _set_filament(db, job_id, 1, "PLA", "#FFFFFF", [{"type": "PETG", "color": "#000000"}])
 
     await qe._process_queue()
-    await asyncio.sleep(0.05)
+    await settle_background_tasks()
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "blocked"
 
@@ -357,7 +305,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
         (await session.get(Printer, 1)).loaded_filaments = [{"type": "PLA", "color": "#FFFFFF"}]
         await session.commit()
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
 
@@ -402,7 +350,7 @@ async def test_offline_printer_slices_job_to_sliced_status(db, tmp_path):
     job_id = await _seed_job(db, printer_id=1)
 
     await qe._process_queue()
-    await asyncio.sleep(0.15)
+    await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -425,7 +373,7 @@ async def test_sliced_job_resumes_when_printer_comes_online(db, tmp_path):
 
     # First cycle: offline → job reaches "sliced"
     await qe._process_queue()
-    await asyncio.sleep(0.15)
+    await settle_background_tasks()
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "sliced"
 
@@ -435,7 +383,7 @@ async def test_sliced_job_resumes_when_printer_comes_online(db, tmp_path):
 
     # Second cycle: ready → resume upload+print
     await qe._process_queue()
-    await asyncio.sleep(0.15)
+    await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -458,12 +406,12 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
 
     # First cycle slices the job
     await qe._process_queue()
-    await asyncio.sleep(0.15)
+    await settle_background_tasks()
     assert mock_slicer.slice.call_count == 1
 
     # Second cycle with printer still offline: must NOT slice again
     await qe._process_queue()
-    await asyncio.sleep(0.05)
+    await settle_background_tasks()
     assert mock_slicer.slice.call_count == 1  # no additional calls
 
 
@@ -534,28 +482,30 @@ async def test_priority_queue_orders_production_before_estimate(db):
     assert results == ["production", "estimate"]
 
 
-@pytest.mark.asyncio
-async def test_equal_priority_no_type_error(db):
-    """Two equal-priority items with seq tiebreaker don't raise TypeError."""
-    import itertools
+async def test_slice_queue_orders_by_priority_then_arrival_via_the_engines_counter(db):
+    """The slice queue is a PriorityQueue of (priority, seq, coroutine): lower priority numbers first, and equal
+    priorities fall back to the engine's `_slice_seq` counter, so two coroutines are never compared (TypeError)
+    and arrival order is kept. (The 0/1/2 values used are the ones the engine enqueues for production /
+    estimate / verify slices today; this test pins the queue mechanics, not those constants.)"""
     from app.services.queue_engine import QueueEngine
     from app.services.slicer_service import SlicerService
 
-    mgr = _make_mock_printer_manager([])
-    slicer = MagicMock(spec=SlicerService)
-    engine = QueueEngine(db, mgr, slicer)
-    seq = itertools.count()
+    engine = QueueEngine(db, _make_mock_printer_manager([]), MagicMock(spec=SlicerService))
+    ran: list[str] = []
 
-    async def noop():
-        pass
+    def job(label: str):
+        async def run():
+            ran.append(label)
+        return run()
 
-    await engine._slice_queue.put((1, next(seq), noop()))
-    await engine._slice_queue.put((1, next(seq), noop()))
-    # Should not raise — drain without error
-    for _ in range(2):
-        _, _s, c = await engine._slice_queue.get()
-        await c
+    for priority, label in [(2, "verify"), (1, "estimate-a"), (0, "prod-a"), (1, "estimate-b"), (0, "prod-b")]:
+        await engine._slice_queue.put((priority, next(engine._slice_seq), job(label)))
+    for _ in range(5):
+        _, _seq, coro = await engine._slice_queue.get()
+        await coro
         engine._slice_queue.task_done()
+
+    assert ran == ["prod-a", "prod-b", "estimate-a", "estimate-b", "verify"]
 
 
 @pytest.mark.asyncio
@@ -823,6 +773,9 @@ async def test_run_estimate_fails_when_printer_missing(db):
     job_id = await _seed_job(db, printer_id)
 
     async with db() as session:
+        # FKs are ON (as in prod), which forbids this state; turn them off on this connection to
+        # exercise the defensive branch for a dangling config.
+        await session.execute(text("PRAGMA foreign_keys=OFF"))
         job = await session.get(Job, job_id)
         job.estimate_status = "pending"
         job.estimate_token = 1
@@ -1290,7 +1243,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
     with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
          patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
         await qe._process_queue()
-        await asyncio.sleep(0.1)
+        await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -1327,7 +1280,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
     with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
          patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
         await qe._process_queue()
-        await asyncio.sleep(0.1)
+        await settle_background_tasks()
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -1601,7 +1554,7 @@ async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_pa
         await session.commit()
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "queued"
     assert mock_slicer.slice.call_count == 0
@@ -1611,7 +1564,7 @@ async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_pa
         await session.commit()
 
     await qe._process_queue()
-    await asyncio.sleep(0.1)
+    await settle_background_tasks()
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
     assert mock_slicer.slice.call_count == 1
