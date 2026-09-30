@@ -719,6 +719,7 @@ export function QueueScreen() {
   const [filter, setFilter] = useState<FilterKey>('all');
   const [selectedJobId, setSelectedJobId] = useState<number | null>(null);
   const [laminusDown, setLaminusDown] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { jobs: rawJobs, refetch } = useQueue();
   const [printers] = useFleetData();
@@ -835,33 +836,27 @@ export function QueueScreen() {
     return true;
   };
 
-  async function handleCancel(jobId: number) {
+  // A rejected cancel/unblock/reorder used to be logged and nothing else: the job just stayed put and the
+  // operator couldn't tell whether the click had done anything. Say what failed until the next action.
+  async function runJobAction(what: string, jobId: number, action: () => Promise<unknown>, onDone?: () => void) {
+    setActionError(null);
     try {
-      await cancelJob(jobId);
-      if (selectedJobId === jobId) setSelectedJobId(null);
+      await action();
+      onDone?.();
       refetch();
     } catch (err) {
-      console.error('Failed to cancel job:', err);
+      console.error(`Failed to ${what} job:`, err);
+      setActionError(`Failed to ${what} job #${jobId}: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
-  async function handleUnblock(jobId: number) {
-    try {
-      await unblockJob(jobId);
-      refetch();
-    } catch (err) {
-      console.error('Failed to unblock job:', err);
-    }
-  }
+  const handleCancel = (jobId: number) =>
+    runJobAction('cancel', jobId, () => cancelJob(jobId), () => { if (selectedJobId === jobId) setSelectedJobId(null); });
 
-  async function handleReorder(jobId: number, action: 'promote' | 'demote' | 'front' | 'back') {
-    try {
-      await reorderJob(jobId, action);
-      refetch();
-    } catch (err) {
-      console.error('Failed to reorder job:', err);
-    }
-  }
+  const handleUnblock = (jobId: number) => runJobAction('unblock', jobId, () => unblockJob(jobId));
+
+  const handleReorder = (jobId: number, action: 'promote' | 'demote' | 'front' | 'back') =>
+    runJobAction('reorder', jobId, () => reorderJob(jobId, action));
 
   return (
     <div
@@ -888,6 +883,17 @@ export function QueueScreen() {
               sub="serial est."
               mono
             />
+          </div>
+        )}
+
+        {actionError && (
+          <div role="alert" style={{
+            padding: '10px 14px', marginBottom: 14, borderRadius: 6,
+            background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)',
+            color: 'var(--err)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ flex: 1 }}>{actionError}</span>
+            <button className="btn ghost icon sm" aria-label="Dismiss" onClick={() => setActionError(null)}>{Icons.x}</button>
           </div>
         )}
 

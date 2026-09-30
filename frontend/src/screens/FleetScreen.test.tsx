@@ -104,37 +104,36 @@ describe('FleetScreen', () => {
     await waitFor(() => expect(screen.getByText(/0 printers/i)).toBeInTheDocument());
   });
 
-  it('reflects WebSocket printer_state update', async () => {
+  it('applies a WebSocket printer_state update to the matching printer', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
 
     act(() => {
       MockWS.instances[0].onmessage?.({
-        data: JSON.stringify({
-          type: 'printer_state',
-          data: { ...PRINTER_1, state: 'IDLE', progress: 0, remaining_time: 0 },
-        }),
+        data: JSON.stringify({ type: 'printer_state', data: { ...PRINTER_1, name: 'Forge II' } }),
       });
     });
 
-    // After update to IDLE, timeRemaining becomes 0 — verify no crash and Forge still shows
-    expect(screen.getByText('Forge')).toBeInTheDocument();
+    expect(screen.getByText('Forge II')).toBeInTheDocument();
+    expect(screen.queryByText('Forge')).toBeNull();                     // replaced in place, not duplicated
+    expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();
   });
 
-  it('ignores non-printer_state WebSocket events', async () => {
+  it('ignores WebSocket events that are not printer_state, even if they carry printer-shaped data', async () => {
     mockFetch([PRINTER_1]);
     render(<FleetScreen />);
     await waitFor(() => expect(screen.getByText('Forge')).toBeInTheDocument());
 
     act(() => {
       MockWS.instances[0].onmessage?.({
-        data: JSON.stringify({ type: 'plate_clear_required', data: { printer_id: 1 } }),
+        data: JSON.stringify({ type: 'plate_clear_required', data: { ...PRINTER_1, name: 'Hijacked' } }),
       });
     });
 
-    // Component should still render without crashing
     expect(screen.getByText('Forge')).toBeInTheDocument();
+    expect(screen.queryByText('Hijacked')).toBeNull();
+    expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();       // and it did not add a printer either
   });
 
   it('closes WebSocket on unmount', async () => {
@@ -401,5 +400,99 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
     expect(slot.spoolman_spool_id).toBe('3');
     expect(slot.type).toBe('PLA');
     expect(slot.color).toBe('#AAAAAA');
+  });
+});
+
+// ── Ready-for-work gate + reconnect (fetch-level: asserts the real request and the resulting UI) ───
+describe('FleetScreen — ready-for-work gate and reconnect', () => {
+  const AWAITING: FleetPrinter = { ...PRINTER_1, state: 'IDLE', progress: 0, remaining_time: 0, current_print: null, awaiting_plate_clear: true };
+  const OFFLINE: FleetPrinter = { ...PRINTER_1, connected: false, state: 'unknown', progress: 0, remaining_time: 0, current_print: null };
+
+  type Call = { url: string; method: string };
+
+  /** Fleet endpoint serves `printer()` (re-evaluated per GET so tests can change it); POSTs go to `post`. */
+  function stubFleetApi(printer: () => FleetPrinter, post: (url: string) => boolean = () => true): Call[] {
+    const calls: Call[] = [];
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method });
+      if (method === 'POST') {
+        const ok = post(url);
+        return Promise.resolve({ ok, status: ok ? 200 : 503, json: () => Promise.resolve({ ok }), text: () => Promise.resolve('unavailable') });
+      }
+      if (url === '/api/v1/maintenance/status') return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([printer()]) });
+    }));
+    return calls;
+  }
+  const fleetGets = (calls: Call[]) => calls.filter(c => c.url === '/api/v1/fleet' && c.method === 'GET').length;
+
+  beforeEach(() => {
+    MockWS.instances = [];
+    vi.stubGlobal('WebSocket', MockWS);
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('offers "Ready for new work" only while the printer is awaiting plate clear', async () => {
+    stubFleetApi(() => PRINTER_1);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge'));
+    await screen.findByText(/capable:/i); // expanded card header is rendered
+    expect(screen.queryByRole('button', { name: /ready for new work/i })).toBeNull();
+  });
+
+  it('keeps offering "Ready for new work" after the card is expanded', async () => {
+    stubFleetApi(() => AWAITING);
+    render(<FleetScreen />);
+    await screen.findAllByRole('button', { name: /ready for new work/i });
+    fireEvent.click(screen.getByText('Forge'));
+    await screen.findByText(/capable:/i);
+    expect(screen.getAllByRole('button', { name: /ready for new work/i }).length).toBeGreaterThan(0);
+  });
+
+  it('"Ready for new work" POSTs plate-cleared for that printer and disappears once the fleet reports the gate released', async () => {
+    let cleared = false;
+    const calls = stubFleetApi(
+      () => ({ ...AWAITING, awaiting_plate_clear: !cleared }),
+      (url) => { if (url.endsWith('/plate-cleared')) cleared = true; return true; },
+    );
+    render(<FleetScreen />);
+
+    fireEvent.click((await screen.findAllByRole('button', { name: /ready for new work/i }))[0]);
+
+    await waitFor(() => expect(calls).toContainEqual({ url: '/api/v1/printers/1/plate-cleared', method: 'POST' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: /ready for new work/i })).toBeNull());
+  });
+
+  it('an offline printer offers Reconnect, which POSTs reconnect and refetches the fleet', async () => {
+    const calls = stubFleetApi(() => OFFLINE);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge'));
+    const before = fleetGets(calls);
+
+    fireEvent.click(await screen.findByRole('button', { name: /reconnect/i }));
+
+    await waitFor(() => expect(calls).toContainEqual({ url: '/api/v1/printers/1/reconnect', method: 'POST' }));
+    await waitFor(() => expect(fleetGets(calls)).toBeGreaterThan(before));
+  });
+
+  it('a failed Reconnect re-enables the button and does not refetch', async () => {
+    const calls = stubFleetApi(() => OFFLINE, () => false);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge'));
+    const before = fleetGets(calls);
+
+    fireEvent.click(await screen.findByRole('button', { name: /reconnect/i }));
+
+    await waitFor(() => expect(calls).toContainEqual({ url: '/api/v1/printers/1/reconnect', method: 'POST' }));
+    await waitFor(() => expect((screen.getByRole('button', { name: /reconnect/i }) as HTMLButtonElement).disabled).toBe(false));
+    expect(fleetGets(calls)).toBe(before);
+  });
+
+  it('a printer that is not offline does not offer Reconnect', async () => {
+    stubFleetApi(() => PRINTER_1);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Forge'));
+    expect(screen.queryByRole('button', { name: /reconnect/i })).toBeNull();
   });
 });

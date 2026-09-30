@@ -303,6 +303,8 @@ input, textarea, select { font-family: inherit; color: inherit; }
   margin-right: 6px;
 }
 .topbar .crumb::after { content: "/"; margin-left: 8px; color: var(--text-4); }
+.topbar a.crumb { text-decoration: none; }
+.topbar a.crumb:hover { color: var(--text-1); text-decoration: underline; }
 .topbar .spacer { flex: 1; }
 .topbar .search {
   background: var(--bg-2);

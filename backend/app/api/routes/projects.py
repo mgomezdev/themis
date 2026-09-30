@@ -61,6 +61,7 @@ class ProjectCreate(BaseModel):
     source_user: Optional[str] = None
     source_layout_id: Optional[int] = None
     amount_paid: Optional[float] = None
+    price: Optional[float] = None
     payment_status: str = "unpaid"
     # Staff/API-created projects default to "queued" (unchanged behavior); customer drafts
     # are created via the customer portal.
@@ -88,6 +89,7 @@ class ProjectPatch(BaseModel):
     due_date: Optional[str] = None
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
+    price: Optional[float] = None  # send null to clear
     payment_status: Optional[str] = None
     customer_id: Optional[int] = None  # send null to unassign
 
@@ -325,6 +327,7 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         select(Job).where(Job.project_id == project.id)
     )).scalars().all()
     progress = _project_progress(job_rows)
+    customer = await session.get(Customer, project.customer_id) if project.customer_id else None
 
     return {
         "id": project.id,
@@ -339,9 +342,11 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
         "amount_paid": project.amount_paid,
+        "price": project.price,
         "payment_status": project.payment_status,
         "stage": project.stage,
         "customer_id": project.customer_id,
+        "customer_name": customer.name if customer else None,
         "created_at": project.created_at,
         "updated_at": project.updated_at,
         "items": items,
@@ -399,6 +404,7 @@ async def create_project(
         source_user=body.source_user,
         source_layout_id=body.source_layout_id,
         amount_paid=body.amount_paid,
+        price=body.price,
         payment_status=body.payment_status,
         stage=body.stage,
         customer_id=await _valid_customer_id(body.customer_id, session),
@@ -455,6 +461,8 @@ async def patch_project(
         proj.notes = body.notes
     if body.amount_paid is not None:
         proj.amount_paid = body.amount_paid
+    if "price" in body.model_fields_set:
+        proj.price = body.price
     if body.payment_status is not None:
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:
@@ -684,6 +692,42 @@ async def add_item(
     return _item_dict(item, f.original_filename)
 
 
+# NOTE: declared before PUT /{project_id}/items/{item_id} on purpose — Starlette matches routes in
+# declaration order, so "/items/reorder" would otherwise be captured by {item_id} and always 422.
+@router.put(
+    "/{project_id}/items/reorder",
+    summary="Reorder project items",
+    responses={
+        404: {"description": "Project not found"},
+        422: {"description": "One or more item IDs do not belong to this project"},
+    },
+    dependencies=[Depends(require_scope("projects:write"))],
+)
+async def reorder_items(
+    project_id: int,
+    body: list[ReorderEntry],
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """Set explicit sort_order values for project items. Returns the full updated item list."""
+    await _get_project_or_404(project_id, session)
+    item_ids = [e.id for e in body]
+    rows = (
+        await session.execute(
+            select(ProjectItem).where(
+                ProjectItem.id.in_(item_ids),
+                ProjectItem.project_id == project_id,
+            )
+        )
+    ).scalars().all()
+    if len(rows) != len(body):
+        raise HTTPException(422, "One or more item IDs do not belong to this project")
+    order_map = {e.id: e.sort_order for e in body}
+    for item in rows:
+        item.sort_order = order_map[item.id]
+    await session.commit()
+    return await _load_items(session, project_id)
+
+
 @router.put(
     "/{project_id}/items/{item_id}",
     summary="Update project item",
@@ -739,40 +783,6 @@ async def delete_item(
     await session.delete(item)
     await session.commit()
     return {"deleted": item_id}
-
-
-@router.put(
-    "/{project_id}/items/reorder",
-    summary="Reorder project items",
-    responses={
-        404: {"description": "Project not found"},
-        422: {"description": "One or more item IDs do not belong to this project"},
-    },
-    dependencies=[Depends(require_scope("projects:write"))],
-)
-async def reorder_items(
-    project_id: int,
-    body: list[ReorderEntry],
-    session: AsyncSession = Depends(get_session),
-) -> list[dict]:
-    """Set explicit sort_order values for project items. Returns the full updated item list."""
-    await _get_project_or_404(project_id, session)
-    item_ids = [e.id for e in body]
-    rows = (
-        await session.execute(
-            select(ProjectItem).where(
-                ProjectItem.id.in_(item_ids),
-                ProjectItem.project_id == project_id,
-            )
-        )
-    ).scalars().all()
-    if len(rows) != len(body):
-        raise HTTPException(422, "One or more item IDs do not belong to this project")
-    order_map = {e.id: e.sort_order for e in body}
-    for item in rows:
-        item.sort_order = order_map[item.id]
-    await session.commit()
-    return await _load_items(session, project_id)
 
 
 # ---------------------------------------------------------------------------

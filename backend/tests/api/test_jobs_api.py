@@ -1,47 +1,12 @@
 # backend/tests/api/test_jobs_api.py
-import json
-import io
-import zipfile
 import pytest
 from unittest.mock import patch
 from app.models import Job
 
 
-def _make_3mf() -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({
-            "plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]
-        }))
-        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
-    return buf.getvalue()
-
-
-async def _upload_file(client, tmp_path):
-    with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"):
-        (tmp_path / "library").mkdir(exist_ok=True)
-        (tmp_path / "filecache").mkdir(exist_ok=True)
-        resp = await client.post(
-            "/api/v1/files/upload",
-            files={"file": ("m.3mf", _make_3mf(), "application/octet-stream")},
-        )
-    return resp.json()["id"]
-
-
-async def _create_printer(client):
-    resp = await client.post("/api/v1/printers", json={
-        "name": "P1S", "printer_type": "bambu",
-        "connection_config": {},
-        "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
-    })
-    return resp.json()["id"]
-
-
-async def test_create_job(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_create_job(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     payload = {
         "uploaded_file_id": file_id,
         "plate_number": 1,
@@ -73,28 +38,14 @@ async def test_list_jobs_empty(client):
     assert response.json() == []
 
 
-async def _create_job(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
-    with patch("app.api.routes.jobs.queue_engine"):
-        create = await client.post("/api/v1/jobs", json={
-            "uploaded_file_id": file_id,
-            "plate_number": 1,
-            "printer_configs": [
-                {"printer_id": printer_id, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_type": "any", "filament_color": "any"}
-            ],
-        })
-    return create.json()["id"]
-
-
-async def test_job_filament_cost_defaults_null(client, tmp_path):
-    job_id = await _create_job(client, tmp_path)
+async def test_job_filament_cost_defaults_null(client, create_job):
+    job_id = await create_job(filament_profile="PLA")
     data = (await client.get(f"/api/v1/jobs/{job_id}")).json()
     assert data["filament_cost"] is None
 
 
-async def test_set_job_cost(client, tmp_path):
-    job_id = await _create_job(client, tmp_path)
+async def test_set_job_cost(client, create_job):
+    job_id = await create_job(filament_profile="PLA")
     resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 2.75})
     assert resp.status_code == 200
     assert resp.json()["filament_cost"] == 2.75
@@ -102,18 +53,22 @@ async def test_set_job_cost(client, tmp_path):
     assert data["filament_cost"] == 2.75
 
 
-async def test_set_job_cost_to_null_clears_it(client, tmp_path):
-    job_id = await _create_job(client, tmp_path)
+async def test_set_job_cost_to_null_clears_it(client, create_job):
+    job_id = await create_job(filament_profile="PLA")
     await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 5.0})
     resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": None})
     assert resp.status_code == 200
     assert resp.json()["filament_cost"] is None
 
 
-async def test_set_job_cost_rejects_negative(client, tmp_path):
-    job_id = await _create_job(client, tmp_path)
+async def test_set_job_cost_rejects_negative(client, create_job):
+    job_id = await create_job(filament_profile="PLA")
+    assert (await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 2.5})).status_code == 200
+
     resp = await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": -1})
+
     assert resp.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["filament_cost"] == 2.5  # rejected value not stored
 
 
 async def test_set_job_cost_404_for_missing_job(client):
@@ -121,9 +76,9 @@ async def test_set_job_cost_404_for_missing_job(client):
     assert resp.status_code == 404
 
 
-async def test_get_job(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_get_job(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
@@ -138,9 +93,9 @@ async def test_get_job(client, tmp_path):
     assert response.json()["id"] == job_id
 
 
-async def test_cancel_job(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_cancel_job(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
@@ -155,9 +110,9 @@ async def test_cancel_job(client, tmp_path):
     assert response.json()["status"] == "cancelled"
 
 
-async def test_cancel_complete_job_fails(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_cancel_complete_job_fails(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
@@ -170,11 +125,25 @@ async def test_cancel_complete_job_fails(client, tmp_path):
     await client.post(f"/api/v1/jobs/{job_id}/cancel")   # transitions to "cancelled"
     response = await client.post(f"/api/v1/jobs/{job_id}/cancel")  # "cancelled" not in _CANCELLABLE_STATUSES
     assert response.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["status"] == "cancelled"
 
 
-async def test_get_slice_failures(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_cancel_completed_job_is_rejected_and_leaves_it_complete(client, session_factory, create_job):
+    from app.models import Job
+    job_id = await create_job()
+    async with session_factory() as session:
+        (await session.get(Job, job_id)).status = "complete"
+        await session.commit()
+
+    response = await client.post(f"/api/v1/jobs/{job_id}/cancel")
+
+    assert response.status_code == 422
+    assert (await client.get(f"/api/v1/jobs/{job_id}")).json()["status"] == "complete"
+
+
+async def test_get_slice_failures(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id,
@@ -189,14 +158,14 @@ async def test_get_slice_failures(client, tmp_path):
     assert response.json() == []
 
 
-async def test_unblock_clears_slice_failure_and_requeues(client, tmp_path):
+async def test_unblock_clears_slice_failure_and_requeues(client, session_factory, upload_3mf, create_printer):
     """Unblocking must reset slice_failed so the job actually re-slices; otherwise
     the engine re-blocks it immediately with the stale error."""
     from app.models import Job, JobPrinterConfig
     from sqlalchemy import select
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -206,19 +175,15 @@ async def test_unblock_clears_slice_failure_and_requeues(client, tmp_path):
 
     # Simulate a prior slice failure that left the job blocked, using the same
     # session factory the API is wired to (conftest's get_session override).
-    from app.main import app
-    from app.database import get_session
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = "blocked"
-    job.block_reason = "slicing failed: boom"
-    cfg = (await session.execute(
-        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-    cfg.slice_failed = True
-    cfg.slice_error = "boom"
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "blocked"
+        job.block_reason = "slicing failed: boom"
+        cfg = (await session.execute(
+            select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        cfg.slice_failed = True
+        cfg.slice_error = "boom"
+        await session.commit()
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post(f"/api/v1/jobs/{job_id}/unblock")
@@ -230,16 +195,14 @@ async def test_unblock_clears_slice_failure_and_requeues(client, tmp_path):
     assert failures.json() == []
 
 
-async def test_cancel_running_job_stops_printer(client, tmp_path):
+async def test_cancel_running_job_stops_printer(client, session_factory, upload_3mf, create_printer):
     """Cancelling a job the printer is actively running must also stop the printer."""
     from unittest.mock import MagicMock
     from app.models import Job
-    from app.main import app
-    from app.database import get_session
     from app.services.printer_manager import printer_manager
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -248,13 +211,11 @@ async def test_cancel_running_job_stops_printer(client, tmp_path):
     job_id = create.json()["id"]
 
     # Put the job in a printing state assigned to the printer.
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.status = "printing"
-    job.assigned_printer_id = printer_id
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status = "printing"
+        job.assigned_printer_id = printer_id
+        await session.commit()
 
     mock_client = MagicMock()
     mock_client.connected = True
@@ -271,12 +232,12 @@ async def test_cancel_running_job_stops_printer(client, tmp_path):
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_verify_slice_success(client, tmp_path):
+async def test_verify_slice_success(client, tmp_path, upload_3mf, create_printer):
     from unittest.mock import MagicMock
     from app.services.slicer_service import SliceError  # noqa: F401
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -307,12 +268,12 @@ async def test_verify_slice_success(client, tmp_path):
     assert not expected_output_dir.exists()  # scratch dir cleaned up after test run
 
 
-async def test_verify_slice_slice_error(client, tmp_path):
+async def test_verify_slice_slice_error(client, tmp_path, upload_3mf, create_printer):
     from unittest.mock import MagicMock
     from app.services.slicer_service import SliceError
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -338,9 +299,9 @@ async def test_verify_slice_slice_error(client, tmp_path):
     assert "OrcaSlicer" in data["error"]
 
 
-async def test_verify_slice_missing_printer_config(client, tmp_path):
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+async def test_verify_slice_missing_printer_config(client, upload_3mf, create_printer):
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -354,7 +315,7 @@ async def test_verify_slice_missing_printer_config(client, tmp_path):
     assert resp.status_code == 404
 
 
-async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path):
+async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path, upload_3mf, create_printer):
     """Test-slicing a job must not delete its already-produced production gcode.
     slice() unlinks *.gcode/*.gcode.3mf in whatever output dir it's given before
     writing, and the production dir defaults to <data_dir>/gcode/<job_id> — the
@@ -362,8 +323,8 @@ async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path
     its own scratch dir instead."""
     from unittest.mock import MagicMock
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -400,13 +361,13 @@ async def test_verify_slice_does_not_touch_production_gcode_dir(client, tmp_path
     assert not expected_output_dir.exists()  # scratch dir cleaned up
 
 
-async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
+async def test_cancel_queued_job_does_not_stop_printer(client, upload_3mf, create_printer):
     """A queued (not yet printing) job cancel must NOT send stop to any printer."""
     from unittest.mock import MagicMock
     from app.services.printer_manager import printer_manager
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     with patch("app.api.routes.jobs.queue_engine"):
         create = await client.post("/api/v1/jobs", json={
             "uploaded_file_id": file_id, "plate_number": 1,
@@ -426,11 +387,11 @@ async def test_cancel_queued_job_does_not_stop_printer(client, tmp_path):
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_job_response_includes_estimate_fields(client, tmp_path):
+async def test_job_response_includes_estimate_fields(client, upload_3mf, create_printer):
     """POST /jobs response includes all new estimate and actual fields."""
     from unittest.mock import MagicMock
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
     payload = {
         "uploaded_file_id": file_id,
         "plate_number": 1,
@@ -448,14 +409,13 @@ async def test_job_response_includes_estimate_fields(client, tmp_path):
         assert field in data, f"missing: {field}"
 
 
-async def test_cancel_job_clears_estimate_status(client, tmp_path):
+async def test_cancel_job_clears_estimate_status(client, session_factory, upload_3mf, create_printer):
     """POST /jobs/{id}/cancel clears estimate_status when it is 'pending'."""
     from unittest.mock import MagicMock
     from app.models import Job
-    from app.database import get_session
 
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     with patch("app.api.routes.jobs.queue_engine") as mock_qe:
         mock_qe.spawn_estimate = MagicMock()
@@ -467,13 +427,10 @@ async def test_cancel_job_clears_estimate_status(client, tmp_path):
     job_id = resp.json()["id"]
 
     # Set estimate_status to pending via the test DB session
-    from app.main import app
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    job = await session.get(Job, job_id)
-    job.estimate_status = "pending"
-    await session.commit()
-    await agen.aclose()
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        await session.commit()
 
     with patch("app.api.routes.jobs.queue_engine") as mock_qe:
         mock_qe.wake = MagicMock()
@@ -484,34 +441,30 @@ async def test_cancel_job_clears_estimate_status(client, tmp_path):
     assert data["estimate_status"] is None
 
 
-async def test_list_jobs_includes_materials_and_printers(client):
+async def test_list_jobs_includes_materials_and_printers(client, session_factory):
     from app.models import UploadedFile, Job, JobPrinterConfig, Printer
-    from app.main import app
-    from app.database import get_session
 
     # Build fixtures directly via the test session
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
+    async with session_factory() as session:
 
-    p1 = Printer(name="X1C", printer_type="bambu", connection_config={})
-    session.add(p1)
-    f = UploadedFile(original_filename="x.3mf", stored_path="/tmp/x.3mf",
-                     plates=[], uploaded_at="2026-01-01T00:00:00")
-    session.add(f)
-    await session.flush()
+        p1 = Printer(name="X1C", printer_type="bambu", connection_config={})
+        session.add(p1)
+        f = UploadedFile(original_filename="x.3mf", stored_path="/tmp/x.3mf",
+                         plates=[], uploaded_at="2026-01-01T00:00:00")
+        session.add(f)
+        await session.flush()
 
-    j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-            queue_position=1.0, created_at="2026-01-01T00:00:00",
-            updated_at="2026-01-01T00:00:00")
-    session.add(j)
-    await session.flush()
+        j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                queue_position=1.0, created_at="2026-01-01T00:00:00",
+                updated_at="2026-01-01T00:00:00")
+        session.add(j)
+        await session.flush()
 
-    cfg = JobPrinterConfig(job_id=j.id, printer_id=p1.id,
-                           print_profile="0.20mm", filament_profile="PLA Basic",
-                           filament_type="PLA")
-    session.add(cfg)
-    await session.commit()
-    await agen.aclose()
+        cfg = JobPrinterConfig(job_id=j.id, printer_id=p1.id,
+                               print_profile="0.20mm", filament_profile="PLA Basic",
+                               filament_type="PLA")
+        session.add(cfg)
+        await session.commit()
 
     resp = await client.get("/api/v1/jobs")
     assert resp.status_code == 200
@@ -521,11 +474,11 @@ async def test_list_jobs_includes_materials_and_printers(client):
     assert any(ep["id"] == p1.id and ep["name"] == "X1C" for ep in job["eligible_printers"])
 
 
-async def test_job_details_returns_live_fields(client, tmp_path):
+async def test_job_details_returns_live_fields(client, upload_3mf, create_printer):
     """GET /jobs/{id}/details returns filament_grams_live and estimated_seconds_live."""
     from unittest.mock import MagicMock
-    file_id = await _upload_file(client, tmp_path)
-    printer_id = await _create_printer(client)
+    file_id = await upload_3mf()
+    printer_id = await create_printer()
 
     with patch("app.api.routes.jobs.queue_engine") as mock_qe:
         mock_qe.spawn_estimate = MagicMock()
@@ -545,144 +498,127 @@ async def test_job_details_returns_live_fields(client, tmp_path):
     assert "estimated_seconds" not in detail
 
 
-async def test_reorder_front_gives_lowest_position(client):
+async def test_reorder_front_gives_lowest_position(client, session_factory):
     """POST /jobs/{id}/reorder with action='front' moves job ahead of all others."""
     from app.models import UploadedFile, Job
-    from app.main import app
-    from app.database import get_session
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
-                     plates=[], uploaded_at="2026-01-01T00:00:00")
-    session.add(f)
-    await session.flush()
-    j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-             queue_position=1.0, created_at="2026-01-01T00:00:00",
-             updated_at="2026-01-01T00:00:00")
-    j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-             queue_position=2.0, created_at="2026-01-01T00:00:00",
-             updated_at="2026-01-01T00:00:00")
-    session.add_all([j1, j2])
-    await session.commit()
-    j1_id, j2_id = j1.id, j2.id
-    j1_pos = j1.queue_position
-    await agen.aclose()
+    async with session_factory() as session:
+        f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                         plates=[], uploaded_at="2026-01-01T00:00:00")
+        session.add(f)
+        await session.flush()
+        j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                 queue_position=1.0, created_at="2026-01-01T00:00:00",
+                 updated_at="2026-01-01T00:00:00")
+        j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                 queue_position=2.0, created_at="2026-01-01T00:00:00",
+                 updated_at="2026-01-01T00:00:00")
+        session.add_all([j1, j2])
+        await session.commit()
+        j1_id, j2_id = j1.id, j2.id
+        j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post(f"/api/v1/jobs/{j2_id}/reorder", json={"action": "front"})
     assert resp.status_code == 200
 
-    agen2 = app.dependency_overrides[get_session]()
-    session2 = await agen2.__anext__()
-    j2_refreshed = await session2.get(Job, j2_id)
-    assert j2_refreshed.queue_position < j1_pos
-    await agen2.aclose()
+    async with session_factory() as session2:
+        j2_refreshed = await session2.get(Job, j2_id)
+        assert j2_refreshed.queue_position < j1_pos
 
 
-async def test_reorder_promote_moves_ahead_of_previous(client):
+async def test_reorder_promote_moves_ahead_of_previous(client, session_factory):
     """POST /jobs/{id}/reorder with action='promote' moves job one step up."""
     from app.models import UploadedFile, Job
-    from app.main import app
-    from app.database import get_session
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
-                     plates=[], uploaded_at="2026-01-01T00:00:00")
-    session.add(f)
-    await session.flush()
-    j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-             queue_position=1.0, created_at="2026-01-01T00:00:00",
-             updated_at="2026-01-01T00:00:00")
-    j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-             queue_position=2.0, created_at="2026-01-01T00:00:00",
-             updated_at="2026-01-01T00:00:00")
-    session.add_all([j1, j2])
-    await session.commit()
-    j1_id, j2_id = j1.id, j2.id
-    j1_pos = j1.queue_position
-    await agen.aclose()
+    async with session_factory() as session:
+        f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                         plates=[], uploaded_at="2026-01-01T00:00:00")
+        session.add(f)
+        await session.flush()
+        j1 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                 queue_position=1.0, created_at="2026-01-01T00:00:00",
+                 updated_at="2026-01-01T00:00:00")
+        j2 = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                 queue_position=2.0, created_at="2026-01-01T00:00:00",
+                 updated_at="2026-01-01T00:00:00")
+        session.add_all([j1, j2])
+        await session.commit()
+        j1_id, j2_id = j1.id, j2.id
+        j1_pos = j1.queue_position
 
     with patch("app.api.routes.jobs.queue_engine"):
         resp = await client.post(f"/api/v1/jobs/{j2_id}/reorder", json={"action": "promote"})
     assert resp.status_code == 200
 
-    agen2 = app.dependency_overrides[get_session]()
-    session2 = await agen2.__anext__()
-    j2_refreshed = await session2.get(Job, j2_id)
-    assert j2_refreshed.queue_position < j1_pos
-    await agen2.aclose()
+    async with session_factory() as session2:
+        j2_refreshed = await session2.get(Job, j2_id)
+        assert j2_refreshed.queue_position < j1_pos
 
 
-async def test_reorder_rejects_non_queued_job(client):
+async def test_reorder_rejects_non_queued_job(client, session_factory):
     """POST /jobs/{id}/reorder returns 422 for jobs not in queued/blocked status."""
     from app.models import UploadedFile, Job
-    from app.main import app
-    from app.database import get_session
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
-                     plates=[], uploaded_at="2026-01-01T00:00:00")
-    session.add(f)
-    await session.flush()
-    j = Job(uploaded_file_id=f.id, plate_number=1, status="printing",
-            queue_position=1.0, created_at="2026-01-01T00:00:00",
-            updated_at="2026-01-01T00:00:00")
-    session.add(j)
-    await session.commit()
-    j_id = j.id
-    await agen.aclose()
+    async with session_factory() as session:
+        f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                         plates=[], uploaded_at="2026-01-01T00:00:00")
+        session.add(f)
+        await session.flush()
+        j = Job(uploaded_file_id=f.id, plate_number=1, status="printing",
+                queue_position=1.0, created_at="2026-01-01T00:00:00",
+                updated_at="2026-01-01T00:00:00")
+        session.add(j)
+        await session.commit()
+        j_id = j.id
 
     resp = await client.post(f"/api/v1/jobs/{j_id}/reorder", json={"action": "promote"})
+
     assert resp.status_code == 422
+    job = (await client.get(f"/api/v1/jobs/{j_id}")).json()
+    assert (job["status"], job["queue_position"]) == ("printing", 1.0)  # untouched
 
 
-async def _seed_spool_warning_fixture(estimate_grams):
+async def _seed_spool_warning_fixture(session_factory, estimate_grams):
     """Seed UploadedFile/Printer/Job/JobPrinterConfig/SpoolmanConfig rows directly
     via the test session, wired so the job's JobPrinterConfig resolves (via
     _slot_for_config) to the printer's loaded_filaments[0] slot, which carries a
     spoolman_spool_id. Returns (job_id, printer_id)."""
     from app.models import UploadedFile, Job, JobPrinterConfig, Printer, SpoolmanConfig
-    from app.main import app
-    from app.database import get_session
 
-    agen = app.dependency_overrides[get_session]()
-    session = await agen.__anext__()
-    f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
-                      plates=[], uploaded_at="2026-01-01T00:00:00")
-    p = Printer(name="P1S", printer_type="bambu", connection_config={},
-                loaded_filaments=[{"slot": 0, "type": "PLA", "color": "", "spoolman_spool_id": "99"}])
-    session.add_all([f, p])
-    await session.flush()
-    j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
-            queue_position=1.0, created_at="2026-01-01T00:00:00",
-            updated_at="2026-01-01T00:00:00", estimate_filament_grams=estimate_grams)
-    session.add(j)
-    await session.flush()
-    cfg = JobPrinterConfig(job_id=j.id, printer_id=p.id, print_profile="0.20mm",
-                            filament_type="any", filament_color="any")
-    session.add(cfg)
-    spoolman_cfg = await session.get(SpoolmanConfig, 1)
-    if spoolman_cfg is None:
-        spoolman_cfg = SpoolmanConfig(id=1, enabled=True, url="http://spoolman.local", api_key=None)
-        session.add(spoolman_cfg)
-    else:
-        spoolman_cfg.enabled = True
-        spoolman_cfg.url = "http://spoolman.local"
-    await session.commit()
-    job_id, printer_id = j.id, p.id
-    await agen.aclose()
+    async with session_factory() as session:
+        f = UploadedFile(original_filename="x.3mf", stored_path="/t/x.3mf",
+                          plates=[], uploaded_at="2026-01-01T00:00:00")
+        p = Printer(name="P1S", printer_type="bambu", connection_config={},
+                    loaded_filaments=[{"slot": 0, "type": "PLA", "color": "", "spoolman_spool_id": "99"}])
+        session.add_all([f, p])
+        await session.flush()
+        j = Job(uploaded_file_id=f.id, plate_number=1, status="queued",
+                queue_position=1.0, created_at="2026-01-01T00:00:00",
+                updated_at="2026-01-01T00:00:00", estimate_filament_grams=estimate_grams)
+        session.add(j)
+        await session.flush()
+        cfg = JobPrinterConfig(job_id=j.id, printer_id=p.id, print_profile="0.20mm",
+                                filament_type="any", filament_color="any")
+        session.add(cfg)
+        spoolman_cfg = await session.get(SpoolmanConfig, 1)
+        if spoolman_cfg is None:
+            spoolman_cfg = SpoolmanConfig(id=1, enabled=True, url="http://spoolman.local", api_key=None)
+            session.add(spoolman_cfg)
+        else:
+            spoolman_cfg.enabled = True
+            spoolman_cfg.url = "http://spoolman.local"
+        await session.commit()
+        job_id, printer_id = j.id, p.id
     return job_id, printer_id
 
 
-async def test_job_details_spool_warning_none_when_sufficient(client):
+async def test_job_details_spool_warning_none_when_sufficient(client, session_factory):
     """GET /jobs/{id}/details: low_stock_warning is None when the bound spool has
     enough filament remaining for the job's estimated grams. Key must match
     frontend/src/api/queue.ts's ApiJobPrinterConfig.low_stock_warning, not an
     internal-only name — see queue.py's matching field for the sibling contract."""
-    job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=200.0)
+    job_id, printer_id = await _seed_spool_warning_fixture(session_factory, estimate_grams=200.0)
 
     fake_spool = {"id": 99, "remaining_weight": 900.0,
                   "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
@@ -694,10 +630,10 @@ async def test_job_details_spool_warning_none_when_sufficient(client):
     assert cfg["low_stock_warning"] is None
 
 
-async def test_job_details_spool_warning_set_when_insufficient(client):
+async def test_job_details_spool_warning_set_when_insufficient(client, session_factory):
     """GET /jobs/{id}/details: low_stock_warning is populated, with both needed and
     remaining grams in the message, when the bound spool is short on filament."""
-    job_id, printer_id = await _seed_spool_warning_fixture(estimate_grams=340.0)
+    job_id, printer_id = await _seed_spool_warning_fixture(session_factory, estimate_grams=340.0)
 
     fake_spool = {"id": 99, "remaining_weight": 220.0,
                   "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}

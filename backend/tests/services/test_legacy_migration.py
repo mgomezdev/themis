@@ -31,3 +31,4 @@ async def test_legacy_upload_moved_into_job_uploads(tmp_path):
         assert row.relative_path == "Job Uploads/model.stl"
         # Idempotent second run does nothing.
         assert await migrate_legacy_uploads(s, data, library, cache) == 0
+    await engine.dispose()

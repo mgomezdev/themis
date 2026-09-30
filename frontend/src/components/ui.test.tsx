@@ -15,9 +15,27 @@ describe('StatusPill', () => {
 });
 
 describe('Progress', () => {
-  it('renders without crashing', () => {
+  const bar = (c: HTMLElement) => c.querySelector('.bar') as HTMLElement;
+  const width = (c: HTMLElement) => bar(c).style.getPropertyValue('--p');
+
+  it('fills the bar to the given percentage', () => {
     const { container } = render(<Progress value={50} />);
-    expect(container.querySelector('.progress')).toBeTruthy();
+    expect(width(container)).toBe('50%');
+  });
+
+  it('is empty by default and clamps out-of-range values to 0-100%', () => {
+    expect(width(render(<Progress />).container)).toBe('0%');
+    expect(width(render(<Progress value={150} />).container)).toBe('100%');
+    expect(width(render(<Progress value={-20} />).container)).toBe('0%');
+  });
+
+  it('adds the warn / err / large modifiers, and none for other tones', () => {
+    const cls = (ui: React.ReactElement) => (render(ui).container.querySelector('.progress') as HTMLElement).className.split(/\s+/).filter(Boolean);
+    expect(cls(<Progress value={1} />)).toEqual(['progress']);
+    expect(cls(<Progress value={1} tone="warn" />)).toEqual(['progress', 'warn']);
+    expect(cls(<Progress value={1} tone="err" />)).toEqual(['progress', 'err']);
+    expect(cls(<Progress value={1} large />)).toEqual(['progress', 'lg']);
+    expect(cls(<Progress value={1} tone="ok" />)).toEqual(['progress']);       // "ok" is not a styled tone (callers pass it anyway)
   });
 });
 

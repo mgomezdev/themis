@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { StatusKey } from '../data/types';
-import { apiFetch, openAuthedWebSocket } from './client';
+import { apiFetch, openLiveSocket } from './client';
 
 export type OrderType = 'customer' | 'internal';
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
@@ -120,17 +120,15 @@ export function useOrders(): { orders: ApiOrder[]; refetch: () => void } {
 
   useEffect(() => {
     let alive = true;
-    const ws = openAuthedWebSocket();
-    ws.onmessage = (e) => {
+    const reload = () => { getOrders().then(d => { if (alive) setOrders(d); }).catch(() => {}); };
+    const close = openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string };
         // Order progress is derived server-side, so refetch rather than patch locally.
-        if (msg.type === 'job_update' || msg.type === 'queue_update') {
-          getOrders().then(d => { if (alive) setOrders(d); }).catch(() => {});
-        }
+        if (msg.type === 'job_update' || msg.type === 'queue_update') reload();
       } catch { /* ignore malformed frames */ }
-    };
-    return () => { alive = false; ws.close(); };
+    }, reload);   // and once more after a reconnect, for whatever changed while the socket was down
+    return () => { alive = false; close(); };
   }, []);
 
   return { orders, refetch };

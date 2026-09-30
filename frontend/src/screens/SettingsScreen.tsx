@@ -4,7 +4,7 @@ import {
   getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools,
   useSpoolmanConfig, useSpoolmanSyncStatus, spoolmanSyncTone, type SpoolmanSyncStatus,
 } from '../api/spoolman';
-import { getQueueConfig, saveQueueConfig } from '../api/queue';
+import { getQueueConfig, saveQueueConfig, type QueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { getOrcaCatalogStatus, type OrcaCatalogStatus } from '../api/orca';
@@ -31,7 +31,6 @@ import {
   type ApiKeyOut, type ApiKeyCreated,
 } from '../api/apiKeys';
 import { StatusPill, Empty } from '../components/ui';
-import { listCustomers, createCustomer, updateCustomer, type Customer } from '../api/customers';
 import { getAdminAccount, setAdminPassword, setAllowLocalLogin, type AdminAccount } from '../api/adminAccount';
 import type { StatusKey } from '../data/types';
 
@@ -417,32 +416,48 @@ function TagsPage() {
 // =========================================================================
 
 function PrintDefaultsPage() {
+  // Last values the server confirmed, so a refused save can put the field back instead of leaving the
+  // screen claiming a value that was never stored.
+  const saved = useRef({ check: 5, snapshot: 2, name: '', estimates: false });
+  const [saveError, setSaveError] = useState<string | null>(null);
+  async function persist(
+    label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
+  ) {
+    setSaveError(null);
+    setBusy?.(true);
+    try { await saveQueueConfig(patch); onSaved(); }
+    catch (e) { revert(); setSaveError(`Couldn't save ${label}: ${e instanceof Error ? e.message : String(e)}`); }
+    finally { setBusy?.(false); }
+  }
+
   // Queue check interval
   const [checkInterval, setCheckInterval] = useState<number>(5);
   const [savingInterval, setSavingInterval] = useState(false);
   useEffect(() => {
-    getQueueConfig().then(c => setCheckInterval(c.check_interval_minutes)).catch(console.error);
+    getQueueConfig().then(c => { saved.current.check = c.check_interval_minutes; setCheckInterval(c.check_interval_minutes); }).catch(console.error);
   }, []);
   async function commitInterval(minutes: number) {
     const v = Math.max(1, Math.round(minutes) || 1);
     setCheckInterval(v);
-    setSavingInterval(true);
-    try { await saveQueueConfig({ check_interval_minutes: v }); }
-    finally { setSavingInterval(false); }
+    await persist('the queue check interval', { check_interval_minutes: v },
+      () => setCheckInterval(saved.current.check), () => { saved.current.check = v; }, setSavingInterval);
   }
 
   // Snapshot interval
   const [snapshotInterval, setSnapshotInterval] = useState<number>(2);
   const [savingSnapshot, setSavingSnapshot] = useState(false);
   useEffect(() => {
-    getQueueConfig().then(c => setSnapshotInterval(c.snapshot_interval_seconds ?? 2)).catch(console.error);
+    getQueueConfig().then(c => {
+      const v = c.snapshot_interval_seconds ?? 2;
+      saved.current.snapshot = v;
+      setSnapshotInterval(v);
+    }).catch(console.error);
   }, []);
   async function commitSnapshotInterval(seconds: number) {
     const v = Math.max(1, Math.round(seconds) || 1);
     setSnapshotInterval(v);
-    setSavingSnapshot(true);
-    try { await saveQueueConfig({ snapshot_interval_seconds: v }); }
-    finally { setSavingSnapshot(false); }
+    await persist('the snapshot interval', { snapshot_interval_seconds: v },
+      () => setSnapshotInterval(saved.current.snapshot), () => { saved.current.snapshot = v; }, setSavingSnapshot);
   }
 
   // Operator display name
@@ -450,23 +465,26 @@ function PrintDefaultsPage() {
   const [savingName, setSavingName] = useState(false);
   const nameTouchedRef = useRef(false);
   useEffect(() => {
-    getQueueConfig().then(c => { if (!nameTouchedRef.current) setOperatorName(c.operator_name ?? ''); }).catch(console.error);
+    getQueueConfig().then(c => {
+      saved.current.name = c.operator_name ?? '';
+      if (!nameTouchedRef.current) setOperatorName(c.operator_name ?? '');
+    }).catch(console.error);
   }, []);
   async function commitOperatorName(name: string) {
-    setSavingName(true);
-    try { await saveQueueConfig({ operator_name: name.trim() }); }
-    finally { setSavingName(false); }
+    const v = name.trim();
+    await persist('the display name', { operator_name: v },
+      () => setOperatorName(saved.current.name), () => { saved.current.name = v; }, setSavingName);
   }
 
   // Estimate generation toggle
   const [estimatesEnabled, setEstimatesEnabled] = useState<boolean>(false);
   useEffect(() => {
-    getQueueConfig().then(c => setEstimatesEnabled(c.estimates_enabled ?? false)).catch(console.error);
+    getQueueConfig().then(c => { saved.current.estimates = c.estimates_enabled ?? false; setEstimatesEnabled(c.estimates_enabled ?? false); }).catch(console.error);
   }, []);
   async function commitEstimatesEnabled(enabled: boolean) {
     setEstimatesEnabled(enabled);
-    try { await saveQueueConfig({ estimates_enabled: enabled }); }
-    catch (e) { console.error(e); }
+    await persist('estimate generation', { estimates_enabled: enabled },
+      () => setEstimatesEnabled(saved.current.estimates), () => { saved.current.estimates = enabled; });
   }
 
   // Printer preset rescan (old legacy rescan endpoint)
@@ -548,6 +566,15 @@ function PrintDefaultsPage() {
     <div className="card" style={{ padding: 28 }}>
       <PageHeader title="Print defaults"
                   sub="Workshop-wide print behavior. Per-job overrides win when set during new-job intake." />
+
+      {saveError && (
+        <div role="alert" className="small" style={{
+          padding: '10px 14px', marginBottom: 14, borderRadius: 6,
+          background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: 'var(--err)',
+        }}>
+          {saveError}
+        </div>
+      )}
 
       <FieldRow label="Queue check interval"
                 hint="How often the queue engine scans for an available printer and claims the next compatible job. Minutes.">
@@ -1974,66 +2001,6 @@ function ApiKeysPage() {
   );
 }
 
-function CustomersPage() {
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', email: '', password: '' });
-
-  const refetch = useCallback(() => {
-    listCustomers().then(setCustomers).catch(e => setError(e instanceof Error ? e.message : String(e)));
-  }, []);
-  useEffect(() => { refetch(); }, [refetch]);
-
-  async function run(fn: () => Promise<unknown>) {
-    setError(null);
-    try { await fn(); refetch(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-  }
-
-  function resetPassword(c: Customer) {
-    const pw = window.prompt(`New password for ${c.email} (signs them out everywhere):`);
-    if (pw) run(() => updateCustomer(c.id, { password: pw }));
-  }
-
-  const canCreate = form.name.trim() && form.email.trim() && form.password;
-
-  return (
-    <div className="card" style={{ padding: 28 }}>
-      <PageHeader title="Customers" sub="Customer accounts sign in with email + password and see only their own projects." />
-      {error && <div className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{error}</div>}
-      <form className="row gap-2" style={{ marginBottom: 16, flexWrap: 'wrap' }}
-            onSubmit={e => {
-              e.preventDefault();
-              if (canCreate) run(async () => { await createCustomer(form); setForm({ name: '', email: '', password: '' }); });
-            }}>
-        <input className="input" placeholder="Name" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} />
-        <input className="input" placeholder="Email" type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-        <input className="input" placeholder="Password" type="password" value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} />
-        <button className="btn primary sm" type="submit" disabled={!canCreate}>{Icons.plus} Add customer</button>
-      </form>
-      {customers.length === 0 ? <Empty title="No customers yet" sub="Add one to give a customer portal access." icon={SettingsIcons.apikey} /> : (
-        <table className="tbl">
-          <thead><tr><th>Name</th><th>Email</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th></tr></thead>
-          <tbody>
-            {customers.map(c => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td>{c.email}</td>
-                <td>{c.enabled ? 'Enabled' : 'Disabled'}</td>
-                <td style={{ textAlign: 'right' }}>
-                  <button className="btn ghost sm" onClick={() => resetPassword(c)}>Reset password</button>
-                  <button className="btn ghost sm" onClick={() => run(() => updateCustomer(c.id, { enabled: !c.enabled }))}>
-                    {c.enabled ? 'Disable' : 'Enable'}
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
-  );
-}
-
 function AdminAccountPage() {
   const [acct, setAcct] = useState<AdminAccount | null>(null);
   const [password, setPassword] = useState('');
@@ -2124,7 +2091,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'customers' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -2138,7 +2105,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'customers', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -2181,7 +2148,6 @@ export function SettingsScreen() {
       label: 'Security',
       items: [
         { id: 'api-keys',      label: 'API Keys',       icon: SettingsIcons.apikey,  sub: 'Manage app access & scopes' },
-        { id: 'customers',     label: 'Customers',      icon: SettingsIcons.apikey,  sub: 'Customer portal accounts' },
         { id: 'admin-account', label: 'Admin account',  icon: SettingsIcons.apikey,  sub: 'Password, local sign-in, recovery' },
       ],
     },
@@ -2217,7 +2183,6 @@ export function SettingsScreen() {
       {activePage === 'notifications'     && <NotificationsPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}
       {activePage === 'api-keys'          && <ApiKeysPage />}
-      {activePage === 'customers'         && <CustomersPage />}
       {activePage === 'admin-account'     && <AdminAccountPage />}
       {activePage === 'about'             && <AboutPage />}
     </div>

@@ -32,7 +32,10 @@ This codebase has no schema-sharing or codegen between backend and frontend — 
 (API response field names, the `SCOPES` registry mirrored by hand in `frontend/src/api/apiKeys.ts`,
 `Sidebar.tsx`'s hand-duplicated settings nav) is kept in sync manually, which means it can drift
 silently and both sides' own tests can still pass (each side tests against what it assumes the other
-does, not what the other actually does).
+does, not what the other actually does). Partial safety net: `contracts/response-keys.json` lists the keys
+the FE reads for the main shapes — `tests/api/test_response_contracts.py` checks real backend responses against it and
+the FE's `responseKeys.contract.test.ts` checks its TS types; `frontend/src/api/contract.test.ts` checks every FE
+URL/method against `openapi.json`. Update the JSON when you rename or add a consumed field (still grep the FE).
 
 If a change adds or renames a response field the frontend consumes, grep the frontend for where it's
 read and confirm the key matches byte-for-byte — don't trust a plan, a negotiated contract, or "I
@@ -55,11 +58,11 @@ awaiting it. Any new fire-and-forget delivery mechanism should follow the same s
 
 Every DB read/write in a request handler goes through `Depends(get_session)` — never a raw import of
 `SessionLocal`/`engine` from `database.py`. Code that imports the module-level session factory
-directly bypasses the test suite's in-memory-DB override and silently depends on whatever's actually in
+directly bypasses the test suite's per-test-DB override and silently depends on whatever's actually in
 `<repo-root>/data/themis.db`. `printer_manager` (via `set_session_factory()`) and `thumbnail_regen.py`
 (same pattern, added later) both take an injectable session factory instead of a direct `SessionLocal`
 import. Only `thumbnail_regen.py` is actually wired up in tests — `conftest.py`'s `client` fixture calls
-`thumbnail_regen.set_session_factory(factory)` with the per-test in-memory engine. `printer_manager`'s
+`thumbnail_regen.set_session_factory(factory)` with the per-test SQLite-file engine. `printer_manager`'s
 factory defaults to `None` and is only set to the real `SessionLocal` in `app/main.py`'s lifespan, which
 the test client's `ASGITransport` never runs, so it stays `None` under test and its factory-gated
 methods (`if not self._session_factory: return`) just no-op rather than touching any DB — harmless, but
@@ -110,7 +113,8 @@ code that touches one of these areas, not just before review.
 
 TDD: a test that failed for the right reason before the fix, for every behavior change — not just
 coverage added after the fact. Full suite green (`pytest -v` from `backend/`) before calling anything
-done.
+done. Assert state (re-read the row / response body), not just a status code; prefer `wait_until` over
+`asyncio.sleep`; a test you can't make fail by breaking the code is not a test (mutate the line and check).
 
 ## 10. Public (unauthenticated) routes
 

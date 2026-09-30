@@ -72,13 +72,23 @@ describe('QueueScreen', () => {
     expect(screen.getAllByText(/Plate \d/i).length).toBeGreaterThan(0);
   });
 
-  it('filter chips are clickable', async () => {
+  it('filter chips show only the matching jobs', async () => {
     const user = userEvent.setup();
     render(<QueueScreen />, { wrapper });
-    const queuedBtn = screen.getByRole('button', { name: /queued/i });
-    await user.click(queuedBtn);
-    // After clicking queued filter, "Active" chip is hidden
-    expect(screen.queryByText(/^Active$/)).toBeNull();
+    expect(screen.getAllByText(/^Plate \d$/)).toHaveLength(2);                 // "All": the printing job and the queued one
+
+    await user.click(screen.getByRole('button', { name: 'Queued' }));
+    expect(screen.getAllByText(/^Plate \d$/).map(e => e.textContent)).toEqual(['Plate 2']);
+    expect(screen.queryByText(/^Active$/)).toBeNull();                          // the Active chip steps aside
+
+    await user.click(screen.getByRole('button', { name: /^Done/ }));
+    expect(screen.queryAllByText(/^Plate \d$/)).toHaveLength(0);
+    expect(screen.getByText(/Nothing here/i)).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: /^All/ }));
+    expect(screen.getAllByText(/^Plate \d$/)).toHaveLength(2);
+    await user.click(screen.getByRole('button', { name: 'Active' }));
+    expect(screen.getAllByText(/^Plate \d$/).map(e => e.textContent)).toEqual(['Plate 1']);
   });
 
   it('renders empty state when no jobs', () => {
@@ -87,20 +97,20 @@ describe('QueueScreen', () => {
     expect(screen.getByText(/Nothing here/i)).toBeTruthy();
   });
 
-  it('cancel button calls cancelJob', async () => {
+  it.each([
+    ['Plate 1', 1],
+    ['Plate 2', 2],
+  ])('the remove button in the %s panel cancels job %i and only that job', async (plate, id) => {
     const user = userEvent.setup();
-    vi.mocked(queueApi.cancelJob).mockResolvedValue(mockJobs[1]);
+    vi.mocked(queueApi.cancelJob).mockClear();
+    vi.mocked(queueApi.cancelJob).mockResolvedValue(mockJobs[id - 1]);
     render(<QueueScreen />, { wrapper });
 
-    // Click a job card to open detail panel
-    const cards = screen.getAllByText(/Plate \d/i);
-    await user.click(cards[0]);
+    await user.click(screen.getByText(plate));                                   // open that job's detail panel
+    await user.click(screen.getByRole('button', { name: /remove from queue/i }));
 
-    // Find and click remove button
-    const removeBtn = screen.getByRole('button', { name: /remove from queue/i });
-    await user.click(removeBtn);
-
-    expect(vi.mocked(queueApi.cancelJob)).toHaveBeenCalled();
+    expect(vi.mocked(queueApi.cancelJob)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(queueApi.cancelJob)).toHaveBeenCalledWith(id);
   });
 
   it('renders detailed error messages and category on failed job cards', () => {

@@ -19,11 +19,26 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0,<1.0",
     "pytest-mock>=3.12",
+    "pytest-cov>=5.0",
 ]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+# greenlet: SQLAlchemy's async layer runs sync code inside greenlets; without this coverage.py drops
+# every line executed after the first `await session.execute(...)` and under-reports by ~12 points.
+[tool.coverage.run]
+branch = true
+source = ["app"]
+concurrency = ["greenlet", "thread"]
+
+# fail_under is a ratchet: measured 86% (line+branch, 2026-09-29 after the test-hardening pass), floor left 2 points below for
+# interpreter/version noise. Raise it as coverage grows; never lower it to make a change pass.
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 84
 
 [build-system]
 requires = ["setuptools>=68"]

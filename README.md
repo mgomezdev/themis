@@ -161,7 +161,7 @@ backend/app
     ├── snapmaker_client.py       mock_printer_client.py   # test/E2E fake driver
     ├── slicer_service.py         laminus_sidecar_client.py  # sidecar delegation
     ├── catalog_utils.py          override_inspector.py
-    ├── three_mf_parser.py        project_pack_builder.py
+    ├── three_mf_parser.py
     ├── spool_check.py            spoolman_service.py
     ├── webhook_service.py        notification_service.py
     ├── maintenance_service.py    thumbnail_regen.py

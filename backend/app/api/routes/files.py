@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -92,7 +92,7 @@ def _tree_insert(root: dict, folder: str) -> None:
 @router.get("", summary="List files", dependencies=[Depends(require_scope("files:read"))])
 async def list_files(
     folder: str | None = None,
-    tags: list[str] | None = None,
+    tags: list[str] | None = Query(None),  # must be Query(): a bare list[str] is read as a JSON *body* on GET and silently ignored
     search: str | None = None,
     sort: str = "updated",
     session: AsyncSession = Depends(get_session),

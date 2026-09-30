@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { apiFetch, withKeyParam, openAuthedWebSocket } from './client';
+import { apiFetch, withKeyParam, openLiveSocket } from './client';
 
 export interface ApiPlate {
   plate_number: number;
@@ -335,8 +335,8 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
   }, [tick]);
 
   useEffect(() => {
-    const ws = openAuthedWebSocket();
-    ws.onmessage = (e) => {
+    // After a reconnect, refetch: frames sent while the socket was down are gone.
+    return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: unknown };
         if (msg.type === 'queue_update' && Array.isArray(msg.data)) {
@@ -360,9 +360,8 @@ export function useQueue(): { jobs: ApiJob[]; refetch: () => void } {
       } catch {
         // ignore malformed frames
       }
-    };
-    return () => { ws.close(); };
-  }, []);
+    }, refetch);
+  }, [refetch]);
 
   return { jobs, refetch };
 }

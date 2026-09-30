@@ -19,8 +19,17 @@ function fakeBackend() {
 }
 type Fake = ReturnType<typeof fakeBackend>;
 
+// Shapes mirror backend/app/api/routes/customers.py (_to_dict, list rollups, get_customer).
 const publicCustomer = (c: Customer) =>
-  ({ id: c.id, name: c.name, email: c.email, enabled: c.enabled, created_at: '2026-09-28T00:00:00Z' });
+  ({ id: c.id, name: c.name, email: c.email, enabled: c.enabled, created_at: '2026-09-28T00:00:00Z',
+     phone: null, company: null, notes: null, has_password: !!c.password });
+const emptyWindow = { project_count: 0, revenue: 0, expenses: 0, profit: 0, billed: 0, outstanding: 0 };
+const customerListItem = (c: Customer) =>
+  ({ ...publicCustomer(c), project_count: 0, active_project_count: 0, outstanding: 0, last_project_at: null });
+const customerDetail = (c: Customer) => ({
+  ...publicCustomer(c), projects: [],
+  financials: { windows: { '30d': emptyWindow, '60d': emptyWindow, '90d': emptyWindow, all: emptyWindow }, unpriced_unpaid: 0 },
+});
 
 function portalProject(p: FakeProject) {
   return {
@@ -122,7 +131,12 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
     // Everything else is staff-only.
     if (!isStaff && !(!key && opts.localAdmin)) return send(customerId != null ? 403 : 401, { detail: 'Forbidden' });
 
-    if (path === '/customers' && method === 'GET') return send(200, fake.customers.map(publicCustomer));
+    if (path === '/customers' && method === 'GET') return send(200, fake.customers.map(customerListItem));
+    if (path === '/customers/unlinked-projects' && method === 'GET') return send(200, []);
+    if ((m = path.match(/^\/customers\/(\d+)$/)) && method === 'GET') {
+      const c = fake.customers.find(x => x.id === +m![1]);
+      return c ? send(200, customerDetail(c)) : send(404, { detail: 'Customer not found' });
+    }
     if (path === '/customers' && method === 'POST') {
       const c: Customer = { id: fake.customers.length + 1, name: body.name, email: body.email.toLowerCase(),
                             password: body.password, enabled: true };
@@ -212,16 +226,18 @@ test('admin creates a customer account, and that customer can then sign in', asy
   // Admin on the local network: no key, no sign-in.
   const adminPage = await browser.newPage();
   await install(adminPage, fake, { localAdmin: true });
-  await adminPage.goto('/settings/customers');
-  await adminPage.getByPlaceholder('Name').fill('Carol');
-  await adminPage.getByPlaceholder('Email').fill('Carol@Example.com');
-  await adminPage.getByPlaceholder('Password').fill('carol-pw');
-  await adminPage.getByRole('button', { name: /add customer/i }).click();
+  await adminPage.goto('/customers?new=1');
+  await adminPage.getByLabel(/^Name/).fill('Carol');
+  await adminPage.getByLabel(/^Email/).fill('Carol@Example.com');
+  await adminPage.getByLabel('Portal password').fill('carol-pw');
+  await adminPage.getByRole('button', { name: /create customer/i }).click();
 
-  await expect(adminPage.getByRole('cell', { name: 'carol@example.com' })).toBeVisible();
+  // Lands on the new customer's detail page.
+  await expect(adminPage).toHaveURL(/\/customers\/1$/);
+  await expect(adminPage.getByLabel('Email')).toHaveValue('carol@example.com');
   expect(fake.captured).toContainEqual({
     method: 'POST', path: '/customers',
-    body: { name: 'Carol', email: 'Carol@Example.com', password: 'carol-pw' },
+    body: { name: 'Carol', email: 'Carol@Example.com', phone: '', company: '', password: 'carol-pw' },
   });
 
   // The new account works: a fresh browser (no staff key) signs in as Carol.
@@ -240,9 +256,9 @@ test('admin disables a customer and the customer can no longer sign in', async (
 
   const adminPage = await browser.newPage();
   await install(adminPage, fake, { staffKey: true });
-  await adminPage.goto('/settings/customers');
+  await adminPage.goto('/customers/1');
   await adminPage.getByRole('button', { name: 'Disable' }).click();
-  await expect(adminPage.getByRole('cell', { name: 'Disabled' })).toBeVisible();
+  await expect(adminPage.getByText('Portal disabled')).toBeVisible();
   expect(fake.captured).toContainEqual({ method: 'PATCH', path: '/customers/1', body: { enabled: false } });
 
   const customerPage = await browser.newPage();
@@ -264,7 +280,8 @@ test('admin promotes a customer draft to planning, then to queued', async ({ pag
   await install(page, fake, { staffKey: true });
 
   await page.goto('/projects/11');
-  await expect(page.getByRole('heading', { name: 'Alice Draft' })).toBeVisible();
+  // Topbar (h1) and the header card (h2) both show the project name now.
+  await expect(page.getByRole('heading', { name: 'Alice Draft', level: 2 })).toBeVisible();
   const generate = page.getByRole('button', { name: 'Generate…' });
   await expect(generate).toBeDisabled();
   await expect(generate).toHaveAttribute('title', 'Promote to planning before creating jobs');

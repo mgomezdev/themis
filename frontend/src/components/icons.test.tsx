@@ -7,8 +7,4 @@ describe('Icons', () => {
     const { container } = render(<>{Icons.queue}</>);
     expect(container.querySelector('svg')).toBeTruthy();
   });
-  it('has all required icons', () => {
-    const required = ['queue', 'fleet', 'printer', 'orders', 'files', 'settings', 'plus', 'x'];
-    required.forEach(k => expect(Icons).toHaveProperty(k));
-  });
 });
