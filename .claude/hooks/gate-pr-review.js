@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // PreToolUse gate: blocks `gh pr create` / mcp__github__create_pull_request
-// unless .claude/review-state.json records a clean review for current HEAD.
+// unless .claude/review-state.json records a clean review for current HEAD with the test/coverage
+// suites confirmed (`checks`: "pass" or "n/a").
 // See CLAUDE.md "Development workflow" for the process this enforces.
 'use strict';
 
@@ -79,18 +80,46 @@ try {
   marker = null; // missing or unreadable marker = no valid review on file
 }
 
-if (marker && marker.sha === headSha && marker.verdict === 'clean') {
+// `checks` records that the suites in CLAUDE.md > Commands were run green at this sha ("pass"), or
+// that nothing they cover changed ("n/a", e.g. a docs-only diff). A review without it says nothing about
+// whether the tests it leans on actually pass.
+const CHECKS_OK = new Set(['pass', 'n/a']);
+
+if (marker && marker.sha === headSha && marker.verdict === 'clean' && CHECKS_OK.has(marker.checks)) {
   allow();
 }
 
+const reviewed = marker && marker.sha === headSha && marker.verdict === 'clean';
+
+// A clean review already on file for this sha only needs the suites confirmed - don't send the agent
+// off to dispatch a second reviewer.
+const steps = [
+  `Check .claude/review-state.json - if it already matches this sha with verdict "clean" and checks "pass" (or "n/a") this block is a bug, re-check the sha.`,
+  `Run the suites for what the diff touches (CLAUDE.md > Commands): backend \`pytest -v -ra --cov\` from backend/ (enforces the coverage floor), ` +
+    `frontend \`npm run build\` + \`npm run test:cov\`, \`npm run test:e2e\` if a screen or e2e mock changed; ` +
+    `regenerate openapi.json (\`python scripts/export_openapi.py\`, from the repo root) if routes or params changed. ` +
+    `All must pass - never skip or loosen a test or floor to get there.`,
+];
+if (!reviewed) {
+  steps.push(
+    `Dispatch exactly one fresh, non-fork reviewer subagent per CLAUDE.md's Development workflow section, ` +
+    `handing it the base/head SHAs and pointing it at docs/agent/backend-review.md and/or docs/agent/frontend-review.md as applicable ` +
+    `(they cover reviewing the tests themselves, not just the product code).`,
+    `Address any Critical/Important findings (fix now, or new commits then re-run the suites and the review).`,
+  );
+}
+steps.push(
+  `Write .claude/review-state.json as {"sha":"${headSha}","verdict":"clean","checks":"pass","reviewed_at":"<iso8601>"} ` +
+    `("n/a" for checks only if the diff touches nothing the suites cover).`,
+  `Retry creating the PR - this check will pass without spawning another review.`,
+);
+
 deny(
-  `No clean review recorded for HEAD (${headSha}). This applies to any way of opening the PR ` +
+  (reviewed
+    ? `The review for HEAD (${headSha}) is recorded clean, but the marker's checks is ${marker.checks === undefined ? 'missing' : JSON.stringify(marker.checks)}, not "pass" or "n/a". `
+    : `No clean review recorded for HEAD (${headSha}). `) +
+  `This applies to any way of opening the PR ` +
   `(gh pr create, the GitHub MCP tool, or a raw \`gh api ... pulls\` call) - do not route around it. ` +
   `Before creating this PR: ` +
-  `1) Check .claude/review-state.json - if it already matches this sha with verdict "clean" this block is a bug, re-check the sha. ` +
-  `2) Otherwise dispatch exactly one fresh, non-fork reviewer subagent per CLAUDE.md's Development workflow section, ` +
-  `handing it the base/head SHAs and pointing it at docs/agent/backend-review.md and/or docs/agent/frontend-review.md as applicable. ` +
-  `3) Address any Critical/Important findings (fix now, or new commits then re-review). ` +
-  `4) Write .claude/review-state.json as {"sha":"${headSha}","verdict":"clean","reviewed_at":"<iso8601>"}. ` +
-  `5) Retry creating the PR - this check will pass without spawning another review.`
+  steps.map((step, i) => `${i + 1}) ${step}`).join(' ')
 );

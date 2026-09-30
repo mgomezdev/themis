@@ -111,10 +111,29 @@ code that touches one of these areas, not just before review.
 
 ## 9. Tests
 
-TDD: a test that failed for the right reason before the fix, for every behavior change — not just
-coverage added after the fact. Full suite green (`pytest -v` from `backend/`) before calling anything
-done. Assert state (re-read the row / response body), not just a status code; prefer `wait_until` over
-`asyncio.sleep`; a test you can't make fail by breaking the code is not a test (mutate the line and check).
+The test suite is part of the diff under review, including a test-only one. A green run is necessary, not
+sufficient — check that each test could fail:
+
+- **Falsifiable.** TDD: a test that failed for the right reason before the fix, for every behavior change. If
+  the diff doesn't show it, mutate the changed line (flip a condition, drop an assignment) and confirm a test
+  goes red; a test that survives is not a test. Assert state (re-read the row / response body), not just a
+  status code or "didn't raise".
+- **DB.** Use the shared `session_factory` (`tests/conftest.py`): a per-test SQLite *file* with the app's
+  production pragmas (FKs on, a connection per session). Flag `sqlite+aiosqlite:///:memory:` (one shared
+  connection, no FKs) and any orphan row — seed the parents with `create_printer` / `create_job` /
+  `upload_3mf` / `make_3mf`. Wait with `tests/waiting.py:wait_until`, never `sleep`.
+- **Isolation.** No real network, vendor connects, or `<repo-root>/data/themis.db`; the `printer_manager`
+  singleton is reset between API tests. Test data with unstable bytes (zip timestamps) makes hash-based
+  assertions flaky — `make_3mf_bytes` fixes them.
+- **Contracts.** A renamed/added field the frontend reads → `contracts/response-keys.json` (checked by
+  `tests/api/test_response_contracts.py` and the FE); a changed route or param → regenerate `openapi.json`
+  (`python scripts/export_openapi.py` from the repo root; CI diffs it). Endpoints not in the JSON are protected only by a hand
+  grep of both sides — do it.
+- **Ratchets.** `fail_under` in `pyproject.toml` only goes up. A diff that lowers it, adds `# pragma: no
+  cover`, skips/xfails a test, or deletes one without a replacement needs a stated reason in the PR.
+- **Run it.** Author: full suite green (`pytest -v -ra --cov` from `backend/`, as CI does) before calling
+  anything done — that is what the marker's `checks` attests. Reviewer: don't re-run everything; run the
+  tests you're judging, and mutate the code they cover to see them go red.
 
 ## 10. Public (unauthenticated) routes
 
