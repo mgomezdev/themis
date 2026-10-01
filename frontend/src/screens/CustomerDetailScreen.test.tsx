@@ -69,7 +69,7 @@ describe('CustomerDetailScreen', () => {
         : new Response('{}', { status: 200 }));
     renderScreen();
 
-    expect(within(await screen.findByTestId('payment-history')).getByText('No payments recorded yet.')).toBeTruthy();
+    expect(await within(await screen.findByTestId('payment-history')).findByText('No payments recorded yet.')).toBeTruthy();
     expect(screen.getByText('Financial summary')).toBeTruthy();
   });
 
