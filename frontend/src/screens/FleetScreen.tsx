@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
@@ -77,6 +78,16 @@ function FanTelem({ label, pct, maxRpm = 7000 }: { label: string; pct: number; m
       </div>
     </div>
   );
+}
+
+/** Link to the printer console (a plain anchor when rendered outside a router, e.g. in isolated tests). */
+function ConsoleLink({ printerId }: { printerId: string }) {
+  const inRouter = useInRouterContext();
+  const href = `/fleet/${printerId}/console`;
+  const content = <>{Icons.printer} Console</>;
+  return inRouter
+    ? <Link className="btn sm" to={href} title="Open the printer console">{content}</Link>
+    : <a className="btn sm" href={href} title="Open the printer console">{content}</a>;
 }
 
 // ── Edit printer modal ───────────────────────────────────────────────────────
@@ -643,6 +654,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               {p.queueOn ? <>{Icons.queue} Queue on</> : <>{Icons.queue} Queue off</>}
             </button>
             <button className="btn sm">{Icons.camera} Snapshot</button>
+            <ConsoleLink printerId={p.id} />
             <button className="btn icon sm" title="Add maintenance item" onClick={() => setAddingMaintenance(true)}>
               👷
             </button>

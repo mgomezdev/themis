@@ -192,6 +192,50 @@ export function setBedTemp(id: string, celsius: number): Promise<void> {
   });
 }
 
+export type Axis = 'X' | 'Y' | 'Z';
+
+export function jogAxis(id: string | number, axis: Axis, distanceMm: number): Promise<void> {
+  return request(`${BASE}/${id}/jog`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ axis, distance_mm: distanceMm }),
+  });
+}
+
+export function homePrinter(id: string | number, axes: 'all' | Axis = 'all'): Promise<void> {
+  return request(`${BASE}/${id}/home`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ axes }),
+  });
+}
+
+export function setNozzleTemp(id: string | number, celsius: number): Promise<void> {
+  return request(`${BASE}/${id}/nozzle-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ celsius }),
+  });
+}
+
+export function setChamberTemp(id: string | number, celsius: number): Promise<void> {
+  return request(`${BASE}/${id}/chamber-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ celsius }),
+  });
+}
+
+/** Send a gcode/3mf/bgcode file straight to the printer, bypassing the queue; `start` also begins printing it. */
+export function uploadToPrinter(
+  id: string | number, file: File, start: boolean,
+): Promise<{ ok: boolean; filename: string; started: boolean }> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('start', start ? 'true' : 'false');
+  return request(`${BASE}/${id}/upload`, { method: 'POST', body: form });
+}
+
 export function reconnectPrinter(id: string): Promise<void> {
   return request(`${BASE}/${id}/reconnect`, { method: 'POST' });
 }

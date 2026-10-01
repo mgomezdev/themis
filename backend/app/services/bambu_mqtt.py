@@ -195,6 +195,10 @@ class BambuMQTTClient(AbstractPrinterClient):
             camera=True,
             bed_levelling=True,
             vibration_cali=True,
+            axis_jog=True,
+            home_axes=True,
+            nozzle_temp=True,
+            direct_upload=True,
         )
 
     @property

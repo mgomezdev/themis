@@ -25,6 +25,12 @@ class PrinterCapabilities:
     camera: bool = False
     fan_control: bool = False
     temp_control: bool = False
+    # Console (BIZ-164). Z jog, home-all and the bed setpoint are the baseline; these gate the rest.
+    axis_jog: bool = False        # X/Y jog
+    home_axes: bool = False       # home a single axis
+    nozzle_temp: bool = False     # nozzle setpoint
+    chamber_temp: bool = False    # chamber setpoint
+    direct_upload: bool = False   # upload (and optionally start) a file outside the queue
 
 
 @dataclass
@@ -99,6 +105,20 @@ class AbstractPrinterClient(ABC):
     def home(self) -> bool:
         return self.send_gcode("G28")
 
+    def jog(self, axis: str, distance_mm: float) -> bool:
+        """Relative move of one axis (X/Y/Z). Default: G-code; vendors with a native command override."""
+        axis = axis.upper()
+        if not self.send_gcode("G91"):
+            return False
+        try:
+            return bool(self.send_gcode(f"G1 {axis}{distance_mm}"))
+        finally:
+            self.send_gcode("G90")      # never leave the printer in relative mode
+
+    def home_axes(self, axes: str) -> bool:
+        """Home specific axes (e.g. 'X', 'XY'). Default: G28 with the listed axes."""
+        return self.send_gcode("G28 " + " ".join(axes.upper()))
+
     def jog_z(self, distance_mm: float, force: bool = False) -> bool:
         if force:
             self.send_gcode("M211 S0")
@@ -116,6 +136,12 @@ class AbstractPrinterClient(ABC):
         return False
 
     def set_bed_temp(self, celsius: int) -> bool:
+        return False
+
+    def set_nozzle_temp(self, celsius: int) -> bool:
+        return self.send_gcode(f"M104 S{int(celsius)}") if self.gcode_supported else False
+
+    def set_chamber_temp(self, celsius: int) -> bool:
         return False
 
     @property

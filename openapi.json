@@ -2131,6 +2131,335 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/jog": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Jog an axis",
+        "description": "Relative move of X, Y or Z by `distance_mm` (negative = other direction). X/Y need the `axis_jog`\ncapability; refused while a print is running.",
+        "operationId": "jog_axis_api_v1_printers__printer_id__jog_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JogBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Jog Axis Api V1 Printers  Printer Id  Jog Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/home": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Home axes",
+        "description": "Home all axes, or a single axis (needs the `home_axes` capability). Refused while printing.",
+        "operationId": "home_printer_api_v1_printers__printer_id__home_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Home Printer Api V1 Printers  Printer Id  Home Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/nozzle-temp": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set nozzle temperature",
+        "operationId": "set_nozzle_temp_api_v1_printers__printer_id__nozzle_temp_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NozzleTempBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Nozzle Temp Api V1 Printers  Printer Id  Nozzle Temp Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/chamber-temp": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set chamber temperature",
+        "operationId": "set_chamber_temp_api_v1_printers__printer_id__chamber_temp_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChamberTempBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Chamber Temp Api V1 Printers  Printer Id  Chamber Temp Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/upload": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Upload a file to the printer, bypassing the queue",
+        "description": "Send a .gcode / .3mf / .bgcode file straight to the printer. With `start`, also begin printing it \u2014\nonly when the printer is idle and no queued job holds it; the plate is then marked not-ready (same\ngate as a queue-started print).",
+        "operationId": "upload_to_printer_api_v1_printers__printer_id__upload_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_to_printer_api_v1_printers__printer_id__upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Upload To Printer Api V1 Printers  Printer Id  Upload Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "413": {
+            "description": "File too large"
+          },
+          "422": {
+            "description": "Unsupported file type"
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/camera": {
       "get": {
         "tags": [
@@ -7126,6 +7455,40 @@
         ],
         "title": "Body_upload_to_draft_api_v1_customer_projects__project_id__files_post"
       },
+      "Body_upload_to_printer_api_v1_printers__printer_id__upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "start": {
+            "type": "boolean",
+            "title": "Start",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_to_printer_api_v1_printers__printer_id__upload_post"
+      },
+      "ChamberTempBody": {
+        "properties": {
+          "celsius": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Celsius"
+          }
+        },
+        "type": "object",
+        "required": [
+          "celsius"
+        ],
+        "title": "ChamberTempBody"
+      },
       "CompleteManuallyBody": {
         "properties": {
           "printer_id": {
@@ -7628,6 +7991,23 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HomeBody": {
+        "properties": {
+          "axes": {
+            "type": "string",
+            "enum": [
+              "all",
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Axes",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "title": "HomeBody"
+      },
       "JobConfigsUpdate": {
         "properties": {
           "printer_configs": {
@@ -7749,6 +8129,31 @@
         },
         "type": "object",
         "title": "JobSchedulePatch"
+      },
+      "JogBody": {
+        "properties": {
+          "axis": {
+            "type": "string",
+            "enum": [
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Axis"
+          },
+          "distance_mm": {
+            "type": "number",
+            "maximum": 200.0,
+            "minimum": -200.0,
+            "title": "Distance Mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "axis",
+          "distance_mm"
+        ],
+        "title": "JogBody"
       },
       "JogZBody": {
         "properties": {
@@ -8086,6 +8491,21 @@
           "config"
         ],
         "title": "NotificationTestIn"
+      },
+      "NozzleTempBody": {
+        "properties": {
+          "celsius": {
+            "type": "integer",
+            "maximum": 350.0,
+            "minimum": 0.0,
+            "title": "Celsius"
+          }
+        },
+        "type": "object",
+        "required": [
+          "celsius"
+        ],
+        "title": "NozzleTempBody"
       },
       "NtfyChannelConfig": {
         "properties": {

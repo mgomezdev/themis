@@ -18,7 +18,10 @@ export interface FleetPrinter {
   remaining_time: number;
   layer_num: number | null;
   total_layers: number | null;
-  temperatures: { nozzle?: number; bed?: number; chamber?: number; bed_target?: number };
+  temperatures: {
+    nozzle?: number; bed?: number; chamber?: number;
+    nozzle_target?: number; bed_target?: number; chamber_target?: number;
+  };
   capabilities: Record<string, boolean>;
   current_print: string | null;
   fan_model: number;
@@ -96,7 +99,8 @@ async function fetchFleetPrinters(): Promise<FleetPrinter[]> {
   return resp.json();
 }
 
-export function useFleetData(): [Printer[], () => void] {
+/** Live fleet in the API's own shape (raw temperatures + capability flags), kept fresh over the WebSocket. */
+export function useFleetRaw(): [FleetPrinter[], () => void] {
   const [raw, setRaw] = useState<FleetPrinter[]>([]);
   const [fetchTick, setFetchTick] = useState(0);
 
@@ -128,5 +132,10 @@ export function useFleetData(): [Printer[], () => void] {
     }, refetch);
   }, [refetch]);
 
+  return [raw, refetch];
+}
+
+export function useFleetData(): [Printer[], () => void] {
+  const [raw, refetch] = useFleetRaw();
   return [raw.map(toFleetPrinter), refetch];
 }
