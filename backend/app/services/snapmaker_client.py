@@ -4,6 +4,8 @@ import itertools
 import json
 import logging
 import threading
+import urllib.parse
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar
 
@@ -14,6 +16,7 @@ from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
     PrinterCapabilities,
+    PrinterFile,
     StartPrintOptions,
 )
 
@@ -139,6 +142,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         return PrinterCapabilities(
             pause_resume=True, gcode=True, camera=True, temp_control=True,
             axis_jog=True, home_axes=True, nozzle_temp=True, direct_upload=True,
+            file_browser=True, file_delete=True, file_download=True,
         )
 
     # ---- state properties ----
@@ -358,6 +362,70 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         except Exception:
             logger.exception("Snapmaker %s: gcode upload failed (%s)", self._ip, filename)
             return False
+
+    # ---- file browser (Moonraker file_manager API; root "gcodes") ----
+    @staticmethod
+    def _gcodes_url_path(file_id: str) -> str:
+        """`/server/files/gcodes/<quoted path>` — each segment quoted, `..` and absolute paths refused."""
+        segments = [s for s in file_id.split("/") if s]
+        if not segments or any(s in (".", "..") for s in segments):
+            raise ValueError(f"Invalid file id: {file_id!r}")
+        return "/server/files/gcodes/" + "/".join(urllib.parse.quote(s, safe="") for s in segments)
+
+    def list_files(self, directory: str = "/") -> list[PrinterFile]:
+        """One directory of the gcodes root with slicer metadata inline (`extended=true`): estimated time,
+        filament length/weight, slicer. Directories come first as `is_dir` entries whose id is the path to
+        pass back as `directory`."""
+        rel = directory.strip("/")
+        path = "gcodes" + (f"/{rel}" if rel else "")
+        try:
+            r = httpx.get(f"{self._http_base}/server/files/directory", params={"path": path, "extended": "true"},
+                          headers=self._headers(), timeout=30)
+            r.raise_for_status()
+            result = r.json()["result"]
+        except Exception:
+            logger.exception("Snapmaker %s: listing %s failed", self._ip, path)
+            return []
+        prefix = f"{rel}/" if rel else ""
+
+        def iso(ts) -> str | None:
+            try:
+                return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                return None
+
+        out = [PrinterFile(id=f"{prefix}{d['dirname']}", name=d["dirname"], size=0, modified_at=iso(d.get("modified")),
+                           is_dir=True) for d in result.get("dirs", []) if d.get("dirname")]
+        for f in result.get("files", []):
+            if not f.get("filename"):
+                continue
+            meta = {k: v for k, v in {
+                "estimated_seconds": f.get("estimated_time"),
+                "filament_mm": f.get("filament_total"),
+                "filament_grams": f.get("filament_weight_total"),
+                "slicer": f.get("slicer"),
+            }.items() if v is not None}
+            out.append(PrinterFile(id=f"{prefix}{f['filename']}", name=f["filename"], size=int(f.get("size") or 0),
+                                   modified_at=iso(f.get("modified")), metadata=meta or None))
+        return out
+
+    def delete_file(self, file_id: str) -> bool:
+        try:
+            r = httpx.delete(f"{self._http_base}{self._gcodes_url_path(file_id)}", headers=self._headers(), timeout=30)
+            r.raise_for_status()
+            return True
+        except Exception:
+            logger.exception("Snapmaker %s: delete of %s failed", self._ip, file_id)
+            return False
+
+    def download_file(self, file_id: str) -> bytes | None:
+        try:
+            r = httpx.get(f"{self._http_base}{self._gcodes_url_path(file_id)}", headers=self._headers(), timeout=120)
+            r.raise_for_status()
+            return r.content
+        except Exception:
+            logger.exception("Snapmaker %s: download of %s failed", self._ip, file_id)
+            return None
 
     def start_print(self, file_name: str, options: StartPrintOptions | None = None) -> bool:
         return self._post("/printer/print/start", params={"filename": file_name})

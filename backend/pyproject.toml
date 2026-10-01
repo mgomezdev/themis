@@ -25,6 +25,9 @@ dev = [
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "real_protocol: manual checks against a real printer (backend/protocol_verification); never part of the normal gates",
+]
 
 # greenlet: SQLAlchemy's async layer runs sync code inside greenlets; without this coverage.py drops
 # every line executed after the first `await session.execute(...)` and under-reports by ~12 points.
