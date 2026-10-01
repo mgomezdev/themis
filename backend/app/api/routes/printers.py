@@ -18,6 +18,7 @@ import shutil
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobPrinterConfig, Printer
+from ...services import camera_hub
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services import scheduling
@@ -1179,42 +1180,43 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    await _activate_camera(client)
-
     if client.camera_mjpeg_url:
-        raw = stream_mjpeg(client.camera_mjpeg_url)
+        mjpeg_url, rtsp_url = client.camera_mjpeg_url, None
     elif client.camera_rtsp_url:
         from ...config import get_ffmpeg_executable
         if not shutil.which(get_ffmpeg_executable()):
             raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        raw = stream_rtsp_ffmpeg(client.camera_rtsp_url)
+        mjpeg_url, rtsp_url = None, client.camera_rtsp_url
     else:
         raise HTTPException(404, "No camera URL configured")
 
-    # Ping keepalive: Elegoo drops the MJPEG stream after 60 s of silence; ping every 45 s.
-    stop = asyncio.Event()
+    if not camera_hub.hub.has_stream(printer_id):
+        await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
 
-    async def _ping_loop():
-        while not stop.is_set():
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=45)
-            except asyncio.TimeoutError:
-                if hasattr(client, "ping_video_stream"):
-                    client.ping_video_stream()
+    async def upstream():
+        raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
+        async for chunk in raw:
+            yield chunk
 
-    ping_task = asyncio.create_task(_ping_loop())
+    # One upstream connection / ffmpeg per printer however many viewers (camera wall, several browsers);
+    # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
+    ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
+    if camera_hub.hub.is_full_for(printer_id):
+        raise HTTPException(429, "Too many camera streams open")
 
     async def _stream():
+        frames = camera_hub.hub.subscribe(printer_id, upstream, ping)
         try:
-            async for chunk in raw:
-                yield chunk
+            async for part in frames:
+                yield part
+        except camera_hub.HubFull:
+            return
         finally:
-            stop.set()
-            ping_task.cancel()
+            await frames.aclose()
 
     return StreamingResponse(
         _stream(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
+        media_type=f"multipart/x-mixed-replace; boundary={camera_hub.BOUNDARY}",
     )
 
 
@@ -1240,10 +1242,12 @@ async def snapshot_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    await _activate_camera(client)
+    async def grab():
+        await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
+        return await grab_snapshot_from_client(client)
 
     try:
-        jpeg = await grab_snapshot_from_client(client)
+        jpeg = await camera_hub.hub.snapshot(printer_id, grab)
     except Exception as exc:
         raise HTTPException(503, f"Camera unavailable: {exc}")
 

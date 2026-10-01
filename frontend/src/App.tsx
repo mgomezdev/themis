@@ -23,6 +23,7 @@ import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }          from './screens/FilesScreen';
 import { PrinterFilesScreen }   from './screens/PrinterFilesScreen';
 import { AlarmsScreen }         from './screens/AlarmsScreen';
+import { CameraWallScreen }    from './screens/CameraWallScreen';
 import { useAlarmSummary }      from './api/alarms';
 import { SettingsScreen }       from './screens/SettingsScreen';
 import { ProjectsScreen }       from './screens/ProjectsScreen';
@@ -81,6 +82,7 @@ const MORE_NAV_ITEMS = [
   { to: '/customers', label: 'Customers', icon: 'user'  },
   { to: '/files',     label: 'Files',     icon: 'files' },
   { to: '/printer-files', label: 'Printer files', icon: 'printer' },
+  { to: '/wall',      label: 'Camera wall', icon: 'camera' },
   { to: '/alarms',    label: 'Alarms',    icon: 'alert' },
   { to: '/history',   label: 'History',   icon: 'clock' },
   { to: '/analytics', label: 'Analytics', icon: 'chart' },
@@ -181,6 +183,7 @@ function AppShell() {
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/printer-files': { title: 'Printer files',    crumbs: ['Workshop'] },
     '/alarms':       { title: 'Alarms',           crumbs: ['Workshop'] },
+    '/wall':         { title: 'Camera wall',      crumbs: ['Workshop'] },
     '/projects':        { title: 'Projects',      crumbs: ['Workshop'],
                          actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
     '/projects/new':    { title: 'New project',  crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
@@ -242,6 +245,7 @@ function AppShell() {
             <Route path="/files"           element={<FilesScreen />} />
             <Route path="/printer-files"   element={<PrinterFilesScreen />} />
             <Route path="/alarms"          element={<AlarmsScreen />} />
+            <Route path="/wall"            element={<CameraWallScreen />} />
             <Route path="/projects"            element={<ProjectsScreen />} />
             <Route path="/projects/new"        element={<ProjectBuilderScreen />} />
             <Route path="/projects/:id"        element={<ProjectDetailScreen />} />

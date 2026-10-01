@@ -1,7 +1,10 @@
 import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock, patch
+from app.services.camera_hub import multipart_part
 from app.services.printer_manager import printer_manager
+
+JPEG_A = b"\xff\xd8frame-a\xff\xd9"
 
 
 @pytest_asyncio.fixture
@@ -84,13 +87,131 @@ async def test_camera_streams_mjpeg_as_multipart_after_activating_the_printer_st
 
     async def stream(url):
         opened.append(url)
-        yield b"--frame\r\nfirst-frame"
+        yield b"junk-header\r\n" + JPEG_A[:6]          # a frame split across chunks, with noise before it
+        yield JPEG_A[6:] + b"\r\n--frame\r\n"
 
     with patch("app.api.routes.printers.stream_mjpeg", stream):
         resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
 
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "multipart/x-mixed-replace; boundary=frame"
-    assert resp.content == b"--frame\r\nfirst-frame"
+    assert resp.content == multipart_part(JPEG_A)          # re-framed whole frame, noise stripped
     assert opened == ["http://192.168.1.20:3031/video"]
     fake.start_video_stream.assert_called_once()
+
+
+async def test_concurrent_viewers_of_one_printer_share_a_single_upstream_connection(client, printer_id):
+    import asyncio
+    printer_manager._clients[printer_id] = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    opened, release = [], asyncio.Event()
+
+    async def stream(url):
+        opened.append(url)
+        await release.wait()                       # hold until both viewers are attached
+        yield JPEG_A
+
+    async def viewer():
+        return await client.get(f"/api/v1/printers/{printer_id}/camera")
+
+    with patch("app.api.routes.printers.stream_mjpeg", stream):
+        t1, t2 = asyncio.create_task(viewer()), asyncio.create_task(viewer())
+        from app.services import camera_hub
+        for _ in range(200):
+            if camera_hub.hub._streams.get(printer_id) and len(camera_hub.hub._streams[printer_id].subscribers) == 2:
+                break
+            await asyncio.sleep(0.01)
+        release.set()
+        r1, r2 = await asyncio.gather(t1, t2)
+
+    assert len(opened) == 1
+    assert r1.content == r2.content == multipart_part(JPEG_A)
+
+
+async def test_camera_429_when_the_stream_cap_is_reached_for_another_printer(client, printer_id, monkeypatch):
+    from app.services import camera_hub
+    monkeypatch.setenv("THEMIS_MAX_CAMERA_STREAMS", "1")
+    camera_hub.hub._streams[999] = camera_hub._Stream(999)          # some other printer already holds the only slot
+    printer_manager._clients[printer_id] = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+
+    resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
+
+    assert resp.status_code == 429
+
+
+async def test_camera_pings_an_elegoo_style_stream_through_the_hub(client, printer_id, monkeypatch):
+    from app.services import camera_hub
+    monkeypatch.setattr(camera_hub, "KEEPALIVE_S", 0.01)
+    fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    printer_manager._clients[printer_id] = fake
+    import asyncio
+
+    async def stream(url):
+        await asyncio.sleep(0.1)
+        yield JPEG_A
+
+    with patch("app.api.routes.printers.stream_mjpeg", stream):
+        await client.get(f"/api/v1/printers/{printer_id}/camera")
+
+    assert fake.ping_video_stream.call_count >= 1
+
+
+async def test_camera_stats_report_open_streams_and_snapshot_sharing(client, printer_id):
+    from app.services import camera_hub
+    printer_manager._clients[printer_id] = _camera_client(mjpeg="http://x/video")
+
+    async def grab(c):
+        return JPEG_A
+
+    with patch("app.api.routes.printers.grab_snapshot_from_client", grab):
+        for _ in range(3):
+            await client.get(f"/api/v1/printers/{printer_id}/snapshot")
+    body = (await client.get("/api/v1/cameras/stats")).json()
+
+    assert (body["snapshot_grabs"], body["snapshot_hits"], body["streams"], body["viewers"]) == (1, 2, [], 0)
+    assert body["max_streams"] == camera_hub.max_streams()
+
+
+async def test_camera_accepts_the_key_as_a_query_parameter_for_img_tags(client, printer_id):
+    from httpx import ASGITransport, AsyncClient
+    from app.main import app
+    raw = client.headers["X-Api-Key"]
+    printer_manager._clients[printer_id] = _camera_client(mjpeg="http://x/video")
+
+    async def stream(url):
+        yield JPEG_A
+
+    remote = ASGITransport(app=app, client=("203.0.113.7", 50000))
+    async with AsyncClient(transport=remote, base_url="http://test") as anon:
+        with patch("app.api.routes.printers.stream_mjpeg", stream):
+            no_key = await anon.get(f"/api/v1/printers/{printer_id}/camera")
+            with_key = await anon.get(f"/api/v1/printers/{printer_id}/camera", params={"key": raw})
+
+    assert (no_key.status_code, with_key.status_code) == (401, 200)
+
+
+async def test_a_camera_that_fails_to_wake_is_an_error_response_not_an_empty_stream(client, printer_id):
+    fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    fake.start_video_stream.side_effect = RuntimeError("camera wake failed")
+    printer_manager._clients[printer_id] = fake
+
+    with pytest.raises(RuntimeError, match="camera wake failed"):
+        await client.get(f"/api/v1/printers/{printer_id}/camera")        # surfaces as a 500 before any stream starts
+
+
+async def test_a_second_viewer_does_not_wake_an_already_streaming_camera_again(client, printer_id):
+    import asyncio
+    from app.services import camera_hub
+    fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    printer_manager._clients[printer_id] = fake
+    camera_hub.hub._streams[printer_id] = camera_hub._Stream(printer_id)     # someone is already watching
+
+    async def stream(url):
+        yield JPEG_A
+
+    with patch("app.api.routes.printers.stream_mjpeg", stream):
+        task = asyncio.create_task(client.get(f"/api/v1/printers/{printer_id}/camera"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    fake.start_video_stream.assert_not_called()
