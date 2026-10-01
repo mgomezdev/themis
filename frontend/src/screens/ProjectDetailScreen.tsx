@@ -11,6 +11,7 @@ import {
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
+import { PaymentsCard } from '../components/PaymentsCard';
 import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
 
 const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
@@ -542,6 +543,9 @@ export function ProjectDetailScreen() {
           </div>
         )}
       </div>
+
+      {/* ── Payments ───────────────────────────────────────────────────── */}
+      <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />
 
       {/* ── Non-printed parts ──────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>

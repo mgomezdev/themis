@@ -8,6 +8,7 @@ import {
   getCustomer, updateCustomer, deleteCustomer, portalStatus,
   type CustomerDetail, type CustomerFields, type CustomerProject, type FinancialSummary, type FinancialWindow,
 } from '../api/customers';
+import { getCustomerPayments, methodLabel, type CustomerPayment } from '../api/payments';
 
 const WINDOWS: { key: FinancialWindow; label: string }[] = [
   { key: '30d', label: '30 days' },
@@ -17,7 +18,7 @@ const WINDOWS: { key: FinancialWindow; label: string }[] = [
 ];
 
 const METRICS: { key: keyof FinancialSummary; label: string; hint: string; money: boolean }[] = [
-  { key: 'revenue',       label: 'Revenue',       hint: 'Amount paid',                       money: true },
+  { key: 'revenue',       label: 'Revenue',       hint: 'Payments received',                      money: true },
   { key: 'expenses',      label: 'Expenses',      hint: 'Filament cost of jobs',             money: true },
   { key: 'profit',        label: 'Profit',        hint: 'Revenue − expenses',                money: true },
   { key: 'billed',        label: 'Billed',        hint: 'Quoted project prices',             money: true },
@@ -180,6 +181,46 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
   );
 }
 
+/** Every payment this customer has made across their projects, newest first. */
+function PaymentHistoryCard({ customerId }: { customerId: number }) {
+  const [payments, setPayments] = useState<CustomerPayment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getCustomerPayments(customerId)
+      .then(p => { if (alive) setPayments(p); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [customerId]);
+
+  return (
+    <div className="card" style={{ padding: 20 }} data-testid="payment-history">
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Payment history</div>
+      {error ? <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        : payments === null ? <div className="muted small">Loading…</div>
+        : payments.length === 0 ? <div style={{ color: 'var(--text-4)', fontSize: 13 }}>No payments recorded yet.</div>
+        : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead><tr><th>Received</th><th>Project</th><th>Method</th><th>Note</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+              <tbody>
+                {payments.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(p.received_on)}</td>
+                    <td><Link to={`/projects/${p.project_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.project_name}</Link></td>
+                    <td>{methodLabel(p.method)}</td>
+                    <td className="muted">{p.note ?? ''}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtMoney(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </div>
+  );
+}
+
 function DetailsCard({ customer, onSaved }: { customer: CustomerDetail; onSaved: () => void }) {
   const navigate = useNavigate();
   const status = portalStatus(customer);
@@ -311,6 +352,7 @@ export function CustomerDetailScreen() {
       <DetailsCard customer={customer} onSaved={reload} />
       <FinancialSummaryCard financials={customer.financials} />
       <ProjectsCard customerId={customer.id} projects={customer.projects} />
+      <PaymentHistoryCard customerId={customer.id} />
     </div>
   );
 }

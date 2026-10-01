@@ -20,6 +20,7 @@ from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
+from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
@@ -412,6 +413,11 @@ async def create_project(
         updated_at=now,
     )
     session.add(proj)
+    await session.flush()
+    if proj.amount_paid and proj.amount_paid > 0:
+        # Record what was entered as a real payment so amount paid stays derived from payment rows.
+        await adopt_manual_amount(session, proj)
+        await sync_project_totals(session, proj)
     await session.commit()
     await session.refresh(proj)
     return await _project_dict(proj, session)
@@ -447,6 +453,10 @@ async def patch_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
+    if (body.amount_paid is not None or body.payment_status is not None) and await has_payments(session, project_id):
+        raise HTTPException(
+            409, "This project's amount paid and payment status come from its recorded payments — "
+                 "add, edit or delete a payment instead")
     if body.name is not None:
         proj.name = body.name
     if body.customer is not None:
@@ -467,6 +477,8 @@ async def patch_project(
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:
         proj.customer_id = await _valid_customer_id(body.customer_id, session)
+    if "price" in body.model_fields_set:
+        await sync_project_totals(session, proj)  # paid/partial depends on the quoted price
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)

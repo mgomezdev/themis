@@ -93,6 +93,18 @@ async def test_library_files_carry_the_file_keys(client, upload_3mf):
     assert_carries("library_file", row)
 
 
+async def test_payments_carry_the_payment_keys(client):
+    customer = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test"})).json()
+    project = (await client.post("/api/v1/projects", json={"name": "P", "price": 10, "customer_id": customer["id"]})).json()
+    await client.post(f"/api/v1/projects/{project['id']}/payments", json={"amount": 4, "note": "deposit"})
+
+    (own,) = (await client.get(f"/api/v1/projects/{project['id']}/payments")).json()
+    (via_customer,) = (await client.get(f"/api/v1/customers/{customer['id']}/payments")).json()
+
+    assert_carries("project_payment", own)
+    assert_carries("customer_payment", via_customer)
+
+
 def test_the_contract_helper_reports_missing_keys():
     with pytest.raises(AssertionError, match="missing keys the frontend reads: \\['name'\\]"):
         assert_carries("project_part", {k: 1 for k in CONTRACT["project_part"] if k != "name"})

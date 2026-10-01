@@ -297,6 +297,23 @@ class ProjectLink(Base):
     created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
+PAYMENT_METHODS = ("cash", "card", "bank_transfer", "check", "other")
+
+
+class ProjectPayment(Base):
+    """One payment received against a project. Once a project has any, its `amount_paid` and
+    `payment_status` are derived from these rows (see services/payments.py)."""
+    __tablename__ = "project_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    received_on: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD — the day the money arrived
+    method: Mapped[str] = mapped_column(String(20), default="other", server_default="other")
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
 class ProjectPart(Base):
     """A non-3D-printed part (bought/off-the-shelf hardware) needed to complete a project's
     assembly, e.g. "3mm magnet" x5. `allocated` is a manual yes/no flag set by the user."""
