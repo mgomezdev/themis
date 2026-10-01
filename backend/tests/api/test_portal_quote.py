@@ -160,3 +160,15 @@ async def test_staff_see_the_flag_and_acceptance_on_the_project(client):
     p = await _project(client, c["id"], visible=True)
     got = (await client.get(f"/api/v1/projects/{p['id']}")).json()
     assert (got["price_visible"], got["quote_accepted_at"]) == (True, None)
+
+
+async def test_the_public_share_page_never_exposes_money_even_when_the_quote_is_visible(client):
+    c = await _customer(client)
+    p = await _project(client, c["id"], price=500, visible=True, amount_paid=200)
+    token = (await client.put(f"/api/v1/projects/{p['id']}/share")).json()["token"]
+
+    public = (await client.get(f"/api/v1/public/projects/{token}")).json()
+
+    forbidden = {"price", "amount_paid", "payment_status", "price_visible", "quote", "quote_accepted_at",
+                 "filament_cost_total", "customer_id"}
+    assert not forbidden & set(public)
