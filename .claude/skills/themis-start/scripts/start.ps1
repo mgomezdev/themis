@@ -5,7 +5,6 @@ $Root = (Resolve-Path "$PSScriptRoot\..\..\..\..").Path
 
 # --- Step 1: Clear port 8001 ---
 Write-Host "Clearing stale processes on :8001..." -ForegroundColor Cyan
-Get-Process python3.13 -ErrorAction SilentlyContinue | Stop-Process -Force -Confirm:$false
 (netstat -ano | Select-String '(:8001).*LISTENING') -replace '.*LISTENING\s+', '' |
     Sort-Object -Unique |
     Where-Object { $_ -match '^\d+$' } |
@@ -14,8 +13,9 @@ Start-Sleep -Milliseconds 400
 
 $still = netstat -ano | Select-String ':8001.*LISTENING'
 if ($still) {
-    Write-Host "  WARNING: :8001 still occupied after kill attempt" -ForegroundColor Yellow
+    Write-Host "  ERROR: :8001 still occupied after kill attempt - not starting a second backend" -ForegroundColor Red
     $still | ForEach-Object { Write-Host "  $_" }
+    exit 1
 }
 
 # --- Step 2: Start backend ---
@@ -27,12 +27,22 @@ if (-not (docker ps --filter name=themis-orca-1 --filter name=concordia-orca-1 -
 $backendCmd = "Set-Location '$Root\backend'; .venv\Scripts\Activate.ps1; `$env:LAMINUS_SIDECAR_URL='http://localhost:5000'; uvicorn app.main:app --reload --port 8001 --host 0.0.0.0"
 Start-Process powershell -ArgumentList "-NoExit", "-Command", $backendCmd
 
-Start-Sleep -Seconds 2
+# Poll the health route (max 30 s) - proves the new backend is serving, not just that something holds the port.
+$backendReady = $false
+for ($i = 0; $i -lt 30; $i++) {
+    Start-Sleep -Seconds 1
+    try {
+        $null = Invoke-WebRequest -Uri "http://localhost:8001/api/v1/health" -TimeoutSec 2 -UseBasicParsing -ErrorAction Stop
+        $backendReady = $true
+        break
+    } catch {}
+}
 
-if (netstat -ano | Select-String ':8001.*LISTENING') {
-    Write-Host "  backend: listening on :8001" -ForegroundColor Green
+if ($backendReady) {
+    Write-Host "  backend: ready on :8001" -ForegroundColor Green
 } else {
-    Write-Host "  backend: not yet listening - may still be starting" -ForegroundColor Yellow
+    Write-Host "  ERROR: backend did not answer on :8001 within 30 s - check the uvicorn window" -ForegroundColor Red
+    exit 1
 }
 
 # --- Step 3: Start frontend ---
