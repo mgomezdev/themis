@@ -173,5 +173,24 @@
     "tags",
     "thumbnail_url",
     "plate_thumbnails"
+  ],
+  "project_payment": [
+    "id",
+    "project_id",
+    "amount",
+    "received_on",
+    "method",
+    "note",
+    "created_at"
+  ],
+  "customer_payment": [
+    "id",
+    "project_id",
+    "amount",
+    "received_on",
+    "method",
+    "note",
+    "created_at",
+    "project_name"
   ]
 }
