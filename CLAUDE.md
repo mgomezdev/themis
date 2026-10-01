@@ -133,10 +133,6 @@ for everything except review.
   base/head SHA, the plan file path, and `docs/agent/backend-review.md` / `docs/agent/frontend-review.md`
   as applicable (see Review guidelines below) — it reads what it needs itself.
 - **Commit**: main session, after addressing whatever the reviewer flags.
-- **Screenshot check (human-in-the-loop)**: for any change with a visible UI effect, before creating the
-  PR, run the app with representative sample data, screenshot every affected screen, and send the
-  screenshots to the user in the session. Create the PR only after the user OKs them, and put the same
-  screenshots in the PR description.
 
 **Enforcement:** a `PreToolUse` hook (`.claude/hooks/gate-pr-review.js`, wired in `.claude/settings.json`)
 blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShell both covered) unless
