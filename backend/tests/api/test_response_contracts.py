@@ -126,6 +126,20 @@ async def test_payments_carry_the_payment_keys(client):
     assert_carries("customer_payment", via_customer)
 
 
+async def test_the_customer_portal_project_and_quote_carry_their_keys(client):
+    customer = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test", "password": "pw1"})).json()
+    project = (await client.post("/api/v1/projects", json={"name": "P", "price": 10, "customer_id": customer["id"]})).json()
+    await client.patch(f"/api/v1/projects/{project['id']}", json={"price_visible": True})
+    await client.post(f"/api/v1/projects/{project['id']}/payments", json={"amount": 4})
+    key = (await client.post("/api/v1/auth/login", json={"email": "a@x.test", "password": "pw1"})).json()["key"]
+
+    (mine,) = (await client.get("/api/v1/customer/projects", headers={"X-Api-Key": key})).json()
+
+    assert_carries("portal_project", mine)
+    assert_carries("portal_quote", mine["quote"])
+    assert_carries("portal_payment", mine["quote"]["payments"][0])
+
+
 def test_the_contract_helper_reports_missing_keys():
     with pytest.raises(AssertionError, match="missing keys the frontend reads: \\['name'\\]"):
         assert_carries("project_part", {k: 1 for k in CONTRACT["project_part"] if k != "name"})

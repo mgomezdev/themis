@@ -65,6 +65,8 @@ export interface Project {
   amount_paid: number | null;
   price: number | null;     // quoted total; outstanding = price - amount_paid
   payment_status: PaymentStatus;
+  price_visible: boolean;           // staff decide when the customer portal shows the quote
+  quote_accepted_at: string | null; // when the customer accepted the visible quote
   stage: ProjectStage;
   customer_id: number | null;
   customer_name: string | null;  // name of the linked customer account, if any
@@ -117,6 +119,7 @@ export interface ProjectCreate {
   amount_paid?: number | null;
   price?: number | null;
   payment_status?: PaymentStatus;
+  price_visible?: boolean;
   customer_id?: number | null;
 }
 

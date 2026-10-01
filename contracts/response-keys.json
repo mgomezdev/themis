@@ -115,7 +115,9 @@
     "estimate_seconds_remaining",
     "actual_filament_grams",
     "actual_seconds",
-    "filament_cost_total"
+    "filament_cost_total",
+    "price_visible",
+    "quote_accepted_at"
   ],
   "project_item": [
     "id",
@@ -192,6 +194,33 @@
     "note",
     "created_at",
     "project_name"
+  ],
+  "portal_project": [
+    "id",
+    "name",
+    "notes",
+    "stage",
+    "due_date",
+    "created_at",
+    "updated_at",
+    "items",
+    "jobs",
+    "jobs_total",
+    "jobs_complete",
+    "quote"
+  ],
+  "portal_quote": [
+    "price",
+    "paid",
+    "balance",
+    "accepted_at",
+    "payments"
+  ],
+  "portal_payment": [
+    "id",
+    "received_on",
+    "amount",
+    "method"
   ],
   "analytics": [
     "range",
