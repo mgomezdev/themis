@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { LoadedFilament } from '../api/printers';
 import type { ApiSpool, ApiFilament } from '../api/spoolman';
-import { parseOrcaProfiles, spoolDisplayName } from '../api/spoolman';
+import { parseOrcaProfiles, slotPatchForSpool } from '../api/spoolman';
 
 export interface SlotSpoolPickerProps {
   slot: LoadedFilament;
@@ -19,6 +19,12 @@ function spoolColor(spool: ApiSpool): string {
 function spoolRowLabel(spool: ApiSpool): string {
   const vendor = spool.filament.vendor?.name;
   return `#${spool.id} ${vendor ? `${vendor} ` : ''}${spool.filament.name} ${spool.filament.material}`;
+}
+
+/** "Shelf B · 412g" — where the spool lives and what's left, so the right one can be found and trusted. */
+function spoolDetail(spool: ApiSpool): string {
+  const parts = [spool.location?.trim() || null, spool.remaining_weight != null ? `${Math.round(spool.remaining_weight)}g left` : null];
+  return parts.filter(Boolean).join(' · ');
 }
 
 export function SlotSpoolPicker({
@@ -65,15 +71,7 @@ export function SlotSpoolPicker({
   }, [spools, query]);
 
   function pickSpool(spool: ApiSpool) {
-    const full = filaments.find(f => f.id === spool.filament.id);
-    const profiles = full && printerPreset ? (parseOrcaProfiles(full)[printerPreset] ?? null) : null;
-    onChange({
-      spoolman_spool_id: String(spool.id),
-      type: spool.filament.material,
-      color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : (slot.color || ''),
-      filament_profile: profiles?.length === 1 ? profiles[0] : (slot.filament_profile ?? null),
-      name: spoolDisplayName(spool),
-    });
+    onChange(slotPatchForSpool(spool, filaments, printerPreset, slot));
     setQuery('');
     setOpen(false);
   }
@@ -106,6 +104,11 @@ export function SlotSpoolPicker({
               <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(selectedSpool), flexShrink: 0 }} />
               <span style={{ flex: 1, fontSize: 13, color: 'var(--text-1)' }}>
                 {spoolRowLabel(selectedSpool)} — {selectedSpool.remaining_weight != null ? `${selectedSpool.remaining_weight}g remaining` : '— remaining'}
+                {selectedSpool.location?.trim() && (
+                  <span data-testid="spool-location" className="muted" style={{ display: 'block', fontSize: 12 }}>
+                    Stored at {selectedSpool.location.trim()}
+                  </span>
+                )}
               </span>
               <button
                 onClick={clearSpool}
@@ -152,7 +155,8 @@ export function SlotSpoolPicker({
                   onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
                   <span style={{ width: 12, height: 12, borderRadius: '50%', background: spoolColor(spool), flexShrink: 0 }} />
-                  <span>{spoolRowLabel(spool)}</span>
+                  <span style={{ flex: 1 }}>{spoolRowLabel(spool)}</span>
+                  <span className="muted" style={{ fontSize: 12 }}>{spoolDetail(spool)}</span>
                 </div>
               ))}
             </div>

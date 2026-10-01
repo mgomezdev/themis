@@ -100,15 +100,16 @@ async def me(request: Request, session: AsyncSession = Depends(get_session)) -> 
     if key is None:
         if await local_admin_allowed(request.client.host if request.client else None, session):
             await session.commit()  # persists the admin row if this created it
-            return {"local": True, "role": "admin", "customer": None}
-        return {"local": False, "role": None, "customer": None}
+            return {"local": True, "role": "admin", "customer": None, "scopes": sorted(SCOPES)}
+        return {"local": False, "role": None, "customer": None, "scopes": []}
+    scopes = sorted(key.scopes or [])   # what this credential may do — lets clients (e.g. the MCP server) adapt
     if key.admin_session:
-        return {"local": False, "role": "admin", "customer": None}
+        return {"local": False, "role": "admin", "customer": None, "scopes": scopes}
     if key.customer_id is None:
-        return {"local": False, "role": "staff", "customer": None}
+        return {"local": False, "role": "staff", "customer": None, "scopes": scopes}
     cust = await session.get(Customer, key.customer_id)
     return {
-        "local": False, "role": "customer",
+        "local": False, "role": "customer", "scopes": scopes,
         "customer": {"id": cust.id, "name": cust.name, "email": cust.email} if cust else None,
     }
 

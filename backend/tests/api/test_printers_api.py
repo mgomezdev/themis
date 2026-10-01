@@ -186,6 +186,26 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, session_fac
         assert job.block_reason
 
 
+async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(client, session_factory, create_job):
+    """jobs.printed_on_printer_id has no FK (v025), so deletion must null it or analytics would point at a dead id."""
+    from app.models import Job
+
+    printer_id = (await client.post("/api/v1/printers", json={
+        "name": "Doomed", "printer_type": "bambu",
+        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+    })).json()["id"]
+    job_id = await create_job(printer_id=printer_id)
+    async with session_factory() as session:
+        job = await session.get(Job, job_id)
+        job.status, job.printed_on_printer_id = "failed", printer_id
+        await session.commit()
+
+    assert (await client.delete(f"/api/v1/printers/{printer_id}")).status_code == 204
+
+    async with session_factory() as session:
+        assert (await session.get(Job, job_id)).printed_on_printer_id is None
+
+
 async def test_switch_active_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",

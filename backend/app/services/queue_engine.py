@@ -1074,7 +1074,8 @@ class QueueEngine:
         result = await session.execute(
             update(Job)
             .where(Job.id == job.id, Job.status == "sliced")
-            .values(status="uploading", assigned_printer_id=printer_id, updated_at=_now())
+            .values(status="uploading", assigned_printer_id=printer_id, printed_on_printer_id=printer_id,
+                    updated_at=_now())
         )
         if result.rowcount == 0:
             return False  # no longer claimable
@@ -1140,6 +1141,7 @@ class QueueEngine:
             if job is None or job.status in ("cancelled", "complete"):
                 return
             job.status = "printing"
+            job.printed_on_printer_id = printer_id
             job.updated_at = _now()
             # The printer has started a physical print: mark it not-ready for new
             # work so it won't auto-claim the next job after this one finishes — the

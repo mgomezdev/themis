@@ -113,6 +113,8 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 `estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
 
+`printed_on_printer_id: int?` (v025, plain integer — no FK; `delete_printer` nulls it) — the printer the job ran on, set when it enters `printing` (and by complete-manually), never cleared; unlike `assigned_printer_id` (nulled on fail/cancel) it lets fleet analytics attribute failures. Analytics falls back to `assigned_printer_id` for pre-v025 rows.
+
 `filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
 Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched
 by any other route. Summed (non-null values only) into `filament_cost_total` on the linked order
@@ -158,7 +160,9 @@ estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-sl
 Managed via `GET/PUT /api/v1/settings/queue`.
 
 `spoolman_config{enabled, url?, api_key?, sync_interval_minutes:int=15, last_sync_at?, last_attempt_at?,
-last_sync_error?, last_sync_error_code?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
+last_sync_error?, last_sync_error_code?, low_stock_default_g?: float, low_stock_overrides?: {filament_id: grams},
+low_stock_alerted?: [spool_id] (v026)}`. The low-stock trio drives `spool.low` alerts (`services/spool_alerts.py`; managed via
+`GET/PUT /api/v1/spoolman/low-stock`; `low_stock_alerted` is service-written state). Managed via `GET/PUT /api/v1/settings/spoolman`,
 `POST /api/v1/settings/spoolman/test`. The last four sync-status fields are written only by
 `spoolman_sync.record_sync()` (called by the manual `POST /api/v1/spoolman/sync-now` and by
 `spoolman_sync.SpoolmanSyncLoop`'s periodic background sync, paced by `sync_interval_minutes`); a

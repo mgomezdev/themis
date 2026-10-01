@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import contractRaw from '../../../contracts/response-keys.json?raw';
 import type { LibraryFile } from '../data/types';
+import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
 import type { FleetPrinter } from './fleet';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
@@ -71,6 +72,13 @@ const LIBRARY_FILE = {
   tags: 1, thumbnail_url: 1, plate_thumbnails: 1,
 } satisfies Record<keyof LibraryFile, 1>;
 
+const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;
+const ANALYTICS_RANGE = { start: 1, end: 1, days: 1 } satisfies Record<keyof AnalyticsRange, 1>;
+const ANALYTICS_TOTALS = {
+  completed: 1, failed: 1, cancelled: 1, success_rate: 1, print_seconds: 1, filament_grams: 1, filament_cost: 1,
+} satisfies Record<keyof AnalyticsStats, 1>;
+const ANALYTICS_PRINTER = { ...ANALYTICS_TOTALS, printer_id: 1, name: 1, utilization_pct: 1 } satisfies Record<keyof AnalyticsPrinter, 1>;
+const ANALYTICS_MATERIAL = { material: 1, grams: 1, jobs: 1 } satisfies Record<keyof AnalyticsMaterial, 1>;
 const PROJECT_PAYMENT = {
   id: 1, project_id: 1, amount: 1, received_on: 1, method: 1, note: 1, created_at: 1,
 } satisfies Record<keyof ProjectPayment, 1>;
@@ -98,6 +106,11 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['portal project', contract.portal_project, keysOf(PORTAL_PROJECT)],
     ['portal quote', contract.portal_quote, keysOf(PORTAL_QUOTE)],
     ['portal payment', contract.portal_payment, keysOf(PORTAL_PAYMENT)],
+    ['analytics', contract.analytics, keysOf(ANALYTICS)],
+    ['analytics range', contract.analytics_range, keysOf(ANALYTICS_RANGE)],
+    ['analytics totals', contract.analytics_totals, keysOf(ANALYTICS_TOTALS)],
+    ['analytics printer', contract.analytics_printer, keysOf(ANALYTICS_PRINTER)],
+    ['analytics material', contract.analytics_material, keysOf(ANALYTICS_MATERIAL)],
     ['project payment', contract.project_payment, keysOf(PROJECT_PAYMENT)],
     ['customer payment', contract.customer_payment, keysOf(CUSTOMER_PAYMENT)],
   ];
@@ -108,8 +121,10 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
 
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
-      'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file', 'project_payment', 'customer_payment',
-      'portal_project', 'portal_quote', 'portal_payment']);
+      'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
+      'project_payment', 'customer_payment',
+      'portal_project', 'portal_quote', 'portal_payment',
+      'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });
