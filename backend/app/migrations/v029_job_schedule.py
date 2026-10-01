@@ -2,7 +2,7 @@
 from __future__ import annotations
 from sqlalchemy import text
 
-version = 28
+version = 29
 name = "job_schedule"
 
 

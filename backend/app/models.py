@@ -26,6 +26,8 @@ class Printer(Base):
     quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     lifetime_job_count: Mapped[int] = mapped_column(Integer, default=0)
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    # Per-printer override of the shop-wide machine rate ($ per hour of print time); null = use the shop rate.
+    machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class UploadedFile(Base):
@@ -167,6 +169,16 @@ class QueueConfig(Base):
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class CostConfig(Base):
+    """Shop-wide cost model (singleton id=1): hourly machine and labour rates, applied live to every project's
+    expenses (changing a rate re-prices past jobs — nothing is snapshotted at print time)."""
+    __tablename__ = "cost_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_rate_per_hour: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    labour_rate_per_hour: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
 
 class SpoolmanConfig(Base):
@@ -333,6 +345,18 @@ class ProjectPayment(Base):
     created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
+class ProjectLabor(Base):
+    """Time spent on a project that isn't machine time (setup, post-processing, assembly, packing)."""
+    __tablename__ = "project_labor"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    logged_on: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
 class ProjectPart(Base):
     """A non-3D-printed part (bought/off-the-shelf hardware) needed to complete a project's
     assembly, e.g. "3mm magnet" x5. `allocated` is a manual yes/no flag set by the user."""
@@ -345,6 +369,8 @@ class ProjectPart(Base):
     allocated: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String(32), default="")
+    # Cost of one unit (bought-in hardware); the project's parts expense is quantity × unit_cost.
+    unit_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class JobItemFailure(Base):

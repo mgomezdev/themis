@@ -7,7 +7,7 @@ import time as _time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -46,6 +46,7 @@ class PrinterCreate(BaseModel):
     no_snapshots_while_idle: bool = False
     bed_x_mm: float = 256.0
     bed_y_mm: float = 256.0
+    machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
 class PrinterUpdate(BaseModel):
@@ -60,6 +61,7 @@ class PrinterUpdate(BaseModel):
     no_snapshots_while_idle: bool | None = None
     bed_x_mm: float | None = None
     bed_y_mm: float | None = None
+    machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None
 
@@ -116,6 +118,7 @@ def _to_dict(p: Printer) -> dict:
         "bed_y_mm": p.bed_y_mm,
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
+        "machine_rate_per_hour": p.machine_rate_per_hour,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -175,6 +178,7 @@ async def create_printer(
         no_snapshots_while_idle=body.no_snapshots_while_idle,
         bed_x_mm=body.bed_x_mm,
         bed_y_mm=body.bed_y_mm,
+        machine_rate_per_hour=body.machine_rate_per_hour,
     )
     session.add(printer)
     await session.commit()
@@ -399,6 +403,8 @@ async def update_printer(
         printer.bed_y_mm = body.bed_y_mm
     if "quiet_start" in body.model_fields_set or "quiet_end" in body.model_fields_set:
         printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
+    if "machine_rate_per_hour" in body.model_fields_set:
+        printer.machine_rate_per_hour = body.machine_rate_per_hour
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

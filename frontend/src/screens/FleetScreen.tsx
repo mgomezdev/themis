@@ -94,8 +94,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
   const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
   const [quietEnd, setQuietEnd] = useState('');
+  const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
@@ -116,6 +118,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
         setQuietStart(api.quiet_start ?? '');
         setQuietEnd(api.quiet_end ?? '');
+        setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
+        setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -145,6 +149,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         connection_config: draftConn,
         current_orca_printer_profile: machinePreset || null,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
+        machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
         // Both or neither: a half-filled window is treated as none.
         quiet_start: quietStart && quietEnd ? quietStart : null,
         quiet_end: quietStart && quietEnd ? quietEnd : null,
@@ -269,6 +274,16 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           </div>
 
           <div className="col gap-2">
+            <div className="tag-key">Machine cost</div>
+            <label className="label" htmlFor="machine-rate">Machine rate ($ per hour of print time)</label>
+            <input id="machine-rate" className="input" type="number" min="0" step="0.01" style={{ maxWidth: 160 }}
+                   placeholder="Shop rate" value={machineRate} onChange={e => setMachineRate(e.target.value)} />
+            <div className="tiny muted">
+              Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
+            </div>
+          </div>
+
+          <div className="col gap-2">
             <div className="tag-key">Quiet hours</div>
             <div className="row gap-2" style={{ alignItems: 'center' }}>
               <input type="time" className="input" aria-label="Quiet hours start" style={{ maxWidth: 130 }}
@@ -334,7 +349,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           )}
           <div className="row gap-2">
             <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" onClick={save} disabled={saving}>
+            <button className="btn primary" onClick={save} disabled={saving || !loaded}>
               {Icons.check} {saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>

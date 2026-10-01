@@ -178,6 +178,26 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     expect(api.to('POST', '/api/v1/projects/7/parts').map(c => c.body)).toEqual([{ name: '3mm magnet', quantity: 1, allocated: false }]);
   });
 
+  it('sends a part\'s unit cost only when one was entered', async () => {
+    const api = open('/projects/new');
+    await userEvent.type(screen.getByLabelText(/Project name/), 'Cabinet');
+    await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), 'magnet');
+    await userEvent.type(screen.getByLabelText('Unit cost'), '0.4');
+    await userEvent.click(screen.getByRole('button', { name: '+ Add part' }));
+    await userEvent.type(screen.getAllByPlaceholderText('e.g. 3mm magnet')[1], 'screw');         // no cost entered
+    await openPicker();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+
+    await screen.findByText('2 jobs added to queue');
+    expect(api.to('POST', '/api/v1/projects/7/parts').map(c => c.body)).toEqual([
+      { name: 'magnet', quantity: 1, allocated: false, unit_cost: 0.4 },
+      { name: 'screw', quantity: 1, allocated: false },
+    ]);
+  });
+
   it('does not send a customer name for an internal project, even if one was typed then switched away', async () => {
     const api = open('/projects/new');
     await userEvent.type(screen.getByLabelText(/Project name/), 'Internal');

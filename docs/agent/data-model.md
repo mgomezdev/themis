@@ -190,6 +190,18 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
 `POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
 
+### Job costing (v028): cost_config, project_labor, printers.machine_rate_per_hour, project_parts.unit_cost
+A project's real cost = **filament** (manually entered `jobs.filament_cost`) + **machine** (each *completed* job's
+`actual_seconds` × the rate of the printer it ran on: `printers.machine_rate_per_hour` if set, else the shop rate) +
+**labour** (`project_labor.minutes` × shop labour rate; rows: `project_id` CASCADE, `minutes`, `logged_on`, `note?`)
++ **parts** (`project_parts.quantity × unit_cost`, parts with no cost add nothing). `cost_config` is a singleton
+(`machine_rate_per_hour`, `labour_rate_per_hour`, default 0) managed at `GET/PUT /api/v1/settings/costs`. Rates are
+applied **live**, never snapshotted: changing one re-prices past jobs. `services/job_costs.py` computes it
+(`compute`, `costs_by_project`); `GET /projects/{id}` carries `costs {filament, machine, labour, parts, machine_hours,
+labour_hours, total}`; customer financial `expenses`/`profit` use the total and each window adds `expense_breakdown`.
+Labour log: `/api/v1/projects/{id}/labor` (`routes/labor.py`, `projects:read`/`write`). Machine time uses the slicer's
+`actual_seconds` (not measured) and the printer in `assigned_printer_id`.
+
 ### project_payments (v024)
 `id, project_id FK → projects (CASCADE), amount: float (>0), received_on: "YYYY-MM-DD" (day the money
 arrived; not in the future), method: cash|card|bank_transfer|check|other, note?, created_at`. CRUD at
