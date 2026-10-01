@@ -2,7 +2,7 @@
 from __future__ import annotations
 from sqlalchemy import text
 
-version = 25
+version = 26
 name = "spool_low_stock"
 
 

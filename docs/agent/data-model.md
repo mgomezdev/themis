@@ -113,6 +113,8 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 `estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
 
+`printed_on_printer_id: int?` (v025, plain integer — no FK; `delete_printer` nulls it) — the printer the job ran on, set when it enters `printing` (and by complete-manually), never cleared; unlike `assigned_printer_id` (nulled on fail/cancel) it lets fleet analytics attribute failures. Analytics falls back to `assigned_printer_id` for pre-v025 rows.
+
 `filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
 Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched
 by any other route. Summed (non-null values only) into `filament_cost_total` on the linked order
@@ -159,7 +161,7 @@ Managed via `GET/PUT /api/v1/settings/queue`.
 
 `spoolman_config{enabled, url?, api_key?, sync_interval_minutes:int=15, last_sync_at?, last_attempt_at?,
 last_sync_error?, last_sync_error_code?, low_stock_default_g?: float, low_stock_overrides?: {filament_id: grams},
-low_stock_alerted?: [spool_id] (v025)}`. The low-stock trio drives `spool.low` alerts (`services/spool_alerts.py`; managed via
+low_stock_alerted?: [spool_id] (v026)}`. The low-stock trio drives `spool.low` alerts (`services/spool_alerts.py`; managed via
 `GET/PUT /api/v1/spoolman/low-stock`; `low_stock_alerted` is service-written state). Managed via `GET/PUT /api/v1/settings/spoolman`,
 `POST /api/v1/settings/spoolman/test`. The last four sync-status fields are written only by
 `spoolman_sync.record_sync()` (called by the manual `POST /api/v1/spoolman/sync-now` and by
@@ -186,6 +188,16 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
 `POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
 
+### project_payments (v024)
+`id, project_id FK → projects (CASCADE), amount: float (>0), received_on: "YYYY-MM-DD" (day the money
+arrived; not in the future), method: cash|card|bank_transfer|check|other, note?, created_at`. CRUD at
+`/api/v1/projects/{id}/payments` (`routes/payments.py`, scopes `projects:read`/`projects:write`); cross-project
+history at `GET /api/v1/customers/{id}/payments` (newest first, adds `project_name`). v024 back-fills one
+"opening balance" payment per project with `amount_paid > 0`, dated the project's creation day. Customer
+financial **revenue is cash-basis** — payments count in the windows containing `received_on`; projects with no
+payment rows fall back to their creation date; expenses/billed/outstanding/`project_count` stay bucketed by
+project creation date.
+
 ### projects
 `id, name, customer:str="", order_type:str="internal"` (`"customer"`|`"internal"` — same vocabulary as
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
@@ -201,8 +213,13 @@ price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `st
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
 - `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
   directly via the Project Builder), independent of whether it's linked to an `orders` row.
-- `amount_paid`/`payment_status`: manually-entered customer payment tracking, independent of the linked
-  order's own copy (a project isn't required to have one) — for future profit/loss reporting.
+- `amount_paid`/`payment_status`: **derived from `project_payments`** once a project has any payment row
+  (`services/payments.py`: unpaid = nothing received; paid = received ≥ `price`; else partial; no price →
+  partial). `PATCH` that *changes* either field → 409 while payments exist (echoing current values is fine); with no payment rows they stay manually
+  settable (legacy API clients such as Ordinus, and "marked paid, no amount"). Adding the first payment
+  adopts a hand-entered `amount_paid` as an opening payment; creating a project with `amount_paid>0` records
+  it as one too; a `price` change re-derives the status; deleting the last payment resets to unpaid/null.
+  Independent of the linked order's own copy.
   `filament_cost_total` (derived, not stored — `projects.py::_project_progress`) sums `jobs.filament_cost`
   across the project's jobs, alongside the existing `actual_filament_grams`/`actual_seconds` aggregates.
 - `price` (v023): quoted total. Outstanding balance = `max(price - amount_paid, 0)` unless

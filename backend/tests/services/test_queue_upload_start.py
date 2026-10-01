@@ -119,6 +119,7 @@ async def test_successful_start_uploads_the_file_starts_with_plate_and_tray_and_
     assert opts.ams_mapping == [3]
     job, printer, gcode_rows = await _state(session_factory, job_id)
     assert job.status == "printing"
+    assert job.printed_on_printer_id == 1  # survives later failure/cancel, unlike assigned_printer_id
     assert printer.awaiting_plate_clear is True
     assert mgr.is_awaiting_plate_clear(1) is True
     assert len(gcode_rows) == 1 and gcode.exists()  # kept until the print ends

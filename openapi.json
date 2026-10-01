@@ -547,6 +547,56 @@
         }
       }
     },
+    "/api/v1/customers/{customer_id}/payments": {
+      "get": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Payment history across a customer's projects (newest first)",
+        "operationId": "customer_payments_api_v1_customers__customer_id__payments_get",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Customer Payments Api V1 Customers  Customer Id  Payments Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Customer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customer/projects": {
       "get": {
         "tags": [
@@ -2153,6 +2203,73 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/analytics": {
+      "get": {
+        "tags": [
+          "fleet"
+        ],
+        "summary": "Fleet analytics over a date range",
+        "description": "Success rate, print time, filament use and cost \u2014 fleet-wide, per printer and per material \u2014 for jobs\nthat reached a terminal state in the range. Definitions: `app/services/fleet_analytics.py`.",
+        "operationId": "fleet_analytics_summary_api_v1_fleet_analytics_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day (UTC), inclusive. Default: 29 days before `end`.",
+              "title": "Start"
+            },
+            "description": "First day (UTC), inclusive. Default: 29 days before `end`."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day (UTC), inclusive. Default: today (UTC).",
+              "title": "End"
+            },
+            "description": "Last day (UTC), inclusive. Default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Fleet Analytics Summary Api V1 Fleet Analytics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Inverted or over-long date range"
           }
         }
       }
@@ -5406,6 +5523,226 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/payments": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "List project payments (newest first)",
+        "operationId": "list_payments_api_v1_projects__project_id__payments_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Payments Api V1 Projects  Project Id  Payments Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Record a payment",
+        "description": "Adds the payment and re-derives the project's amount paid and payment status.",
+        "operationId": "add_payment_api_v1_projects__project_id__payments_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Payment Api V1 Projects  Project Id  Payments Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Invalid payment"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/payments/{payment_id}": {
+      "patch": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Edit a payment",
+        "operationId": "update_payment_api_v1_projects__project_id__payments__payment_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Payment Api V1 Projects  Project Id  Payments  Payment Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or payment not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Delete a payment",
+        "description": "Removes the payment and re-derives the project's totals. Deleting the last payment returns the\nproject to unpaid / no amount (the legacy manual fields are then editable again).",
+        "operationId": "delete_payment_api_v1_projects__project_id__payments__payment_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Payment Api V1 Projects  Project Id  Payments  Payment Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or payment not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/public/projects/{token}": {
       "get": {
         "tags": [
@@ -7719,6 +8056,118 @@
           "password"
         ],
         "title": "PasswordBody"
+      },
+      "PaymentCreate": {
+        "properties": {
+          "amount": {
+            "type": "number",
+            "maximum": 1000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          },
+          "received_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received On"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "check",
+              "other"
+            ],
+            "title": "Method",
+            "default": "other"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount"
+        ],
+        "title": "PaymentCreate"
+      },
+      "PaymentPatch": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "received_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received On"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "check",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "PaymentPatch"
       },
       "PositionUpdate": {
         "properties": {

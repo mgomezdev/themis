@@ -37,6 +37,7 @@ function open(over: Record<string, unknown> = {}, initial: object = project()) {
   const api = stubFetch({
     'GET /api/v1/projects/42': () => state.project,
     'GET /api/v1/projects/42/jobs': [],
+    'GET /api/v1/projects/42/payments': [],
     'GET /api/v1/printers': PRINTERS,
     'GET /api/v1/printers/1/profiles': { print_profiles: ['0.20mm Standard'], filament_profiles: [] },
     'GET /api/v1/printers/2/profiles': { print_profiles: ['0.20mm Standard'], filament_profiles: [] },
@@ -220,7 +221,7 @@ describe('ProjectDetailScreen - customer account', () => {
     { id: 3, name: 'Vela Robotics', email: 'ops@vela.test', enabled: true, created_at: '' },
     { id: 4, name: 'Ada', email: 'ada@x.test', enabled: true, created_at: '' },
   ];
-  const account = () => screen.getByRole('combobox') as HTMLSelectElement;
+  const account = () => screen.getByLabelText('Account') as HTMLSelectElement;
 
   it('does not load customers until the account picker is focused, and only once', async () => {
     const { api } = open({ 'GET /api/v1/customers': CUSTOMERS });

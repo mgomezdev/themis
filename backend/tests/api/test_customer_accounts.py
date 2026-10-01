@@ -38,7 +38,8 @@ async def test_local_client_is_admin_without_key(client: AsyncClient, monkeypatc
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
         assert (await anon.get("/api/v1/projects")).status_code == 200
         me = (await anon.get("/api/v1/auth/me")).json()
-    assert me == {"local": True, "role": "admin", "customer": None}
+    from app.auth import SCOPES
+    assert me == {"local": True, "role": "admin", "customer": None, "scopes": sorted(SCOPES)}
 
 
 async def test_customer_key_wins_over_local_mode(client: AsyncClient, monkeypatch):
@@ -83,6 +84,32 @@ async def test_customer_session_cannot_use_staff_routes_and_is_hidden_from_key_l
     assert me["role"] == "customer" and me["customer"]["email"] == "a@example.com"
     names = [k["name"] for k in (await client.get("/api/v1/api-keys")).json()]
     assert not any(n.startswith("Customer session") for n in names)
+
+
+async def test_me_reports_the_scopes_of_the_credential(client: AsyncClient, session_factory):
+    from app.auth import SCOPES
+    from app.models import ApiKey
+    from app.services.api_key_service import generate_key, hash_key
+
+    raw, prefix = generate_key()
+    async with session_factory() as s:
+        s.add(ApiKey(name="limited", key_prefix=prefix, key_hash=hash_key(raw), enabled=True,
+                     scopes=["queue:read", "fleet:read"], created_at="2026-01-01T00:00:00"))
+        await s.commit()
+
+    limited = (await client.get("/api/v1/auth/me", headers={"X-Api-Key": raw})).json()
+    assert (limited["role"], limited["scopes"]) == ("staff", ["fleet:read", "queue:read"])      # sorted, exactly what the key has
+
+    full = (await client.get("/api/v1/auth/me")).json()                                           # conftest's full-scope key
+    assert full["scopes"] == sorted(SCOPES)
+
+    await _customer(client)
+    cust = (await client.get("/api/v1/auth/me", headers=await _login(client))).json()
+    assert cust["role"] == "customer" and cust["scopes"] == ["customer"]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon_client:
+        anon = (await anon_client.get("/api/v1/auth/me", headers={"X-Api-Key": "thm_" + "x" * 30})).json()
+    assert (anon["role"], anon["scopes"]) == (None, [])
 
 
 async def test_staff_key_cannot_use_customer_portal(client: AsyncClient):

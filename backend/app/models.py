@@ -119,6 +119,10 @@ class Job(Base):
     estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Manually-entered cost of the filament used for this job, for profit/loss reporting.
     filament_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The printer this job actually ran on. Unlike assigned_printer_id it survives failure/cancel, so fleet
+    # analytics can attribute outcomes to a printer.
+    # Plain integer (no FK — see v025); delete_printer nulls it.
+    printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -300,6 +304,23 @@ class ProjectLink(Base):
     url: Mapped[str] = mapped_column(String(2048))
     label: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
+PAYMENT_METHODS = ("cash", "card", "bank_transfer", "check", "other")
+
+
+class ProjectPayment(Base):
+    """One payment received against a project. Once a project has any, its `amount_paid` and
+    `payment_status` are derived from these rows (see services/payments.py)."""
+    __tablename__ = "project_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    received_on: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD — the day the money arrived
+    method: Mapped[str] = mapped_column(String(20), default="other", server_default="other")
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
