@@ -17,6 +17,7 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    DiscoveredPrinter,
     PrinterCapabilities,
     PrinterFile,
     StartPrintOptions,
@@ -173,6 +174,28 @@ class ElegooCentauriClient(AbstractPrinterClient):
     # ------------------------------------------------------------------
     # ABC metadata
     # ------------------------------------------------------------------
+
+    @classmethod
+    async def discover_host(cls, net, ip: str):
+        """SDCP discovery: the datagram `M99999` to UDP 3000 is answered with a JSON description (documented in the
+        SDCP spec; usually sent as a broadcast, here unicast to each address so it works across VLANs)."""
+        reply = await net.udp_request(ip, 3000, b"M99999", 1.0)
+        return cls.parse_discovery_reply(ip, reply) if reply else None
+
+    @staticmethod
+    def parse_discovery_reply(ip: str, datagram: bytes):
+        try:
+            d = json.loads(datagram.decode("utf-8", "replace"))["Data"]
+        except Exception:
+            return None
+        if not isinstance(d, dict) or "MainboardID" not in d:
+            return None
+        found_ip = d.get("MainboardIP") or ip
+        return DiscoveredPrinter(
+            printer_type="elegoo_centauri", ip=ip, model=d.get("MachineName"), name=d.get("Name"),
+            serial=d.get("MainboardID"), connection_config={"ip_address": ip, "port": DEFAULT_PORT},
+            note=None if found_ip == ip else f"Printer reports its own address as {found_ip}",
+        )
 
     @classmethod
     def connection_fields(cls) -> list[ConnectionField]:

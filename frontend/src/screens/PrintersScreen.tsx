@@ -14,11 +14,13 @@ import {
   type ConnectionField,
   type LoadedFilament,
   type MachinePreset,
+  type DiscoveredPrinter,
 } from '../api/printers';
 import { MachinePicker } from '../components/MachinePicker';
 import { getPrinterProfiles } from '../api/queue';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { DiscoverPrinters } from '../components/DiscoverPrinters';
 
 // ---------------------------------------------------------------------------
 // Constants + small components
@@ -266,6 +268,20 @@ export function PrinterAddForm({
     }
   }
 
+  /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. */
+  function applyDiscovered(p: DiscoveredPrinter) {
+    const type = types.find(t => t.printer_type === p.printer_type);
+    if (!type) return;
+    setData({
+      printerType: type,
+      nickname: data.nickname || p.name || p.model || '',
+      connectionConfig: Object.fromEntries(Object.entries(p.connection_config).map(([k, v]) => [k, String(v)])),
+    });
+    setConnStatus('idle');
+    setConnError(null);
+    setStep(2);
+  }
+
   async function handleFinish() {
     if (!data.printerType) return;
     setFinishing(true);
@@ -330,6 +346,7 @@ export function PrinterAddForm({
         {/* Step 1: Printer type */}
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
+            <DiscoverPrinters onPick={applyDiscovered} />
             <SectionHeader title="Select printer type" sub="Choose the vendor for this printer." />
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
               {types.map(t => {

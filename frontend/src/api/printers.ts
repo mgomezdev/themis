@@ -245,3 +245,31 @@ export function reconnectPrinter(id: string): Promise<void> {
 export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> {
   return request(`${BASE}/${id}/plate-cleared`, { method: 'POST' });
 }
+
+export interface DiscoveredPrinter {
+  printer_type: string;
+  display_name: string;
+  ip: string;
+  model: string | null;
+  name: string | null;
+  serial: string | null;
+  connection_config: Record<string, string | number>;
+  note: string | null;
+  already_added: boolean;
+}
+
+export interface DiscoveryResult {
+  ranges: string[];
+  scanned: number;
+  truncated: boolean;
+  found: DiscoveredPrinter[];
+}
+
+/** Sweep the given IP ranges (empty = the server's own /24) for printers answering a vendor's discovery signature. */
+export function discoverPrinters(ranges: string[]): Promise<DiscoveryResult> {
+  return request(`${BASE}/discover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ranges }),
+  });
+}

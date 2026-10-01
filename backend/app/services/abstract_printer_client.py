@@ -56,6 +56,18 @@ class FileTooLargeError(Exception):
 
 
 @dataclass
+class DiscoveredPrinter:
+    """A printer found on the network, ready to pre-fill the add form (secrets such as access codes stay blank)."""
+    printer_type: str
+    ip: str
+    model: str | None = None
+    name: str | None = None
+    serial: str | None = None
+    connection_config: dict = field(default_factory=dict)
+    note: str | None = None                  # e.g. "Requires an API key"
+
+
+@dataclass
 class PrinterFile:
     """One entry in a printer's storage. `id` is what the other file operations (print/delete/download) take
     back — a path in the vendor's own addressing — while `name` is for display."""
@@ -186,6 +198,19 @@ class AbstractPrinterClient(ABC):
     @property
     def is_printing(self) -> bool:
         return False
+
+    # --- Network discovery (classmethods; BIZ-153) ---
+
+    @classmethod
+    async def discover_host(cls, net, ip: str) -> DiscoveredPrinter | None:
+        """Probe ONE address for this vendor's printer using its documented discovery signature. `net` is a
+        `discovery_net.Network`. Default: this vendor can't be discovered."""
+        return None
+
+    @classmethod
+    def parse_announcement(cls, ip: str, datagram: bytes) -> DiscoveredPrinter | None:
+        """Parse a passively heard multicast announcement (same-subnet discovery). Default: none."""
+        return None
 
     # --- Connection field descriptor (classmethod) ---
 

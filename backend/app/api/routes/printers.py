@@ -325,6 +325,62 @@ class TestConnectionRequest(BaseModel):
     connection_config: dict
 
 
+class DiscoverRequest(BaseModel):
+    ranges: list[str] = Field(default_factory=list, max_length=8)   # CIDR / single IP; empty = this host's /24
+
+
+_discovery_lock = asyncio.Lock()
+
+
+def _discovery_network():
+    """Seam for tests: the network discovery runs over."""
+    from ...services.discovery_net import RealNetwork
+    return RealNetwork()
+
+
+@router.post(
+    "/discover",
+    summary="Scan the network for printers",
+    responses={422: {"description": "Malformed, oversized or non-private range"}},
+    dependencies=[Depends(require_scope("printers:write"))],
+)
+async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    """Sweep `ranges` (e.g. `192.168.7.0/24` — printers on another VLAN need their range given explicitly) and list
+    what answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers
+    already added (same IP) are flagged. Secrets (access codes, API keys) are never discovered."""
+    from ...services import discovery
+    ranges = [r for r in body.ranges if r.strip()] or discovery.local_ranges()
+    if not ranges:
+        raise HTTPException(422, "Could not work out this host's network; pass a range such as 192.168.1.0/24")
+    if _discovery_lock.locked():
+        raise HTTPException(409, "A network scan is already running")       # each scan holds hundreds of sockets
+    net = _discovery_network()
+    try:
+        async with _discovery_lock:
+            result = await discovery.scan(net, ranges, REGISTRY)
+    except discovery.ScanRangeError as e:
+        raise HTTPException(422, str(e))
+    finally:
+        close = getattr(net, "aclose", None)
+        if close is not None:
+            await close()
+    existing: set[str] = set()
+    for p in (await session.execute(select(Printer))).scalars().all():
+        cfg = p.connection_config or {}
+        for key in ("ip_address", "host"):
+            if cfg.get(key):
+                existing.add(str(cfg[key]).strip())
+    names = {t["printer_type"]: t["display_name"] for t in get_printer_types_for_ui()}
+    return {
+        "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
+        "found": [{
+            "printer_type": d.printer_type, "display_name": names.get(d.printer_type, d.printer_type),
+            "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
+            "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
+        } for d in result.found],
+    }
+
+
 _TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
 
 

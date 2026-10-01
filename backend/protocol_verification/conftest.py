@@ -40,6 +40,21 @@ def sacrificial_name() -> str:
 SACRIFICIAL_BODY = b"; themis protocol verification - safe to delete\nG28\n"
 
 
+@pytest.fixture
+def net():
+    from app.services.discovery_net import RealNetwork
+    return RealNetwork()
+
+
+@pytest.fixture(scope="session")
+def discovery_cfg():
+    rng = _env("THEMIS_VERIFY_DISCOVERY_RANGE")
+    if not rng:
+        pytest.skip("set THEMIS_VERIFY_DISCOVERY_RANGE (e.g. 192.168.7.0/24) plus the per-vendor THEMIS_VERIFY_*_HOST/URL "
+                    "of printers inside it")
+    return {"range": rng}
+
+
 @pytest.fixture(scope="session")
 def bambu_cfg():
     host, code = _env("THEMIS_VERIFY_BAMBU_HOST"), _env("THEMIS_VERIFY_BAMBU_ACCESS_CODE")

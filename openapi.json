@@ -1393,6 +1393,43 @@
         }
       }
     },
+    "/api/v1/printers/discover": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Scan the network for printers",
+        "description": "Sweep `ranges` (e.g. `192.168.7.0/24` \u2014 printers on another VLAN need their range given explicitly) and list\nwhat answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers\nalready added (same IP) are flagged. Secrets (access codes, API keys) are never discovered.",
+        "operationId": "discover_printers_api_v1_printers_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Discover Printers Api V1 Printers Discover Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed, oversized or non-private range"
+          }
+        }
+      }
+    },
     "/api/v1/printers/test-connection": {
       "post": {
         "tags": [
@@ -7999,6 +8036,20 @@
         },
         "type": "object",
         "title": "DiscordChannelConfig"
+      },
+      "DiscoverRequest": {
+        "properties": {
+          "ranges": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Ranges"
+          }
+        },
+        "type": "object",
+        "title": "DiscoverRequest"
       },
       "DraftCreate": {
         "properties": {

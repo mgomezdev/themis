@@ -16,6 +16,7 @@ import paho.mqtt.client as mqtt
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    DiscoveredPrinter,
     PrinterCapabilities,
     FileTooLargeError,
     PrinterFile,
@@ -26,6 +27,52 @@ logger = logging.getLogger(__name__)
 
 MQTT_PORT = 8883
 FTPS_PORT = 990  # Bambu LAN file transfer is implicit FTPS
+
+
+# SSDP (OpenBambuAPI "ssdp"): printers announce `NOTIFY * HTTP/1.1` to 239.255.255.250 on UDP 1990 (2021 on newer
+# firmware) and answer an `M-SEARCH` for this search target. Headers carry the serial (USN), model code, name.
+SSDP_PORTS = (1990, 2021)
+BAMBU_SSDP_ST = "urn:bambulab-com:device:3dprinter:1"
+BAMBU_MSEARCH = (
+    "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n"
+    f"ST: {BAMBU_SSDP_ST}\r\n\r\n"
+).encode()
+BAMBU_MODELS = {                                  # DevModel.bambu.com → product name
+    "BL-P001": "X1 / X1 Carbon", "BL-P002": "X1E", "C11": "P1P", "C12": "P1S",
+    "N1": "A1 mini", "N2S": "A1", "O1D": "H2D",
+}
+
+
+def parse_ssdp_headers(datagram: bytes) -> dict[str, str]:
+    """Header name (lower-cased) → value of an SSDP NOTIFY / M-SEARCH response; {} if it isn't one."""
+    try:
+        text = datagram.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    lines = text.replace("\r", "").split("\n")
+    if not lines or not (lines[0].startswith("NOTIFY") or lines[0].startswith("HTTP/1.1 200")):
+        return {}
+    out: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def bambu_from_ssdp(ip: str, datagram: bytes) -> DiscoveredPrinter | None:
+    h = parse_ssdp_headers(datagram)
+    if h.get("nt", h.get("st", "")) != BAMBU_SSDP_ST and "devmodel.bambu.com" not in h:
+        return None
+    code = h.get("devmodel.bambu.com")
+    serial = h.get("usn") or None
+    # The address is the datagram's SENDER, never its `Location:` header — any LAN host can forge that header and
+    # would otherwise steer the add-printer prefill (and the access code the user types next) to an attacker.
+    return DiscoveredPrinter(
+        printer_type="bambu", ip=ip, model=BAMBU_MODELS.get(code or "", code),
+        name=h.get("devname.bambu.com"), serial=serial,
+        connection_config={"ip_address": ip, "serial_number": serial or ""},
+    )
 
 
 # Directories of the printer's SD card that hold printable files (OpenBambuAPI ftp docs: sliced projects are
@@ -124,6 +171,25 @@ class PrinterState:
 
 class BambuMQTTClient(AbstractPrinterClient):
     printer_type: ClassVar[str] = "bambu"
+
+    @classmethod
+    async def discover_host(cls, net, ip: str):
+        """A Bambu printer in LAN mode exposes MQTT (8883) and FTPS (990). Both open is the signature; a unicast
+        SSDP M-SEARCH (works across VLANs, unlike multicast) adds serial / model / name when the printer answers."""
+        import asyncio
+        mqtt_open, ftps_open = await asyncio.gather(net.tcp_open(ip, MQTT_PORT, 1.0), net.tcp_open(ip, FTPS_PORT, 1.0))
+        if not (mqtt_open and ftps_open):
+            return None
+        reply = await net.udp_request(ip, SSDP_PORTS[0], BAMBU_MSEARCH, 1.0)
+        found = bambu_from_ssdp(ip, reply) if reply else None
+        if found is not None:
+            return found
+        return DiscoveredPrinter(printer_type="bambu", ip=ip, connection_config={"ip_address": ip, "serial_number": ""},
+                                 note="Serial number not announced — read it from the printer's screen")
+
+    @classmethod
+    def parse_announcement(cls, ip: str, datagram: bytes):
+        return bambu_from_ssdp(ip, datagram)
 
     def orca_export_args(self, file_base: str) -> list[str]:
         # Bambu printers ingest the sliced .gcode.3mf (not raw gcode); name it

@@ -18,6 +18,9 @@ THEMIS_VERIFY_BAMBU_HOST=192.168.7.20 THEMIS_VERIFY_BAMBU_ACCESS_CODE=12345678 \
 THEMIS_VERIFY_MOONRAKER_URL=http://192.168.7.30:7125 [THEMIS_VERIFY_MOONRAKER_API_KEY=...] \
     pytest protocol_verification -m real_protocol -v -s
 
+# Discovery: a range containing the printers above (also needs the per-vendor host vars)
+THEMIS_VERIFY_DISCOVERY_RANGE=192.168.7.0/24 THEMIS_VERIFY_BAMBU_HOST=... pytest protocol_verification/test_discovery.py -v -s
+
 # Elegoo Centauri (SDCP websocket, port 3030)
 THEMIS_VERIFY_ELEGOO_HOST=192.168.7.40 pytest protocol_verification -m real_protocol -v -s
 ```
@@ -54,4 +57,5 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 |---|---|
 | `test_bambu_files.py` | implicit FTPS on :990 with `bblp` + access code and `PROT P`; `LIST` lines parse as `ls -l`; listed sizes equal `SIZE`; `/cache` presence; download = listed size and is a zip; (write) STOR → listed → DELE round trip |
 | `test_moonraker_files.py` | `/server/info` reachable; `/server/files/directory?extended=true` shape (`dirs[].dirname`, `files[].filename/size/modified`, metadata keys & units); client listing agrees with the raw API; download = listed size; (write) upload → listed → delete |
+| `test_discovery.py` | Bambu: MQTT 8883 + FTPS 990 open; unicast SSDP `M-SEARCH` on UDP 1990 answers with `USN`/`DevModel.bambu.com`/`DevName.bambu.com`; multicast NOTIFY parses. Elegoo: unicast `M99999` on UDP 3000 → SDCP JSON (`MainboardID`, `MachineName`, `Name`, `MainboardIP`). Moonraker: `/server/info` signature (200, or 401/403 when a key is required). Whole sweep of `THEMIS_VERIFY_DISCOVERY_RANGE` finds every configured printer |
 | `test_elegoo_files.py` | SDCP `GET_FILE_LIST` response shape for `/local/` (entry keys, how directories are marked, name format); client listing agrees; ids round-trip into `start_print`'s `/local/` prefix rule |
