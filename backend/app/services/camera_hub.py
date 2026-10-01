@@ -23,6 +23,7 @@ MAX_FRAME_BYTES = 2_000_000
 QUEUE_FRAMES = 2                       # a viewer more than this far behind skips ahead
 SNAPSHOT_TTL_S = 1.0                   # concurrent/rapid snapshot requests share a grab this fresh
 LIVE_FRAME_MAX_AGE_S = 3.0             # a live stream's latest frame this fresh answers snapshots too
+MAX_CONCURRENT_GRABS = 4               # simultaneous snapshot grabs across ALL printers (each may spawn ffmpeg)
 KEEPALIVE_S = 45.0                     # Elegoo drops a silent MJPEG stream after 60 s
 
 
@@ -89,7 +90,8 @@ class CameraHub:
     def __init__(self) -> None:
         self._streams: dict[int, _Stream] = {}
         self._snap: dict[int, tuple[float, bytes]] = {}
-        self._inflight: dict[int, asyncio.Future] = {}
+        self._inflight: dict[int, asyncio.Task] = {}
+        self._slots: asyncio.Semaphore | None = None
         self.snapshot_hits = 0
         self.snapshot_grabs = 0
 
@@ -185,22 +187,28 @@ class CameraHub:
         pending = self._inflight.get(key)
         if pending is not None:
             self.snapshot_hits += 1
-            return await asyncio.shield(pending)
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        self._inflight[key] = fut
-        try:
-            self.snapshot_grabs += 1
-            jpeg = await grab()
-            if jpeg is not None:
-                self._snap[key] = (time.monotonic(), jpeg)
-            fut.set_result(jpeg)
-            return jpeg
-        except BaseException as exc:
-            fut.set_exception(exc if isinstance(exc, Exception) else RuntimeError("cancelled"))
-            fut.exception()                                   # mark retrieved when nobody else was waiting
-            raise
-        finally:
-            self._inflight.pop(key, None)
+        else:
+            async def run() -> bytes | None:
+                async with self._grab_slots():                 # many printers at once must not mean many grabs at once
+                    self.snapshot_grabs += 1
+                    jpeg = await grab()
+                if jpeg is not None:
+                    self._snap[key] = (time.monotonic(), jpeg)
+                return jpeg
+
+            pending = self._inflight[key] = asyncio.create_task(run())
+            pending.add_done_callback(lambda t, k=key: (self._inflight.pop(k, None), t.cancelled() or t.exception()))
+        # The grab is its own task and every caller (the first included) only waits on it through `shield`: a client
+        # that disconnects mid-grab cancels its own wait, never the grab the other callers share.
+        return await asyncio.shield(pending)
+
+    def _grab_slots(self) -> asyncio.Semaphore:
+        if self._slots is None:
+            self._slots = asyncio.Semaphore(MAX_CONCURRENT_GRABS)
+        return self._slots
+
+    def has_stream(self, key: int) -> bool:
+        return key in self._streams
 
     def is_full_for(self, key: int) -> bool:
         return key not in self._streams and len(self._streams) >= max_streams()

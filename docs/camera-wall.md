@@ -1,13 +1,13 @@
 # Camera wall & camera proxy (BIZ-162)
 
-**Screen:** `/wall` (More → Camera wall). Every camera-capable printer in a grid; density (columns) selector; status
+**Screen:** `/wall` (sidebar / More → Camera wall). Every camera-capable printer in a grid; density (columns) selector; status
 filter (All / Printing / Paused / Error / Idle / Offline); tile shows name, status, alarm badge (BIZ-157); click opens
 `/fleet/:id/console`.
 
 ## Live vs snapshot
 Browsers allow ~6 concurrent HTTP/1.1 connections per origin, and each live MJPEG `<img>` holds one for as long as it
-is open. So the wall shows **at most N live streams** (selector: 0 / 4 / 8 / 16, default 4 — printing/paused tiles get
-them first) and every other tile polls `/snapshot` every 5 s. Over HTTP/2 (a TLS reverse proxy) the cap can be raised. A tile whose live stream errors (e.g. 429, camera
+is open. So over HTTP/1.1 the wall offers **at most 0 / 2 / 4 live streams (default 2)**; over HTTP/2 (detected from
+the page's `nextHopProtocol`) 0 / 4 / 8 / 16 / 32 (default 8). Printing/paused tiles get them first; and every other tile polls `/snapshot` every 5 s. Over HTTP/2 (a TLS reverse proxy) the cap can be raised. A tile whose live stream errors (e.g. 429, camera
 down) falls back to snapshots on its own.
 
 ## Proxy sharing (`services/camera_hub.py`)
@@ -15,7 +15,8 @@ down) falls back to snapshots on its own.
   ffmpeg** transcode. Closed when the last viewer leaves.
 - The hub cuts upstream into whole JPEG frames and fans them out through 2-frame queues: a slow viewer drops its own
   frames, never stalls others.
-- Snapshots: served from a live stream's latest frame if one is open; else a ≤ 1 s cache; concurrent requests share a
+- Snapshots: at most 4 real grabs run in parallel across all printers (each may spawn ffmpeg) and tile timers are staggered
+  so 40 tiles don't tick together. A printer with *no snapshots while idle* is not fetched at all while idle. Served from a live stream's latest frame if one is open; else a ≤ 1 s cache; concurrent requests share a
   single grab. 40 tiles × several browsers therefore cost ≤ 1 grab/printer/second.
 - Cap: `THEMIS_MAX_CAMERA_STREAMS` (default 64) distinct upstreams; beyond it `/camera` answers 429 (the wall then falls
   back to snapshots).
@@ -41,3 +42,12 @@ cameras*; sharing keeps CPU flat as viewers are added. A 40-tile wall of live st
 viewer — which is why the wall defaults to few live tiles + snapshots (a snapshot tile at 5 s ≈ 8 KB/s).
 **Not measured:** ffmpeg RTSP→MJPEG CPU (depends on the camera's codec/resolution; budget roughly one core-fraction per
 printer — run `top` against a real RTSP camera and record it here) and real Bambu/Elegoo cameras' own connection limits.
+
+## Known limitations
+- A live tile whose upstream dies mid-stream freezes on its last frame (an MJPEG `<img>` gives no signal for a clean
+  end) — reload the page or switch the tile via the live-limit selector. A camera that fails to wake is a 5xx and
+  falls back to snapshots.
+- `?key=` on `/camera` and `/snapshot` lands in access logs/history (same as thumbnails); use a read-only key for the wall.
+- A snapshot taken while a live stream is stalled (> 3 s without a frame) opens a second upstream connection; a
+  single-connection camera may refuse it.
+- Tearing a stream down and re-opening it in the same instant (page refresh) can briefly overlap the old and new upstream.

@@ -86,33 +86,33 @@ async def test_a_slow_viewer_drops_its_own_old_frames_and_never_blocks_a_fast_on
     fast: list = []
     tf = asyncio.create_task(collect(hub, 1, src, 6, fast))
     slow_gen = hub.subscribe(1, src)
-    slow_first = asyncio.create_task(slow_gen.__anext__())
+    slow_first = asyncio.create_task(slow_gen.__anext__())            # attached, but never reads until later
     await wait_until(lambda: src.opened == 1 and len(hub._streams[1].subscribers) == 2)
+    slow_first.cancel()
+    await asyncio.gather(slow_first, return_exceptions=True)
     for i in range(6):
         await src.q.put(jpeg(str(i)))
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.01)
     await asyncio.wait_for(tf, 3)
-    assert len(fast) == 6
-    assert (await asyncio.wait_for(slow_first, 3)) is not None
-    slow_first2 = await asyncio.wait_for(slow_gen.__anext__(), 3)
-    assert slow_first2 in [multipart_part(jpeg(str(i))) for i in range(6)]
-    await slow_gen.aclose()
+    assert len(fast) == 6                                              # the fast viewer lost nothing
+    # a viewer that never drained holds only the newest QUEUE_FRAMES frames
+    q = asyncio.Queue(maxsize=camera_hub.QUEUE_FRAMES)
+    for i in range(6):
+        CameraHub._offer(q, jpeg(str(i)))
+    assert [q.get_nowait(), q.get_nowait()] == [jpeg("4"), jpeg("5")]
 
 
 async def test_a_joining_viewer_gets_the_latest_frame_immediately():
     hub, src = CameraHub(), Source()
-    first = []
-    t1 = asyncio.create_task(collect(hub, 1, src, 1, first))
+    first, late = [], []
+    t1 = asyncio.create_task(collect(hub, 1, src, 99, first))          # stays attached, keeping the stream open
     await wait_until(lambda: src.opened == 1)
     await src.q.put(jpeg("now"))
-    await t1
-    late = []
+    await wait_until(lambda: len(first) == 1)
     t2 = asyncio.create_task(collect(hub, 1, src, 1, late))
-    # (stream may have closed with the first viewer; either way the late viewer gets a frame from a live upstream)
-    await wait_until(lambda: src.opened >= 1)
-    await src.q.put(jpeg("later"))
-    await asyncio.wait_for(t2, 3)
-    assert late and late[0].endswith(b"\xff\xd9\r\n")
+    await asyncio.wait_for(t2, 3)                                        # nothing further was pushed upstream
+    assert late == [multipart_part(jpeg("now"))] and src.opened == 1
+    t1.cancel()
 
 
 async def test_an_upstream_that_ends_ends_every_viewer():
@@ -211,3 +211,42 @@ async def test_a_failed_grab_reaches_every_waiter_and_is_not_cached():
     results = await asyncio.gather(*[hub.snapshot(1, boom) for _ in range(3)], return_exceptions=True)
     assert all(isinstance(r, ValueError) for r in results)
     assert await hub.snapshot(1, _grab_returning(jpeg("ok"))) == jpeg("ok")
+
+
+async def test_a_snapshot_leader_that_disconnects_does_not_fail_the_other_callers():
+    hub, calls = CameraHub(), []
+    leader = asyncio.create_task(hub.snapshot(1, _grab_returning(jpeg("x"), calls, 0.1)))
+    await asyncio.sleep(0.01)
+    follower = asyncio.create_task(hub.snapshot(1, _grab_returning(jpeg("y"), calls)))
+    await asyncio.sleep(0.01)
+    leader.cancel()                                                      # client A hung up mid-grab
+    assert await asyncio.wait_for(follower, 3) == jpeg("x")
+    assert len(calls) == 1
+
+
+async def test_snapshot_grabs_across_printers_are_limited_in_parallel(monkeypatch):
+    monkeypatch.setattr(camera_hub, "MAX_CONCURRENT_GRABS", 2)
+    hub, running, peak = CameraHub(), [0], [0]
+
+    async def grab():
+        running[0] += 1
+        peak[0] = max(peak[0], running[0])
+        await asyncio.sleep(0.02)
+        running[0] -= 1
+        return jpeg("x")
+
+    await asyncio.gather(*[hub.snapshot(k, grab) for k in range(8)])
+    assert peak[0] == 2
+
+
+async def test_an_upstream_that_raises_ends_every_viewer_and_frees_the_slot():
+    hub = CameraHub()
+
+    async def broken():
+        yield jpeg("1")
+        raise RuntimeError("camera reset")
+
+    out = []
+    async for part in hub.subscribe(1, broken):
+        out.append(part)
+    assert 1 not in hub._streams and len(out) <= 1

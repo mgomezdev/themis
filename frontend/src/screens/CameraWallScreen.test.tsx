@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, within, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, within, fireEvent, waitFor, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { CameraWallScreen, planWall } from './CameraWallScreen';
@@ -34,7 +34,8 @@ function show(fleet: FleetPrinter[] = FLEET) {
 }
 
 beforeEach(() => { vi.stubGlobal('WebSocket', MockWS); localStorage.clear(); });
-afterEach(() => { vi.unstubAllGlobals(); });
+const savePrefs = (live: number) => localStorage.setItem('themis.cameraWall', JSON.stringify({ live }));
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('planWall', () => {
   const printers = FLEET.map(toFleetPrinter);
@@ -55,6 +56,7 @@ describe('planWall', () => {
 
 describe('CameraWallScreen', () => {
   it('shows a tile per camera printer, links each to its console, and marks live vs snapshot', async () => {
+    savePrefs(4);
     show();
     const tiles = await screen.findAllByTestId('wall-tile');
     expect(tiles).toHaveLength(5);
@@ -109,12 +111,36 @@ describe('CameraWallScreen', () => {
   });
 
   it('falls back to snapshots for a tile whose live stream fails', async () => {
+    savePrefs(4);
     show();
     const tile = await screen.findByRole('link', { name: 'Open P1 console' });
     expect(within(tile).getByTestId('wall-live')).toBeTruthy();
     fireEvent.error(img(tile));
     await waitFor(() => expect(within(tile).getByTestId('wall-snapshot')).toBeTruthy());
     expect(img(tile).getAttribute('src')).toMatch(/\/snapshot/);
+  });
+
+  it('offers only a couple of live streams over HTTP/1.1 (default 2) and many more over HTTP/2', async () => {
+    show();
+    await screen.findAllByTestId('wall-tile');
+    const opts = (el: HTMLElement) => Array.from((el as HTMLSelectElement).options).map(o => Number(o.value));
+    expect(opts(screen.getByLabelText('Live streams'))).toEqual([0, 2, 4]);
+    expect(screen.getAllByTestId('wall-live')).toHaveLength(2);
+    cleanup();
+
+    vi.spyOn(performance, 'getEntriesByType').mockReturnValue([{ nextHopProtocol: 'h2' } as unknown as PerformanceEntry]);
+    show();
+    await screen.findAllByTestId('wall-tile');
+    expect(opts(screen.getByLabelText('Live streams'))).toEqual([0, 4, 8, 16, 32]);
+    expect((screen.getByLabelText('Live streams') as HTMLSelectElement).value).toBe('8');
+  });
+
+  it('does not fetch snapshots for an idle printer set to be left alone, but does once it prints', async () => {
+    savePrefs(0);
+    show([fp(1, 'IDLE', { no_snapshots_while_idle: true }), fp(2, 'IDLE')]);
+    await screen.findAllByTestId('wall-tile');
+    expect(img(screen.getByRole('link', { name: 'Open P1 console' }))).toBeNull();
+    expect(img(screen.getByRole('link', { name: 'Open P2 console' }))).not.toBeNull();
   });
 
   it('ignores corrupt saved preferences', async () => {

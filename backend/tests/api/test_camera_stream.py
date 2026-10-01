@@ -187,3 +187,31 @@ async def test_camera_accepts_the_key_as_a_query_parameter_for_img_tags(client, 
             with_key = await anon.get(f"/api/v1/printers/{printer_id}/camera", params={"key": raw})
 
     assert (no_key.status_code, with_key.status_code) == (401, 200)
+
+
+async def test_a_camera_that_fails_to_wake_is_an_error_response_not_an_empty_stream(client, printer_id):
+    fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    fake.start_video_stream.side_effect = RuntimeError("camera wake failed")
+    printer_manager._clients[printer_id] = fake
+
+    with pytest.raises(RuntimeError, match="camera wake failed"):
+        await client.get(f"/api/v1/printers/{printer_id}/camera")        # surfaces as a 500 before any stream starts
+
+
+async def test_a_second_viewer_does_not_wake_an_already_streaming_camera_again(client, printer_id):
+    import asyncio
+    from app.services import camera_hub
+    fake = _camera_client(mjpeg="http://192.168.1.20:3031/video")
+    printer_manager._clients[printer_id] = fake
+    camera_hub.hub._streams[printer_id] = camera_hub._Stream(printer_id)     # someone is already watching
+
+    async def stream(url):
+        yield JPEG_A
+
+    with patch("app.api.routes.printers.stream_mjpeg", stream):
+        task = asyncio.create_task(client.get(f"/api/v1/printers/{printer_id}/camera"))
+        await asyncio.sleep(0.05)
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    fake.start_video_stream.assert_not_called()

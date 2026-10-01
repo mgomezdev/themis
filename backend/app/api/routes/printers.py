@@ -1190,8 +1190,10 @@ async def stream_camera(
     else:
         raise HTTPException(404, "No camera URL configured")
 
+    if not camera_hub.hub.has_stream(printer_id):
+        await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
+
     async def upstream():
-        await _activate_camera(client)
         raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
         async for chunk in raw:
             yield chunk

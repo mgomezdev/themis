@@ -12,19 +12,27 @@ const FILTERS: Filter[] = ['all', 'printing', 'paused', 'error', 'idle', 'offlin
 const COLUMNS = [2, 3, 4, 6, 8, 10];
 /** Browsers hold ~6 HTTP/1.1 connections per origin and each live MJPEG <img> keeps one open, so live tiles are
  *  capped; every other tile polls snapshots (the server shares those between viewers). */
-const LIVE_LIMITS = [0, 4, 8, 16];
+/** Over HTTP/1.1 only a couple may stream (the rest of the page needs connections too); HTTP/2 multiplexes, so more. */
+function multiplexed(): boolean {
+  try {
+    const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined;
+    return /^h[23]/.test(nav?.nextHopProtocol ?? '');
+  } catch { return false; }
+}
+export const LIVE_LIMITS_H1 = [0, 2, 4];
+export const LIVE_LIMITS_H2 = [0, 4, 8, 16, 32];
 const SNAPSHOT_MS = 5000;
 
 interface Prefs { columns: number; live: number; filter: Filter }
-const DEFAULTS: Prefs = { columns: 4, live: 4, filter: 'all' };
 const STORAGE_KEY = 'themis.cameraWall';
 
-function loadPrefs(): Prefs {
+function loadPrefs(limits: number[]): Prefs {
+  const DEFAULTS: Prefs = { columns: 4, live: limits.includes(8) ? 8 : 2, filter: 'all' };
   try {
     const p = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as Partial<Prefs>;
     return {
       columns: COLUMNS.includes(p.columns as number) ? p.columns! : DEFAULTS.columns,
-      live: LIVE_LIMITS.includes(p.live as number) ? p.live! : DEFAULTS.live,
+      live: limits.includes(p.live as number) ? p.live! : DEFAULTS.live,
       filter: FILTERS.includes(p.filter as Filter) ? p.filter! : DEFAULTS.filter,
     };
   } catch { return DEFAULTS; }
@@ -62,7 +70,8 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
       <div style={{ aspectRatio: '16 / 9', position: 'relative', overflow: 'hidden', background: '#000' }}>
         {asLive
           ? <LiveFeed printer={p} onFail={() => setLiveFailed(true)} />
-          : <VideoTile live={p.status !== 'offline'} printerId={p.id} intervalMs={SNAPSHOT_MS} />}
+          : <VideoTile live={p.status !== 'offline'} printerId={p.id} status={p.status} noSnapshotsWhileIdle={p.noSnapshotsWhileIdle}
+                       intervalMs={SNAPSHOT_MS + (Number(p.id) % 10) * 130} />}   /* staggered so 40 tiles don't all tick at once */
         <div style={{ position: 'absolute', top: 6, left: 6, right: 6, display: 'flex', justifyContent: 'space-between',
                       gap: 6, zIndex: 4, pointerEvents: 'none' }}>
           <span className="tiny" style={{ background: 'rgba(0,0,0,0.6)', color: '#fff', borderRadius: 4, padding: '1px 6px',
@@ -73,7 +82,7 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
                     style={{ background: 'rgba(0,0,0,0.6)', color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`,
                              borderRadius: 999, padding: '0 6px', fontSize: 11, fontWeight: 600 }}>{label}</span>
             )}
-            <StatusPill status={p.status} />
+            {asLive && <StatusPill status={p.status} />}      {/* snapshot tiles get theirs from VideoTile */}
           </span>
         </div>
         <span className="tiny" data-testid={asLive ? 'wall-live' : 'wall-snapshot'}
@@ -90,7 +99,8 @@ function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
 
 export function CameraWallScreen() {
   const [printers] = useFleetData();
-  const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  const [limits] = useState(() => (multiplexed() ? LIVE_LIMITS_H2 : LIVE_LIMITS_H1));
+  const [prefs, setPrefs] = useState<Prefs>(() => loadPrefs(limits));
   const set = (patch: Partial<Prefs>) => setPrefs(prev => {
     const next = { ...prev, ...patch };
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode: keep it in memory */ }
@@ -116,7 +126,7 @@ export function CameraWallScreen() {
         <label className="small muted" htmlFor="wall-live">Live streams</label>
         <select id="wall-live" className="input" style={{ width: 'auto' }} value={prefs.live}
                 onChange={e => set({ live: Number(e.target.value) })}>
-          {LIVE_LIMITS.map(c => <option key={c} value={c}>{c === 0 ? 'none (snapshots)' : `up to ${c}`}</option>)}
+          {limits.map(c => <option key={c} value={c}>{c === 0 ? 'none (snapshots)' : `up to ${c}`}</option>)}
         </select>
       </div>
       {shown.length === 0 ? (
