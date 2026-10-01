@@ -151,6 +151,26 @@ describe('PrinterConsoleScreen — temperatures', () => {
     expect(printersApi.setChamberTemp).toHaveBeenCalledWith(1, 35);
   });
 
+  it('locks the nozzle setpoint while printing (a mid-print M104 would ruin the print) but leaves the bed alone', () => {
+    show([printer({ state: 'RUNNING' })]);
+    const nozzleSet = screen.getByLabelText('Nozzle setpoint').parentElement!.querySelectorAll('button')[1] as HTMLButtonElement;
+    expect(nozzleSet.disabled).toBe(true);
+    expect((screen.getByLabelText('Bed setpoint').parentElement!.querySelectorAll('button')[1] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('does not claim a target the printer never reports', () => {
+    show([printer({ temperatures: { nozzle: 200, bed: 60 } })]);                 // e.g. Bambu telemetry has no targets
+    expect(screen.queryByText(/→ off/)).toBeNull();
+  });
+
+  it('does not carry a half-typed setpoint over to the next printer', async () => {
+    const user = userEvent.setup();
+    show([printer({ id: 1 }), printer({ id: 2, name: 'Borealis' })]);
+    await user.type(screen.getByLabelText('Nozzle setpoint'), '200');
+    await user.click(screen.getByRole('button', { name: 'Next printer' }));
+    expect((screen.getByLabelText('Nozzle setpoint') as HTMLInputElement).value).toBe('');
+  });
+
   it('shows current → target readings', () => {
     show([printer({ temperatures: { nozzle: 198.6, nozzle_target: 200, bed: 24, bed_target: 0 } })]);
     expect(screen.getByText(/199°C/)).toBeTruthy();

@@ -281,7 +281,7 @@ def _console_client(**caps):
     mock.is_printing = False
     mock.is_idle = True
     mock.get_capabilities.return_value = PrinterCapabilities(**caps)
-    for m in ("jog", "home", "home_axes", "set_nozzle_temp", "set_chamber_temp", "upload_file", "start_print"):
+    for m in ("jog", "jog_z", "home", "home_axes", "set_nozzle_temp", "set_chamber_temp", "upload_file", "start_print"):
         getattr(mock, m).return_value = True
     return mock
 
@@ -291,11 +291,12 @@ async def test_jog_z_needs_no_capability_but_xy_does(client, printer_id):
     printer_manager._clients[printer_id] = mock
 
     assert (await client.post(f"/api/v1/printers/{printer_id}/jog", json={"axis": "Z", "distance_mm": -1})).status_code == 200
-    mock.jog.assert_called_once_with("Z", -1)
+    mock.jog_z.assert_called_once_with(-1)               # Z goes through jog_z so vendors with a native command (Elegoo) work
+    mock.jog.assert_not_called()
 
     resp = await client.post(f"/api/v1/printers/{printer_id}/jog", json={"axis": "X", "distance_mm": 10})
     assert resp.status_code == 409 and "X/Y jog" in resp.json()["detail"]
-    assert mock.jog.call_count == 1                                     # the refused move never reached the printer
+    mock.jog.assert_not_called()                                        # the refused move never reached the printer
 
 
 async def test_xy_jog_with_the_capability_reaches_the_client(client, printer_id):
@@ -306,6 +307,7 @@ async def test_xy_jog_with_the_capability_reaches_the_client(client, printer_id)
 
     assert resp.status_code == 200
     mock.jog.assert_called_once_with("Y", 5.5)
+    mock.jog_z.assert_not_called()
 
 
 @pytest.mark.parametrize("body", [
@@ -323,8 +325,23 @@ async def test_motion_commands_are_refused_while_printing(client, printer_id):
 
     assert (await client.post(f"/api/v1/printers/{printer_id}/jog", json={"axis": "Z", "distance_mm": 1})).status_code == 409
     assert (await client.post(f"/api/v1/printers/{printer_id}/home", json={})).status_code == 409
+    mock.jog_z.assert_not_called()
+    mock.home.assert_not_called()
+
+
+async def test_motion_and_nozzle_need_a_positively_idle_printer_not_just_a_not_printing_one(client, printer_id):
+    """Bambu's PREPARE (heating/levelling) is neither printing nor idle."""
+    mock = _console_client(axis_jog=True, nozzle_temp=True)
+    mock.is_printing = False
+    mock.is_idle = False
+    printer_manager._clients[printer_id] = mock
+
+    assert (await client.post(f"/api/v1/printers/{printer_id}/jog", json={"axis": "X", "distance_mm": 1})).status_code == 409
+    assert (await client.post(f"/api/v1/printers/{printer_id}/home", json={})).status_code == 409
+    assert (await client.post(f"/api/v1/printers/{printer_id}/nozzle-temp", json={"celsius": 0})).status_code == 409
     mock.jog.assert_not_called()
     mock.home.assert_not_called()
+    mock.set_nozzle_temp.assert_not_called()
 
 
 async def test_home_all_always_and_single_axis_only_with_the_capability(client, printer_id):
@@ -462,3 +479,88 @@ def test_default_client_commands_are_plain_gcode():
     c.home_axes("xy")
     c.set_nozzle_temp(210)
     assert sent == ["G91", "G1 X-2.5", "G90", "G28 X Y", "M104 S210"]
+
+
+async def test_upload_and_print_claims_the_printer_before_uploading_so_the_queue_cannot_race_it(client, printer_id):
+    mock = _console_client(direct_upload=True)
+    seen: dict = {}
+
+    def upload(data, name):
+        seen["gate_during_upload"] = printer_manager.is_awaiting_plate_clear(printer_id)
+        return True
+    mock.upload_file.side_effect = upload
+    printer_manager._clients[printer_id] = mock
+
+    assert (await _upload(client, printer_id, start=True)).status_code == 200
+    assert seen["gate_during_upload"] is True
+
+
+async def test_upload_and_print_refuses_an_uncleared_plate_but_upload_only_is_fine(client, printer_id):
+    mock = _console_client(direct_upload=True)
+    printer_manager._clients[printer_id] = mock
+    printer_manager.set_awaiting_plate_clear(printer_id, True)
+
+    resp = await _upload(client, printer_id, start=True)
+
+    assert resp.status_code == 409 and "plate" in resp.json()["detail"]
+    mock.upload_file.assert_not_called()
+    mock.start_print.assert_not_called()
+    assert (await _upload(client, printer_id)).status_code == 200
+
+
+async def test_a_failed_upload_releases_the_plate_gate_it_took(client, printer_id):
+    mock = _console_client(direct_upload=True)
+    mock.upload_file.return_value = False
+    printer_manager._clients[printer_id] = mock
+
+    assert (await _upload(client, printer_id, start=True)).status_code == 502
+    assert not printer_manager.is_awaiting_plate_clear(printer_id)
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["awaiting_plate_clear"] is False
+
+
+async def test_upload_rejects_a_traversal_name_by_extension_and_keeps_only_the_basename(client, printer_id):
+    mock = _console_client(direct_upload=True)
+    printer_manager._clients[printer_id] = mock
+    assert (await _upload(client, printer_id, name="../../etc/passwd")).status_code == 422
+    resp = await _upload(client, printer_id, name="../../up/evil.gcode")
+    assert resp.json()["filename"] == "evil.gcode"
+    mock.upload_file.assert_called_once_with(b"G28\n", "evil.gcode")
+
+
+async def test_upload_over_the_size_cap_is_413(client, printer_id):
+    mock = _console_client(direct_upload=True)
+    printer_manager._clients[printer_id] = mock
+    with patch("app.api.routes.printers._MAX_DIRECT_UPLOAD_BYTES", 10):
+        resp = await _upload(client, printer_id, data=b"x" * 11)
+    assert resp.status_code == 413
+    mock.upload_file.assert_not_called()
+
+
+def test_vendor_capability_sets_match_what_each_client_can_actually_do():
+    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.services.elegoo_centauri_client import ElegooCentauriClient
+    from app.services.snapmaker_client import SnapmakerExtendedClient as SnapmakerClient
+
+    def caps(cls):
+        return cls.__new__(cls).get_capabilities()
+
+    for cls in (BambuMQTTClient, SnapmakerClient):          # G-code vendors
+        c = caps(cls)
+        assert (c.axis_jog, c.home_axes, c.nozzle_temp, c.direct_upload) == (True, True, True, True)
+        assert c.chamber_temp is False                       # not verifiable → not offered
+    e = caps(ElegooCentauriClient)                           # SDCP: only what is known to work
+    assert (e.axis_jog, e.home_axes, e.nozzle_temp, e.chamber_temp, e.direct_upload) == (False, False, False, False, True)
+
+
+def test_relative_jog_always_restores_absolute_mode_and_stops_if_it_cannot_enter_relative():
+    from app.services.mock_printer_client import MockPrinterClient
+    c = MockPrinterClient.__new__(MockPrinterClient)
+    sent: list[str] = []
+    c.send_gcode = lambda g: sent.append(g) or (g != "G1 X1")     # type: ignore[method-assign]
+    assert c.jog("X", 1) is False
+    assert sent == ["G91", "G1 X1", "G90"]                        # the move failed, absolute mode is still restored
+
+    sent.clear()
+    c.send_gcode = lambda g: sent.append(g) or (g != "G91")       # type: ignore[method-assign]
+    assert c.jog("X", 1) is False
+    assert sent == ["G91"]                                        # no move was attempted

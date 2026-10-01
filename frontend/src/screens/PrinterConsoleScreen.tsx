@@ -27,7 +27,7 @@ function SetpointRow({ label, current, target, onSet, disabled }: {
       <div style={{ width: 90 }} className="small">{label}</div>
       <div className="num small" style={{ width: 120 }}>
         {current != null ? `${current.toFixed(0)}°C` : '—'}
-        <span className="muted"> → {target ? `${target.toFixed(0)}°C` : 'off'}</span>
+        {target !== undefined && <span className="muted"> → {target ? `${target.toFixed(0)}°C` : 'off'}</span>}
       </div>
       <input type="number" min="0" className="input" aria-label={`${label} setpoint`} placeholder="°C"
              style={{ maxWidth: 90 }} value={value} onChange={e => setValue(e.target.value)} />
@@ -177,15 +177,15 @@ export function PrinterConsoleScreen() {
           <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>Temperatures</div>
           <div className="col gap-2">
             {caps.nozzle_temp && (
-              <SetpointRow label="Nozzle" current={temps.nozzle} target={temps.nozzle_target} disabled={offline}
+              <SetpointRow key={`n${printer.id}`} label="Nozzle" current={temps.nozzle} target={temps.nozzle_target} disabled={motionDisabled}
                            onSet={c => act(`Nozzle ${c}°C`, () => setNozzleTemp(printer.id, c))} />
             )}
             {caps.temp_control && (
-              <SetpointRow label="Bed" current={temps.bed} target={temps.bed_target} disabled={offline}
+              <SetpointRow key={`b${printer.id}`} label="Bed" current={temps.bed} target={temps.bed_target} disabled={offline}
                            onSet={c => act(`Bed ${c}°C`, () => setBedTemp(String(printer.id), c))} />
             )}
             {caps.chamber_temp && (
-              <SetpointRow label="Chamber" current={temps.chamber} target={temps.chamber_target} disabled={offline}
+              <SetpointRow key={`c${printer.id}`} label="Chamber" current={temps.chamber} target={temps.chamber_target} disabled={offline}
                            onSet={c => act(`Chamber ${c}°C`, () => setChamberTemp(printer.id, c))} />
             )}
             {!caps.nozzle_temp && !caps.temp_control && !caps.chamber_temp && (

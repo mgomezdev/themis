@@ -730,8 +730,10 @@ def _require_capability(client, name: str, what: str) -> None:
 
 
 def _require_not_printing(client) -> None:
-    if client.is_printing:
-        raise HTTPException(409, "Printer is printing; stop or pause the print first")
+    """Motion and nozzle changes need a printer that is positively idle (the queue's own notion), not merely
+    "not printing": states like Bambu's PREPARE (heating/levelling) are neither."""
+    if client.is_printing or not client.is_idle:
+        raise HTTPException(409, "Printer is busy; wait for it to be idle (or stop the print) first")
 
 
 def _ok_or_502(result) -> dict:
@@ -762,6 +764,8 @@ async def jog_axis(printer_id: int, body: JogBody, session: AsyncSession = Depen
     if body.axis != "Z":
         _require_capability(client, "axis_jog", "X/Y jog")
     _require_not_printing(client)
+    if body.axis == "Z":      # vendors with a native Z command (Elegoo SDCP) override jog_z, not jog
+        return _ok_or_502(await asyncio.to_thread(client.jog_z, body.distance_mm))
     return _ok_or_502(await asyncio.to_thread(client.jog, body.axis, body.distance_mm))
 
 
@@ -792,6 +796,7 @@ async def set_nozzle_temp(printer_id: int, body: NozzleTempBody, session: AsyncS
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     _require_capability(client, "nozzle_temp", "a nozzle setpoint")
+    _require_not_printing(client)      # M104 mid-print would cool the nozzle and ruin the print
     return _ok_or_502(await asyncio.to_thread(client.set_nozzle_temp, body.celsius))
 
 
@@ -806,6 +811,13 @@ async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: Asyn
     client = _get_connected_client(printer_id)
     _require_capability(client, "chamber_temp", "a chamber setpoint")
     return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
+
+
+async def _set_plate_gate(session: AsyncSession, printer, printer_id: int, value: bool) -> None:
+    printer_manager.set_awaiting_plate_clear(printer_id, value)
+    if printer is not None:
+        printer.awaiting_plate_clear = value
+        await session.commit()
 
 
 _UPLOAD_EXTENSIONS = (".gcode", ".gcode.3mf", ".3mf", ".bgcode")
@@ -841,25 +853,36 @@ async def upload_to_printer(
     data = await file.read(_MAX_DIRECT_UPLOAD_BYTES + 1)
     if len(data) > _MAX_DIRECT_UPLOAD_BYTES:
         raise HTTPException(413, "File is larger than 300 MB")
-    if start:
-        if not client.is_idle:
-            raise HTTPException(409, "Printer is not idle")
-        busy = await session.execute(
-            select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
-        if busy.first() is not None:
-            raise HTTPException(409, "A queued job currently holds this printer")
-    if not await asyncio.to_thread(client.upload_file, data, name):
-        raise HTTPException(502, "Printer rejected the upload")
-    if start:
+    if not start:
+        if not await asyncio.to_thread(client.upload_file, data, name):
+            raise HTTPException(502, "Printer rejected the upload")
+        return {"ok": True, "filename": name, "started": False}
+
+    if not client.is_idle:
+        raise HTTPException(409, "Printer is not idle")
+    if printer_manager.is_awaiting_plate_clear(printer_id):
+        raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
+    busy = await session.execute(
+        select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
+    if busy.first() is not None:
+        raise HTTPException(409, "A queued job currently holds this printer")
+
+    # Claim the printer BEFORE the (possibly minutes-long) upload: marking it not-ready is what keeps the queue
+    # engine from claiming it meanwhile. Rolled back if nothing ends up printing.
+    printer = await session.get(Printer, printer_id)
+    await _set_plate_gate(session, printer, printer_id, True)
+    started = False
+    try:
+        if not await asyncio.to_thread(client.upload_file, data, name):
+            raise HTTPException(502, "Printer rejected the upload")
         from ...services.abstract_printer_client import StartPrintOptions
         if not await asyncio.to_thread(client.start_print, name, StartPrintOptions(gcode_path=name)):
             raise HTTPException(502, "Uploaded, but the printer would not start the print")
-        printer = await session.get(Printer, printer_id)
-        printer_manager.set_awaiting_plate_clear(printer_id, True)
-        if printer is not None:
-            printer.awaiting_plate_clear = True
-            await session.commit()
-    return {"ok": True, "filename": name, "started": start}
+        started = True
+    finally:
+        if not started:
+            await _set_plate_gate(session, printer, printer_id, False)
+    return {"ok": True, "filename": name, "started": True}
 
 
 async def _activate_camera(client) -> None:

@@ -108,10 +108,12 @@ class AbstractPrinterClient(ABC):
     def jog(self, axis: str, distance_mm: float) -> bool:
         """Relative move of one axis (X/Y/Z). Default: G-code; vendors with a native command override."""
         axis = axis.upper()
-        self.send_gcode("G91")
-        ok = self.send_gcode(f"G1 {axis}{distance_mm}")
-        self.send_gcode("G90")
-        return ok
+        if not self.send_gcode("G91"):
+            return False
+        try:
+            return bool(self.send_gcode(f"G1 {axis}{distance_mm}"))
+        finally:
+            self.send_gcode("G90")      # never leave the printer in relative mode
 
     def home_axes(self, axes: str) -> bool:
         """Home specific axes (e.g. 'X', 'XY'). Default: G28 with the listed axes."""
