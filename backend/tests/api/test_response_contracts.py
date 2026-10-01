@@ -44,6 +44,17 @@ async def test_printer_file_responses_carry_their_keys(client, create_printer):
     assert_carries("printer_file", merged["files"][0])
 
 
+async def test_alarm_responses_carry_their_keys(client, session_factory, create_printer):
+    from app.services import alarms as alarm_service
+    from app.services.abstract_printer_client import Alarm
+    pid = await create_printer()
+    async with session_factory() as s:
+        await alarm_service.reconcile(s, pid, [Alarm(code="X", severity="error", message="m", source="hms")])
+
+    assert_carries("printer_alarm", (await client.get("/api/v1/alarms")).json()[0])
+    assert_carries("alarm_summary", (await client.get("/api/v1/alarms/summary")).json())
+
+
 async def test_fleet_items_carry_the_fleet_keys_offline_and_the_fan_keys_when_connected(client, create_printer):
     offline_id = await create_printer(name="Cold")
     live_id = await create_printer(name="Live", printer_type="elegoo_centauri", connection_config={"ip_address": "10.0.0.1"})

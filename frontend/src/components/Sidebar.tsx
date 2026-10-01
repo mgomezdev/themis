@@ -11,6 +11,8 @@ interface SidebarProps {
   queueCounts: QueueCounts;
   operatorName: string | null;
   printerCount: number;
+  alarmCount?: number;
+  alarmWorst?: 'info' | 'warning' | 'error' | 'fatal' | null;
   collapsed?: boolean;
   onToggle?: () => void;
 }
@@ -45,7 +47,7 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   );
 }
 
-export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = false, onToggle = () => {} }: SidebarProps) {
+export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 0, alarmWorst = null, collapsed = false, onToggle = () => {} }: SidebarProps) {
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
@@ -53,6 +55,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/customers', label: 'Customers',   icon: Icons.user },
     { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/printer-files', label: 'Printer files', icon: Icons.printer },
+    { to: '/alarms',    label: 'Alarms',      icon: Icons.alert },
     { to: '/history',   label: 'History',     icon: Icons.clock },
     { to: '/analytics', label: 'Analytics',   icon: Icons.chart },
   ];
@@ -109,6 +112,13 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
             {it.icon}
             <span className="label">{it.label}</span>
             {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
+            {it.to === '/alarms' && alarmCount > 0 && (
+              <span data-testid="badge-alarms" className="count num"
+                    style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.3)',
+                             color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
+                {alarmCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </div>

@@ -155,6 +155,9 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
 
+### printer_alarms (v030)
+`id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
+
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-slice estimate pipeline

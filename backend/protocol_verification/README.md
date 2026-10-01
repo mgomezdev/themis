@@ -47,6 +47,7 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 
 ## Known gaps (need a printer *and* a sacrificial print — not automated)
 
+* Bambu HMS severity nibble (`code >> 16`: 1 fatal … 4 info), the module table, the wiki URL pattern (`https://wiki.bambulab.com/en/x1/troubleshooting/hmscode/AAAA_BBBB_CCCC_DDDD` — open one to confirm), and the SDCP `ErrorNumber` table (1–5): only provable by provoking real faults.
 * Bambu `start_print` payload for a stored file (`param`, `url` for root vs `/cache` files).
 * Elegoo delete / start on a listed id, and how SDCP marks directories (`type`).
 * Whether Bambu reports `subtask_name` with or without the extension while printing (the delete guard compares stems).
@@ -58,4 +59,5 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 | `test_bambu_files.py` | implicit FTPS on :990 with `bblp` + access code and `PROT P`; `LIST` lines parse as `ls -l`; listed sizes equal `SIZE`; `/cache` presence; download = listed size and is a zip; (write) STOR → listed → DELE round trip |
 | `test_moonraker_files.py` | `/server/info` reachable; `/server/files/directory?extended=true` shape (`dirs[].dirname`, `files[].filename/size/modified`, metadata keys & units); client listing agrees with the raw API; download = listed size; (write) upload → listed → delete |
 | `test_discovery.py` | Bambu: MQTT 8883 + FTPS 990 open; unicast SSDP `M-SEARCH` on UDP 1990 answers with `USN`/`DevModel.bambu.com`/`DevName.bambu.com`; multicast NOTIFY parses. Elegoo: unicast `M99999` on UDP 3000 → SDCP JSON (`MainboardID`, `MachineName`, `Name`, `MainboardIP`). Moonraker: `/server/info` signature (200, or 401/403 when a key is required). Whole sweep of `THEMIS_VERIFY_DISCOVERY_RANGE` finds every configured printer |
+| `test_alarms.py` | Bambu `print.hms` = list of `{attr:int, code:int}` and carries the full current list; entries decode to known modules + severities (set `THEMIS_VERIFY_BAMBU_SERIAL` too). Elegoo `Status.PrintInfo.ErrorNumber` is an int. Moonraker `webhooks.state/state_message` and `print_stats.state/message` exist and the client's alarms match them. Observational on a healthy printer — trigger a harmless fault to exercise decoding |
 | `test_elegoo_files.py` | SDCP `GET_FILE_LIST` response shape for `/local/` (entry keys, how directories are marked, name format); client listing agrees; ids round-trip into `start_print`'s `/local/` prefix rule |

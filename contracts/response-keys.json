@@ -17,7 +17,9 @@
     "total_layers",
     "temperatures",
     "capabilities",
-    "current_print"
+    "current_print",
+    "alarm_count",
+    "alarm_severity"
   ],
   "fleet_printer_connected_only": [
     "fan_model",
@@ -309,5 +311,25 @@
     "error",
     "can_delete",
     "can_download"
+  ],
+  "printer_alarm": [
+    "id",
+    "printer_id",
+    "printer_name",
+    "code",
+    "severity",
+    "message",
+    "source",
+    "help_url",
+    "first_seen",
+    "last_seen",
+    "resolved_at",
+    "acknowledged_at",
+    "active"
+  ],
+  "alarm_summary": [
+    "count",
+    "worst",
+    "printers"
   ]
 }

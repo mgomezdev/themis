@@ -178,9 +178,21 @@ class PrinterManager:
         return state
 
     async def on_state_change(self, printer_id: int, vendor_state) -> None:
+        await self._observe_alarms(printer_id)
         if self._on_state_broadcast:
             normalized = self.get_normalized_state(printer_id)
             await self._on_state_broadcast("printer_state", normalized)
+
+    async def _observe_alarms(self, printer_id: int) -> None:
+        """Feed the printer's current problems to the alarm history. Never lets an alarm failure break telemetry."""
+        client = self._clients.get(printer_id)
+        if client is None or self._session_factory is None:
+            return
+        try:
+            from .alarms import tracker
+            await tracker.observe(self._session_factory, printer_id, client.get_alarms(), self._on_state_broadcast)
+        except Exception:
+            logger.exception("Alarm update failed for printer %s", printer_id)
 
     async def on_print_complete(self, printer_id: int, vendor_state) -> None:
         self.set_awaiting_plate_clear(printer_id, True)
@@ -256,6 +268,8 @@ class PrinterManager:
         client = self._clients.pop(printer_id, None)
         if client:
             client.disconnect()
+        from .alarms import tracker
+        tracker.forget(printer_id)
 
 
 printer_manager = PrinterManager()

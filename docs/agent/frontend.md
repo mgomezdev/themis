@@ -132,3 +132,5 @@ Canned data includes: a 4-slot U1 printer + a single-tool printer; a multi-mater
 | `edit-job.spec.ts` | Pre-fills a saved `filament_map`; asserts `updateJobConfigs` round-trip |
 
 **Run:** one-time `npx playwright install chromium`, then `npm run test:e2e` (headless) or `npm run test:e2e:ui` (interactive).
+
+| `AlarmsScreen` / `api/alarms.ts` | `/alarms` — unacknowledged/active/history alarms with severity, acknowledge (one/all, optional `?printer=`), and the `min_severity` select for webhook/notification delivery. `useAlarmFeed` reloads on ws `alarms_changed`; `useAlarmSummary` feeds the sidebar badge; Fleet tiles show `AlarmBadge` from `/fleet`'s `alarm_count`/`alarm_severity`. `printer.alarm` is also a checkbox in the webhook/notification event lists. |

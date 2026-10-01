@@ -16,6 +16,7 @@ import paho.mqtt.client as mqtt
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
     DiscoveredPrinter,
     PrinterCapabilities,
     FileTooLargeError,
@@ -405,6 +406,10 @@ class BambuMQTTClient(AbstractPrinterClient):
     def is_printing(self) -> bool:
         return self.state.state in ("RUNNING", "PAUSE")
 
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import hms_alarms
+        return hms_alarms(self.state.hms_errors)
+
     def request_status_update(self) -> None:
         self._publish({"pushing": {"command": "pushall", "version": 1, "push_target": 1}})
 
@@ -550,6 +555,8 @@ class BambuMQTTClient(AbstractPrinterClient):
                 "FINISH": "FINISH",
                 "FAILED": "FAILED",
             }.get(raw, "unknown")
+        if "hms" in p and isinstance(p["hms"], list):
+            self.state.hms_errors = p["hms"]          # present = the full current list (empty list = all cleared)
         if "stg_cur" in p:
             self.state.stg_cur = p["stg_cur"]
         if "subtask_name" in p:

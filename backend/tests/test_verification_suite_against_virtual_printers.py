@@ -76,6 +76,33 @@ def test_discovery_verification_checks_pass_against_the_virtual_lan(monkeypatch)
     assert len(ran) == 9
 
 
+def test_alarm_verification_checks_pass_against_virtual_error_reports(monkeypatch):
+    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.services.elegoo_centauri_client import ElegooCentauriClient
+    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from tests.virtual_printers.alarm_payloads import bambu_report, elegoo_status, moonraker_status
+
+    bambu = BambuMQTTClient(ip_address="192.0.2.7", serial_number="S", access_code="1")
+    bambu._handle_message(bambu_report([(0x07000100, 0x00020001)]))
+    seen = [bambu_report([(0x07000100, 0x00020001)])]
+
+    elegoo = ElegooCentauriClient(ip_address="192.0.2.5")
+    elegoo._parse_status_msg(elegoo_status(error_number=0))        # raw = the whole message, as a live push leaves it
+
+    moon = SnapmakerExtendedClient(ip_address="192.0.2.6")
+    status = moonraker_status({"state": "ready", "state_message": "ok"}, {"state": "standby", "message": ""})["params"][0]
+    moon._apply_status(status)
+
+    import httpx
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: httpx.Response(
+        200, json={"result": {"status": status}}, request=httpx.Request("GET", url)))
+
+    ran = _run_all("protocol_verification.test_alarms", bambu_report=(bambu, seen), elegoo_client=elegoo,
+                   moonraker_cfg={"url": "http://192.0.2.6:7125", "api_key": None})
+
+    assert len(ran) == 5
+
+
 def test_the_suite_skips_cleanly_without_a_printer_configured():
     """Collected by hand (not by default), every check must skip — never error — when no printer is configured."""
     import subprocess
@@ -85,7 +112,7 @@ def test_the_suite_skips_cleanly_without_a_printer_configured():
     out = subprocess.run([sys.executable, "-m", "pytest", "protocol_verification", "-q", "-p", "no:cacheprovider"],
                          cwd=Path(__file__).resolve().parents[1], env=env, capture_output=True, text=True, timeout=120)
     assert out.returncode == 0, out.stdout + out.stderr
-    assert "skipped" in out.stdout and "passed" not in out.stdout and "failed" not in out.stdout
+    assert "skipped" in out.stdout and "failed" not in out.stdout and "error" not in out.stdout.lower()
 
 
 def test_the_normal_gates_never_collect_the_real_protocol_suite():

@@ -5,7 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -62,7 +62,21 @@ async def list_fleet(session: AsyncSession = Depends(get_session)) -> list[dict]
     """All printers with live telemetry (temperatures, progress, print state) merged in.
     Offline or disconnected printers return a zeroed-out state block."""
     result = await session.execute(select(Printer))
-    return [_fleet_dict(p) for p in result.scalars().all()]
+    from ...models import PrinterAlarm
+    from ...services.alarms import rank
+    badge: dict[int, tuple[int, str]] = {}
+    for pid, sev, n in (await session.execute(
+        select(PrinterAlarm.printer_id, PrinterAlarm.severity, func.count())
+        .where(PrinterAlarm.resolved_at.is_(None), PrinterAlarm.acknowledged_at.is_(None))
+        .group_by(PrinterAlarm.printer_id, PrinterAlarm.severity)
+    )).all():
+        count, worst = badge.get(pid, (0, "info"))
+        badge[pid] = (count + n, sev if rank(sev) > rank(worst) else worst)
+    out = []
+    for p in result.scalars().all():
+        count, worst = badge.get(p.id, (0, None))
+        out.append({**_fleet_dict(p), "alarm_count": count, "alarm_severity": worst})
+    return out
 
 
 @router.get(

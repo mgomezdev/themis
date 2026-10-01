@@ -22,6 +22,8 @@ import { JobDetailScreen } from './screens/JobDetailScreen';
 import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }          from './screens/FilesScreen';
 import { PrinterFilesScreen }   from './screens/PrinterFilesScreen';
+import { AlarmsScreen }         from './screens/AlarmsScreen';
+import { useAlarmSummary }      from './api/alarms';
 import { SettingsScreen }       from './screens/SettingsScreen';
 import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
@@ -79,6 +81,7 @@ const MORE_NAV_ITEMS = [
   { to: '/customers', label: 'Customers', icon: 'user'  },
   { to: '/files',     label: 'Files',     icon: 'files' },
   { to: '/printer-files', label: 'Printer files', icon: 'printer' },
+  { to: '/alarms',    label: 'Alarms',    icon: 'alert' },
   { to: '/history',   label: 'History',   icon: 'clock' },
   { to: '/analytics', label: 'Analytics', icon: 'chart' },
 ] as const;
@@ -131,6 +134,7 @@ function AppShell() {
   const { jobs } = useQueue();
   const { config: queueConfig } = useQueueConfig();
   const [printers] = useFleetData();
+  const alarmSummary = useAlarmSummary();
   const queueCounts = useMemo(() => ({
     active:  jobs.filter(j => ['printing','paused','slicing','uploading'].includes(j.status)).length,
     pending: jobs.filter(j => j.status === 'queued').length,
@@ -176,6 +180,7 @@ function AppShell() {
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
     '/printer-files': { title: 'Printer files',    crumbs: ['Workshop'] },
+    '/alarms':       { title: 'Alarms',           crumbs: ['Workshop'] },
     '/projects':        { title: 'Projects',      crumbs: ['Workshop'],
                          actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
     '/projects/new':    { title: 'New project',  crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
@@ -215,7 +220,7 @@ function AppShell() {
 
   return (
     <div className="app" data-nav={navCollapsed ? 'collapsed' : 'expanded'}>
-      <Sidebar queueCounts={queueCounts}
+      <Sidebar queueCounts={queueCounts} alarmCount={alarmSummary.count} alarmWorst={alarmSummary.worst}
                operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length}
                collapsed={navCollapsed} onToggle={() => setNavCollapsed(c => !c)} />
       <div className="main">
@@ -236,6 +241,7 @@ function AppShell() {
             <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"           element={<FilesScreen />} />
             <Route path="/printer-files"   element={<PrinterFilesScreen />} />
+            <Route path="/alarms"          element={<AlarmsScreen />} />
             <Route path="/projects"            element={<ProjectsScreen />} />
             <Route path="/projects/new"        element={<ProjectBuilderScreen />} />
             <Route path="/projects/:id"        element={<ProjectDetailScreen />} />

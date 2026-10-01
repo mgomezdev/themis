@@ -15,6 +15,7 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
     DiscoveredPrinter,
     FileTooLargeError,
     PrinterCapabilities,
@@ -39,6 +40,7 @@ _NORM_STATE = {
 # Objects we subscribe to / query for live status.
 _SUBSCRIBE_OBJECTS = {
     "print_stats": None,
+    "webhooks": None,
     "display_status": None,
     "heater_bed": None,
     "extruder": None,
@@ -67,6 +69,9 @@ class SnapmakerState:
     extruder_temps: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     extruder_targets: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     active_extruder: int = 0
+    klippy_state: str | None = None      # webhooks.state
+    klippy_message: str | None = None    # webhooks.state_message
+    print_message: str | None = None     # print_stats.message
     raw: dict = field(default_factory=dict)
 
     @property
@@ -127,6 +132,13 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._loop = None
         self._prev_print_state = "standby"
         self._rpc_id = itertools.count(1)
+
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import klipper_alarms
+        with self._lock:
+            s = self.state
+            return klipper_alarms({"state": s.klippy_state, "state_message": s.klippy_message},
+                                  {"state": s.print_state, "message": s.print_message})
 
     # ---- discovery (Moonraker web API: GET /server/info, GET /printer/info) ----
     @classmethod
@@ -287,10 +299,13 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         elif method == "notify_klippy_ready":
             with self._lock:
                 self.state.klippy_ready = True
+                self.state.klippy_state, self.state.klippy_message = "ready", None
             self._fire_state_change()
         elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
             with self._lock:
                 self.state.klippy_ready = False
+                if method == "notify_klippy_shutdown":
+                    self.state.klippy_state = "shutdown"       # the reason arrives with the next webhooks update
             self._fire_state_change()
         elif "result" in data:
             result = data["result"]
@@ -305,8 +320,16 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
     def _apply_status(self, status: dict) -> None:
         with self._lock:
             self.state.raw = status
+            wh = status.get("webhooks")
+            if wh:
+                if "state" in wh:
+                    self.state.klippy_state = wh["state"]
+                if "state_message" in wh:
+                    self.state.klippy_message = wh["state_message"]
             ps = status.get("print_stats")
             if ps:
+                if "message" in ps:
+                    self.state.print_message = ps.get("message") or None
                 if "state" in ps:
                     self.state.print_state = ps["state"]
                 if "filename" in ps:
