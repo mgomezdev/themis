@@ -69,6 +69,20 @@ paused/hold/partial→warn, error→err, idle/ready/complete→ok, in_progress�
   status that should render styled, add it to `StatusKey` AND the `StatusPill` map** — otherwise it
   shows up as a grey pill with the raw key.
 
+## Responsive / touch (BIZ-156)
+
+- One breakpoint does the work: `@media (max-width: 1024px)` in `app.css` swaps the sidebar for the bottom
+  bar (`BottomNav` in `App.tsx`; destinations without a slot live in its **More** sheet, `MORE_NAV_ITEMS`),
+  enforces ≥44px `.btn`/inputs/`.settings-tab`/`.layout-toggle` targets, and stacks `.fleet-expanded` and the
+  open-job panel (`.queue-grid[data-selected]`). Inline `gridTemplateColumns` can't be overridden by a media
+  query — put multi-column layouts in a class (see `.fleet-expanded`, `.queue-grid`).
+- Use `minmax(0, 1fr)`, never bare `1fr`, for a grid track holding wide content (a bare `1fr` can't shrink
+  below its min-content and widens the whole page — the original Queue bug). Use `.row.wrap` for toolbars.
+- `useMediaQuery(query)` (`components/useMediaQuery.ts`) for JS-level switches (Fleet hides the 7-column Rows
+  layout at ≤768px). `e2e/responsive.spec.ts` asserts no sideways scroll + 44px targets at 375/768/1024px.
+- PWA: `public/manifest.webmanifest` + `public/icons/*` (copied to `dist/`, served by `register_spa`), linked
+  from `index.html`. No service worker (installable for home-screen launch; no offline mode).
+
 ## Recipes
 
 - **Style a new element** → compose existing utility/component classes + tokens; only add a new class in
