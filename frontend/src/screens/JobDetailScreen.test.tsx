@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { JobDetailScreen } from './JobDetailScreen';
@@ -13,6 +13,7 @@ vi.mock('../api/queue', async (importOriginal) => {
     cancelJob: vi.fn(),
     unblockJob: vi.fn(),
     completeJobManually: vi.fn(),
+    setJobSchedule: vi.fn(),
   };
 });
 
@@ -46,6 +47,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
   eligible_printers: [],
   low_stock_warning: null,
   filament_cost: null,
+  not_before: null,
   printer_configs: [
     {
       printer_id: 3,
@@ -190,5 +192,44 @@ describe('JobDetailScreen — manual completion', () => {
     await user.click(screen.getByRole('button', { name: /^confirm$/i }));
 
     expect(await screen.findByText(/500 slice error/i)).toBeTruthy();
+  });
+});
+
+describe('JobDetailScreen — scheduled start', () => {
+  it('shows the saved start time and sends a UTC instant when changed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, not_before: '2030-01-01T22:00:00+00:00' });
+    vi.mocked(queueApi.setJobSchedule).mockResolvedValue({ ...BASE_JOB, not_before: '2030-02-03T04:05:00.000Z' });
+    renderJobDetail();
+
+    const input = await screen.findByLabelText('Earliest start') as HTMLInputElement;
+    expect(input.value).not.toBe('');
+    fireEvent.change(input, { target: { value: '2030-02-03T04:05' } });
+    await user.click(within(screen.getByTestId('start-time-card')).getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(queueApi.setJobSchedule).toHaveBeenCalledTimes(1));
+    const [id, sent] = vi.mocked(queueApi.setJobSchedule).mock.calls[0];
+    expect(id).toBe(5);
+    expect(sent).toBe(new Date('2030-02-03T04:05').toISOString());     // local wall time → UTC
+  });
+
+  it('"Start as soon as possible" clears the start time', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, not_before: '2030-01-01T22:00:00+00:00' });
+    vi.mocked(queueApi.setJobSchedule).mockResolvedValue({ ...BASE_JOB, not_before: null });
+    renderJobDetail();
+
+    await user.click(await screen.findByRole('button', { name: /start as soon as possible/i }));
+
+    await waitFor(() => expect(queueApi.setJobSchedule).toHaveBeenCalledWith(5, null));
+    expect((screen.getByLabelText('Earliest start') as HTMLInputElement).value).toBe('');
+    expect(screen.queryByRole('button', { name: /start as soon as possible/i })).toBeNull();
+  });
+
+  it('is not offered once the job has started', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'printing' });
+    renderJobDetail();
+    await screen.findByText(/part\.3mf/);
+    expect(screen.queryByTestId('start-time-card')).toBeNull();
   });
 });

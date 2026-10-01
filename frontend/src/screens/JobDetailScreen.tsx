@@ -3,8 +3,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
-import { getJobDetails, cancelJob, unblockJob, completeJobManually, setJobCost, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
+import { getJobDetails, cancelJob, unblockJob, completeJobManually, setJobCost, setJobSchedule, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
+import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
 
 const BADGE: Record<string, string> = {
   elegoo_centauri: 'ECC',
@@ -110,13 +111,15 @@ export function JobDetailScreen() {
   const [completeError, setCompleteError] = useState<string | null>(null);
   const [costInput, setCostInput] = useState('');
   const [savingCost, setSavingCost] = useState(false);
+  const [startInput, setStartInput] = useState('');
+  const [savingStart, setSavingStart] = useState(false);
 
   useEffect(() => {
     if (jobId == null) return;
     let alive = true;
     setLoading(true);
     getJobDetails(jobId)
-      .then(d => { if (alive) { setJob(d); setCostInput(d.filament_cost != null ? String(d.filament_cost) : ''); setLoading(false); } })
+      .then(d => { if (alive) { setJob(d); setCostInput(d.filament_cost != null ? String(d.filament_cost) : ''); setStartInput(toLocalInput(d.not_before)); setLoading(false); } })
       .catch(e => { if (alive) { setError(String(e)); setLoading(false); } });
     return () => { alive = false; };
   }, [jobId]);
@@ -131,6 +134,20 @@ export function JobDetailScreen() {
       setError(`Failed to save cost: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setSavingCost(false);
+    }
+  }
+
+  async function saveStart(value: string) {
+    if (!job || savingStart) return;
+    setSavingStart(true);
+    try {
+      const updated = await setJobSchedule(job.id, fromLocalInput(value));
+      setJob(prev => prev ? { ...prev, not_before: updated.not_before } : prev);
+      setStartInput(toLocalInput(updated.not_before));
+    } catch (e) {
+      setError(`Failed to save start time: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setSavingStart(false);
     }
   }
 
@@ -419,6 +436,34 @@ export function JobDetailScreen() {
                   Print was aborted — please manually update your Spoolman inventory.
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Scheduled start */}
+          {(job.status === 'queued' || job.status === 'blocked') && (
+            <div className="card" style={{ padding: 20 }} data-testid="start-time-card">
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 14 }}>Start time</div>
+              <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  type="datetime-local" className="input" aria-label="Earliest start"
+                  style={{ maxWidth: 220 }}
+                  value={startInput}
+                  onChange={e => setStartInput(e.target.value)}
+                />
+                <button className="btn sm" disabled={savingStart} onClick={() => saveStart(startInput)}>
+                  {savingStart ? 'Saving…' : 'Save'}
+                </button>
+                {job.not_before && (
+                  <button className="btn ghost sm" disabled={savingStart} onClick={() => saveStart('')}>
+                    Start as soon as possible
+                  </button>
+                )}
+              </div>
+              <div className="tiny muted" style={{ marginTop: 8 }}>
+                {startsIn(job.not_before)
+                  ? `The queue won't start this job ${startsIn(job.not_before)} (${new Date(job.not_before!).toLocaleString()}); jobs behind it can still run.`
+                  : 'No earliest start: the job runs as soon as a compatible printer is free (and outside its quiet hours).'}
+              </div>
             </div>
           )}
 

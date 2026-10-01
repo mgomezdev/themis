@@ -403,6 +403,54 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
   });
 });
 
+describe('FleetScreen — edit printer quiet hours', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  async function openEdit(apiPrinter: object) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPrinter) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+  const patchBody = (calls: Array<[string, RequestInit | undefined]>) =>
+    JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+
+  it('loads the stored window and saves an edited one', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, quiet_start: '22:00', quiet_end: '06:00' });
+    const start = await screen.findByLabelText('Quiet hours start') as HTMLInputElement;
+    await waitFor(() => expect(start.value).toBe('22:00'));
+    expect((screen.getByLabelText('Quiet hours end') as HTMLInputElement).value).toBe('06:00');
+
+    fireEvent.change(start, { target: { value: '23:30' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    const body = patchBody(calls);
+    expect([body.quiet_start, body.quiet_end]).toEqual(['23:30', '06:00']);
+  });
+
+  it('Clear removes the window, and a half-filled one is saved as none', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, quiet_start: '22:00', quiet_end: '06:00' });
+    await waitFor(() => expect((screen.getByLabelText('Quiet hours start') as HTMLInputElement).value).toBe('22:00'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.change(screen.getByLabelText('Quiet hours start'), { target: { value: '21:00' } });   // only one side
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    const body = patchBody(calls);
+    expect([body.quiet_start, body.quiet_end]).toEqual([null, null]);
+  });
+});
+
 // ── Ready-for-work gate + reconnect (fetch-level: asserts the real request and the resulting UI) ───
 describe('FleetScreen — ready-for-work gate and reconnect', () => {
   const AWAITING: FleetPrinter = { ...PRINTER_1, state: 'IDLE', progress: 0, remaining_time: 0, current_print: null, awaiting_plate_clear: true };

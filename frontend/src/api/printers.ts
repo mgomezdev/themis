@@ -54,6 +54,8 @@ export interface ApiPrinter {
   no_snapshots_while_idle: boolean;
   bed_x_mm: number;
   bed_y_mm: number;
+  quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
+  quiet_end: string | null;
 }
 
 export interface CreatePrinterBody {
@@ -77,6 +79,8 @@ export interface UpdatePrinterBody {
   no_snapshots_while_idle?: boolean;
   bed_x_mm?: number;
   bed_y_mm?: number;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
 }
 
 export interface MachinePreset {

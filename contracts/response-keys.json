@@ -39,7 +39,9 @@
     "build_plate_type",
     "no_snapshots_while_idle",
     "bed_x_mm",
-    "bed_y_mm"
+    "bed_y_mm",
+    "quiet_start",
+    "quiet_end"
   ],
   "queue_job": [
     "id",
@@ -74,7 +76,8 @@
     "estimate_preset_label",
     "created_at",
     "updated_at",
-    "filament_cost"
+    "filament_cost",
+    "not_before"
   ],
   "job_details_extra": [
     "file",

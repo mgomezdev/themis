@@ -3724,6 +3724,67 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/schedule": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Set or clear a job's earliest start time",
+        "description": "Hold a queued/blocked job until `not_before` (UTC ISO; null clears it and releases the job now).",
+        "operationId": "set_job_schedule_api_v1_jobs__job_id__schedule_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSchedulePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Schedule Api V1 Jobs  Job Id  Schedule Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job already started or finished"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/cost": {
       "patch": {
         "tags": [
@@ -7415,6 +7476,17 @@
               }
             ],
             "title": "Overrides"
+          },
+          "not_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Before"
           }
         },
         "type": "object",
@@ -7423,6 +7495,23 @@
           "printer_configs"
         ],
         "title": "JobCreate"
+      },
+      "JobSchedulePatch": {
+        "properties": {
+          "not_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Before"
+          }
+        },
+        "type": "object",
+        "title": "JobSchedulePatch"
       },
       "JogZBody": {
         "properties": {
@@ -8516,6 +8605,28 @@
               }
             ],
             "title": "Bed Y Mm"
+          },
+          "quiet_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Start"
+          },
+          "quiet_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet End"
           }
         },
         "type": "object",

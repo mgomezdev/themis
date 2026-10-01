@@ -40,6 +40,8 @@ def _fleet_dict(p: Printer) -> dict:
         "queue_on": p.queue_on,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
+        "quiet_start": p.quiet_start,
+        "quiet_end": p.quiet_end,
         "loaded_filaments": p.loaded_filaments or [],
     }
     client = printer_manager._clients.get(p.id)

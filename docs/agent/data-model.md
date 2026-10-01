@@ -60,6 +60,7 @@ trigger math, never reset except by construction (per-item resets live on `print
   For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
   (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped); for
   others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
+`quiet_start` / `quiet_end: str?` (v028) — server-local `HH:MM` window (wraps midnight; both or neither, validated in `PrinterUpdate`) in which a *ready* printer starts no new jobs (neither claims nor resumes pre-sliced gcode); running prints are never interrupted and offline slice-ahead still happens. Logic in `services/scheduling.py::in_quiet_hours`.
 
 ### uploaded_files
 `id, original_filename, stored_path, plates: JSON, uploaded_at`.
@@ -114,6 +115,7 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
 
 `printed_on_printer_id: int?` (v025, plain integer — no FK; `delete_printer` nulls it) — the printer the job ran on, set when it enters `printing` (and by complete-manually), never cleared; unlike `assigned_printer_id` (nulled on fail/cancel) it lets fleet analytics attribute failures. Analytics falls back to `assigned_printer_id` for pre-v025 rows.
+`not_before: str?` (v028) — UTC ISO instant before which the queue engine won't start the job (null = ASAP). The claim and resume-sliced queries skip a not-yet-due job (it does **not** block the head of the line — jobs behind it run), offline printers don't pre-slice it, and the engine's idle wait is capped at the earliest future `not_before` (`_seconds_until_next_schedule`) so it starts on time. Set on `POST /jobs {not_before}` or `PATCH /jobs/{id}/schedule` (queued/blocked only, else 409; null clears + wakes the engine).
 
 `filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
 Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched

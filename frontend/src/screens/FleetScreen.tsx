@@ -92,6 +92,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
   const [machinePreset, setMachinePreset] = useState<string>('');
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
+  const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
+  const [quietEnd, setQuietEnd] = useState('');
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -112,6 +114,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setDraftConn(conn);
         setMachinePreset(api.current_orca_printer_profile ?? '');
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
+        setQuietStart(api.quiet_start ?? '');
+        setQuietEnd(api.quiet_end ?? '');
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -141,6 +145,9 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         connection_config: draftConn,
         current_orca_printer_profile: machinePreset || null,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
+        // Both or neither: a half-filled window is treated as none.
+        quiet_start: quietStart && quietEnd ? quietStart : null,
+        quiet_end: quietStart && quietEnd ? quietEnd : null,
       });
       onSaved();
     } catch (e) {
@@ -259,6 +266,21 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
               Sets which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
               {machinePreset && <> Preset: <span className="mono">{machinePreset}</span>.</>}
             </div>
+          </div>
+
+          <div className="col gap-2">
+            <div className="tag-key">Quiet hours</div>
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <input type="time" className="input" aria-label="Quiet hours start" style={{ maxWidth: 130 }}
+                     value={quietStart} onChange={e => setQuietStart(e.target.value)} />
+              <span className="small muted">to</span>
+              <input type="time" className="input" aria-label="Quiet hours end" style={{ maxWidth: 130 }}
+                     value={quietEnd} onChange={e => setQuietEnd(e.target.value)} />
+              {(quietStart || quietEnd) && (
+                <button type="button" className="btn ghost sm" onClick={() => { setQuietStart(''); setQuietEnd(''); }}>Clear</button>
+              )}
+            </div>
+            <span className="tiny muted">This printer won&apos;t start new jobs in this window (server time; may wrap midnight). A running print is never interrupted.</span>
           </div>
 
           <div className="col gap-2">

@@ -21,6 +21,9 @@ class Printer(Base):
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
     bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
     bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    # Server-local 'HH:MM' window in which this printer won't start new jobs (wraps midnight); both or neither.
+    quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     lifetime_job_count: Mapped[int] = mapped_column(Integer, default=0)
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -123,6 +126,8 @@ class Job(Base):
     # analytics can attribute outcomes to a printer.
     # Plain integer (no FK — see v025); delete_printer nulls it.
     printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # UTC ISO instant before which the queue engine won't start this job (None = as soon as possible).
+    not_before: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
 
 class JobPrinterConfig(Base):

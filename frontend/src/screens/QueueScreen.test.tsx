@@ -30,7 +30,7 @@ const nullEstimate = {
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
   materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
-  low_stock_warning: null, filament_cost: null,
+  low_stock_warning: null, filament_cost: null, not_before: null,
 };
 
 const mockJobs: ApiJob[] = [
@@ -327,6 +327,24 @@ describe('QueueScreen', () => {
     expect(screen.getByRole('button', { name: /up/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /down/i })).toBeTruthy();
     expect(screen.getByRole('button', { name: /back/i })).toBeTruthy();
+  });
+
+  it('shows a countdown for a job scheduled for later, and nothing once it is due', () => {
+    const base: ApiJob = {
+      id: 11, uploaded_file_id: 10, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: 1.0,
+      status: 'queued', overrides: null, block_reason: null,
+      created_at: '2026-05-27T00:00:00Z', updated_at: '2026-05-27T00:00:00Z', ...nullEstimate,
+    };
+    const inTwoHours = new Date(Date.now() + 2 * 3600_000 + 30_000).toISOString();
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...base, not_before: inTwoHours }], refetch: vi.fn() });
+    const { unmount } = render(<QueueScreen />, { wrapper });
+    expect(screen.getByText('in 2h 1m')).toBeTruthy();
+    unmount();
+
+    vi.mocked(queueApi.useQueue).mockReturnValue({
+      jobs: [{ ...base, not_before: new Date(Date.now() - 60_000).toISOString() }], refetch: vi.fn() });
+    render(<QueueScreen />, { wrapper });
+    expect(screen.queryByText(/^in \d/)).toBeNull();
   });
 
   it('shows low-stock warning strip on job card when present', () => {
