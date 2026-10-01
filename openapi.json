@@ -6080,6 +6080,67 @@
         }
       }
     },
+    "/api/v1/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Low-inventory alert thresholds",
+        "operationId": "get_low_stock_api_v1_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Set low-inventory alert thresholds",
+        "description": "Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one\nre-arms spools that are no longer below it.",
+        "operationId": "put_low_stock_api_v1_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStockConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tags": {
       "get": {
         "tags": [
@@ -7040,6 +7101,33 @@
           "password"
         ],
         "title": "LoginBody"
+      },
+      "LowStockConfig": {
+        "properties": {
+          "default_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default G"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "title": "LowStockConfig",
+        "description": "Grams below which a spool raises a `spool.low` event. `overrides` maps a Spoolman filament id (as a\nstring) to its own threshold and wins over `default_g`; with neither set nothing alerts."
       },
       "MaintenanceItemCreate": {
         "properties": {

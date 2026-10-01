@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -142,3 +142,46 @@ async def patch_filament(
         raise HTTPException(status_code=exc.response.status_code, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
+
+
+class LowStockConfig(BaseModel):
+    """Grams below which a spool raises a `spool.low` event. `overrides` maps a Spoolman filament id (as a
+    string) to its own threshold and wins over `default_g`; with neither set nothing alerts."""
+    default_g: float | None = Field(default=None, ge=0, le=100_000)
+    overrides: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("overrides")
+    @classmethod
+    def _valid_overrides(cls, v: dict[str, float]) -> dict[str, float]:
+        for key, grams in v.items():
+            if not key.isdigit():
+                raise ValueError(f"override key {key!r} must be a Spoolman filament id")
+            if not 0 <= grams <= 100_000:
+                raise ValueError("override thresholds must be between 0 and 100000 grams")
+        return v
+
+
+def _low_stock_out(row: SpoolmanConfig | None) -> LowStockConfig:
+    return LowStockConfig(default_g=row.low_stock_default_g if row else None,
+                          overrides={str(k): float(g) for k, g in ((row.low_stock_overrides or {}) if row else {}).items()})
+
+
+@router.get("/low-stock", summary="Low-inventory alert thresholds", response_model=LowStockConfig,
+            dependencies=[Depends(require_scope("spoolman:read"))])
+async def get_low_stock(session: AsyncSession = Depends(get_session)):
+    return _low_stock_out(await session.get(SpoolmanConfig, 1))
+
+
+@router.put("/low-stock", summary="Set low-inventory alert thresholds", response_model=LowStockConfig,
+            dependencies=[Depends(require_scope("spoolman:write"))])
+async def put_low_stock(body: LowStockConfig, session: AsyncSession = Depends(get_session)):
+    """Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one
+    re-arms spools that are no longer below it."""
+    row = await session.get(SpoolmanConfig, 1)
+    if row is None:
+        row = SpoolmanConfig(id=1, enabled=False)
+        session.add(row)
+    row.low_stock_default_g = body.default_g
+    row.low_stock_overrides = body.overrides
+    await session.commit()
+    return _low_stock_out(row)

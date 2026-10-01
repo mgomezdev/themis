@@ -16,7 +16,7 @@ import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import SpoolmanConfig
-from . import spoolman_service
+from . import spool_alerts, spoolman_service
 
 logger = logging.getLogger("app")
 
@@ -48,6 +48,7 @@ async def record_sync(session: AsyncSession, row: SpoolmanConfig) -> dict:
     row.last_sync_at = now
     row.last_sync_error = None
     row.last_sync_error_code = None
+    await spool_alerts.process(session, row, spools)   # never raises; a notification problem must not fail the sync
     await session.commit()
     return {"filament_count": len(filaments), "spool_count": len(spools)}
 
