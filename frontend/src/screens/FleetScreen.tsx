@@ -94,6 +94,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
@@ -113,6 +114,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setMachinePreset(api.current_orca_printer_profile ?? '');
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
         setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
+        setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -324,7 +326,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           )}
           <div className="row gap-2">
             <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" onClick={save} disabled={saving}>
+            <button className="btn primary" onClick={save} disabled={saving || !loaded}>
               {Icons.check} {saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>

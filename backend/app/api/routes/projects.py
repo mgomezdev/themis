@@ -323,7 +323,7 @@ def _project_progress(job_rows: list[Job]) -> dict:
     }
 
 
-async def _project_dict(project: Project, session: AsyncSession) -> dict:
+async def _project_dict(project: Project, session: AsyncSession, costs: dict | None = None) -> dict:
     items = await _load_items(session, project.id)
     links = await _load_links(session, project.id)
     parts = await _load_parts(session, project.id)
@@ -358,7 +358,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "links": links,
         "parts": parts,
         # Filament + machine + labour + parts (see services/job_costs.py); rates are the current settings.
-        "costs": (await job_costs.costs_by_project(session, [project.id], {project.id: list(job_rows)}))[project.id],
+        "costs": costs if costs is not None else
+                 (await job_costs.costs_by_project(session, [project.id], {project.id: list(job_rows)}))[project.id],
         **progress,
     }
 
@@ -389,7 +390,14 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[di
             select(Project).order_by(Project.created_at.desc())
         )
     ).scalars().all()
-    return [await _project_dict(p, session) for p in rows]
+    # Costs for every listed project in a constant number of queries (not 4 per project).
+    ids = [p.id for p in rows]
+    jobs_by_project: dict[int, list[Job]] = {i: [] for i in ids}
+    if ids:
+        for j in (await session.execute(select(Job).where(Job.project_id.in_(ids)))).scalars().all():
+            jobs_by_project[j.project_id].append(j)
+    costs = await job_costs.costs_by_project(session, ids, jobs_by_project)
+    return [await _project_dict(p, session, costs[p.id]) for p in rows]
 
 
 @router.post("", status_code=201, summary="Create project",

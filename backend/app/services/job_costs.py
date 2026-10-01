@@ -6,6 +6,8 @@ Settings re-prices every past job consistently. Definitions:
 - filament: the manually entered `jobs.filament_cost` (unchanged; never computed from Spoolman pricing).
 - machine: for each *completed* job, `actual_seconds` (the slicer's figure, not a measurement) × the rate of the
   printer it ran on (that printer's own rate if set, else the shop rate). Failed/cancelled jobs cost nothing here.
+  A job's printer is `assigned_printer_id`, which deleting the printer clears — so completed jobs of a deleted
+  printer are re-priced at the shop rate (its own rate is gone with it).
 - labour: logged minutes × the shop labour rate.
 - parts: quantity × unit cost of each non-printed part that has a unit cost.
 """

@@ -118,6 +118,59 @@ async def test_a_printers_rate_override_prices_the_jobs_it_ran(client, session_f
     assert (await client.get(f"/api/v1/projects/{p['id']}")).json()["costs"]["machine"] == 4.0
 
 
+async def test_deleting_a_printer_reprices_its_completed_jobs_at_the_shop_rate(client, session_factory, create_printer):
+    """Documented behavior: the job's printer link is cleared on delete, so the printer's own rate no longer applies."""
+    await client.put("/api/v1/settings/costs", json={"machine_rate_per_hour": 2.0, "labour_rate_per_hour": 0})
+    pid = await create_printer(name="Gone")
+    await client.patch(f"/api/v1/printers/{pid}", json={"machine_rate_per_hour": 10.0})
+    p = await _project(client)
+    await _complete_job(session_factory, p["id"], seconds=HOUR, printer_id=pid)
+    assert (await client.get(f"/api/v1/projects/{p['id']}")).json()["costs"]["machine"] == 10.0
+
+    assert (await client.delete(f"/api/v1/printers/{pid}")).status_code == 204
+
+    assert (await client.get(f"/api/v1/projects/{p['id']}")).json()["costs"]["machine"] == 2.0
+
+
+async def test_project_list_carries_each_projects_own_costs(client, session_factory):
+    await client.put("/api/v1/settings/costs", json={"machine_rate_per_hour": 2.0, "labour_rate_per_hour": 60.0})
+    a, b = await _project(client, name="A"), await _project(client, name="B")
+    await _complete_job(session_factory, a["id"], seconds=HOUR, filament=1.0)
+    await client.post(f"/api/v1/projects/{b['id']}/labor", json={"minutes": 30})
+    await client.post(f"/api/v1/projects/{b['id']}/parts", json={"name": "x", "quantity": 2, "unit_cost": 1.5})
+
+    by_name = {p["name"]: p["costs"] for p in (await client.get("/api/v1/projects")).json()}
+
+    assert (by_name["A"]["filament"], by_name["A"]["machine"], by_name["A"]["total"]) == (1.0, 2.0, 3.0)
+    assert (by_name["B"]["labour"], by_name["B"]["parts"], by_name["B"]["total"]) == (30.0, 3.0, 33.0)
+
+
+async def test_project_list_costs_use_a_constant_number_of_queries(client, session_factory):
+    """Costs for N projects must not issue per-project cost queries (list is polled by the UI)."""
+    from sqlalchemy import event
+    from app.database import get_session
+    from app.main import app
+
+    projects = [await _project(client, name=f"P{i}") for i in range(6)]
+    for p in projects:
+        await client.post(f"/api/v1/projects/{p['id']}/labor", json={"minutes": 10})
+
+    seen: list[str] = []
+    gen = app.dependency_overrides[get_session]()
+    sess = await gen.__anext__()
+    bind = sess.bind.sync_engine
+    listener = lambda conn, cursor, statement, *a: seen.append(statement)
+    event.listen(bind, "before_cursor_execute", listener)
+    try:
+        await client.get("/api/v1/projects")
+    finally:
+        event.remove(bind, "before_cursor_execute", listener)
+        await gen.aclose()
+
+    cost_queries = [q for q in seen if "FROM project_labor" in q or "FROM cost_config" in q or "machine_rate_per_hour IS NOT NULL" in q]
+    assert len(cost_queries) <= 3, cost_queries     # labour once, config once, printer overrides once — not per project
+
+
 async def test_printer_rate_validation(client, create_printer):
     pid = await create_printer()
     assert (await client.patch(f"/api/v1/printers/{pid}", json={"machine_rate_per_hour": -1})).status_code == 422

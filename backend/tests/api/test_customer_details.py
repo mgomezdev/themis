@@ -181,3 +181,13 @@ async def test_unlinked_projects_suggestions_and_link(client: AsyncClient):
     r = await client.post("/api/v1/customers/link-projects",
                           json={"links": [{"project_id": by_name["id"], "customer_id": other["id"]}]})
     assert r.status_code == 409
+
+
+def test_financials_without_costs_fall_back_to_filament_only_expenses():
+    """A caller that doesn't pass the cost map (the older signature) still gets filament-only expenses."""
+    from datetime import datetime, timezone
+    from app.models import Job, Project
+    now = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    p = Project(id=1, name="x", created_at="2026-08-30T00:00:00Z", price=80, amount_paid=None, payment_status="unpaid")
+    w = _financials([p], {1: [Job(status="complete", filament_cost=4.0), Job(status="queued", filament_cost=None)]}, now)["windows"]["all"]
+    assert (w["expenses"], w["expense_breakdown"]) == (4.0, {"filament": 4.0, "machine": 0.0, "labour": 0.0, "parts": 0.0})
