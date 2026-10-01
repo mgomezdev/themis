@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import Sequence
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -11,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import ApiKey, Customer, Job, Project
+from ...models import ApiKey, Customer, Job, Project, ProjectPayment
+from ...services.payments import payment_dict
 from ...services.password import hash_password
 
 router = APIRouter(prefix="/api/v1/customers", tags=["customers"])
@@ -142,16 +144,32 @@ def _project_summary(p: Project, jobs: list[Job]) -> dict:
 FINANCIAL_WINDOWS = {"30d": 30, "60d": 60, "90d": 90, "all": None}
 
 
-def _financials(projects: list[Project], jobs_by_project: dict[int, list[Job]], now: datetime) -> dict:
-    """Revenue (amount paid), expenses (job filament cost), billed (quoted price) and
-    outstanding balance, bucketed by project creation date. Payments carry no date of
-    their own, so a project's money lands in the window the project was created in."""
+async def _customer_payments(session: AsyncSession, projects: list[Project]) -> list[ProjectPayment]:
+    if not projects:
+        return []
+    return list((await session.execute(
+        select(ProjectPayment).where(ProjectPayment.project_id.in_([p.id for p in projects]))
+        .order_by(ProjectPayment.received_on.desc(), ProjectPayment.id.desc())
+    )).scalars().all())
+
+
+def _financials(projects: list[Project], jobs_by_project: dict[int, list[Job]], now: datetime,
+                payments: Sequence[ProjectPayment] = ()) -> dict:
+    """Revenue, expenses (job filament cost), billed (quoted price) and outstanding balance.
+
+    Revenue is cash-basis: each recorded payment counts in the windows containing the day it was *received*,
+    whenever the project started. Projects with no recorded payments (legacy manual amounts, or "marked paid"
+    with no amount) fall back to the project's creation date, as before. Expenses, billed, outstanding and
+    project_count are still bucketed by project creation date."""
+    paid_projects = {pay.project_id for pay in payments}
     windows = {}
     for key, days in FINANCIAL_WINDOWS.items():
         cutoff = now - timedelta(days=days) if days is not None else None
         in_window = [p for p in projects
                      if cutoff is None or ((ts := _parse_ts(p.created_at)) is not None and ts >= cutoff)]
-        revenue = sum(_paid(p) for p in in_window)
+        cutoff_day = cutoff.date().isoformat() if cutoff is not None else None
+        revenue = sum(pay.amount for pay in payments if cutoff_day is None or pay.received_on >= cutoff_day) \
+            + sum(_paid(p) for p in in_window if p.id not in paid_projects)
         expenses = sum(j.filament_cost for p in in_window for j in jobs_by_project.get(p.id, [])
                        if j.filament_cost is not None)
         windows[key] = {
@@ -261,11 +279,23 @@ async def get_customer(customer_id: int, session: AsyncSession = Depends(get_ses
     if c is None:
         raise HTTPException(404, "Customer not found")
     projects, jobs_by_project = await _customer_projects(session, [c.id])
+    payments = await _customer_payments(session, projects)
     return {
         **_to_dict(c),
         "projects": [_project_summary(p, jobs_by_project.get(p.id, [])) for p in projects],
-        "financials": _financials(projects, jobs_by_project, datetime.now(timezone.utc)),
+        "financials": _financials(projects, jobs_by_project, datetime.now(timezone.utc), payments),
     }
+
+
+@router.get("/{customer_id}/payments", summary="Payment history across a customer's projects (newest first)",
+            responses={404: {"description": "Customer not found"}},
+            dependencies=[Depends(require_scope("customers:read")), Depends(require_scope("projects:read"))])
+async def customer_payments(customer_id: int, session: AsyncSession = Depends(get_session)) -> list[dict]:
+    if await session.get(Customer, customer_id) is None:
+        raise HTTPException(404, "Customer not found")
+    projects, _ = await _customer_projects(session, [customer_id])
+    names = {p.id: p.name for p in projects}
+    return [payment_dict(pay, names[pay.project_id]) for pay in await _customer_payments(session, projects)]
 
 
 @router.post("", status_code=201, summary="Create customer",

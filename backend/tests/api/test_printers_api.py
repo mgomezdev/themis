@@ -187,7 +187,7 @@ async def test_delete_printer_blocks_job_left_with_no_config(client, session_fac
 
 
 async def test_delete_printer_clears_printed_on_reference_on_its_finished_jobs(client, session_factory, create_job):
-    """jobs.printed_on_printer_id has no FK (v024), so deletion must null it or analytics would point at a dead id."""
+    """jobs.printed_on_printer_id has no FK (v025), so deletion must null it or analytics would point at a dead id."""
     from app.models import Job
 
     printer_id = (await client.post("/api/v1/printers", json={

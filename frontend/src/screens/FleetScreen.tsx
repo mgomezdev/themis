@@ -12,6 +12,7 @@ import { MachinePicker } from '../components/MachinePicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
+import { useMediaQuery } from '../components/useMediaQuery';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
 import {
   useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem, completeMaintenanceItem,
@@ -544,12 +545,12 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         ...cardCueStyle(p),
       }}>
         {/* Header */}
-        <div className="row between" style={{
+        <div className="row between wrap" style={{
           padding: '14px 18px', background: 'var(--bg-3)',
-          borderBottom: '1px solid var(--border-1)', gap: 16, alignItems: 'center',
+          borderBottom: '1px solid var(--border-1)', gap: 12, alignItems: 'center',
         }}>
-          <div className="col" style={{ minWidth: 0, flex: 1 }}>
-            <div className="row gap-2" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+          <div className="col" style={{ minWidth: 0, flex: '1 1 220px' }}>
+            <div className="row gap-2 wrap" style={{ alignItems: 'baseline' }}>
               <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
               {editingName ? (
                 <input autoFocus className="input" value={nickname}
@@ -574,7 +575,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {p.capabilities.join(' · ')}
             </div>
           </div>
-          <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
+          <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -615,7 +616,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         </div>
 
         {/* Body */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(300px, 1fr)', gap: 18, padding: 18 }}>
+        <div className="fleet-expanded">
           {/* LEFT */}
           <div className="col gap-4" style={{ minWidth: 0 }}>
             <VideoTile
@@ -998,7 +999,7 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
     { id: 'rows',  label: 'Rows',  icon: Icons.layers },
   ];
   return (
-    <div className="row" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
+    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
       {opts.map(o => {
         const on = value === o.id;
         return (
@@ -1074,6 +1075,8 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
 export function FleetScreen() {
   const [printers, refetchFleet] = useFleetData();
   const [layout, setLayout] = useState<Layout>('cards');
+  // The row table has seven fixed columns; on a phone the card layout is the only one that fits.
+  const narrow = useMediaQuery('(max-width: 768px)');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
@@ -1124,18 +1127,18 @@ export function FleetScreen() {
 
   return (
     <div className="col gap-5">
-      <div className="row between">
+      <div className="row between wrap">
         <div>
           <div className="tag-key" style={{ marginBottom: 2 }}>Workshop</div>
-          <div className="row gap-3" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+          <div className="row gap-3 wrap" style={{ alignItems: 'baseline' }}>
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em' }}>
               {printers.length} printers
             </div>
             <div className="muted small">{fleetSummary}</div>
           </div>
         </div>
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
-          <LayoutToggle value={layout} onChange={setLayout} />
+        <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+          {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
           <button className="btn primary sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setAdding(true)}>
             {Icons.plus} Add printer
@@ -1143,10 +1146,10 @@ export function FleetScreen() {
         </div>
       </div>
 
-      {layout === 'cards' && (
+      {(layout === 'cards' || narrow) && (
         <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
-      {layout === 'rows' && (
+      {layout === 'rows' && !narrow && (
         <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
     </div>

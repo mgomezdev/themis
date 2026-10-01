@@ -72,12 +72,34 @@ const BOTTOM_NAV_ITEMS = [
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ] as const;
 
+// Destinations the four-slot bar has no room for; reachable from its "More" sheet.
+const MORE_NAV_ITEMS = [
+  { to: '/customers', label: 'Customers', icon: 'user'  },
+  { to: '/files',     label: 'Files',     icon: 'files' },
+  { to: '/history',   label: 'History',   icon: 'clock' },
+  { to: '/analytics', label: 'Analytics', icon: 'chart' },
+] as const;
+
 function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: number; blocked: number } }) {
   const location = useLocation();
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => setMoreOpen(false), [location.pathname]);
   const navigate = useNavigate();
   const path = '/' + location.pathname.split('/').filter(Boolean)[0];
   const total = queueCounts.active + queueCounts.pending + queueCounts.blocked;
   return (
+    <>
+    {moreOpen && (
+      <div className="more-sheet" role="menu" aria-label="More destinations">
+        {MORE_NAV_ITEMS.map(item => (
+          <button key={item.to} role="menuitem" className={`more-sheet-item ${path === item.to ? 'active' : ''}`}
+                  onClick={() => navigate(item.to)}>
+            {Icons[item.icon]}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    )}
     <nav className="bottom-nav">
       {BOTTOM_NAV_ITEMS.map(item => (
         <button
@@ -92,7 +114,13 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
           <span>{item.label}</span>
         </button>
       ))}
+      <button className={`bottom-nav-item ${moreOpen || MORE_NAV_ITEMS.some(i => i.to === path) ? 'active' : ''}`}
+              aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen(o => !o)}>
+        {Icons.more}
+        <span>More</span>
+      </button>
     </nav>
+    </>
   );
 }
 

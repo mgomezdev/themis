@@ -3,6 +3,7 @@ import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
 import { SpoolmanStatusChip } from './SpoolmanStatusChip';
 import { useSpoolmanConfig } from '../api/spoolman';
+import { useBuildInfo, shortSha } from '../api/version';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
 
@@ -58,6 +59,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
   const location = useLocation();
   const isSettingsRoute = location.pathname.startsWith('/settings');
   const { config: spoolmanCfg } = useSpoolmanConfig();
+  const build = useBuildInfo();
   const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
 
   const settingsSubItems = [
@@ -130,6 +132,13 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
         <LaminusStatusChip />
         <SpoolmanStatusChip />
       </div>
+
+      {!collapsed && build && (
+        <div data-testid="build-info" className="muted small num" title={`Build ${build.git_sha}`}
+             style={{ padding: '0 14px 6px', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+          v{build.version} · {shortSha(build.git_sha)}
+        </div>
+      )}
 
       <div className="sidebar-toggle">
         <button className="btn ghost icon sm" onClick={onToggle}

@@ -7,6 +7,7 @@ import contractRaw from '../../../contracts/response-keys.json?raw';
 import type { LibraryFile } from '../data/types';
 import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
 import type { FleetPrinter } from './fleet';
+import type { CustomerPayment, ProjectPayment } from './payments';
 import type { ApiPrinter } from './printers';
 import type { Project, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails } from './queue';
@@ -77,6 +78,10 @@ const ANALYTICS_TOTALS = {
 } satisfies Record<keyof AnalyticsStats, 1>;
 const ANALYTICS_PRINTER = { ...ANALYTICS_TOTALS, printer_id: 1, name: 1, utilization_pct: 1 } satisfies Record<keyof AnalyticsPrinter, 1>;
 const ANALYTICS_MATERIAL = { material: 1, grams: 1, jobs: 1 } satisfies Record<keyof AnalyticsMaterial, 1>;
+const PROJECT_PAYMENT = {
+  id: 1, project_id: 1, amount: 1, received_on: 1, method: 1, note: 1, created_at: 1,
+} satisfies Record<keyof ProjectPayment, 1>;
+const CUSTOMER_PAYMENT = { ...PROJECT_PAYMENT, project_name: 1 } satisfies Record<keyof CustomerPayment, 1>;
 
 describe('contracts/response-keys.json matches the frontend interfaces', () => {
   const cases: [string, string[], string[]][] = [
@@ -95,6 +100,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['analytics totals', contract.analytics_totals, keysOf(ANALYTICS_TOTALS)],
     ['analytics printer', contract.analytics_printer, keysOf(ANALYTICS_PRINTER)],
     ['analytics material', contract.analytics_material, keysOf(ANALYTICS_MATERIAL)],
+    ['project payment', contract.project_payment, keysOf(PROJECT_PAYMENT)],
+    ['customer payment', contract.customer_payment, keysOf(CUSTOMER_PAYMENT)],
   ];
 
   it.each(cases)('%s', (_name, fromContract, fromInterface) => {
@@ -104,6 +111,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
       'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
+      'project_payment', 'customer_payment',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });

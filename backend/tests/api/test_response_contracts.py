@@ -114,6 +114,16 @@ async def test_fleet_analytics_carries_the_analytics_keys(client, create_printer
     assert_carries("analytics_totals", body["totals"])
     assert_carries("analytics_printer", body["printers"][0])
     assert_carries("analytics_material", body["materials"][0])
+async def test_payments_carry_the_payment_keys(client):
+    customer = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test"})).json()
+    project = (await client.post("/api/v1/projects", json={"name": "P", "price": 10, "customer_id": customer["id"]})).json()
+    await client.post(f"/api/v1/projects/{project['id']}/payments", json={"amount": 4, "note": "deposit"})
+
+    (own,) = (await client.get(f"/api/v1/projects/{project['id']}/payments")).json()
+    (via_customer,) = (await client.get(f"/api/v1/customers/{customer['id']}/payments")).json()
+
+    assert_carries("project_payment", own)
+    assert_carries("customer_payment", via_customer)
 
 
 def test_the_contract_helper_reports_missing_keys():

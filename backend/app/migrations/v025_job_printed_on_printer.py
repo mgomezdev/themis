@@ -7,7 +7,7 @@ cannot DROP COLUMN a column carrying a foreign key, which would break down()."""
 from __future__ import annotations
 from sqlalchemy import text
 
-version = 24
+version = 25
 name = "job_printed_on_printer"
 
 
