@@ -134,7 +134,8 @@ def build_tools(api: ThemisClient) -> dict[str, Tool]:
         await api.json("POST", f"/printers/{printer_id}/plate-cleared")
         return f"Printer {printer_id} is marked ready for new work."
 
-    @tool("stop_printer", {"printers:control"}, DESTRUCTIVE, control=True)
+    # fleet:read as well: the unconfirmed preview shows which printer/print would be stopped.
+    @tool("stop_printer", {"printers:control", "fleet:read"}, DESTRUCTIVE, control=True)
     async def stop_printer(printer_id: int, confirm: bool = False) -> str:
         """DESTRUCTIVE: stop (abort) the running print, which cannot be resumed. Without confirm=true this only describes what would be stopped; show that to the user and call again with confirm=true once they agree."""
         if not confirm:
@@ -146,7 +147,8 @@ def build_tools(api: ThemisClient) -> dict[str, Tool]:
         await api.json("POST", f"/printers/{printer_id}/stop")
         return f"Stopped printer {printer_id}."
 
-    @tool("cancel_job", {"jobs:write"}, DESTRUCTIVE, control=True)
+    # jobs:read as well: the unconfirmed preview shows which job would be cancelled.
+    @tool("cancel_job", {"jobs:write", "jobs:read"}, DESTRUCTIVE, control=True)
     async def cancel_job(job_id: int, confirm: bool = False) -> str:
         """DESTRUCTIVE: cancel a job (stops its printer if it is printing). Without confirm=true this only describes the job; show that to the user and call again with confirm=true once they agree."""
         if not confirm:

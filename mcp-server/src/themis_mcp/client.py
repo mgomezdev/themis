@@ -50,7 +50,11 @@ class ThemisClient:
         return resp
 
     async def json(self, method: str, path: str, **kw: Any) -> Any:
-        return (await self._request(method, path, **kw)).json()
+        resp = await self._request(method, path, **kw)
+        try:
+            return resp.json()
+        except ValueError as e:   # e.g. THEMIS_URL points at a web page or proxy instead of the Themis API
+            raise ThemisError(f"{self._http.base_url} did not answer like Themis (expected JSON from {path}).") from e
 
     async def bytes(self, path: str) -> bytes:
         return (await self._request("GET", path)).content

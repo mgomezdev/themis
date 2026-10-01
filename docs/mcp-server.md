@@ -55,8 +55,8 @@ regardless. Against a Themis too old to report scopes, every tool is offered and
 | `pause_printer`, `resume_printer` | Pause / resume a print | `printers:control` |
 | `mark_plate_cleared` | "Ready for new work" after the plate is physically cleared | `printers:control` |
 | `add_job` | Queue a library file on a printer (first print profile unless one is given) | `jobs:write`, `printers:read` |
-| `stop_printer` ⚠ | Abort a running print | `printers:control` |
-| `cancel_job` ⚠ | Cancel a job (stops its printer if printing) | `jobs:write` |
+| `stop_printer` ⚠ | Abort a running print | `printers:control`, `fleet:read` (for the preview) |
+| `cancel_job` ⚠ | Cancel a job (stops its printer if printing) | `jobs:write`, `jobs:read` (for the preview) |
 
 ## Destructive actions need confirmation
 

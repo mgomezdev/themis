@@ -165,11 +165,27 @@ async def test_cancel_job_only_describes_until_confirmed(api, fake):
     assert fake.posts() == ["/jobs/7/cancel"]
 
 
-async def test_a_falsy_confirm_does_not_count(api, fake):
+@pytest.mark.parametrize("confirm", [False, "false", "False", 0, "0", "no", None, ""])
+async def test_only_a_real_true_confirms_whatever_the_client_sends(api, fake, confirm):
+    """The MCP layer validates/coerces arguments before the tool runs; nothing falsy-looking may reach the POST."""
     fake.route("GET", "/jobs/7/details", {"id": 7, "status": "queued", "uploaded_file_id": 1})
+    fake.route("GET", "/fleet", FLEET)
     fake.route("POST", "/jobs/7/cancel", {})
-    await call(build_server(api, ALL), "cancel_job", job_id=7, confirm=False)
+    fake.route("POST", "/printers/1/stop", {})
+    server = build_server(api, ALL)
+
+    for tool, args in (("cancel_job", {"job_id": 7}), ("stop_printer", {"printer_id": 1})):
+        try:
+            await server.call_tool(tool, {**args, "confirm": confirm})
+        except ToolError:
+            pass                                    # rejected by validation (e.g. None): equally fine
     assert fake.posts() == []
+
+
+async def test_the_preview_needs_read_scopes_so_those_are_required_to_offer_the_destructive_tools(api):
+    only_control = {"printers:control", "jobs:write"}
+    assert not {"stop_printer", "cancel_job"} & await names(build_server(api, only_control))
+    assert {"stop_printer", "cancel_job"} <= await names(build_server(api, only_control | {"fleet:read", "jobs:read"}))
 
 
 # ---- add_job ----------------------------------------------------------------------------------
@@ -250,6 +266,16 @@ async def test_no_key_means_no_header(fake):
 async def test_scopes_probe(api, fake, response, expected):
     fake.route("GET", "/auth/me", response)
     assert await api.scopes() == expected
+
+
+async def test_a_url_that_is_not_themis_is_reported_not_crashed_on(fake):
+    fake.route("GET", "/fleet", httpx.Response(200, text="<html>not the API</html>", headers={"content-type": "text/html"}))
+    fake.route("GET", "/auth/me", httpx.Response(200, text="<html>spa</html>", headers={"content-type": "text/html"}))
+    api = ThemisClient("http://themis.test", "k", transport=httpx.MockTransport(fake))
+
+    assert await api.scopes() is None                                   # degrades (offer everything) instead of crashing
+    with pytest.raises(ToolError, match="did not answer like Themis"):
+        await call(build_server(api, ALL), "fleet_status")
 
 
 def test_from_env_reads_url_and_key(monkeypatch):
