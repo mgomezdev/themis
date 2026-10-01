@@ -60,6 +60,7 @@ export const Icons = {
   trash:    <Icon paths={["M3 6h18","M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2","M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6","M10 11v6","M14 11v6"]} />,
   panel:    <Icon paths={["M3 3h18v18H3z","M9 3v18"]} />,
   wrench:   <Icon paths={["M14.7 6.3a4 4 0 1 1 5.66 5.66l-1.41 1.41-5.66-5.66 1.41-1.41z","M14.7 6.3 3.5 17.5a2 2 0 1 0 2.83 2.83l11.2-11.2"]} />,
+  chart:    <Icon paths={["M3 3v18h18","M7 15l4-4 3 3 5-6"]} />,
 } as const;
 
 export type IconKey = keyof typeof Icons;

@@ -140,6 +140,22 @@ export interface PortalJob {
   estimate_seconds: number | null;
 }
 
+export interface PortalPayment {
+  id: number;
+  received_on: string;     // YYYY-MM-DD
+  amount: number;
+  method: string;
+}
+
+/** Present only once staff have made the price visible; null = show nothing money-related. */
+export interface PortalQuote {
+  price: number;
+  paid: number;
+  balance: number;
+  accepted_at: string | null;
+  payments: PortalPayment[];
+}
+
 export interface PortalProject {
   id: number;
   name: string;
@@ -152,6 +168,7 @@ export interface PortalProject {
   jobs: PortalJob[];
   jobs_total: number;
   jobs_complete: number;
+  quote: PortalQuote | null;
 }
 
 export const listMyProjects = () => request<PortalProject[]>('/api/v1/customer/projects');
@@ -159,6 +176,8 @@ export const createDraft = (body: { name: string; notes?: string }) =>
   request<PortalProject>('/api/v1/customer/projects', json('POST', body));
 export const updateDraft = (id: number, body: { name?: string; notes?: string }) =>
   request<PortalProject>(`/api/v1/customer/projects/${id}`, json('PATCH', body));
+export const acceptQuote = (id: number) =>
+  request<PortalProject>(`/api/v1/customer/projects/${id}/quote/accept`, { method: 'POST' });
 export function uploadToDraft(id: number, file: File) {
   const fd = new FormData();
   fd.append('file', file);

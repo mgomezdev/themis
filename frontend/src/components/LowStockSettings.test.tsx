@@ -1,0 +1,84 @@
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LowStockSettings } from './LowStockSettings';
+import { Reply, stubFetch } from '../test/fetchStub';
+import type { ApiFilament } from '../api/spoolman';
+
+const URL = '/api/v1/spoolman/low-stock';
+const FILAMENTS: ApiFilament[] = [
+  { id: 1, name: 'PLA White', material: 'PLA', vendor: { id: 1, name: 'Elegoo' } },
+  { id: 2, name: 'PETG Black', material: 'PETG' },
+];
+
+describe('LowStockSettings', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('loads the saved default and overrides, naming filaments from Spoolman', async () => {
+    stubFetch({ [`GET ${URL}`]: { default_g: 150, overrides: { '1': 40, '99': 5 } } });
+    render(<LowStockSettings filaments={FILAMENTS} />);
+
+    expect(((await screen.findByLabelText('Default threshold (g)')) as HTMLInputElement).value).toBe('150');
+    expect(within(screen.getByTestId('override-1')).getByText('Elegoo PLA White')).toBeTruthy();
+    expect(within(screen.getByTestId('override-1')).getByText('40 g')).toBeTruthy();
+    expect(within(screen.getByTestId('override-99')).getByText('Filament #99')).toBeTruthy();   // not in the list any more
+  });
+
+  it('saves the default and per-filament overrides it was given, and shows what the server stored', async () => {
+    const api = stubFetch({
+      [`GET ${URL}`]: { default_g: null, overrides: {} },
+      [`PUT ${URL}`]: (c: { body: unknown }) => c.body,
+    });
+    render(<LowStockSettings filaments={FILAMENTS} />);
+    const def = await screen.findByLabelText('Default threshold (g)');
+    expect((def as HTMLInputElement).value).toBe('');                       // off by default
+
+    await userEvent.type(def, '200');
+    await userEvent.selectOptions(screen.getByLabelText('Filament'), 'PETG Black');
+    await userEvent.type(screen.getByLabelText('Threshold for filament (g)'), '60');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save thresholds' }));
+
+    expect((await screen.findByRole('status')).textContent).toBe('Saved');
+    expect(api.to('PUT', URL)[0].body).toEqual({ default_g: 200, overrides: { '2': 60 } });
+    // the added filament is no longer offered again
+    expect(within(screen.getByLabelText('Filament')).queryByRole('option', { name: 'PETG Black' })).toBeNull();
+  });
+
+  it('clearing the default sends null (alerts off) and a removed override is dropped', async () => {
+    const api = stubFetch({ [`GET ${URL}`]: { default_g: 100, overrides: { '1': 40 } }, [`PUT ${URL}`]: (c: { body: unknown }) => c.body });
+    render(<LowStockSettings filaments={FILAMENTS} />);
+    const def = await screen.findByLabelText('Default threshold (g)');
+
+    await userEvent.clear(def);
+    await userEvent.click(screen.getByRole('button', { name: 'Remove threshold for Elegoo PLA White' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save thresholds' }));
+
+    await screen.findByRole('status');
+    expect(api.to('PUT', URL)[0].body).toEqual({ default_g: null, overrides: {} });
+  });
+
+  it('shows the API error when saving fails', async () => {
+    stubFetch({ [`GET ${URL}`]: { default_g: null, overrides: {} }, [`PUT ${URL}`]: new Reply(422, { detail: 'bad' }) });
+    render(<LowStockSettings filaments={FILAMENTS} />);
+    await screen.findByLabelText('Default threshold (g)');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save thresholds' }));
+
+    expect((await screen.findByRole('alert')).textContent).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  it('does not add an incomplete or negative override', async () => {
+    stubFetch({ [`GET ${URL}`]: { default_g: null, overrides: {} } });
+    render(<LowStockSettings filaments={FILAMENTS} />);
+    await screen.findByLabelText('Default threshold (g)');
+    const add = screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement;
+
+    expect(add.disabled).toBe(true);
+    await userEvent.selectOptions(screen.getByLabelText('Filament'), 'PETG Black');
+    expect(add.disabled).toBe(true);                                       // no grams yet
+    await userEvent.type(screen.getByLabelText('Threshold for filament (g)'), '-5');
+    expect(add.disabled).toBe(true);
+  });
+});

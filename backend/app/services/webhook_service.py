@@ -32,11 +32,12 @@ async def fire(url: str, secret: str | None, payload: dict) -> None:
         logger.warning("Webhook delivery failed for %s: %s", url, exc)
 
 
-def schedule(url: str, secret: str | None, event: str, job_id: int, extra: dict | None = None) -> None:
+def schedule(url: str, secret: str | None, event: str, job_id: int | None, extra: dict | None = None) -> None:
     """Queue a fire-and-forget webhook delivery (safe to call from sync or async context)."""
     payload = {
         "event": event,
-        "job_id": job_id,
+        # Non-job events (e.g. spool.low) carry no job_id.
+        **({"job_id": job_id} if job_id is not None else {}),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **(extra or {}),
     }

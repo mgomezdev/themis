@@ -70,6 +70,13 @@ export function ProjectDetailScreen() {
     catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
   }
 
+  async function handlePriceVisible(visible: boolean) {
+    if (!project) return;
+    setStageError('');
+    try { setProject(await patchProject(project.id, { price_visible: visible })); }
+    catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
+  }
+
   const reload = useCallback(() => {
     if (!projectId) return;
     getProject(projectId).then(setProject).catch(console.error);
@@ -241,6 +248,17 @@ export function ProjectDetailScreen() {
               )}
               {project.filament_cost_total != null && (
                 <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
+              )}
+              {project.customer_id != null && (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                       title={project.price == null ? 'Set a price first' : 'Show the price, what has been paid and the balance in the customer portal'}>
+                  <input type="checkbox" checked={project.price_visible} disabled={project.price == null}
+                         onChange={e => handlePriceVisible(e.target.checked)} />
+                  Show price to customer
+                </label>
+              )}
+              {project.quote_accepted_at && (
+                <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
               )}
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 Account

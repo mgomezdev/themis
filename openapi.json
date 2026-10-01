@@ -760,6 +760,51 @@
         }
       }
     },
+    "/api/v1/customer/projects/{project_id}/quote/accept": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Accept the quote",
+        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept.",
+        "operationId": "accept_quote_api_v1_customer_projects__project_id__quote_accept_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Accept Quote Api V1 Customer Projects  Project Id  Quote Accept Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customer/projects/{project_id}/files": {
       "post": {
         "tags": [
@@ -2203,6 +2248,73 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/analytics": {
+      "get": {
+        "tags": [
+          "fleet"
+        ],
+        "summary": "Fleet analytics over a date range",
+        "description": "Success rate, print time, filament use and cost \u2014 fleet-wide, per printer and per material \u2014 for jobs\nthat reached a terminal state in the range. Definitions: `app/services/fleet_analytics.py`.",
+        "operationId": "fleet_analytics_summary_api_v1_fleet_analytics_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day (UTC), inclusive. Default: 29 days before `end`.",
+              "title": "Start"
+            },
+            "description": "First day (UTC), inclusive. Default: 29 days before `end`."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day (UTC), inclusive. Default: today (UTC).",
+              "title": "End"
+            },
+            "description": "Last day (UTC), inclusive. Default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Fleet Analytics Summary Api V1 Fleet Analytics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Inverted or over-long date range"
           }
         }
       }
@@ -6566,6 +6678,67 @@
         }
       }
     },
+    "/api/v1/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Low-inventory alert thresholds",
+        "operationId": "get_low_stock_api_v1_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Set low-inventory alert thresholds",
+        "description": "Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one\nre-arms spools that are no longer below it.",
+        "operationId": "put_low_stock_api_v1_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStockConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tags": {
       "get": {
         "tags": [
@@ -7586,6 +7759,33 @@
           "password"
         ],
         "title": "LoginBody"
+      },
+      "LowStockConfig": {
+        "properties": {
+          "default_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default G"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "title": "LowStockConfig",
+        "description": "Grams below which a spool raises a `spool.low` event. `overrides` maps a Spoolman filament id (as a\nstring) to its own threshold and wins over `default_g`; with neither set nothing alerts."
       },
       "MaintenanceItemCreate": {
         "properties": {
@@ -9133,6 +9333,17 @@
               }
             ],
             "title": "Price"
+          },
+          "price_visible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Visible"
           },
           "payment_status": {
             "anyOf": [

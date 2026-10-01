@@ -441,6 +441,9 @@ async def delete_printer(
         .where(Job.assigned_printer_id == printer_id)
         .values(assigned_printer_id=None)
     )
+    await session.execute(
+        update(Job).where(Job.printed_on_printer_id == printer_id).values(printed_on_printer_id=None)
+    )
 
     if affected_job_ids:
         remaining = set((await session.execute(

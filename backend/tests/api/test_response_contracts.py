@@ -93,6 +93,27 @@ async def test_library_files_carry_the_file_keys(client, upload_3mf):
     assert_carries("library_file", row)
 
 
+async def test_fleet_analytics_carries_the_analytics_keys(client, create_printer, upload_3mf, session_factory):
+    from datetime import datetime, timezone
+
+    from app.models import Job
+
+    printer_id = await create_printer()
+    file_id = await upload_3mf()
+    now = datetime.now(timezone.utc).isoformat()
+    async with session_factory() as s:
+        s.add(Job(uploaded_file_id=file_id, status="complete", assigned_printer_id=printer_id, completed_at=now,
+                  actual_seconds=60, actual_filament_grams=1.0, actual_filament_breakdown=[{"filament_profile": "PLA", "grams": 1.0}],
+                  created_at=now, updated_at=now))
+        await s.commit()
+
+    body = (await client.get("/api/v1/fleet/analytics")).json()
+
+    assert_carries("analytics", body)
+    assert_carries("analytics_range", body["range"])
+    assert_carries("analytics_totals", body["totals"])
+    assert_carries("analytics_printer", body["printers"][0])
+    assert_carries("analytics_material", body["materials"][0])
 async def test_payments_carry_the_payment_keys(client):
     customer = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test"})).json()
     project = (await client.post("/api/v1/projects", json={"name": "P", "price": 10, "customer_id": customer["id"]})).json()
@@ -112,6 +133,20 @@ async def test_job_cost_responses_carry_their_keys(client):
     assert_carries("project_costs", (await client.get(f"/api/v1/projects/{project['id']}")).json()["costs"])
     assert_carries("project_labor", (await client.get(f"/api/v1/projects/{project['id']}/labor")).json()[0])
     assert_carries("cost_config", (await client.get("/api/v1/settings/costs")).json())
+
+
+async def test_the_customer_portal_project_and_quote_carry_their_keys(client):
+    customer = (await client.post("/api/v1/customers", json={"name": "A", "email": "a@x.test", "password": "pw1"})).json()
+    project = (await client.post("/api/v1/projects", json={"name": "P", "price": 10, "customer_id": customer["id"]})).json()
+    await client.patch(f"/api/v1/projects/{project['id']}", json={"price_visible": True})
+    await client.post(f"/api/v1/projects/{project['id']}/payments", json={"amount": 4})
+    key = (await client.post("/api/v1/auth/login", json={"email": "a@x.test", "password": "pw1"})).json()["key"]
+
+    (mine,) = (await client.get("/api/v1/customer/projects", headers={"X-Api-Key": key})).json()
+
+    assert_carries("portal_project", mine)
+    assert_carries("portal_quote", mine["quote"])
+    assert_carries("portal_payment", mine["quote"]["payments"][0])
 
 
 def test_the_contract_helper_reports_missing_keys():

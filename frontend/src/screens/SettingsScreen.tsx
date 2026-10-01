@@ -2,9 +2,10 @@ import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react'
 import { CostSettings } from '../components/CostSettings';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools,
+  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useFilaments,
   useSpoolmanConfig, useSpoolmanSyncStatus, spoolmanSyncTone, type SpoolmanSyncStatus,
 } from '../api/spoolman';
+import { LowStockSettings } from '../components/LowStockSettings';
 import { getQueueConfig, saveQueueConfig, type QueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
@@ -819,6 +820,7 @@ function SpoolmanPage() {
 
   const { status: syncStatus, refetch: refetchSyncStatus } = useSpoolmanSyncStatus();
   const spools = useSpools(s.connectionStatus === 'connected');
+  const filaments = useFilaments(s.connectionStatus === 'connected');
 
   const stats = useMemo(() => ({
     spools: spools.length,
@@ -963,6 +965,8 @@ function SpoolmanPage() {
               </div>
             </div>
           )}
+
+          {isConnected && <LowStockSettings filaments={filaments} />}
 
           {s.enabled && syncStatus && <SyncDetails status={syncStatus} />}
 
@@ -1233,7 +1237,7 @@ function FleetBackupPage() {
 // Webhook page
 // =========================================================================
 
-const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low'];
 
 function WebhookPage() {
   const [url, setUrl] = useState('');
@@ -1304,7 +1308,7 @@ function WebhookPage() {
           style={{ width: '100%' }}
         />
       </FieldRow>
-      <FieldRow label="Events" hint="Which job state transitions fire a request.">
+      <FieldRow label="Events" hint="Which events fire a request: job state changes, and spools running low.">
         <div className="col" style={{ gap: 10 }}>
           {ALL_WEBHOOK_EVENTS.map(ev => (
             <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
@@ -1328,7 +1332,7 @@ function WebhookPage() {
 // Notifications page
 // =========================================================================
 
-const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low'];
 
 function EventCheckboxes({ events, onToggle }: { events: string[]; onToggle: (ev: string) => void }) {
   return (

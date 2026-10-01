@@ -53,6 +53,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
     { to: '/customers', label: 'Customers',   icon: Icons.user },
     { to: '/files',     label: 'Files',       icon: Icons.files },
     { to: '/history',   label: 'History',     icon: Icons.clock },
+    { to: '/analytics', label: 'Analytics',   icon: Icons.chart },
   ];
 
   const location = useLocation();

@@ -121,6 +121,10 @@ class Job(Base):
     estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Manually-entered cost of the filament used for this job, for profit/loss reporting.
     filament_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The printer this job actually ran on. Unlike assigned_printer_id it survives failure/cancel, so fleet
+    # analytics can attribute outcomes to a printer.
+    # Plain integer (no FK — see v025); delete_printer nulls it.
+    printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -186,6 +190,12 @@ class SpoolmanConfig(Base):
     last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     last_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_sync_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Low-inventory alerts (event `spool.low`): grams below which a spool alerts. A per-filament override
+    # ({spoolman filament id (str): grams}) wins over the default; neither set = no alerts.
+    low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Spool ids already alerted while below their threshold, so each drop alerts once (cleared on refill).
+    low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
 class Customer(Base):
@@ -234,6 +244,10 @@ class Project(Base):
     # Quoted total for the project; outstanding balance = price - amount_paid.
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
+    # Whether the customer portal shows this project's quote (price, paid, balance). Staff decide; default hidden.
+    price_visible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # When the customer accepted the shown quote; cleared if the price changes afterwards.
+    quote_accepted_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     stage: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True

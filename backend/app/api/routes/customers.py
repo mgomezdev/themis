@@ -14,7 +14,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import ApiKey, Customer, Job, Project, ProjectPayment
 from ...services import job_costs
-from ...services.payments import payment_dict
+from ...services.payments import outstanding, paid_amount, payment_dict
 from ...services.password import hash_password
 
 router = APIRouter(prefix="/api/v1/customers", tags=["customers"])
@@ -88,19 +88,8 @@ def _project_status(jobs_total: int, jobs_complete: int) -> str:
     return "completed" if jobs_complete == jobs_total else "active"
 
 
-def _paid(p: Project) -> float:
-    """Amount received. A project marked paid with no amount entered counts as paid in full."""
-    if p.amount_paid is None and p.payment_status == "paid":
-        return p.price or 0.0
-    return p.amount_paid or 0.0
-
-
-def _outstanding(p: Project) -> float:
-    """Unpaid balance against the quoted price. A project marked paid owes nothing; one
-    without a price has no known balance (counted separately as ``unpriced_unpaid``)."""
-    if p.price is None or p.payment_status == "paid":
-        return 0.0
-    return max(p.price - _paid(p), 0.0)
+_paid = paid_amount          # shared with the customer portal (services/payments.py)
+_outstanding = outstanding
 
 
 async def _customer_projects(session: AsyncSession, customer_ids: list[int]) -> tuple[list[Project], dict[int, list[Job]]]:

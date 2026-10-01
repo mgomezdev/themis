@@ -117,7 +117,9 @@
     "actual_filament_grams",
     "actual_seconds",
     "filament_cost_total",
-    "costs"
+    "costs",
+    "price_visible",
+    "quote_accepted_at"
   ],
   "project_item": [
     "id",
@@ -216,5 +218,69 @@
   "cost_config": [
     "machine_rate_per_hour",
     "labour_rate_per_hour"
+  ],
+  "portal_project": [
+    "id",
+    "name",
+    "notes",
+    "stage",
+    "due_date",
+    "created_at",
+    "updated_at",
+    "items",
+    "jobs",
+    "jobs_total",
+    "jobs_complete",
+    "quote"
+  ],
+  "portal_quote": [
+    "price",
+    "paid",
+    "balance",
+    "accepted_at",
+    "payments"
+  ],
+  "portal_payment": [
+    "id",
+    "received_on",
+    "amount",
+    "method"
+  ],
+  "analytics": [
+    "range",
+    "totals",
+    "printers",
+    "materials"
+  ],
+  "analytics_range": [
+    "start",
+    "end",
+    "days"
+  ],
+  "analytics_totals": [
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_printer": [
+    "printer_id",
+    "name",
+    "utilization_pct",
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_material": [
+    "material",
+    "grams",
+    "jobs"
   ]
 }
