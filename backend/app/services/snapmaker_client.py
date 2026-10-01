@@ -13,6 +13,7 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    DiscoveredPrinter,
     PrinterCapabilities,
     StartPrintOptions,
 )
@@ -122,6 +123,24 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._loop = None
         self._prev_print_state = "standby"
         self._rpc_id = itertools.count(1)
+
+    # ---- discovery (Moonraker web API: GET /server/info, GET /printer/info) ----
+    @classmethod
+    async def discover_host(cls, net, ip: str):
+        """Moonraker answers `GET /server/info` on :7125 with `result.moonraker_version`; with an API key configured
+        and the caller untrusted it answers 401/403 — still a Moonraker, flagged as needing a key."""
+        status, body = await net.http_get_json(f"http://{ip}:{DEFAULT_PORT}/server/info", 1.5)
+        cfg = {"ip_address": ip, "port": DEFAULT_PORT}
+        if status in (401, 403):
+            return DiscoveredPrinter(printer_type="snapmaker_extended", ip=ip, model="Moonraker / Klipper",
+                                     connection_config=cfg, note="Requires an API key")
+        result = (body or {}).get("result")
+        if status != 200 or not isinstance(result, dict) or "moonraker_version" not in result:
+            return None
+        _s, info = await net.http_get_json(f"http://{ip}:{DEFAULT_PORT}/printer/info", 1.5)
+        hostname = ((info or {}).get("result") or {}).get("hostname")
+        return DiscoveredPrinter(printer_type="snapmaker_extended", ip=ip, model="Moonraker / Klipper",
+                                 name=hostname, connection_config=cfg)
 
     # ---- ABC metadata ----
     @classmethod
