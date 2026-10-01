@@ -202,7 +202,7 @@ function JobCardRich({
             )}
           </div>
 
-          <div className="row gap-5" style={{ marginTop: 4 }}>
+          <div className="row gap-5 wrap" style={{ marginTop: 4, rowGap: 8 }}>
             {job.materials.length > 0 && (
               <Kv k="Material" v={
                 <div className="row gap-1">
@@ -860,8 +860,8 @@ export function QueueScreen() {
 
   return (
     <div
-      className="screen-grid"
-      style={{ gridTemplateColumns: selectedJob ? '1fr 360px' : '1fr', gap: 18 }}
+      className="screen-grid queue-grid"
+      data-selected={selectedJob ? 'true' : 'false'}
     >
       <div>
         {/* Summary strip — only shown for "all" filter */}
@@ -917,8 +917,8 @@ export function QueueScreen() {
         )}
 
         {/* Filter + actions */}
-        <div className="row between" style={{ marginBottom: 14 }}>
-          <div className="row gap-2">
+        <div className="row between wrap" style={{ marginBottom: 14 }}>
+          <div className="row gap-2 wrap">
             <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
               All{' '}
               <span className="num muted" style={{ marginLeft: 4 }}>
