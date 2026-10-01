@@ -25,6 +25,7 @@ import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 import { ProjectDetailScreen }  from './screens/ProjectDetailScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
+import { AnalyticsScreen }      from './screens/AnalyticsScreen';
 import { SharedProjectScreen }  from './screens/SharedProjectScreen';
 import { CustomersScreen }      from './screens/CustomersScreen';
 import { CustomerDetailScreen } from './screens/CustomerDetailScreen';
@@ -152,6 +153,7 @@ function AppShell() {
                            actions: <button className="btn primary sm" onClick={() => navigate('/customers?new=1')}>{Icons.plus} New customer</button> },
     '/customers/detail': { title: 'Customer',  crumbs: ['Workshop', { label: 'Customers', to: '/customers' }] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
+    '/analytics':  { title: 'Analytics',         crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -207,6 +209,7 @@ function AppShell() {
             <Route path="/customers"      element={<CustomersScreen />} />
             <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
+            <Route path="/analytics"      element={<AnalyticsScreen />} />
             {/* Customers used to live under Settings. */}
             <Route path="/settings/customers" element={<Navigate to="/customers" replace />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />

@@ -93,6 +93,29 @@ async def test_library_files_carry_the_file_keys(client, upload_3mf):
     assert_carries("library_file", row)
 
 
+async def test_fleet_analytics_carries_the_analytics_keys(client, create_printer, upload_3mf, session_factory):
+    from datetime import datetime, timezone
+
+    from app.models import Job
+
+    printer_id = await create_printer()
+    file_id = await upload_3mf()
+    now = datetime.now(timezone.utc).isoformat()
+    async with session_factory() as s:
+        s.add(Job(uploaded_file_id=file_id, status="complete", assigned_printer_id=printer_id, completed_at=now,
+                  actual_seconds=60, actual_filament_grams=1.0, actual_filament_breakdown=[{"filament_profile": "PLA", "grams": 1.0}],
+                  created_at=now, updated_at=now))
+        await s.commit()
+
+    body = (await client.get("/api/v1/fleet/analytics")).json()
+
+    assert_carries("analytics", body)
+    assert_carries("analytics_range", body["range"])
+    assert_carries("analytics_totals", body["totals"])
+    assert_carries("analytics_printer", body["printers"][0])
+    assert_carries("analytics_material", body["materials"][0])
+
+
 def test_the_contract_helper_reports_missing_keys():
     with pytest.raises(AssertionError, match="missing keys the frontend reads: \\['name'\\]"):
         assert_carries("project_part", {k: 1 for k in CONTRACT["project_part"] if k != "name"})

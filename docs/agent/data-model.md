@@ -113,6 +113,8 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 `estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
 
+`printed_on_printer_id: int? FK → printers (SET NULL)` (v024) — the printer the job ran on, set when it enters `printing` (and by complete-manually), never cleared; unlike `assigned_printer_id` (nulled on fail/cancel) it lets fleet analytics attribute failures. Analytics falls back to `assigned_printer_id` for pre-v024 rows.
+
 `filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
 Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched
 by any other route. Summed (non-null values only) into `filament_cost_total` on the linked order

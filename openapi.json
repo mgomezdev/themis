@@ -2157,6 +2157,73 @@
         }
       }
     },
+    "/api/v1/fleet/analytics": {
+      "get": {
+        "tags": [
+          "fleet"
+        ],
+        "summary": "Fleet analytics over a date range",
+        "description": "Success rate, print time, filament use and cost \u2014 fleet-wide, per printer and per material \u2014 for jobs\nthat reached a terminal state in the range. Definitions: `app/services/fleet_analytics.py`.",
+        "operationId": "fleet_analytics_summary_api_v1_fleet_analytics_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day (UTC), inclusive. Default: 29 days before `end`.",
+              "title": "Start"
+            },
+            "description": "First day (UTC), inclusive. Default: 29 days before `end`."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day (UTC), inclusive. Default: today (UTC).",
+              "title": "End"
+            },
+            "description": "Last day (UTC), inclusive. Default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Fleet Analytics Summary Api V1 Fleet Analytics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Inverted or over-long date range"
+          }
+        }
+      }
+    },
     "/api/v1/files": {
       "get": {
         "tags": [

@@ -46,6 +46,11 @@ describe('Sidebar nav items', () => {
     expect(screen.getByText('Files')).toBeTruthy();
     expect(screen.getByText('Settings')).toBeTruthy();
   });
+
+  it('links Analytics to /analytics', () => {
+    renderOnFleet(0, 0, 0);
+    expect(screen.getByText('Analytics').closest('a')?.getAttribute('href')).toBe('/analytics');
+  });
 });
 
 // ─── Queue badges — empty queue ───────────────────────────────────────────────
