@@ -73,6 +73,33 @@ describe('CustomerDetailScreen', () => {
     expect(screen.getByText('Financial summary')).toBeTruthy();
   });
 
+  it('breaks expenses into filament, machine, labour and parts for every period', async () => {
+    const withBreakdown = {
+      ...CUSTOMER,
+      financials: { ...CUSTOMER.financials, windows: Object.fromEntries(Object.entries(CUSTOMER.financials.windows).map(([k, w]) => [
+        k, { ...w, expense_breakdown: k === 'all' ? { filament: 15.5, machine: 40, labour: 22.5, parts: 5 } : { filament: 3, machine: 0, labour: 0, parts: 0 } },
+      ])) },
+    };
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/api/v1/customers/7') ? new Response(JSON.stringify(withBreakdown), { status: 200 })
+        : new Response('[]', { status: 200 }));
+    renderScreen();
+
+    const table = within(await screen.findByTestId('financial-table'));
+    const row = (key: string) => within(table.getByTestId(`expense-${key}`)).getAllByRole('cell').map(c => c.textContent);
+    expect(row('filament')).toEqual(['Filament', '$3.00', '$3.00', '$3.00', '$15.50']);   // 30d, 60d, 90d, all time
+    expect(row('machine')).toEqual(['Machine time', '$0.00', '$0.00', '$0.00', '$40.00']);
+    expect(row('labour')).toEqual(['Labour', '$0.00', '$0.00', '$0.00', '$22.50']);
+    expect(row('parts')).toEqual(['Parts', '$0.00', '$0.00', '$0.00', '$5.00']);
+  });
+
+  it('shows zeros for the breakdown against a server that does not report one', async () => {
+    renderScreen();
+    const table = within(await screen.findByTestId('financial-table'));
+    expect(within(table.getByTestId('expense-machine')).getAllByRole('cell').map(c => c.textContent)).toEqual(
+      ['Machine time', '$0.00', '$0.00', '$0.00', '$0.00']);
+  });
+
   it('lists the payment history across projects, newest first, linking each to its project', async () => {
     renderScreen();
 

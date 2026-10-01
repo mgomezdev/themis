@@ -39,7 +39,8 @@
     "build_plate_type",
     "no_snapshots_while_idle",
     "bed_x_mm",
-    "bed_y_mm"
+    "bed_y_mm",
+    "machine_rate_per_hour"
   ],
   "queue_job": [
     "id",
@@ -115,7 +116,8 @@
     "estimate_seconds_remaining",
     "actual_filament_grams",
     "actual_seconds",
-    "filament_cost_total"
+    "filament_cost_total",
+    "costs"
   ],
   "project_item": [
     "id",
@@ -145,7 +147,8 @@
     "quantity",
     "allocated",
     "sort_order",
-    "created_at"
+    "created_at",
+    "unit_cost"
   ],
   "project_job": [
     "id",
@@ -192,5 +195,26 @@
     "note",
     "created_at",
     "project_name"
+  ],
+  "project_labor": [
+    "id",
+    "project_id",
+    "minutes",
+    "logged_on",
+    "note",
+    "created_at"
+  ],
+  "project_costs": [
+    "filament",
+    "machine",
+    "labour",
+    "parts",
+    "machine_hours",
+    "labour_hours",
+    "total"
+  ],
+  "cost_config": [
+    "machine_rate_per_hour",
+    "labour_rate_per_hour"
   ]
 }

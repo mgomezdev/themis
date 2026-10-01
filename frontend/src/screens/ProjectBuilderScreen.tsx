@@ -117,7 +117,11 @@ interface LocalPart {
   name: string;
   quantity: number;
   allocated: boolean;
+  unitCost: string;   // '' = no cost entered (the field is optional)
 }
+
+/** The API value for a part's unit cost: null when blank, so an edited part can have its cost cleared. */
+const unitCostValue = (pt: { unitCost: string }): number | null => (pt.unitCost.trim() === '' ? null : Number(pt.unitCost));
 
 let _lid = 0;
 const newLocalId = () => String(++_lid);
@@ -248,7 +252,7 @@ export function ProjectBuilderScreen() {
         ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
       })),
       links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
-      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, sid: p.serverId })),
+      parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
     });
   }
 
@@ -307,6 +311,7 @@ export function ProjectBuilderScreen() {
         name: pt.name,
         quantity: pt.quantity,
         allocated: pt.allocated,
+        unitCost: pt.unit_cost != null ? String(pt.unit_cost) : '',
       }));
       setName(n); setCustomer(cName); setCustomerId(cid); setOrderType(ot); setOnHold(oh);
       setDueDate(dd); setNotes(no); setPrice(pr); setIsDraft(p.stage === 'draft');
@@ -443,11 +448,12 @@ export function ProjectBuilderScreen() {
       for (const pt of parts) {
         if (pt.serverId) {
           await updateProjectPart(projectId, pt.serverId, {
-            name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
+            name: pt.name, quantity: pt.quantity, allocated: pt.allocated, unit_cost: unitCostValue(pt),
           });
         } else {
           await addProjectPart(projectId, {
             name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
+            ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
           });
         }
       }
@@ -469,7 +475,10 @@ export function ProjectBuilderScreen() {
         await addProjectLink(proj.id, { url: lk.url, label: lk.label || null });
       }
       for (const pt of parts) {
-        await addProjectPart(proj.id, { name: pt.name, quantity: pt.quantity, allocated: pt.allocated });
+        await addProjectPart(proj.id, {
+          name: pt.name, quantity: pt.quantity, allocated: pt.allocated,
+          ...(pt.unitCost.trim() === '' ? {} : { unit_cost: unitCostValue(pt) }),
+        });
       }
       return proj.id;
     }
@@ -724,7 +733,7 @@ export function ProjectBuilderScreen() {
             <button
               className="btn ghost sm"
               onClick={() => setParts(prev => [
-                ...prev, { localId: newLocalId(), name: '', quantity: 1, allocated: false },
+                ...prev, { localId: newLocalId(), name: '', quantity: 1, allocated: false, unitCost: '' },
               ])}
             >
               + Add part
@@ -746,6 +755,17 @@ export function ProjectBuilderScreen() {
                 value={pt.quantity}
                 onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, quantity: Math.max(1, parseInt(e.target.value) || 1) } : p))}
                 style={{ width: 64, textAlign: 'center' }}
+              />
+              <input
+                type="number"
+                className="input"
+                min={0}
+                step="0.01"
+                placeholder="$ each"
+                aria-label="Unit cost"
+                value={pt.unitCost}
+                onChange={e => setParts(prev => prev.map(p => p.localId === pt.localId ? { ...p, unitCost: e.target.value } : p))}
+                style={{ width: 84 }}
               />
               <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
                               fontSize: 12, color: 'var(--text-3)', whiteSpace: 'nowrap' }}>

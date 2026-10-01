@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import ApiKey, Customer, Job, Project, ProjectPayment
+from ...services import job_costs
 from ...services.payments import payment_dict
 from ...services.password import hash_password
 
@@ -118,10 +119,10 @@ async def _customer_projects(session: AsyncSession, customer_ids: list[int]) -> 
     return list(projects), jobs_by_project
 
 
-def _project_summary(p: Project, jobs: list[Job]) -> dict:
+def _project_summary(p: Project, jobs: list[Job], costs: dict | None = None) -> dict:
     jobs_total = len(jobs)
     jobs_complete = sum(1 for j in jobs if j.status == "complete")
-    costs = [j.filament_cost for j in jobs if j.filament_cost is not None]
+    filament = [j.filament_cost for j in jobs if j.filament_cost is not None]
     return {
         "id": p.id,
         "name": p.name,
@@ -136,7 +137,9 @@ def _project_summary(p: Project, jobs: list[Job]) -> dict:
         "price": p.price,
         "amount_paid": p.amount_paid,
         "payment_status": p.payment_status,
-        "filament_cost_total": round(sum(costs), 2) if costs else None,
+        "filament_cost_total": round(sum(filament), 2) if filament else None,
+        # Full cost of production (filament + machine + labour + parts); present on the customer detail view.
+        **({"costs": costs} if costs is not None else {}),
         "outstanding": round(_outstanding(p), 2),
     }
 
@@ -154,13 +157,16 @@ async def _customer_payments(session: AsyncSession, projects: list[Project]) -> 
 
 
 def _financials(projects: list[Project], jobs_by_project: dict[int, list[Job]], now: datetime,
-                payments: Sequence[ProjectPayment] = ()) -> dict:
-    """Revenue, expenses (job filament cost), billed (quoted price) and outstanding balance.
+                payments: Sequence[ProjectPayment] = (), costs: dict[int, dict] | None = None) -> dict:
+    """Revenue, expenses (see below), billed (quoted price) and outstanding balance.
 
     Revenue is cash-basis: each recorded payment counts in the windows containing the day it was *received*,
     whenever the project started. Projects with no recorded payments (legacy manual amounts, or "marked paid"
     with no amount) fall back to the project's creation date, as before. Expenses, billed, outstanding and
-    project_count are still bucketed by project creation date."""
+    project_count are still bucketed by project creation date.
+
+    Expenses are the full cost of production (filament + machine time + labour + parts, services/job_costs.py)
+    when `costs` is given, with the same four-way breakdown per window; without it, filament only."""
     paid_projects = {pay.project_id for pay in payments}
     windows = {}
     for key, days in FINANCIAL_WINDOWS.items():
@@ -170,12 +176,19 @@ def _financials(projects: list[Project], jobs_by_project: dict[int, list[Job]], 
         cutoff_day = cutoff.date().isoformat() if cutoff is not None else None
         revenue = sum(pay.amount for pay in payments if cutoff_day is None or pay.received_on >= cutoff_day) \
             + sum(_paid(p) for p in in_window if p.id not in paid_projects)
-        expenses = sum(j.filament_cost for p in in_window for j in jobs_by_project.get(p.id, [])
-                       if j.filament_cost is not None)
+        breakdown = {c: 0.0 for c in job_costs.CATEGORIES}
+        for p in in_window:
+            if costs is not None and p.id in costs:
+                for c in job_costs.CATEGORIES:
+                    breakdown[c] += costs[p.id][c]
+            else:
+                breakdown["filament"] += sum(j.filament_cost for j in jobs_by_project.get(p.id, []) if j.filament_cost is not None)
+        expenses = sum(breakdown.values())
         windows[key] = {
             "project_count": len(in_window),
             "revenue": round(revenue, 2),
             "expenses": round(expenses, 2),
+            "expense_breakdown": {c: round(v, 2) for c, v in breakdown.items()},
             "profit": round(revenue - expenses, 2),
             "billed": round(sum(p.price or 0.0 for p in in_window), 2),
             "outstanding": round(sum(_outstanding(p) for p in in_window), 2),
@@ -280,10 +293,11 @@ async def get_customer(customer_id: int, session: AsyncSession = Depends(get_ses
         raise HTTPException(404, "Customer not found")
     projects, jobs_by_project = await _customer_projects(session, [c.id])
     payments = await _customer_payments(session, projects)
+    costs = await job_costs.costs_by_project(session, [p.id for p in projects], jobs_by_project)
     return {
         **_to_dict(c),
-        "projects": [_project_summary(p, jobs_by_project.get(p.id, [])) for p in projects],
-        "financials": _financials(projects, jobs_by_project, datetime.now(timezone.utc), payments),
+        "projects": [_project_summary(p, jobs_by_project.get(p.id, []), costs[p.id]) for p in projects],
+        "financials": _financials(projects, jobs_by_project, datetime.now(timezone.utc), payments, costs),
     }
 
 

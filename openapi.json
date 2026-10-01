@@ -3731,6 +3731,161 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/labor": {
+      "get": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "List logged labour (newest first)",
+        "operationId": "list_labor_api_v1_projects__project_id__labor_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Labor Api V1 Projects  Project Id  Labor Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "Log labour time",
+        "description": "Setup, post-processing, assembly, packing\u2026 priced at the shop labour rate (Settings \u2192 Costs).",
+        "operationId": "add_labor_api_v1_projects__project_id__labor_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaborCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Labor Api V1 Projects  Project Id  Labor Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Invalid entry"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/labor/{labor_id}": {
+      "delete": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "Delete a labour entry",
+        "operationId": "delete_labor_api_v1_projects__project_id__labor__labor_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "labor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Labor Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Labor Api V1 Projects  Project Id  Labor  Labor Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or entry not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/laminus/catalog": {
       "get": {
         "tags": [
@@ -5790,6 +5945,67 @@
         }
       }
     },
+    "/api/v1/settings/costs": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get the shop cost model",
+        "operationId": "get_cost_config_api_v1_settings_costs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostConfigModel"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the shop cost model",
+        "description": "Re-prices every project's machine and labour expenses immediately \u2014 past jobs included.",
+        "operationId": "put_cost_config_api_v1_settings_costs_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CostConfigModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostConfigModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings/queue": {
       "get": {
         "tags": [
@@ -6706,6 +6922,27 @@
         ],
         "title": "ConfirmRemapBody"
       },
+      "CostConfigModel": {
+        "properties": {
+          "machine_rate_per_hour": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Machine Rate Per Hour",
+            "default": 0.0
+          },
+          "labour_rate_per_hour": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Labour Rate Per Hour",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "CostConfigModel",
+        "description": "Shop-wide hourly rates used for every project's expenses (applied live \u2014 see services/job_costs.py)."
+      },
       "CustomerCreate": {
         "properties": {
           "name": {
@@ -7263,6 +7500,45 @@
           "distance_mm"
         ],
         "title": "JogZBody"
+      },
+      "LaborCreate": {
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "maximum": 44640.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minutes"
+          },
+          "logged_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logged On"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes"
+        ],
+        "title": "LaborCreate"
       },
       "LightBody": {
         "properties": {
@@ -8176,6 +8452,19 @@
             "type": "number",
             "title": "Bed Y Mm",
             "default": 256.0
+          },
+          "machine_rate_per_hour": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Rate Per Hour"
           }
         },
         "type": "object",
@@ -8316,6 +8605,19 @@
               }
             ],
             "title": "Bed Y Mm"
+          },
+          "machine_rate_per_hour": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Rate Per Hour"
           }
         },
         "type": "object",
@@ -8658,6 +8960,19 @@
             "type": "integer",
             "title": "Sort Order",
             "default": 0
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
           }
         },
         "type": "object",
@@ -8711,6 +9026,19 @@
               }
             ],
             "title": "Sort Order"
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
           }
         },
         "type": "object",

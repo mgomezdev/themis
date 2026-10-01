@@ -7,13 +7,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
+from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
@@ -36,6 +36,34 @@ class QueueConfigIn(BaseModel):
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
+
+
+class CostConfigModel(BaseModel):
+    """Shop-wide hourly rates used for every project's expenses (applied live — see services/job_costs.py)."""
+    machine_rate_per_hour: float = Field(default=0.0, ge=0, le=100_000)
+    labour_rate_per_hour: float = Field(default=0.0, ge=0, le=100_000)
+
+
+@router.get("/costs", response_model=CostConfigModel, summary="Get the shop cost model",
+            dependencies=[Depends(require_scope("settings:read"))])
+async def get_cost_config(session: AsyncSession = Depends(get_session)):
+    row = await session.get(CostConfig, 1)
+    return CostConfigModel(machine_rate_per_hour=row.machine_rate_per_hour if row else 0.0,
+                           labour_rate_per_hour=row.labour_rate_per_hour if row else 0.0)
+
+
+@router.put("/costs", response_model=CostConfigModel, summary="Set the shop cost model",
+            dependencies=[Depends(require_scope("settings:write"))])
+async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends(get_session)):
+    """Re-prices every project's machine and labour expenses immediately — past jobs included."""
+    row = await session.get(CostConfig, 1)
+    if row is None:
+        row = CostConfig(id=1)
+        session.add(row)
+    row.machine_rate_per_hour = body.machine_rate_per_hour
+    row.labour_rate_per_hour = body.labour_rate_per_hour
+    await session.commit()
+    return body
 
 
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:

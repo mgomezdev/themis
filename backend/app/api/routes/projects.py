@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
+from ...services import job_costs
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
@@ -159,6 +160,7 @@ class ProjectPartCreate(BaseModel):
     quantity: int = 1
     allocated: bool = False
     sort_order: int = 0
+    unit_cost: Optional[float] = Field(default=None, ge=0, le=1_000_000)
 
     @field_validator("quantity")
     @classmethod
@@ -173,6 +175,7 @@ class ProjectPartUpdate(BaseModel):
     quantity: Optional[int] = None
     allocated: Optional[bool] = None
     sort_order: Optional[int] = None
+    unit_cost: Optional[float] = Field(default=None, ge=0, le=1_000_000)  # send null to clear
 
     @field_validator("quantity")
     @classmethod
@@ -242,6 +245,7 @@ def _part_dict(part: ProjectPart) -> dict:
         "allocated": part.allocated,
         "sort_order": part.sort_order,
         "created_at": part.created_at,
+        "unit_cost": part.unit_cost,
     }
 
 
@@ -353,6 +357,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "items": items,
         "links": links,
         "parts": parts,
+        # Filament + machine + labour + parts (see services/job_costs.py); rates are the current settings.
+        "costs": (await job_costs.costs_by_project(session, [project.id], {project.id: list(job_rows)}))[project.id],
         **progress,
     }
 
@@ -942,6 +948,7 @@ async def add_part(
         quantity=body.quantity,
         allocated=body.allocated,
         sort_order=body.sort_order,
+        unit_cost=body.unit_cost,
         created_at=_now_iso(),
     )
     session.add(part)
@@ -976,6 +983,8 @@ async def update_part(
         part.allocated = body.allocated
     if body.sort_order is not None:
         part.sort_order = body.sort_order
+    if "unit_cost" in body.model_fields_set:
+        part.unit_cost = body.unit_cost
     await session.commit()
     await session.refresh(part)
     return _part_dict(part)

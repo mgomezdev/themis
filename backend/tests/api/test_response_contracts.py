@@ -105,6 +105,15 @@ async def test_payments_carry_the_payment_keys(client):
     assert_carries("customer_payment", via_customer)
 
 
+async def test_job_cost_responses_carry_their_keys(client):
+    project = (await client.post("/api/v1/projects", json={"name": "P"})).json()
+    await client.post(f"/api/v1/projects/{project['id']}/labor", json={"minutes": 10})
+
+    assert_carries("project_costs", (await client.get(f"/api/v1/projects/{project['id']}")).json()["costs"])
+    assert_carries("project_labor", (await client.get(f"/api/v1/projects/{project['id']}/labor")).json()[0])
+    assert_carries("cost_config", (await client.get("/api/v1/settings/costs")).json())
+
+
 def test_the_contract_helper_reports_missing_keys():
     with pytest.raises(AssertionError, match="missing keys the frontend reads: \\['name'\\]"):
         assert_carries("project_part", {k: 1 for k in CONTRACT["project_part"] if k != "name"})

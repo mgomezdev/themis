@@ -82,7 +82,8 @@ async def test_get_customer_detail_projects_and_financials(client: AsyncClient):
     assert fin["unpriced_unpaid"] == 1
     for key in ("30d", "60d", "90d", "all"):
         assert fin["windows"][key] == {"project_count": 3, "revenue": 120, "expenses": 15.5, "profit": 104.5,
-                                       "billed": 150, "outstanding": 30}
+                                       "billed": 150, "outstanding": 30,
+                                       "expense_breakdown": {"filament": 15.5, "machine": 0, "labour": 0, "parts": 0}}
 
     lst = {x["id"]: x for x in (await client.get("/api/v1/customers")).json()}
     assert lst[c["id"]]["project_count"] == 3
