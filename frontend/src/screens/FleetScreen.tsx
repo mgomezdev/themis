@@ -4,6 +4,7 @@ import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
+import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
@@ -625,6 +626,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
             </div>
           </div>
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+            <AlarmBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -862,6 +864,22 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
+/** Unacknowledged-alarm badge; links to that printer's alarms. */
+function AlarmBadge({ printer: p }: { printer: Printer }) {
+  const inRouter = useInRouterContext();
+  if (!p.alarmCount || !p.alarmSeverity) return null;
+  const props = {
+    onClick: (e: React.MouseEvent) => e.stopPropagation(), 'data-testid': 'alarm-badge',
+    title: `${p.alarmCount} active alarm${p.alarmCount === 1 ? '' : 's'} (worst: ${p.alarmSeverity})`,
+    style: { color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`, borderRadius: 999,
+             padding: '1px 8px', fontSize: 11, fontWeight: 600, textDecoration: 'none' },
+  };
+  const to = `/alarms?printer=${p.id}`;
+  return inRouter
+    ? <Link to={to} {...props}>{Icons.alert} {p.alarmCount}</Link>      // client-side navigation: keeps the SPA state
+    : <a href={to} {...props}>{Icons.alert} {p.alarmCount}</a>;
+}
+
 function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueRowsByPrinter }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]> }) {
   const isPrinting = p.status === 'printing';
   return (
@@ -874,6 +892,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
           {!p.queueOn && <QueueOffBadge />}
+          <AlarmBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>

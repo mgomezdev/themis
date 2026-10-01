@@ -269,6 +269,30 @@
         }
       }
     },
+    "/api/v1/cameras/stats": {
+      "get": {
+        "tags": [
+          "cameras"
+        ],
+        "summary": "Camera proxy load",
+        "description": "Open shared upstream streams (viewers, frames, bytes in/out), the stream cap, and how many snapshot requests\nwere answered from a live frame / cache / coalesced grab versus a real grab. Use it to size a camera wall.",
+        "operationId": "camera_stats_api_v1_cameras_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Camera Stats Api V1 Cameras Stats Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customers": {
       "get": {
         "tags": [
@@ -4555,6 +4579,282 @@
         }
       }
     },
+    "/api/v1/alarms": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "List printer alarms",
+        "description": "Alarms newest first. `active` = still reported by the printer; `unacknowledged` = active and not yet\nacknowledged; `all` includes resolved history.",
+        "operationId": "list_alarms_api_v1_alarms_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(active|unacknowledged|all)$",
+              "default": "active",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "printer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "min_severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(info|warning|error|fatal)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Severity"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Alarms Api V1 Alarms Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/summary": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Active alarm counts",
+        "description": "Unacknowledged active alarms: total, worst severity, and per printer \u2014 what badges show.",
+        "operationId": "alarm_summary_api_v1_alarms_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Alarm Summary Api V1 Alarms Summary Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/settings": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Alarm notification settings",
+        "operationId": "get_alarm_settings_api_v1_alarms_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Alarm Settings Api V1 Alarms Settings Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Update alarm notification settings",
+        "description": "Lowest severity that raises a `printer.alarm` webhook/notification. The feed itself always shows everything.",
+        "operationId": "update_alarm_settings_api_v1_alarms_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlarmSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Alarm Settings Api V1 Alarms Settings Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown severity"
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/{alarm_id}/acknowledge": {
+      "post": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Acknowledge an alarm",
+        "description": "Silence an alarm in badges and the unacknowledged list. It stays active until the printer stops reporting it.",
+        "operationId": "acknowledge_api_v1_alarms__alarm_id__acknowledge_post",
+        "parameters": [
+          {
+            "name": "alarm_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Alarm Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Acknowledge Api V1 Alarms  Alarm Id  Acknowledge Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Alarm not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/acknowledge-all": {
+      "post": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Acknowledge every active alarm",
+        "operationId": "acknowledge_all_api_v1_alarms_acknowledge_all_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Acknowledge All Api V1 Alarms Acknowledge All Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/projects/{project_id}/labor": {
       "get": {
         "tags": [
@@ -7684,6 +7984,19 @@
           "preset"
         ],
         "title": "ActivePresetUpdate"
+      },
+      "AlarmSettings": {
+        "properties": {
+          "min_severity": {
+            "type": "string",
+            "title": "Min Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "min_severity"
+        ],
+        "title": "AlarmSettings"
       },
       "ApiKeyCreate": {
         "properties": {

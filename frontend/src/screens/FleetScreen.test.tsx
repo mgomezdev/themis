@@ -136,6 +136,27 @@ describe('FleetScreen', () => {
     expect(screen.getByText(/1 printers?/i)).toBeInTheDocument();       // and it did not add a printer either
   });
 
+  it('shows an alarm badge linking to that printer\'s alarms, only while it has unacknowledged alarms', async () => {
+    mockFetch([{ ...PRINTER_1, alarm_count: 2, alarm_severity: 'error' }]);
+    render(<FleetScreen />);
+    const badge = await screen.findByTestId('alarm-badge');
+    expect(badge.textContent).toContain('2');
+    expect(badge.getAttribute('href')).toBe('/alarms?printer=1');
+    expect(badge.getAttribute('title')).toBe('2 active alarms (worst: error)');
+  });
+
+  it('shows no alarm badge for a printer without alarms, and keeps the badge across a telemetry-only update', async () => {
+    mockFetch([{ ...PRINTER_1, alarm_count: 1, alarm_severity: 'fatal' }, { ...PRINTER_1, id: 2, name: 'Calm', alarm_count: 0, alarm_severity: null }]);
+    render(<FleetScreen />);
+    await screen.findByText('Calm');
+    expect(screen.getAllByTestId('alarm-badge')).toHaveLength(1);
+
+    act(() => {                                                       // a websocket frame has no alarm fields
+      MockWS.instances[0].onmessage?.({ data: JSON.stringify({ type: 'printer_state', data: { id: 1, state: 'IDLE' } }) });
+    });
+    expect(screen.getAllByTestId('alarm-badge')).toHaveLength(1);
+  });
+
   it('closes WebSocket on unmount', async () => {
     mockFetch([PRINTER_1]);
     const { unmount } = render(<FleetScreen />);

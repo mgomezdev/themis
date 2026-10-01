@@ -33,6 +33,8 @@ export interface Printer {
   queueOn: boolean;
   awaitingPlateClear: boolean;
   noSnapshotsWhileIdle: boolean;
+  alarmCount?: number;
+  alarmSeverity?: 'info' | 'warning' | 'error' | 'fatal' | null;
 }
 
 export interface OrderPart {

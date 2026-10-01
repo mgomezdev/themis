@@ -1237,7 +1237,7 @@ function FleetBackupPage() {
 // Webhook page
 // =========================================================================
 
-const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low'];
+const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
 
 function WebhookPage() {
   const [url, setUrl] = useState('');
@@ -1332,7 +1332,7 @@ function WebhookPage() {
 // Notifications page
 // =========================================================================
 
-const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low'];
+const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
 
 function EventCheckboxes({ events, onToggle }: { events: string[]; onToggle: (ev: string) => void }) {
   return (

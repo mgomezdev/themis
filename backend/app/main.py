@@ -29,6 +29,7 @@ from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.alarms import router as alarms_router
 from .api.routes.labor import router as labor_router
 from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
@@ -87,6 +88,13 @@ async def lifespan(app: FastAPI):
         await migrate_legacy_uploads(
             _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
         await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
+
+    try:                                   # bound the alarm history (resolved alarms older than 90 days)
+        from .services import alarms as _alarms
+        async with SessionLocal() as _s:
+            await _alarms.purge_old(_s)
+    except Exception:
+        logging.getLogger("app").exception("Could not purge old alarms")
 
     loop = asyncio.get_running_loop()
 
@@ -171,6 +179,7 @@ app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(alarms_router)
 app.include_router(labor_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
