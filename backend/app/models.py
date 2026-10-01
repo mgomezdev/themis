@@ -222,6 +222,10 @@ class Project(Base):
     # Quoted total for the project; outstanding balance = price - amount_paid.
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
+    # Whether the customer portal shows this project's quote (price, paid, balance). Staff decide; default hidden.
+    price_visible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # When the customer accepted the shown quote; cleared if the price changes afterwards.
+    quote_accepted_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     stage: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True

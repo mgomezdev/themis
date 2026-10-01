@@ -91,6 +91,7 @@ class ProjectPatch(BaseModel):
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
     price: Optional[float] = None  # send null to clear
+    price_visible: Optional[bool] = None  # show the quote (price, paid, balance) in the customer portal
     payment_status: Optional[str] = None
     customer_id: Optional[int] = None  # send null to unassign
 
@@ -345,6 +346,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "amount_paid": project.amount_paid,
         "price": project.price,
         "payment_status": project.payment_status,
+        "price_visible": project.price_visible,
+        "quote_accepted_at": project.quote_accepted_at,
         "stage": project.stage,
         "customer_id": project.customer_id,
         "customer_name": customer.name if customer else None,
@@ -477,7 +480,11 @@ async def patch_project(
     if body.amount_paid is not None and not await has_payments(session, project_id):
         proj.amount_paid = body.amount_paid
     if "price" in body.model_fields_set:
+        if body.price != proj.price:
+            proj.quote_accepted_at = None   # what the customer accepted no longer matches
         proj.price = body.price
+    if body.price_visible is not None:
+        proj.price_visible = body.price_visible
     if body.payment_status is not None and not await has_payments(session, project_id):
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:

@@ -218,6 +218,7 @@ price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `st
   Independent of the linked order's own copy.
   `filament_cost_total` (derived, not stored — `projects.py::_project_progress`) sums `jobs.filament_cost`
   across the project's jobs, alongside the existing `actual_filament_grams`/`actual_seconds` aggregates.
+- `price_visible: bool` / `quote_accepted_at?` (v027): staff-controlled flag for showing the quote in the customer portal (`PATCH /projects/{id} {price_visible}`; the project page has a "Show price to customer" checkbox) and when the customer accepted it (`POST /api/v1/customer/projects/{id}/quote/accept`: idempotent, moves a `draft` to `planning`, 409 with nothing visible; cleared when `price` later changes). The portal's `quote` ({price, paid, balance, accepted_at, payments[{id, received_on, amount, method}]}) is `null` unless `price_visible` and a price exist, and never carries costs, profit, filament spend or payment notes.
 - `price` (v023): quoted total. Outstanding balance = `max(price - amount_paid, 0)` unless
   `payment_status == "paid"`; no price → no known balance. Responses also carry derived
   `customer_name` (the linked `customers.name`, or null).

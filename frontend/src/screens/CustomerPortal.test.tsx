@@ -7,7 +7,7 @@ import type { PortalProject } from '../api/customers';
 
 const project = (over: Partial<PortalProject> & { id: number; name: string }): PortalProject => ({
   notes: null, stage: 'draft', due_date: null, created_at: '2026-09-01T00:00:00', updated_at: '2026-09-01T00:00:00',
-  items: [], jobs: [], jobs_total: 0, jobs_complete: 0, ...over,
+  items: [], jobs: [], jobs_total: 0, jobs_complete: 0, quote: null, ...over,
 });
 
 const DRAFT = project({ id: 1, name: 'Robot arm', notes: 'need 4 of them', items: [{ id: 5, filename: 'arm.stl', quantity: 4 }] });
@@ -325,3 +325,77 @@ describe('CustomerPortal - sign out', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('CustomerPortal - quote and balance', () => {
+  const quote = (over: Partial<NonNullable<PortalProject['quote']>> = {}): NonNullable<PortalProject['quote']> => ({
+    price: 250, paid: 50, balance: 200, accepted_at: null,
+    payments: [{ id: 2, received_on: '2026-09-15', amount: 20, method: 'cash' }, { id: 1, received_on: '2026-09-01', amount: 30, method: 'bank_transfer' }],
+    ...over,
+  });
+  const QUOTED = project({ id: 4, name: 'Bench', stage: 'planning', quote: quote() });
+  const OTHER = project({ id: 5, name: 'Shelf', stage: 'queued', quote: quote({ price: 40, paid: 0, balance: 40, payments: [] }) });
+  const PAID = project({ id: 6, name: 'Hooks', stage: 'queued', quote: quote({ price: 10, paid: 10, balance: 0 }) });
+
+  it('shows no money at all for projects without a visible quote, and no overview', async () => {
+    open([DRAFT, IN_PRODUCTION]);
+    await screen.findByText('Robot arm');
+
+    expect(screen.queryByTestId('balance-overview')).toBeNull();
+    await userEvent.click(listed('Robot arm'));
+    expect(screen.queryByTestId('quote')).toBeNull();
+    expect(screen.queryByText(/\$/)).toBeNull();
+  });
+
+  it('shows price, paid, balance and the payment history for a quoted project', async () => {
+    open([QUOTED]);
+    await userEvent.click(await screen.findByRole('button', { name: /^Bench/ }));
+
+    const card = within(screen.getByTestId('quote'));
+    expect(card.getByText('$250.00')).toBeTruthy();
+    expect(card.getByText('$50.00')).toBeTruthy();
+    expect(card.getByTestId('quote-balance').textContent).toBe('$200.00');
+    const rows = card.getAllByRole('row').slice(1);
+    expect(rows.map(r => r.textContent)).toEqual(['Sep 15, 2026Cash$20.00', 'Sep 1, 2026Bank transfer$30.00']);
+  });
+
+  it('totals the outstanding balance across quoted projects only, and flags what is due in the list', async () => {
+    open([QUOTED, OTHER, PAID, DRAFT]);
+    await screen.findByText('Bench');
+
+    const overview = within(screen.getByTestId('balance-overview'));
+    expect(overview.getByText('$240.00')).toBeTruthy();                     // 200 + 40; the paid and un-quoted ones add nothing
+    expect(overview.getByText('across 2 projects')).toBeTruthy();
+    expect(listed('Bench').textContent).toContain('$200.00 due');
+    expect(listed('Hooks').textContent).not.toContain('due');
+  });
+
+  it('says "All paid up" when nothing is owed', async () => {
+    open([PAID]);
+    expect((await screen.findByTestId('balance-overview')).textContent).toContain('All paid up');
+    await userEvent.click(screen.getByRole('button', { name: /^Hooks/ }));
+    expect(screen.getByTestId('quote-balance').textContent).toBe('Paid in full');
+  });
+
+  it('accepts the quote, then shows when it was accepted instead of the button', async () => {
+    const accepted = { ...QUOTED, stage: 'planning' as const, quote: quote({ accepted_at: '2026-09-20T10:00:00Z' }) };
+    const api = open([QUOTED], { 'POST /api/v1/customer/projects/4/quote/accept': accepted });
+    await userEvent.click(await screen.findByRole('button', { name: /^Bench/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Accept quote' }));
+
+    await screen.findByText(/You accepted this quote on/);
+    expect(api.to('POST', '/api/v1/customer/projects/4/quote/accept')).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Accept quote' })).toBeNull();
+  });
+
+  it('shows the error when accepting fails and keeps the button', async () => {
+    open([QUOTED], { 'POST /api/v1/customer/projects/4/quote/accept': new Reply(409, { detail: 'There is no quote to accept yet' }) });
+    await userEvent.click(await screen.findByRole('button', { name: /^Bench/ }));
+
+    await userEvent.click(screen.getByRole('button', { name: 'Accept quote' }));
+
+    expect(await screen.findByText('There is no quote to accept yet')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Accept quote' })).toBeTruthy();
+  });
+});
+

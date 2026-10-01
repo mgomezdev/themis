@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_customer
 from ...database import get_session
-from ...models import Job, Project, ProjectItem, UploadedFile
+from ...models import Job, Project, ProjectItem, ProjectPayment, UploadedFile
+from ...services.payments import outstanding, paid_amount
 from .files import upload_file
 
 router = APIRouter(prefix="/api/v1/customer", tags=["customer"])
@@ -27,6 +28,24 @@ def _job_dict(j: Job) -> dict:
         "id": j.id, "status": j.status, "plate_number": j.plate_number,
         "created_at": j.created_at, "completed_at": j.completed_at,
         "estimate_seconds": j.estimate_seconds,
+    }
+
+
+async def _quote(p: Project, session: AsyncSession) -> dict | None:
+    """What the customer may see about money — only once staff have made the price visible, and never anything
+    internal (costs, profit, filament spend, payment notes). None = show nothing money-related."""
+    if not p.price_visible or p.price is None:
+        return None
+    pays = (await session.execute(
+        select(ProjectPayment).where(ProjectPayment.project_id == p.id)
+        .order_by(ProjectPayment.received_on.desc(), ProjectPayment.id.desc())
+    )).scalars().all()
+    return {
+        "price": p.price,
+        "paid": round(paid_amount(p), 2),
+        "balance": round(outstanding(p), 2),
+        "accepted_at": p.quote_accepted_at,
+        "payments": [{"id": x.id, "received_on": x.received_on, "amount": x.amount, "method": x.method} for x in pays],
     }
 
 
@@ -47,6 +66,7 @@ async def _project_dict(p: Project, session: AsyncSession) -> dict:
         "jobs": [_job_dict(j) for j in jobs],
         "jobs_total": len(jobs),
         "jobs_complete": sum(1 for j in jobs if j.status == "complete"),
+        "quote": await _quote(p, session),
     }
 
 
@@ -85,6 +105,23 @@ async def list_my_projects(customer_id: int = Depends(require_customer),
 async def get_my_project(project_id: int, customer_id: int = Depends(require_customer),
                          session: AsyncSession = Depends(get_session)) -> dict:
     return await _project_dict(await _own_project(project_id, customer_id, session), session)
+
+
+@router.post("/projects/{project_id}/quote/accept", summary="Accept the quote")
+async def accept_quote(project_id: int, customer_id: int = Depends(require_customer),
+                       session: AsyncSession = Depends(get_session)) -> dict:
+    """Records that the customer agreed to the quote they can see, and moves a draft request on to planning.
+    Idempotent: accepting again changes nothing. 409 when there is no visible quote to accept."""
+    p = await _own_project(project_id, customer_id, session)
+    if not p.price_visible or p.price is None:
+        raise HTTPException(409, "There is no quote to accept yet")
+    if p.quote_accepted_at is None:
+        p.quote_accepted_at = _now()
+        if p.stage == "draft":
+            p.stage = "planning"
+        p.updated_at = _now()
+        await session.commit()
+    return await _project_dict(p, session)
 
 
 @router.post("/projects", status_code=201, summary="Create draft project")

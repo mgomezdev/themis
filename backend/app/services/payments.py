@@ -13,6 +13,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import Project, ProjectPayment
 
 
+def paid_amount(p: Project) -> float:
+    """Amount received. A project marked paid with no amount entered counts as paid in full."""
+    if p.amount_paid is None and p.payment_status == "paid":
+        return p.price or 0.0
+    return p.amount_paid or 0.0
+
+
+def outstanding(p: Project) -> float:
+    """Unpaid balance against the quoted price. A project marked paid owes nothing; one without a price has no
+    known balance (reported separately as unpriced)."""
+    if p.price is None or p.payment_status == "paid":
+        return 0.0
+    return max(p.price - paid_amount(p), 0.0)
+
+
 def derive_status(price: float | None, total: float) -> str:
     """unpaid → nothing received; paid → received covers the quoted price; otherwise partial.
     With no quoted price there's nothing to compare against, so received money reads as partial."""

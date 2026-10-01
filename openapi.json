@@ -760,6 +760,51 @@
         }
       }
     },
+    "/api/v1/customer/projects/{project_id}/quote/accept": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Accept the quote",
+        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept.",
+        "operationId": "accept_quote_api_v1_customer_projects__project_id__quote_accept_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Accept Quote Api V1 Customer Projects  Project Id  Quote Accept Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customer/projects/{project_id}/files": {
       "post": {
         "tags": [
@@ -8805,6 +8850,17 @@
               }
             ],
             "title": "Price"
+          },
+          "price_visible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Visible"
           },
           "payment_status": {
             "anyOf": [
