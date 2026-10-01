@@ -226,6 +226,19 @@ describe('JobDetailScreen — scheduled start', () => {
     expect(screen.queryByRole('button', { name: /start as soon as possible/i })).toBeNull();
   });
 
+  it('shows a failed save inline and keeps the page', async () => {
+    const user = userEvent.setup();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(BASE_JOB);
+    vi.mocked(queueApi.setJobSchedule).mockRejectedValue(new Error('Job is printing; only queued or blocked jobs can be rescheduled'));
+    renderJobDetail();
+
+    fireEvent.change(await screen.findByLabelText('Earliest start'), { target: { value: '2030-02-03T04:05' } });
+    await user.click(within(screen.getByTestId('start-time-card')).getByRole('button', { name: 'Save' }));
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/only queued or blocked/);
+    expect(screen.getByLabelText('Earliest start')).toBeTruthy();          // page still there
+  });
+
   it('is not offered once the job has started', async () => {
     vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'printing' });
     renderJobDetail();

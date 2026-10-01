@@ -1060,7 +1060,6 @@ class QueueEngine:
             select(Job, GcodeFile)
             .join(GcodeFile, and_(GcodeFile.job_id == Job.id, GcodeFile.printer_id == printer_id))
             .where(Job.status == "sliced")
-            .where(or_(Job.not_before.is_(None), Job.not_before <= _now()))
             .order_by(Job.queue_position.asc())
             .limit(1)
         )

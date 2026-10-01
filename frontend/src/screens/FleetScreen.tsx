@@ -280,7 +280,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
                 <button type="button" className="btn ghost sm" onClick={() => { setQuietStart(''); setQuietEnd(''); }}>Clear</button>
               )}
             </div>
-            <span className="tiny muted">This printer won&apos;t start new jobs in this window (server time; may wrap midnight). A running print is never interrupted.</span>
+            <span className="tiny muted">This printer won&apos;t start new jobs in this window (server clock, UTC in Docker by default; may wrap midnight). A running print is never interrupted.</span>
           </div>
 
           <div className="col gap-2">

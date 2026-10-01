@@ -113,6 +113,7 @@ export function JobDetailScreen() {
   const [savingCost, setSavingCost] = useState(false);
   const [startInput, setStartInput] = useState('');
   const [savingStart, setSavingStart] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -140,12 +141,13 @@ export function JobDetailScreen() {
   async function saveStart(value: string) {
     if (!job || savingStart) return;
     setSavingStart(true);
+    setStartError(null);
     try {
       const updated = await setJobSchedule(job.id, fromLocalInput(value));
       setJob(prev => prev ? { ...prev, not_before: updated.not_before } : prev);
       setStartInput(toLocalInput(updated.not_before));
     } catch (e) {
-      setError(`Failed to save start time: ${e instanceof Error ? e.message : String(e)}`);
+      setStartError(e instanceof Error ? e.message : String(e));   // inline: don't blank the page over a 409 race
     } finally {
       setSavingStart(false);
     }
@@ -459,6 +461,7 @@ export function JobDetailScreen() {
                   </button>
                 )}
               </div>
+              {startError && <div className="small" role="alert" style={{ color: 'var(--err)', marginTop: 8 }}>{startError}</div>}
               <div className="tiny muted" style={{ marginTop: 8 }}>
                 {startsIn(job.not_before)
                   ? `The queue won't start this job ${startsIn(job.not_before)} (${new Date(job.not_before!).toLocaleString()}); jobs behind it can still run.`
