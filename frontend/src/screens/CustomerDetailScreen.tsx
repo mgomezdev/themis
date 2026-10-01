@@ -188,7 +188,7 @@ function PaymentHistoryCard({ customerId }: { customerId: number }) {
   useEffect(() => {
     let alive = true;
     getCustomerPayments(customerId)
-      .then(p => { if (alive) setPayments(p); })
+      .then(p => { if (alive) setPayments(Array.isArray(p) ? p : []); })
       .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
   }, [customerId]);

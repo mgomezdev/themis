@@ -155,7 +155,8 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
       p.stage = body.stage;
       return send(200, staffProject(p));
     }
-    if ((m = path.match(/^\/projects\/(\d+)\/jobs$/))) return send(200, []);
+    if ((m = path.match(/^\/customers\/(\d+)\/payments$/))) return send(200, []);
+    if ((m = path.match(/^\/projects\/(\d+)\/(jobs|payments)$/))) return send(200, []);
     if ((m = path.match(/^\/projects\/(\d+)$/))) {
       const p = fake.projects.find(x => x.id === +m![1]);
       return p ? send(200, staffProject(p)) : send(404, { detail: 'Not found' });

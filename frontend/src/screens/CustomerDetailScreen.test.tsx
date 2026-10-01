@@ -63,6 +63,16 @@ beforeEach(() => {
 });
 
 describe('CustomerDetailScreen', () => {
+  it('treats a malformed payments response as no payments instead of crashing the page', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/api/v1/customers/7') ? new Response(JSON.stringify(CUSTOMER), { status: 200 })
+        : new Response('{}', { status: 200 }));
+    renderScreen();
+
+    expect(within(await screen.findByTestId('payment-history')).getByText('No payments recorded yet.')).toBeTruthy();
+    expect(screen.getByText('Financial summary')).toBeTruthy();
+  });
+
   it('lists the payment history across projects, newest first, linking each to its project', async () => {
     renderScreen();
 
