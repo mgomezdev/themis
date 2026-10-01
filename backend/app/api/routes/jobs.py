@@ -949,6 +949,7 @@ async def complete_job_manually(
     if job.status in _MANUAL_COMPLETE_TERMINAL_STATUSES:
         raise HTTPException(409, f"Job in status {job.status!r} is already terminal")
     job.assigned_printer_id = body.printer_id
+    job.printed_on_printer_id = body.printer_id
     job.block_reason = None
 
     job.actual_filament_grams = grams

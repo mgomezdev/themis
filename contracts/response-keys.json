@@ -192,5 +192,42 @@
     "note",
     "created_at",
     "project_name"
+  ],
+  "analytics": [
+    "range",
+    "totals",
+    "printers",
+    "materials"
+  ],
+  "analytics_range": [
+    "start",
+    "end",
+    "days"
+  ],
+  "analytics_totals": [
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_printer": [
+    "printer_id",
+    "name",
+    "utilization_pct",
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_material": [
+    "material",
+    "grams",
+    "jobs"
   ]
 }

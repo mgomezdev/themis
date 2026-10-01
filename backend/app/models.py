@@ -119,6 +119,10 @@ class Job(Base):
     estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Manually-entered cost of the filament used for this job, for profit/loss reporting.
     filament_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The printer this job actually ran on. Unlike assigned_printer_id it survives failure/cancel, so fleet
+    # analytics can attribute outcomes to a printer.
+    # Plain integer (no FK — see v025); delete_printer nulls it.
+    printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
 
 class JobPrinterConfig(Base):

@@ -47,12 +47,13 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
 
     # lifetime_job_count/lifetime_print_seconds aren't exposed via the printers
     # API - check the DB directly, same pattern as the 409-terminal-status test.
-    from app.models import Printer
+    from app.models import Job, Printer
 
     async with session_factory() as session:
         printer = await session.get(Printer, printer_id)
         assert printer.lifetime_job_count == 1
         assert printer.lifetime_print_seconds == 3930
+        assert (await session.get(Job, job_id)).printed_on_printer_id == printer_id
 
 
 async def test_complete_manually_404_unknown_job(client):
