@@ -48,7 +48,12 @@ async def record_sync(session: AsyncSession, row: SpoolmanConfig) -> dict:
     row.last_sync_at = now
     row.last_sync_error = None
     row.last_sync_error_code = None
-    await spool_alerts.process(session, row, spools)   # never raises; a notification problem must not fail the sync
+    try:
+        # A savepoint, so a problem while alerting (even a DB error) can't poison the sync's own commit.
+        async with session.begin_nested():
+            await spool_alerts.process(session, row, spools)
+    except Exception:
+        logger.exception("Low-stock alerting failed; the sync itself succeeded")
     await session.commit()
     return {"filament_count": len(filaments), "spool_count": len(spools)}
 

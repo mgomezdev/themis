@@ -124,14 +124,23 @@ async def test_the_webhook_is_skipped_when_its_event_list_excludes_spool_low(ses
     schedule.assert_not_called()
 
 
-async def test_a_delivery_failure_never_breaks_the_caller(session_factory):
+async def test_a_failed_delivery_is_retried_at_the_next_sync_and_does_not_block_other_spools(session_factory):
     await _row(session_factory, low_stock_default_g=100)
     async with session_factory() as s:
         s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
         await s.commit()
-    with patch.object(spool_alerts.webhook_service, "schedule", side_effect=RuntimeError("boom")):
-        fresh, _ = await _process(session_factory, [spool(1, 80)])
-    assert fresh == []   # swallowed and logged
+
+    def flaky(url, secret, event, job_id, extra):
+        if extra["spool_id"] == 1:
+            raise RuntimeError("boom")
+    with patch.object(spool_alerts.webhook_service, "schedule", side_effect=flaky):
+        fresh, alerted = await _process(session_factory, [spool(1, 80), spool(2, 70)])
+    assert [l.spool_id for l in fresh] == [2] and alerted == [2]     # 2 was delivered; 1 stays un-alerted
+
+    with patch.object(spool_alerts.webhook_service, "schedule") as schedule:
+        fresh, alerted = await _process(session_factory, [spool(1, 80), spool(2, 70)])
+    assert [l.spool_id for l in fresh] == [1] and alerted == [1, 2]  # 1 retried (and only 1)
+    assert [c.args[4]["spool_id"] for c in schedule.call_args_list] == [1]
 
 
 # ---- sync integration ------------------------------------------------------------------------
@@ -155,12 +164,13 @@ async def test_record_sync_raises_alerts_for_the_spools_it_just_fetched_and_only
         assert (await s.get(SpoolmanConfig, 1)).low_stock_alerted == expected
 
 
-async def test_an_alerting_failure_does_not_fail_the_sync(session_factory, spoolman_upstream):
+async def test_a_failure_while_alerting_does_not_fail_or_roll_back_the_sync(session_factory, spoolman_upstream):
     await _row(session_factory, low_stock_default_g=900)
-    async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
-        await s.commit()
-    with patch.object(spool_alerts.webhook_service, "schedule", side_effect=RuntimeError("boom")):
+    with patch.object(spool_alerts, "process", side_effect=RuntimeError("config load failed")):
         async with session_factory() as s:
             counts = await record_sync(s, await s.get(SpoolmanConfig, 1))
+
     assert counts["spool_count"] == 2
+    async with session_factory() as s:
+        row = await s.get(SpoolmanConfig, 1)
+    assert row.last_sync_at is not None and row.last_sync_error is None   # the sync is still recorded as successful

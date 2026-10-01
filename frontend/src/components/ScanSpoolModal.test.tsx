@@ -21,6 +21,7 @@ const ROUTES = {
   'GET /api/v1/spoolman/spools': [SPOOL, { ...SPOOL, id: 13, location: null }],
   'GET /api/v1/spoolman/filaments': [FILAMENT],
   'GET /api/v1/printers': [PRINTER],
+  'GET /api/v1/printers/1': PRINTER,
   'PATCH /api/v1/printers/1': PRINTER,
 };
 
@@ -63,6 +64,19 @@ describe('ScanSpoolModal', () => {
     ] });
     expect(screen.getByRole('status').textContent).toBe('Loaded ELEGOO Sky Blue PLA into Forge.');
     expect(onAssigned).toHaveBeenCalledTimes(1);
+  });
+
+  it('builds the update from the printer as it is when you press Load, not as it was when the dialog opened', async () => {
+    const amsUpdate = { ...PRINTER, loaded_filaments: [PRINTER.loaded_filaments[0], { ...PRINTER.loaded_filaments[1], name: 'Changed by AMS' }] };
+    const { api } = open({ 'GET /api/v1/printers/1': amsUpdate });
+    await enterCode('12');
+    await userEvent.selectOptions(await screen.findByLabelText('Printer'), 'Forge');
+    await userEvent.selectOptions(screen.getByLabelText('Slot'), 'T0 — Old PETG');
+    await userEvent.click(screen.getByRole('button', { name: 'Load into printer' }));
+
+    await screen.findByRole('status');
+    const sent = (api.to('PATCH', '/api/v1/printers/1')[0].body as { loaded_filaments: { name: string }[] }).loaded_filaments;
+    expect(sent[1].name).toBe('Changed by AMS');     // the other slot keeps its latest state
   });
 
   it('can add the spool as a new slot after the existing ones', async () => {

@@ -65,30 +65,35 @@ def message_for(low: LowSpool) -> tuple[str, str]:
 
 
 async def process(session: AsyncSession, row: SpoolmanConfig, spools: list[dict]) -> list[LowSpool]:
-    """Alert for spools newly below threshold; remember them so they alert once. Never raises."""
-    try:
-        low = find_low(spools, row.low_stock_default_g, row.low_stock_overrides)
-        already = set(row.low_stock_alerted or [])
-        fresh = [l for l in low if l.spool_id not in already]
-        now_low = sorted(l.spool_id for l in low)
-        if now_low != sorted(already):
-            row.low_stock_alerted = now_low   # also drops spools that were refilled, re-arming them
-        if fresh:
-            await _deliver(session, fresh)
-        return fresh
-    except Exception:
-        logger.exception("Low-stock evaluation failed")
-        return []
+    """Alert for spools newly below threshold and remember the ones actually delivered (so each drop alerts
+    once). A spool whose delivery failed is *not* remembered and is retried at the next sync. A failure to
+    load the notification configs (a DB error) propagates — the caller runs this inside a savepoint."""
+    low = find_low(spools, row.low_stock_default_g, row.low_stock_overrides)
+    already = set(row.low_stock_alerted or [])
+    still_low = {l.spool_id for l in low}
+    fresh = [l for l in low if l.spool_id not in already]
+    webhook = await session.get(WebhookConfig, 1) if fresh else None
+    notif = await session.get(NotificationConfig, 1) if fresh else None
+
+    delivered: list[LowSpool] = []
+    for l in fresh:
+        try:
+            _deliver(webhook, notif, l)
+            delivered.append(l)
+        except Exception:
+            logger.exception("Low-stock alert for spool %s could not be sent; will retry at the next sync", l.spool_id)
+
+    remembered = sorted((already & still_low) | {l.spool_id for l in delivered})   # refilled spools drop out (re-armed)
+    if remembered != sorted(already):
+        row.low_stock_alerted = remembered
+    return delivered
 
 
-async def _deliver(session: AsyncSession, fresh: list[LowSpool]) -> None:
-    webhook = await session.get(WebhookConfig, 1)
-    notif = await session.get(NotificationConfig, 1)
-    for low in fresh:
-        if webhook and webhook.url and (not webhook.events or EVENT in webhook.events):
-            webhook_service.schedule(webhook.url, webhook.secret, EVENT, None, {
-                "spool_id": low.spool_id, "filament_id": low.filament_id, "name": low.name,
-                "remaining_g": low.remaining_g, "threshold_g": low.threshold_g, "location": low.location})
-        if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
-            title, message = message_for(low)
-            asyncio.create_task(notification_service.dispatch(notif, EVENT, None, title, message))
+def _deliver(webhook: WebhookConfig | None, notif: NotificationConfig | None, low: LowSpool) -> None:
+    if webhook and webhook.url and (not webhook.events or EVENT in webhook.events):
+        webhook_service.schedule(webhook.url, webhook.secret, EVENT, None, {
+            "spool_id": low.spool_id, "filament_id": low.filament_id, "name": low.name,
+            "remaining_g": low.remaining_g, "threshold_g": low.threshold_g, "location": low.location})
+    if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
+        title, message = message_for(low)
+        asyncio.create_task(notification_service.dispatch(notif, EVENT, None, title, message))

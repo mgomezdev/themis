@@ -5,7 +5,7 @@ import {
   fetchFilaments, fetchSpools, parseSpoolCode, slotPatchForSpool, spoolDisplayName,
   type ApiFilament, type ApiSpool,
 } from '../api/spoolman';
-import { fetchPrinters, updatePrinter, type ApiPrinter, type LoadedFilament } from '../api/printers';
+import { fetchPrinter, fetchPrinters, updatePrinter, type ApiPrinter, type LoadedFilament } from '../api/printers';
 
 const NEW_SLOT = 'new';
 
@@ -45,10 +45,12 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
     if (!spool || !printer) return;
     setBusy(true); setError('');
     try {
-      const slots = [...(printer.loaded_filaments ?? [])];
+      // Re-read the printer: an AMS update may have landed since the dialog opened, and the PATCH replaces the whole list.
+      const latest = await fetchPrinter(printer.id);
+      const slots = [...(latest.loaded_filaments ?? [])];
       const idx = slot === NEW_SLOT ? -1 : slots.findIndex(s => String(s.slot) === slot);
       const current = idx >= 0 ? slots[idx] : undefined;
-      const patch = slotPatchForSpool(spool, filaments, printer.current_orca_printer_profile, current);
+      const patch = slotPatchForSpool(spool, filaments, latest.current_orca_printer_profile, current);
       if (idx >= 0) {
         slots[idx] = { ...current!, ...patch };
       } else {
