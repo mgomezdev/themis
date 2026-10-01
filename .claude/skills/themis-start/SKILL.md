@@ -13,13 +13,13 @@ Run:
 & '.claude\skills\themis-start\scripts\start.ps1'
 ```
 
-The script kills stale processes on :8001, opens backend and frontend in new terminal windows, polls until both are ready, then prints the access URLs. Relay the output to the user.
+The script kills only the process(es) listening on :8001 (never other Python processes), opens backend and frontend in new terminal windows, polls until both answer, then prints the access URLs. It exits non-zero if :8001 can't be freed or the backend never answers. Relay the output to the user.
 
 ## Troubleshooting (only consult if the script reports failure)
 
 | Symptom | Fix |
 |---|---|
-| `:8001` still occupied after kill | `Get-Process python3.13 \| Stop-Process -Force` then re-run |
+| `:8001` still occupied after kill | Find the PID in the `netstat -ano` line the script printed, check what it is (`Get-Process -Id <pid>`), `Stop-Process -Id <pid> -Force`, then re-run |
 | `curl localhost:8001` returns wrong HTML | IPv6 fallback hitting stale process — kill remaining PID shown in netstat |
 | Fleet shows empty on first load | Normal — printers reconnect asynchronously within a few seconds |
 | `dionysus` not resolving | Tailscale must be running on the remote device |
