@@ -614,6 +614,8 @@ async def delete_printer(
     await session.delete(printer)
     await session.commit()
     printer_manager.disconnect_printer(printer_id)
+    if printer_manager._on_state_broadcast is not None:   # its alarms went with it (FK cascade)
+        await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
 
 @router.post(

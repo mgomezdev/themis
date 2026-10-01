@@ -109,6 +109,29 @@ describe('AlarmsScreen', () => {
     await waitFor(() => expect(calls.find(c => c.method === 'PUT')?.body).toEqual({ min_severity: 'fatal' }));
   });
 
+  it('puts the threshold back and says why when saving it fails', async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      'GET /api/v1/alarms/settings': { min_severity: 'error', severities: ['info', 'warning', 'error', 'fatal'] },
+      'GET /api/v1/alarms?status=unacknowledged': [],
+      'PUT /api/v1/alarms/settings': new Reply(500, 'nope'),
+    });
+    show();
+    const select = await screen.findByLabelText(/send webhook/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('error'));
+
+    await user.selectOptions(select, 'fatal');
+
+    expect((await screen.findByRole('alert')).textContent).toMatch(/500/);
+    await waitFor(() => expect(select.value).toBe('error'));          // not left showing a value that was never stored
+  });
+
+  it('tells the user which notification event must be ticked', async () => {
+    stubFetch({ ...SETTINGS, 'GET /api/v1/alarms?status=unacknowledged': [] });
+    show();
+    expect((await screen.findByText(/printer\.alarm/)).textContent).toMatch(/ticked/);
+  });
+
   it('shows a failed acknowledge inline', async () => {
     const user = userEvent.setup();
     stubFetch({

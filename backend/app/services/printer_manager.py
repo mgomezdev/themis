@@ -190,7 +190,9 @@ class PrinterManager:
             return
         try:
             from .alarms import tracker
-            await tracker.observe(self._session_factory, printer_id, client.get_alarms(), self._on_state_broadcast)
+            await tracker.observe(
+                self._session_factory, printer_id, client.get_alarms(), self._on_state_broadcast,
+                refresh=lambda: self._clients[printer_id].get_alarms() if printer_id in self._clients else [])
         except Exception:
             logger.exception("Alarm update failed for printer %s", printer_id)
 

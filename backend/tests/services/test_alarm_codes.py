@@ -108,7 +108,7 @@ def test_elegoo_client_reads_the_error_number_from_every_status_push():
 def test_klipper_shutdown_and_error_states_and_print_errors():
     (a,) = klipper_alarms({"state": "shutdown", "state_message": "Heater extruder not heating at expected rate\nSee docs"}, None)
     assert (a.code, a.severity, a.source) == ("KLIPPER_SHUTDOWN", "fatal", "klipper")
-    assert a.message == "Heater extruder not heating at expected rate"                  # first line only
+    assert a.message == "Heater extruder not heating at expected rate — See docs"       # lines joined, none dropped
     (b,) = klipper_alarms({"state": "error", "state_message": ""}, None)
     assert (b.code, b.severity, b.message) == ("KLIPPER_ERROR", "error", "Klipper is in the error state")
     (c,) = klipper_alarms({"state": "ready"}, {"state": "error", "message": "Filament runout"})
@@ -139,6 +139,18 @@ def test_snapmaker_shutdown_notification_raises_the_alarm_before_the_reason_arri
     assert c.get_alarms()[0].message == "Klipper is in the shutdown state"          # reason not known yet
     c._on_ws_message(None, json.dumps({"jsonrpc": "2.0", "method": "notify_klippy_ready"}))
     assert c.get_alarms() == []
+
+
+def test_snapmaker_asks_for_the_reason_on_shutdown_and_reads_the_printer_info_reply():
+    c = _moon()
+    sent = []
+    c._ws_send = lambda method, params=None: sent.append(method)
+    c._on_ws_message(None, json.dumps({"jsonrpc": "2.0", "method": "notify_klippy_shutdown"}))
+    assert sent == ["printer.info"]
+    c._on_ws_message(None, json.dumps({"jsonrpc": "2.0", "id": 5, "result": {
+        "state": "shutdown", "state_message": "Heater extruder not heating at expected rate"}}))
+    (a,) = c.get_alarms()
+    assert a.message == "Heater extruder not heating at expected rate"                  # the real reason, not the placeholder
 
 
 def test_default_clients_and_the_mock_report_no_alarms():

@@ -23,6 +23,8 @@ async def up(conn) -> None:
         )
     """))
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_printer_alarms_printer_id ON printer_alarms (printer_id)"))
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_printer_alarms_active ON printer_alarms (printer_id, code) WHERE resolved_at IS NULL"))
     cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(queue_config)"))).fetchall()}
     if "alarm_min_severity" not in cols:
         await conn.execute(text("ALTER TABLE queue_config ADD COLUMN alarm_min_severity VARCHAR(10) NOT NULL DEFAULT 'warning'"))

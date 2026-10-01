@@ -11,9 +11,17 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Printer, PrinterAlarm, QueueConfig
 from ...services import alarms as alarm_service
+from ...services.printer_manager import printer_manager
 from ...services.abstract_printer_client import SEVERITIES
 
 router = APIRouter(prefix="/api/v1/alarms", tags=["alarms"])
+
+
+async def _announce_change(printer_id: int | None) -> None:
+    """Tell every open page (sidebar badge, Fleet tiles, other tabs) the unacknowledged counts changed."""
+    broadcast = printer_manager._on_state_broadcast
+    if broadcast is not None:
+        await broadcast("alarms_changed", {"printer_id": printer_id})
 
 
 def _dict(a: PrinterAlarm, printer_name: str | None) -> dict:
@@ -106,6 +114,7 @@ async def acknowledge(alarm_id: int, session: AsyncSession = Depends(get_session
     if a.acknowledged_at is None:
         a.acknowledged_at = datetime.now(timezone.utc).isoformat()
         await session.commit()
+        await _announce_change(a.printer_id)
     printer = await session.get(Printer, a.printer_id)
     return _dict(a, printer.name if printer else None)
 
@@ -121,4 +130,6 @@ async def acknowledge_all(printer_id: int | None = None, session: AsyncSession =
     for a in rows:
         a.acknowledged_at = stamp
     await session.commit()
+    if rows:
+        await _announce_change(printer_id)
     return {"acknowledged": len(rows)}

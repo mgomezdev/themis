@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -465,6 +465,10 @@ class PrinterAlarm(Base):
     the printer keeps reporting its `code`; it is resolved (not deleted) when the printer stops, so the table is
     the alarm history. `acknowledged_at` only silences it in the UI — it does not affect resolution."""
     __tablename__ = "printer_alarms"
+    __table_args__ = (
+        # One ACTIVE row per (printer, code): makes a racing double-insert fail loudly instead of duplicating.
+        Index("ux_printer_alarms_active", "printer_id", "code", unique=True, sqlite_where=text("resolved_at IS NULL")),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), index=True)

@@ -113,7 +113,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
             <span className="label">{it.label}</span>
             {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
             {it.to === '/alarms' && alarmCount > 0 && (
-              <span data-testid="badge-alarms" className="count num"
+              <span data-testid="badge-alarms" className="count num" aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
                     style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.3)',
                              color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
                 {alarmCount}

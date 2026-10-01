@@ -5,10 +5,7 @@ import {
   type AlarmStatus, type PrinterAlarm, type Severity,
 } from '../api/alarms';
 import { Icons } from '../components/icons';
-
-export const SEVERITY_COLOR: Record<Severity, string> = {
-  info: 'var(--text-3)', warning: 'var(--warn)', error: 'var(--err)', fatal: 'var(--err)',
-};
+import { SEVERITY_COLOR } from '../lib/severity';
 
 export function SeverityPill({ severity }: { severity: Severity }) {
   return (
@@ -36,7 +33,7 @@ export function AlarmsScreen() {
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
-    try { await fn(); refetch(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    try { await fn(); refetch(); return true; } catch (e) { setError(e instanceof Error ? e.message : String(e)); return false; }
   }
 
   return (
@@ -52,9 +49,16 @@ export function AlarmsScreen() {
         <span style={{ flex: 1 }} />
         <label className="small muted" htmlFor="alarm-min-severity">Send webhook / notifications for</label>
         <select id="alarm-min-severity" className="input" style={{ width: 'auto' }} value={minSeverity}
-                onChange={e => { const v = e.target.value as Severity; setMinSeverity(v); void run(() => saveAlarmSettings(v)); }}>
+                onChange={e => {
+                  const v = e.target.value as Severity, prev = minSeverity;
+                  setMinSeverity(v);
+                  void run(() => saveAlarmSettings(v)).then(ok => { if (!ok) setMinSeverity(prev); });   // failed save → show what is really stored
+                }}>
           {SEVERITIES.map(s => <option key={s} value={s}>{s} and above</option>)}
         </select>
+        <span className="tiny muted" style={{ flexBasis: '100%', textAlign: 'right' }}>
+          Notification channels (Settings → Notifications) only receive alarms when “printer.alarm” is ticked there.
+        </span>
         <button className="btn sm" disabled={!alarms.some(a => a.active && !a.acknowledged_at)}
                 onClick={() => void run(() => acknowledgeAll(printerId))}>Acknowledge all</button>
       </div>

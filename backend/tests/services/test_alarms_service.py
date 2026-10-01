@@ -8,6 +8,7 @@ from sqlalchemy import select
 from app.models import NotificationConfig, PrinterAlarm, QueueConfig, WebhookConfig
 from app.services import alarms
 from app.services.abstract_printer_client import Alarm
+from tests.waiting import wait_until
 
 
 def A(code="HMS_X", sev="error", msg="boom", **kw):
@@ -28,10 +29,10 @@ async def test_a_reported_code_becomes_one_active_row_and_repeats_do_not_duplica
         first = await alarms.reconcile(s, pid, [A()])
     assert len(first) == 1
     async with session_factory() as s:
-        again = await alarms.reconcile(s, pid, [A(msg="boom v2", sev="fatal")])
-    assert again == []                                                          # same code: not new
+        again = await alarms.reconcile(s, pid, [A(msg="boom v2")])
+    assert again == []                                                          # same code, same severity: not announced
     (row,) = await rows(session_factory)
-    assert (row.message, row.severity, row.resolved_at) == ("boom v2", "fatal", None)   # refreshed in place
+    assert (row.message, row.severity, row.resolved_at) == ("boom v2", "error", None)   # refreshed in place
     assert row.last_seen >= row.first_seen
 
 
@@ -48,6 +49,50 @@ async def test_a_code_that_stops_being_reported_is_resolved_and_kept_as_history_
         fresh = await alarms.reconcile(s, pid, [A("A"), A("B")])
     assert [r.code for r in fresh] == ["A"]                                      # A is back → a new row/event
     assert [r.code for r in await rows(session_factory)] == ["A", "B", "A"]
+
+
+async def test_an_escalation_is_announced_again_and_needs_acknowledging_again(session_factory, create_printer):
+    pid = await create_printer()
+    async with session_factory() as s:
+        await alarms.reconcile(s, pid, [A(sev="warning")])
+        row = (await s.execute(select(PrinterAlarm))).scalar_one()
+        row.acknowledged_at = alarms.now()
+        await s.commit()
+    async with session_factory() as s:
+        assert await alarms.reconcile(s, pid, [A(sev="warning")]) == []         # same severity: quiet
+    async with session_factory() as s:
+        (esc,) = await alarms.reconcile(s, pid, [A(sev="fatal")])
+    assert (esc.severity, esc.acknowledged_at) == ("fatal", None)
+    async with session_factory() as s:
+        assert await alarms.reconcile(s, pid, [A(sev="error")]) == []           # de-escalation is not announced
+    assert len(await rows(session_factory)) == 1
+
+
+async def test_an_absent_alarm_is_only_resolved_after_the_grace_period(session_factory, create_printer):
+    pid = await create_printer()
+    async with session_factory() as s:
+        await alarms.reconcile(s, pid, [A()])
+    async with session_factory() as s:
+        await alarms.reconcile(s, pid, [], grace_s=3600)                         # e.g. the empty state after a restart
+        assert alarms.reconcile.last_pending is True
+    assert (await rows(session_factory))[0].resolved_at is None
+    async with session_factory() as s:
+        assert await alarms.reconcile(s, pid, [A()], grace_s=3600) == []        # it came back: still the same alarm
+    assert len(await rows(session_factory)) == 1
+    async with session_factory() as s:
+        await alarms.reconcile(s, pid, [], grace_s=0)
+        assert alarms.reconcile.last_pending is False
+    assert (await rows(session_factory))[0].resolved_at is not None
+
+
+async def test_two_active_rows_for_one_code_cannot_exist(session_factory, create_printer):
+    from sqlalchemy.exc import IntegrityError
+    pid = await create_printer()
+    async with session_factory() as s:
+        for _ in range(2):
+            s.add(PrinterAlarm(printer_id=pid, code="X", severity="info", message="m", first_seen=alarms.now(), last_seen=alarms.now()))
+        with pytest.raises(IntegrityError):
+            await s.commit()
 
 
 async def test_alarms_are_per_printer(session_factory, create_printer):
@@ -148,7 +193,8 @@ async def test_a_delivery_failure_is_swallowed(session_factory, create_printer):
 
 # ── tracker ──────────────────────────────────────────────────────────────────
 
-async def test_the_tracker_skips_unchanged_reports_retries_after_a_db_failure_and_broadcasts_changes(session_factory, create_printer):
+async def test_the_tracker_skips_unchanged_reports_retries_after_a_db_failure_and_broadcasts_changes(session_factory, create_printer, monkeypatch):
+    monkeypatch.setattr(alarms, "RESOLVE_GRACE_S", 0)
     pid = await create_printer()
     t = alarms.AlarmTracker()
     sent = []
@@ -189,3 +235,42 @@ async def test_purge_removes_only_old_resolved_alarms(session_factory, create_pr
         await s.commit()
         assert await alarms.purge_old(s) == 1
     assert sorted(r.code for r in await rows(session_factory)) == ["new", "old-active"]
+
+
+async def test_the_tracker_holds_a_standing_alarm_through_a_restart_then_resolves_it_on_the_recheck(session_factory, create_printer, monkeypatch):
+    monkeypatch.setattr(alarms, "RESOLVE_GRACE_S", 0.05)
+    pid = await create_printer()
+    sent = []
+
+    async def broadcast(kind, data):
+        sent.append(kind)
+
+    t = alarms.AlarmTracker()
+    await t.observe(session_factory, pid, [A()], broadcast)
+    t2 = alarms.AlarmTracker()                                                   # "restart": fresh tracker, client reports nothing yet
+    cleared = []
+    await t2.observe(session_factory, pid, [], broadcast, refresh=lambda: cleared)
+    assert (await rows(session_factory))[0].resolved_at is None                  # not resolved by the empty first report
+    await wait_until(lambda: _resolved(session_factory), timeout=3)              # the re-check resolves it once truly absent
+    assert len(await rows(session_factory)) == 1
+
+
+async def _resolved(factory):
+    return (await rows(factory))[0].resolved_at is not None
+
+
+async def test_a_flapping_alarm_does_not_re_announce(session_factory, create_printer, monkeypatch):
+    monkeypatch.setattr(alarms, "RESOLVE_GRACE_S", 3600)
+    pid = await create_printer()
+    t = alarms.AlarmTracker()
+    with patch("app.services.alarms.deliver", new_callable=AsyncMock) as deliver:
+        for report in ([A()], [], [A()], [], [A()]):
+            await t.observe(session_factory, pid, report)
+    assert deliver.call_count == 1 and len(await rows(session_factory)) == 1
+
+
+async def test_concurrent_observations_of_one_printer_make_one_row(session_factory, create_printer):
+    pid = await create_printer()
+    t = alarms.AlarmTracker()
+    await asyncio.gather(*[t.observe(session_factory, pid, [A()]) for _ in range(8)])
+    assert len(await rows(session_factory)) == 1

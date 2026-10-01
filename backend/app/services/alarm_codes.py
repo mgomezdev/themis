@@ -112,7 +112,7 @@ def klipper_alarms(webhooks: dict | None, print_stats: dict | None) -> list[Alar
     if state in ("shutdown", "error"):
         msg = (wh.get("state_message") or "").strip() or f"Klipper is in the {state} state"
         out.append(Alarm(code=f"KLIPPER_{state.upper()}", severity="fatal" if state == "shutdown" else "error",
-                         message=msg.splitlines()[0][:300] if "\n" in msg else msg[:300], source="klipper"))
+                         message=" — ".join(l.strip() for l in msg.splitlines() if l.strip())[:300], source="klipper"))
     ps = print_stats or {}
     if ps.get("state") == "error":
         msg = (ps.get("message") or "").strip() or "The print stopped with an error"

@@ -50,6 +50,23 @@ async def test_acknowledge_silences_but_does_not_resolve_and_is_idempotent(clien
     assert (await client.post("/api/v1/alarms/999/acknowledge")).status_code == 404
 
 
+async def test_acknowledging_and_deleting_a_printer_tell_open_pages(client, session_factory, create_printer, monkeypatch):
+    sent = []
+
+    async def broadcast(kind, data):
+        sent.append((kind, data["printer_id"]))
+
+    monkeypatch.setattr(printer_manager, "_on_state_broadcast", broadcast)
+    pid = await create_printer()
+    await raise_alarms(session_factory, pid, A("X"))
+    (a,) = (await client.get("/api/v1/alarms")).json()
+    await client.post(f"/api/v1/alarms/{a['id']}/acknowledge")
+    await client.post("/api/v1/alarms/acknowledge-all", params={"printer_id": pid})   # nothing left to ack → no event
+    assert sent == [("alarms_changed", pid)]
+    await client.delete(f"/api/v1/printers/{pid}")
+    assert sent[-1] == ("alarms_changed", pid) and len(sent) == 2
+
+
 async def test_acknowledge_all_can_be_scoped_to_one_printer(client, session_factory, create_printer):
     p1, p2 = await create_printer(name="a"), await create_printer(name="b")
     await raise_alarms(session_factory, p1, A("1"), A("2"))
@@ -91,7 +108,8 @@ async def test_settings_round_trip_and_validation(client):
     assert (await client.get("/api/v1/alarms/settings")).json()["min_severity"] == "error"
 
 
-async def test_the_printer_manager_turns_a_clients_reported_problems_into_alarms_and_resolves_them(client, session_factory, create_printer):
+async def test_the_printer_manager_turns_a_clients_reported_problems_into_alarms_and_resolves_them(client, session_factory, create_printer, monkeypatch):
+    monkeypatch.setattr(alarm_service, "RESOLVE_GRACE_S", 0)
     pid = await create_printer(name="Atlas")
     mock = MagicMock()
     mock.connected = True

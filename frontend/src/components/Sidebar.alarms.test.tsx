@@ -18,6 +18,7 @@ describe('Sidebar alarms', () => {
     renderBar(3, 'error');
     expect(screen.getByRole('link', { name: /Alarms/ }).getAttribute('href')).toBe('/alarms');
     expect(screen.getByTestId('badge-alarms').textContent).toBe('3');
+    expect(screen.getByLabelText('3 unacknowledged alarms')).toBe(screen.getByTestId('badge-alarms'));
   });
 
   it('shows no badge without alarms', () => {

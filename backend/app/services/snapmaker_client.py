@@ -305,10 +305,18 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
             with self._lock:
                 self.state.klippy_ready = False
                 if method == "notify_klippy_shutdown":
-                    self.state.klippy_state = "shutdown"       # the reason arrives with the next webhooks update
+                    self.state.klippy_state = "shutdown"
             self._fire_state_change()
+            if method == "notify_klippy_shutdown":
+                # Moonraker doesn't push `webhooks` updates once Klippy is gone: ask for the reason (`printer.info`
+                # → state + state_message) so the alarm says WHY, not just "shutdown".
+                self._ws_send("printer.info", {})
         elif "result" in data:
             result = data["result"]
+            if isinstance(result, dict) and "state_message" in result and result.get("state") in ("startup", "ready", "shutdown", "error"):
+                with self._lock:                               # `printer.info` reply
+                    self.state.klippy_state, self.state.klippy_message = result["state"], result.get("state_message")
+                self._fire_state_change()
             if isinstance(result, dict):
                 if "klippy_state" in result:
                     with self._lock:
