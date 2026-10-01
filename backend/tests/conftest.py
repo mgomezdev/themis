@@ -237,3 +237,12 @@ def _reset_laminus_module_state():
     for n, v in saved.items():
         setattr(laminus, n, v)
 
+
+
+@pytest.fixture(autouse=True)
+def _fresh_camera_hub():
+    """The camera hub is a process-wide singleton (shared streams, snapshot cache keyed by printer id, and ids repeat
+    from 1 in every test's fresh DB) — give each test a clean one."""
+    from app.services import camera_hub
+    camera_hub.hub = camera_hub.CameraHub()
+    yield

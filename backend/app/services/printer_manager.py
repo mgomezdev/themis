@@ -256,6 +256,8 @@ class PrinterManager:
         client = self._clients.pop(printer_id, None)
         if client:
             client.disconnect()
+        from .camera_hub import hub as _camera_hub
+        _camera_hub.forget(printer_id)               # end its shared camera stream and drop cached frames
 
 
 printer_manager = PrinterManager()
