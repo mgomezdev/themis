@@ -1,0 +1,64 @@
+"""Shared plumbing for the real-protocol verification suite (see README.md). Everything skips unless the
+relevant THEMIS_VERIFY_* environment variables point at a real printer."""
+from __future__ import annotations
+
+import os
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # make `app` importable when run from anywhere
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        item.add_marker(pytest.mark.real_protocol)
+
+
+def _env(name: str) -> str | None:
+    return os.environ.get(name) or None
+
+
+@pytest.fixture(scope="session")
+def allow_write() -> bool:
+    return os.environ.get("THEMIS_VERIFY_ALLOW_WRITE") == "1"
+
+
+@pytest.fixture
+def require_write(allow_write):
+    if not allow_write:
+        pytest.skip("set THEMIS_VERIFY_ALLOW_WRITE=1 to run tests that write to the printer")
+
+
+@pytest.fixture
+def sacrificial_name() -> str:
+    return f"themis-verify-{int(time.time())}.gcode"
+
+
+SACRIFICIAL_BODY = b"; themis protocol verification - safe to delete\nG28\n"
+
+
+@pytest.fixture(scope="session")
+def bambu_cfg():
+    host, code = _env("THEMIS_VERIFY_BAMBU_HOST"), _env("THEMIS_VERIFY_BAMBU_ACCESS_CODE")
+    if not (host and code):
+        pytest.skip("set THEMIS_VERIFY_BAMBU_HOST and THEMIS_VERIFY_BAMBU_ACCESS_CODE")
+    return {"host": host, "access_code": code}
+
+
+@pytest.fixture(scope="session")
+def moonraker_cfg():
+    url = _env("THEMIS_VERIFY_MOONRAKER_URL")
+    if not url:
+        pytest.skip("set THEMIS_VERIFY_MOONRAKER_URL (e.g. http://192.168.7.30:7125)")
+    return {"url": url.rstrip("/"), "api_key": _env("THEMIS_VERIFY_MOONRAKER_API_KEY")}
+
+
+@pytest.fixture(scope="session")
+def elegoo_cfg():
+    host = _env("THEMIS_VERIFY_ELEGOO_HOST")
+    if not host:
+        pytest.skip("set THEMIS_VERIFY_ELEGOO_HOST")
+    return {"host": host, "port": int(_env("THEMIS_VERIFY_ELEGOO_PORT") or 3030)}

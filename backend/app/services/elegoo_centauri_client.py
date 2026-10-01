@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -230,6 +231,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
             # X/Y jog, single-axis homing and nozzle/chamber setpoints stay off until their SDCP
             # commands are verified on hardware (only Z jog, home-all and the bed setpoint are known).
             direct_upload=True,
+            # SDCP file list + delete are implemented; download is not (no documented read command).
+            file_browser=True,
+            file_delete=True,
         )
 
     # ------------------------------------------------------------------
@@ -715,14 +719,16 @@ class ElegooCentauriClient(AbstractPrinterClient):
         return [
             PrinterFile(
                 id=f.get("name", ""),
-                name=f.get("name", ""),
+                name=os.path.basename(f.get("name", "").rstrip("/")) or f.get("name", ""),
                 size=int(f.get("size", 0)),
             )
             for f in resp.get("FileList", [])
         ]
 
-    def delete_file(self, remote_path: str) -> bool:
-        return self._send(_Cmd.DELETE_FILE, {"FileList": [remote_path], "FolderList": []})
+    def delete_file(self, file_id: str) -> bool:
+        if ".." in file_id or any(c in file_id for c in "\x00\r\n"):
+            return False           # ids are absolute /local/... paths, so only traversal and control chars are refused
+        return self._send(_Cmd.DELETE_FILE, {"FileList": [file_id], "FolderList": []})
 
     def get_loaded_filaments(self) -> list:
         return [{

@@ -104,6 +104,11 @@ that have already bitten this project:
 - **Coverage floors are ratchets** (`fail_under` in `backend/pyproject.toml`, thresholds in
   `frontend/vitest.config.ts`, both ~2 points under measured): raise them when coverage grows, never lower
   one to make a change pass.
+- **Hardware-dependent protocols:** implement against the *documented* protocol, drive the gate/action tests with a
+  virtual printer (`backend/tests/virtual_printers/`), and add a manual check in `backend/protocol_verification/`
+  that asserts each assumption the virtual printer encodes against a real device (read-only by default, writes
+  opt-in via env, never part of the gates — see its README). `tests/test_verification_suite_against_virtual_printers.py`
+  runs those checks against the virtual printers so the suite and the fakes can't drift.
 - **Frontend tests:** `src/test/fetchStub.ts` (`stubFetch` + `Reply`) for API-level tests; don't fake
   `setInterval`/`setTimeout` around Testing Library `waitFor` (it hangs) — spy on them instead; flush
   effects (`await act(async () => {})`) before firing window key events.

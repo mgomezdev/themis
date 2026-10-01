@@ -251,7 +251,7 @@ describe('App - navigation chrome', () => {
     expect(screen.queryByRole('menu')).toBeNull();
     await userEvent.click(within(bar).getByRole('button', { name: 'More' }));
     const menu = screen.getByRole('menu', { name: 'More destinations' });
-    expect(within(menu).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Customers', 'Files', 'History', 'Analytics']);
+    expect(within(menu).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Customers', 'Files', 'Printer files', 'History', 'Analytics']);
 
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'History' }));
 

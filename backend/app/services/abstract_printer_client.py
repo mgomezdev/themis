@@ -31,6 +31,11 @@ class PrinterCapabilities:
     nozzle_temp: bool = False     # nozzle setpoint
     chamber_temp: bool = False    # chamber setpoint
     direct_upload: bool = False   # upload (and optionally start) a file outside the queue
+    # File browser (BIZ-169): list what is stored on the printer; delete / download are separate because
+    # not every protocol exposes them.
+    file_browser: bool = False
+    file_delete: bool = False
+    file_download: bool = False
 
 
 @dataclass
@@ -46,12 +51,20 @@ class StartPrintOptions:
     gcode_path: str | None = None
 
 
+class FileTooLargeError(Exception):
+    """A download was aborted because it would exceed the caller's size cap."""
+
+
 @dataclass
 class PrinterFile:
+    """One entry in a printer's storage. `id` is what the other file operations (print/delete/download) take
+    back — a path in the vendor's own addressing — while `name` is for display."""
     id: str
     name: str
     size: int
-    modified_at: str | None = None
+    modified_at: str | None = None          # UTC ISO-8601 when the protocol reports it
+    is_dir: bool = False
+    metadata: dict | None = None            # {"estimated_seconds", "filament_grams", "filament_mm", "slicer"} when known
 
 
 @dataclass
@@ -205,6 +218,14 @@ class AbstractPrinterClient(ABC):
 
     def list_files(self, directory: str = "/") -> list[PrinterFile]:
         return []
+
+    def delete_file(self, file_id: str) -> bool:
+        return False
+
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
+        """Fetch a stored file's bytes (None = unsupported or failed). Raises FileTooLargeError as soon as more
+        than `max_bytes` have arrived, without buffering the rest."""
+        return None
 
     def storage_info(self) -> dict | None:
         return None
