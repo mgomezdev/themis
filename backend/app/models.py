@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -169,6 +169,8 @@ class QueueConfig(Base):
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Lowest alarm severity that raises a `printer.alarm` webhook/notification (info < warning < error < fatal).
+    alarm_min_severity: Mapped[str] = mapped_column(String(10), default="warning", server_default="warning")
 
 
 class CostConfig(Base):
@@ -456,3 +458,26 @@ class AdminAccount(Base):
     recovery_code_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     recovery_code_expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     recovery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class PrinterAlarm(Base):
+    """One problem a printer reported (Bambu HMS, Klipper shutdown, SDCP error number…). A row is *active* while
+    the printer keeps reporting its `code`; it is resolved (not deleted) when the printer stops, so the table is
+    the alarm history. `acknowledged_at` only silences it in the UI — it does not affect resolution."""
+    __tablename__ = "printer_alarms"
+    __table_args__ = (
+        # One ACTIVE row per (printer, code): makes a racing double-insert fail loudly instead of duplicating.
+        Index("ux_printer_alarms_active", "printer_id", "code", unique=True, sqlite_where=text("resolved_at IS NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(80))
+    severity: Mapped[str] = mapped_column(String(10))            # info | warning | error | fatal
+    message: Mapped[str] = mapped_column(Text)
+    source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)   # e.g. "hms", "klipper", "sdcp"
+    help_url: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    first_seen: Mapped[str] = mapped_column(String(32))
+    last_seen: Mapped[str] = mapped_column(String(32))
+    resolved_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    acknowledged_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)

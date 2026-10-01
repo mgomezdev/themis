@@ -55,6 +55,20 @@ class FileTooLargeError(Exception):
     """A download was aborted because it would exceed the caller's size cap."""
 
 
+SEVERITIES = ("info", "warning", "error", "fatal")           # ascending
+
+
+@dataclass(frozen=True)
+class Alarm:
+    """A problem a printer currently reports, in the shape every vendor is normalised to. `code` is the stable
+    identity (a printer re-reporting the same code is the same alarm); `message` is human text."""
+    code: str
+    severity: str                       # one of SEVERITIES
+    message: str
+    source: str | None = None           # "hms" | "klipper" | "sdcp" …
+    help_url: str | None = None
+
+
 @dataclass
 class DiscoveredPrinter:
     """A printer found on the network, ready to pre-fill the add form (secrets such as access codes stay blank)."""
@@ -198,6 +212,13 @@ class AbstractPrinterClient(ABC):
     @property
     def is_printing(self) -> bool:
         return False
+
+    # --- Alarms (BIZ-157) ---
+
+    def get_alarms(self) -> list[Alarm]:
+        """The problems the printer reports RIGHT NOW (empty = healthy). Called on every state update, so it must
+        be a cheap read of already-parsed state. Default: this vendor reports none."""
+        return []
 
     # --- Network discovery (classmethods; BIZ-153) ---
 

@@ -25,6 +25,13 @@ const BASE: FleetPrinter = {
   fan_box: 0,
 };
 
+describe('toFleetPrinter alarms', () => {
+  it('maps the alarm badge fields, defaulting to none', () => {
+    expect(toFleetPrinter({ ...BASE, alarm_count: 3, alarm_severity: 'warning' })).toMatchObject({ alarmCount: 3, alarmSeverity: 'warning' });
+    expect(toFleetPrinter(BASE)).toMatchObject({ alarmCount: 0, alarmSeverity: null });
+  });
+});
+
 describe('toFleetPrinter', () => {
   it('converts numeric id to string', () => {
     expect(toFleetPrinter({ ...BASE, id: 42 }).id).toBe('42');

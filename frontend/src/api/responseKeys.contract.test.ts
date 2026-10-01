@@ -10,6 +10,7 @@ import type { FleetPrinter } from './fleet';
 import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
+import type { AlarmSummary, PrinterAlarm } from './alarms';
 import type { ApiPrinter } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
@@ -23,7 +24,7 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 const FLEET = {
   id: 1, name: 1, printer_type: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
-  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1,
+  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
@@ -88,6 +89,11 @@ const PRINTER_FILES_LISTING = {
 const PRINTER_FILES_MERGED = {
   printer_id: 1, printer_name: 1, files: 1, error: 1, can_delete: 1, can_download: 1,
 } satisfies Record<keyof MergedPrinterFiles, 1>;
+const PRINTER_ALARM = {
+  id: 1, printer_id: 1, printer_name: 1, code: 1, severity: 1, message: 1, source: 1, help_url: 1, first_seen: 1, last_seen: 1,
+  resolved_at: 1, acknowledged_at: 1, active: 1,
+} satisfies Record<keyof PrinterAlarm, 1>;
+const ALARM_SUMMARY = { count: 1, worst: 1, printers: 1 } satisfies Record<keyof AlarmSummary, 1>;
 const ANALYTICS_PRINTER = { ...ANALYTICS_TOTALS, printer_id: 1, name: 1, utilization_pct: 1 } satisfies Record<keyof AnalyticsPrinter, 1>;
 const ANALYTICS_MATERIAL = { material: 1, grams: 1, jobs: 1 } satisfies Record<keyof AnalyticsMaterial, 1>;
 const PROJECT_PAYMENT = {
@@ -128,6 +134,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['analytics', contract.analytics, keysOf(ANALYTICS)],
     ['analytics range', contract.analytics_range, keysOf(ANALYTICS_RANGE)],
     ['analytics totals', contract.analytics_totals, keysOf(ANALYTICS_TOTALS)],
+    ['printer alarm', contract.printer_alarm, keysOf(PRINTER_ALARM)],
+    ['alarm summary', contract.alarm_summary, keysOf(ALARM_SUMMARY)],
     ['printer file', contract.printer_file, keysOf(PRINTER_FILE)],
     ['printer files listing', contract.printer_files_listing, keysOf(PRINTER_FILES_LISTING)],
     ['printer files merged', contract.printer_files_merged, keysOf(PRINTER_FILES_MERGED)],
@@ -146,7 +154,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
       'project_payment', 'customer_payment',
       'portal_project', 'portal_quote', 'portal_payment',
-      'printer_file', 'printer_files_listing', 'printer_files_merged',
+      'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());

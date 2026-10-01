@@ -17,6 +17,7 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
     DiscoveredPrinter,
     PrinterCapabilities,
     PrinterFile,
@@ -94,6 +95,7 @@ _TEMP_MAP = {
 class ElegooState:
     connected: bool = False
     current_status: list = field(default_factory=list)
+    error_number: int = 0
     print_state: str = "standby"
     filename: str | None = None
     task_id: str | None = None
@@ -427,6 +429,10 @@ class ElegooCentauriClient(AbstractPrinterClient):
             new.print_state = "standby"
 
         # PrintInfo fields (present during and after prints)
+        try:
+            new.error_number = int(print_info.get("ErrorNumber") or 0)
+        except (TypeError, ValueError):
+            new.error_number = 0
         new.filename = print_info.get("Filename") or None
         new.task_id = print_info.get("TaskId") or None
         new.total_ticks = float(print_info.get("TotalTicks", 0))
@@ -636,6 +642,11 @@ class ElegooCentauriClient(AbstractPrinterClient):
     # ------------------------------------------------------------------
     # Axis control (native SDCP, not G-code)
     # ------------------------------------------------------------------
+
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import sdcp_alarms
+        with self._lock:
+            return sdcp_alarms(self.state.error_number)
 
     def home(self) -> bool:
         return self._send(_Cmd.EDIT_AXIS_ZERO, {"Axis": "XYZ"})

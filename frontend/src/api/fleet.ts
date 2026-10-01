@@ -27,6 +27,8 @@ export interface FleetPrinter {
   fan_model: number;
   fan_aux: number;
   fan_box: number;
+  alarm_count?: number;                 // active, unacknowledged
+  alarm_severity?: 'info' | 'warning' | 'error' | 'fatal' | null;
 }
 
 const ACCENT: Record<string, string> = {
@@ -90,6 +92,8 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     queueOn: p.queue_on ?? true,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,
     noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
+    alarmCount: p.alarm_count ?? 0,
+    alarmSeverity: p.alarm_severity ?? null,
   };
 }
 
