@@ -67,9 +67,10 @@ def test_bambu_tolerates_a_firmware_without_a_cache_dir(monkeypatch):
     assert [f.id for f in bambu_fake.make_client().list_files()] == ["a.3mf"]
 
 
-def test_bambu_wrong_access_code_lists_nothing_instead_of_raising(bambu):
-    _client, storage = bambu
-    assert bambu_fake.make_client(access_code="00000000").list_files() == []
+def test_bambu_listing_failures_raise_so_they_are_not_mistaken_for_an_empty_card(bambu):
+    import ftplib
+    with pytest.raises(ftplib.error_perm):                          # wrong access code → 530, not "No files."
+        bambu_fake.make_client(access_code="00000000").list_files()
 
 
 def test_bambu_download_and_delete_round_trip(bambu):
@@ -126,7 +127,10 @@ def test_moonraker_subdirectory_ids_are_paths_relative_to_gcodes(moon):
     client, _ = moon
     (inner,) = client.list_files("sub")
     assert (inner.id, inner.name, inner.metadata) == ("sub/inner.gcode", "inner.gcode", {"estimated_seconds": 60})
-    assert client.list_files("/nope") == []                              # 404 → empty, not an exception
+    with pytest.raises(Exception):                                       # 404 propagates: "couldn't look" != "empty"
+        client.list_files("/nope")
+    with pytest.raises(ValueError):
+        client.list_files("sub/../..")
 
 
 def test_moonraker_download_delete_quote_paths_and_report_failures(moon):
@@ -151,7 +155,8 @@ def test_moonraker_sends_the_api_key(monkeypatch):
     server = moon_fake.VirtualMoonraker({"a.gcode": {"data": b"x", "modified": 1.0}}, api_key="sekret")
     moon_fake.install(monkeypatch, server)
     assert [f.id for f in moon_fake.make_client("sekret").list_files()] == ["a.gcode"]
-    assert moon_fake.make_client(None).list_files() == []                # 401 → empty
+    with pytest.raises(Exception):                                       # 401 → raises (a wrong key is not an empty printer)
+        moon_fake.make_client(None).list_files()
 
 
 # ── capability claims ────────────────────────────────────────────────────────
@@ -174,3 +179,22 @@ def test_file_capabilities_per_vendor_match_the_implemented_operations():
     e = caps(ElegooCentauriClient)
     assert (e.file_browser, e.file_delete, e.file_download) == (True, True, False)
     assert ElegooCentauriClient.download_file is AbstractPrinterClient.download_file
+
+
+# ── download size cap ────────────────────────────────────────────────────────
+
+def test_bambu_download_aborts_past_the_cap_without_buffering_the_rest(bambu):
+    from app.services.abstract_printer_client import FileTooLargeError
+    client, storage = bambu
+    storage.files["big.3mf"] = b"x" * 100
+    assert client.download_file("big.3mf", max_bytes=100) == b"x" * 100        # exactly at the cap is fine
+    with pytest.raises(FileTooLargeError):
+        client.download_file("big.3mf", max_bytes=99)
+
+
+def test_moonraker_download_aborts_past_the_cap(moon):
+    from app.services.abstract_printer_client import FileTooLargeError
+    client, server = moon
+    assert client.download_file("part.gcode", max_bytes=4) == b"G28\n"
+    with pytest.raises(FileTooLargeError):
+        client.download_file("part.gcode", max_bytes=3)

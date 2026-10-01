@@ -726,6 +726,8 @@ class ElegooCentauriClient(AbstractPrinterClient):
         ]
 
     def delete_file(self, file_id: str) -> bool:
+        if ".." in file_id or any(c in file_id for c in "\x00\r\n"):
+            return False           # ids are absolute /local/... paths, so only traversal and control chars are refused
         return self._send(_Cmd.DELETE_FILE, {"FileList": [file_id], "FolderList": []})
 
     def get_loaded_filaments(self) -> list:

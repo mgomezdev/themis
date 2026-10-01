@@ -17,6 +17,7 @@ from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
     PrinterCapabilities,
+    FileTooLargeError,
     PrinterFile,
     StartPrintOptions,
 )
@@ -241,29 +242,29 @@ class BambuMQTTClient(AbstractPrinterClient):
             return False
 
     def list_files(self, directory: str = "/") -> list[PrinterFile]:
-        """Printable files (.3mf / .gcode) on the SD card: the root plus /cache. No per-file metadata (that
-        would mean downloading each archive)."""
+        """Printable files (.3mf / .gcode) on the SD card: the root plus /cache (`directory` is ignored — the
+        listing is flat). No per-file metadata (that would mean downloading each archive). Connection, login
+        and listing failures RAISE so callers can tell "no files" from "couldn't look"; only a missing /cache
+        (a 550 on that LIST) is tolerated."""
         out: list[PrinterFile] = []
-        try:
-            with self._ftps() as ftp:
-                for d in _FILE_DIRS:
-                    lines: list[str] = []
-                    try:
-                        ftp.retrlines(f"LIST /{d}" if d else "LIST", lines.append)
-                    except ftplib.error_perm:
-                        continue                   # e.g. no /cache on this firmware
-                    for line in lines:
-                        parsed = parse_unix_list_line(line)
-                        if parsed is None:
-                            continue
-                        name, size, is_dir, modified = parsed
-                        if is_dir or not name.lower().endswith(_PRINTABLE_SUFFIXES):
-                            continue
-                        out.append(PrinterFile(id=f"{d}/{name}" if d else name, name=name, size=size,
-                                               modified_at=modified))
-        except Exception:
-            logger.exception("FTPS listing of %s failed", self._ip)
-            return []
+        with self._ftps() as ftp:
+            for d in _FILE_DIRS:
+                lines: list[str] = []
+                try:
+                    ftp.retrlines(f"LIST /{d}" if d else "LIST", lines.append)
+                except ftplib.error_perm:
+                    if not d:
+                        raise                      # the root must list; only /cache may legitimately be absent
+                    continue
+                for line in lines:
+                    parsed = parse_unix_list_line(line)
+                    if parsed is None:
+                        continue
+                    name, size, is_dir, modified = parsed
+                    if is_dir or not name.lower().endswith(_PRINTABLE_SUFFIXES):
+                        continue
+                    out.append(PrinterFile(id=f"{d}/{name}" if d else name, name=name, size=size,
+                                           modified_at=modified))
         return out
 
     def delete_file(self, file_id: str) -> bool:
@@ -276,13 +277,24 @@ class BambuMQTTClient(AbstractPrinterClient):
             logger.exception("FTPS delete of %s on %s failed", file_id, self._ip)
             return False
 
-    def download_file(self, file_id: str) -> bytes | None:
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
         try:
             self._validate_file_id(file_id)
-            buf = io.BytesIO()
+            chunks: list[bytes] = []
+            total = 0
+
+            def take(chunk: bytes) -> None:
+                nonlocal total
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise FileTooLargeError(f"{file_id} is larger than {max_bytes} bytes")
+                chunks.append(chunk)
+
             with self._ftps() as ftp:
-                ftp.retrbinary(f"RETR {file_id}", buf.write)
-            return buf.getvalue()
+                ftp.retrbinary(f"RETR {file_id}", take)
+            return b"".join(chunks)
+        except FileTooLargeError:
+            raise
         except Exception:
             logger.exception("FTPS download of %s from %s failed", file_id, self._ip)
             return None

@@ -65,6 +65,16 @@ async def test_listing_needs_the_capability_and_a_connected_printer(client, pid)
     assert (await client.get("/api/v1/printers/999/files")).status_code == 404
 
 
+async def test_a_listing_the_printer_refuses_is_a_502_with_the_reason_not_an_empty_list(client, pid):
+    mock = _client(**FULL)
+    mock.list_files.side_effect = Exception("530 Login incorrect.")
+    printer_manager._clients[pid] = mock
+    resp = await client.get(f"/api/v1/printers/{pid}/files")
+    assert resp.status_code == 502 and "530 Login incorrect" in resp.json()["detail"]
+    mock.list_files.side_effect = ValueError("Invalid directory: '..'")
+    assert (await client.get(f"/api/v1/printers/{pid}/files", params={"directory": ".."})).status_code == 422
+
+
 async def test_a_listing_that_times_out_is_a_502_not_a_hang(client, pid):
     mock = _client(**FULL)
     mock.list_files.side_effect = lambda d: __import__("time").sleep(0.5)
@@ -183,14 +193,28 @@ async def test_delete_removes_the_file_and_reports_a_refusal_as_502(client, pid)
     assert (await _delete(client, pid)).status_code == 502
 
 
-async def test_delete_refuses_the_file_being_printed_but_not_others(client, pid):
+@pytest.mark.parametrize("reported,file_id,blocked", [
+    ("/local/b.gcode", "b.gcode", True),                  # Elegoo: absolute path
+    ("Benchy", "Benchy.gcode.3mf", True),                 # Bambu: subtask_name without the extension
+    ("benchy.GCODE.3MF", "cache/Benchy.gcode.3mf", True), # case and directory don't matter
+    ("Benchy", "Other.gcode.3mf", False),
+    ("", "anything.gcode", True),                         # printer busy but name unknown → refuse rather than guess
+])
+async def test_delete_refuses_the_file_being_printed_but_not_others(client, pid, reported, file_id, blocked):
     mock = _client(**FULL)
-    mock.is_printing = True
+    mock.is_idle = False                                  # covers the start-up window, not just RUNNING
+    mock.is_printing = False
     printer_manager._clients[pid] = mock
-    with patch.object(printer_manager, "get_normalized_state", return_value={"current_print": "/local/b.gcode"}):
-        assert (await _delete(client, pid, "b.gcode")).status_code == 409
-        mock.delete_file.assert_not_called()
-        assert (await _delete(client, pid, "other.gcode")).status_code == 200
+    with patch.object(printer_manager, "get_normalized_state", return_value={"current_print": reported}):
+        resp = await _delete(client, pid, file_id)
+    assert (resp.status_code == 409) is blocked
+    assert mock.delete_file.called is (not blocked)
+
+
+async def test_delete_is_unrestricted_on_an_idle_printer(client, pid):
+    printer_manager._clients[pid] = mock = _client(**FULL)
+    assert (await _delete(client, pid, "whatever.gcode")).status_code == 200
+    mock.delete_file.assert_called_once()
 
 
 async def test_delete_needs_the_capability(client, pid):
@@ -223,7 +247,7 @@ async def test_to_library_downloads_into_the_library_and_dedupes(client, pid, li
     rec = first.json()
     assert rec["original_filename"] == "A.3mf" and rec["folder"] == "/From Printers"
     assert (library / "From Printers" / "A.3mf").read_bytes() == make_3mf_bytes()
-    mock.download_file.assert_called_once_with("sub/A.3mf")
+    mock.download_file.assert_called_once_with("sub/A.3mf", 300 * 1024 * 1024)
     again = (await _to_library(client, pid, "sub/A.3mf")).json()
     assert again["id"] == rec["id"]                                           # same content → same record
     assert [f["id"] for f in (await client.get("/api/v1/files")).json()] == [rec["id"]]
@@ -239,8 +263,43 @@ async def test_to_library_refuses_gcode_and_reports_download_failures(client, pi
     assert (await _to_library(client, pid)).status_code == 409                 # no file_download capability
 
 
-async def test_to_library_enforces_the_size_cap(client, pid, library):
-    printer_manager._clients[pid] = _client(**FULL)
+async def test_to_library_passes_the_cap_to_the_download_and_maps_an_abort_to_413(client, pid, library):
+    from app.services.abstract_printer_client import FileTooLargeError
+    mock = _client(**FULL)
+    mock.download_file.side_effect = FileTooLargeError("too big")
+    printer_manager._clients[pid] = mock
     with patch("app.api.routes.printers._MAX_DIRECT_UPLOAD_BYTES", 10):
         assert (await _to_library(client, pid)).status_code == 413
+    assert mock.download_file.call_args.args[1] == 10                          # the cap reached the client
     assert not (library / "From Printers").exists()
+
+
+async def test_to_library_runs_the_thumbnail_background_task(client, pid, library):
+    printer_manager._clients[pid] = _client(**FULL)
+    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
+        assert (await _to_library(client, pid)).status_code == 200
+    regen.assert_called_once()                                                  # actually executed, not just queued
+
+
+async def test_concurrent_direct_starts_on_one_printer_start_exactly_one_print(client, pid):
+    mock = _client(**FULL)
+    import time
+
+    def start(name, opts):
+        time.sleep(0.05)                       # widen the window between the checks and the claim
+        return True
+    mock.start_print.side_effect = start
+    printer_manager._clients[pid] = mock
+
+    from app.api.routes import printers as routes
+    real_gate = routes._set_plate_gate
+
+    async def slow_gate(*a, **kw):
+        await asyncio.sleep(0.05)              # latency between "checks passed" and "printer claimed"
+        return await real_gate(*a, **kw)
+
+    with patch.object(routes, "_set_plate_gate", slow_gate):
+        r1, r2 = await asyncio.gather(_print(client, pid, "a.gcode"), _print(client, pid, "b.gcode"))
+
+    assert sorted([r1.status_code, r2.status_code]) == [200, 409]
+    assert mock.start_print.call_count == 1

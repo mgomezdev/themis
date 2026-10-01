@@ -15,6 +15,7 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    FileTooLargeError,
     PrinterCapabilities,
     PrinterFile,
     StartPrintOptions,
@@ -377,15 +378,14 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         filament length/weight, slicer. Directories come first as `is_dir` entries whose id is the path to
         pass back as `directory`."""
         rel = directory.strip("/")
+        if any(s in (".", "..") for s in rel.split("/")):
+            raise ValueError(f"Invalid directory: {directory!r}")
         path = "gcodes" + (f"/{rel}" if rel else "")
-        try:
-            r = httpx.get(f"{self._http_base}/server/files/directory", params={"path": path, "extended": "true"},
-                          headers=self._headers(), timeout=30)
-            r.raise_for_status()
-            result = r.json()["result"]
-        except Exception:
-            logger.exception("Snapmaker %s: listing %s failed", self._ip, path)
-            return []
+        # Failures raise (httpx errors / KeyError): callers must be able to tell "empty" from "couldn't look".
+        r = httpx.get(f"{self._http_base}/server/files/directory", params={"path": path, "extended": "true"},
+                      headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        result = r.json()["result"]
         prefix = f"{rel}/" if rel else ""
 
         def iso(ts) -> str | None:
@@ -418,11 +418,21 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
             logger.exception("Snapmaker %s: delete of %s failed", self._ip, file_id)
             return False
 
-    def download_file(self, file_id: str) -> bytes | None:
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
         try:
-            r = httpx.get(f"{self._http_base}{self._gcodes_url_path(file_id)}", headers=self._headers(), timeout=120)
-            r.raise_for_status()
-            return r.content
+            chunks: list[bytes] = []
+            total = 0
+            with httpx.stream("GET", f"{self._http_base}{self._gcodes_url_path(file_id)}",
+                              headers=self._headers(), timeout=120) as r:
+                r.raise_for_status()
+                for chunk in r.iter_bytes():
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise FileTooLargeError(f"{file_id} is larger than {max_bytes} bytes")
+                    chunks.append(chunk)
+            return b"".join(chunks)
+        except FileTooLargeError:
+            raise
         except Exception:
             logger.exception("Snapmaker %s: download of %s failed", self._ip, file_id)
             return None

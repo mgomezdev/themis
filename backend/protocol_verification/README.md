@@ -42,6 +42,12 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 3. Add a `test_<vendor>_<feature>.py` here that asserts, against a real device, each assumption the virtual
    printer encodes (response shapes, units, ordering, error behaviour). Read-only first; writes opt-in.
 
+## Known gaps (need a printer *and* a sacrificial print — not automated)
+
+* Bambu `start_print` payload for a stored file (`param`, `url` for root vs `/cache` files).
+* Elegoo delete / start on a listed id, and how SDCP marks directories (`type`).
+* Whether Bambu reports `subtask_name` with or without the extension while printing (the delete guard compares stems).
+
 ## What is verified today
 
 | Suite | Assumptions checked |

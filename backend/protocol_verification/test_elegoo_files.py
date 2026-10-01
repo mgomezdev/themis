@@ -46,4 +46,4 @@ def test_listed_ids_are_what_start_print_expects(client):
     """start_print prefixes bare names with /local/ and passes absolute paths through; confirm listing ids are one
     of those two forms so a listed id can be handed straight back."""
     for f in client.list_files("/"):
-        assert f.id.startswith("/") or "/" not in f.id, f"unexpected id form: {f.id}"
+        assert f.id.startswith("/local/"), f"expected absolute /local/... ids (start_print/delete pass them through): {f.id}"

@@ -46,11 +46,13 @@ def test_listed_sizes_match_the_SIZE_command(client):
 
 
 def test_cache_directory_behaviour_is_recorded(client):
+    import ftplib
     try:
         lines = _raw_list(client, "/cache")
         print("/cache exists, entries:", *lines, sep="\n  ")
-    except Exception as e:                       # the client tolerates a missing /cache (error_perm); just record it
-        print("/cache listing failed (client treats this as 'no cache dir'):", repr(e))
+    except ftplib.error_perm as e:               # the ONLY failure list_files tolerates for /cache: a 550
+        assert str(e).startswith("550"), f"a missing /cache must answer 550 (client relies on it), got {e}"
+        print("no /cache on this printer:", e)
 
 
 def test_download_of_a_listed_file_matches_its_size_and_is_a_zip(client):

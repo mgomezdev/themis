@@ -33,6 +33,7 @@ def test_directory_listing_shape_and_units(client):
         assert isinstance(d["dirname"], str)
     for f in result["files"]:
         assert isinstance(f["filename"], str) and isinstance(f["size"], int) and isinstance(f["modified"], (int, float))
+        assert f["modified"] > 1_000_000_000, f"modified should be a UTC epoch in seconds, got {f['modified']!r}"
         for key, kinds in (("estimated_time", (int, float)), ("filament_total", (int, float)),
                            ("filament_weight_total", (int, float)), ("slicer", str)):
             if key in f:                                  # metadata is only present for files Moonraker has scanned

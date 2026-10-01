@@ -78,7 +78,19 @@ class VirtualMoonraker:
         return self._resp(req, 404, {"error": {"code": 404, "message": f"Not found: {method} {path}"}})
 
 
+class _StreamCtx:
+    def __init__(self, resp: httpx.Response) -> None:
+        self._r = resp
+
+    def __enter__(self):
+        return self._r
+
+    def __exit__(self, *exc):
+        return False
+
+
 def install(monkeypatch, server: VirtualMoonraker):
+    monkeypatch.setattr(httpx, "stream", lambda method, url, **kw: _StreamCtx(server.handle(method, url, **kw)))
     monkeypatch.setattr(httpx, "get", lambda url, **kw: server.handle("GET", url, **kw))
     monkeypatch.setattr(httpx, "delete", lambda url, **kw: server.handle("DELETE", url, **kw))
     monkeypatch.setattr(httpx, "post", lambda url, **kw: server.handle("POST", url, **kw))

@@ -7,7 +7,7 @@ import time as _time
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
@@ -160,6 +160,14 @@ def _get_connected_client(printer_id: int):
 async def list_printer_types() -> list[dict]:
     """Available printer driver types with display name and required connection config fields."""
     return get_printer_types_for_ui()
+
+
+def _stem(name: str) -> str:
+    base = os.path.basename(name.replace("\\", "/")).lower()
+    for ext in (".gcode.3mf", ".3mf", ".gcode", ".bgcode"):
+        if base.endswith(ext):
+            return base[: -len(ext)]
+    return base
 
 
 def _file_dict(f) -> dict:
@@ -880,6 +888,9 @@ async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: Asyn
     return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
 
 
+_direct_start_locks: dict[tuple[int, int], asyncio.Lock] = {}     # keyed by (event loop, printer)
+
+
 async def _start_stored_file(client, file_id: str, failure: str) -> None:
     from ...services.abstract_printer_client import StartPrintOptions
     opts = StartPrintOptions(gcode_path=os.path.basename(file_id))     # same options the queue engine passes
@@ -891,23 +902,26 @@ async def _direct_start(session: AsyncSession, client, printer_id: int, steps) -
     """Run `steps` (which end in a start_print) on a printer that is idle, uncleared-plate-free and not held by
     a queue job. The printer is claimed (plate gate set) BEFORE the steps so the queue engine cannot race them,
     and released again if nothing ended up printing."""
-    if not client.is_idle:
-        raise HTTPException(409, "Printer is not idle")
-    if printer_manager.is_awaiting_plate_clear(printer_id):
-        raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
-    busy = await session.execute(
-        select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
-    if busy.first() is not None:
-        raise HTTPException(409, "A queued job currently holds this printer")
-    printer = await session.get(Printer, printer_id)
-    await _set_plate_gate(session, printer, printer_id, True)
-    started = False
-    try:
-        await steps()
-        started = True
-    finally:
-        if not started:
-            await _set_plate_gate(session, printer, printer_id, False)
+    # One direct start per printer at a time: the checks below await, so without this two concurrent requests
+    # could both pass them before either has claimed the printer.
+    async with _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
+        if not client.is_idle:
+            raise HTTPException(409, "Printer is not idle")
+        if printer_manager.is_awaiting_plate_clear(printer_id):
+            raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
+        busy = await session.execute(
+            select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
+        if busy.first() is not None:
+            raise HTTPException(409, "A queued job currently holds this printer")
+        printer = await session.get(Printer, printer_id)
+        await _set_plate_gate(session, printer, printer_id, True)
+        started = False
+        try:
+            await steps()
+            started = True
+        finally:
+            if not started:
+                await _set_plate_gate(session, printer, printer_id, False)
 
 
 async def _set_plate_gate(session: AsyncSession, printer, printer_id: int, value: bool) -> None:
@@ -992,6 +1006,10 @@ async def list_files_on_printer(
         files = await _list_printer_files(client, directory)
     except asyncio.TimeoutError:
         raise HTTPException(502, "Timed out listing files")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:                       # login refused, port closed, 4xx/5xx from the printer…
+        raise HTTPException(502, f"Could not list files: {e}")
     caps = client.get_capabilities()
     return {"printer_id": printer_id, "directory": directory, "files": files,
             "can_delete": caps.file_delete, "can_download": caps.file_download}
@@ -1030,10 +1048,13 @@ async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSessio
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     _require_capability(client, "file_delete", "deleting files")
-    if client.is_printing:
+    if not client.is_idle:
+        # Not idle covers the start-up window too (heating/levelling) when state isn't RUNNING yet. Firmwares
+        # report the running file inconsistently (with/without extension, with a path), so compare stems, and
+        # when the name is unknown refuse rather than guess.
         current = printer_manager.get_normalized_state(printer_id).get("current_print") or ""
-        if os.path.basename(current) == os.path.basename(file_id):
-            raise HTTPException(409, "That file is being printed right now")
+        if not current or _stem(current) == _stem(file_id):
+            raise HTTPException(409, "That file is (or may be) being printed right now")
     return _ok_or_502(await asyncio.to_thread(client.delete_file, file_id))
 
 
@@ -1044,7 +1065,7 @@ async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSessio
     dependencies=[Depends(require_scope("files:write"))],
 )
 async def copy_stored_file_to_library(
-    printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session),
+    printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
     deduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused."""
@@ -1054,16 +1075,18 @@ async def copy_stored_file_to_library(
     name = os.path.basename(body.file_id)
     if not name.lower().endswith((".3mf", ".stl")):
         raise HTTPException(422, "Only .3mf and .stl files can be added to the library")
-    data = await asyncio.to_thread(client.download_file, body.file_id)
+    from ...services.abstract_printer_client import FileTooLargeError
+    try:
+        data = await asyncio.to_thread(client.download_file, body.file_id, _MAX_DIRECT_UPLOAD_BYTES)
+    except FileTooLargeError:
+        raise HTTPException(413, "File is larger than 300 MB")     # aborted mid-transfer, never fully buffered
     if data is None:
         raise HTTPException(502, "The printer would not hand over the file")
-    if len(data) > _MAX_DIRECT_UPLOAD_BYTES:
-        raise HTTPException(413, "File is larger than 300 MB")
     from io import BytesIO
-    from fastapi import BackgroundTasks
     from starlette.datastructures import UploadFile as StarletteUpload
     from .files import upload_file as library_upload
-    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), BackgroundTasks(),
+    # The route's own BackgroundTasks, so the thumbnail job the library upload queues actually runs.
+    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), background_tasks,
                                 "/From Printers", session)
 
 
