@@ -1,0 +1,26 @@
+[project]
+name = "themis-mcp"
+version = "0.1.0"
+description = "MCP server for Themis: ask an AI assistant about your print farm and run it, using a scoped Themis API key."
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=2.2,<3",
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+themis-mcp = "themis_mcp.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

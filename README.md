@@ -212,6 +212,7 @@ docker compose up --build
 | [`docs/agent/`](docs/agent/) | **As-built** architecture reference — backend routes/services, frontend screens/hooks, data model, printer protocols, recipes, conventions, and a backend/frontend review checklist. LLM-facing; load before making changes. |
 | [`docs/slicing-flow.md`](docs/slicing-flow.md) | Sequence diagrams for the queue-engine → sidecar slicing flow, including error paths. |
 | [`docs/printer-interface.md`](docs/printer-interface.md) | The `AbstractPrinterClient` / capability / factory pattern (narrative version). |
+| [`docs/mcp-server.md`](docs/mcp-server.md) | The Farm Agent MCP server (`mcp-server/`): ask Claude (or any MCP client) about your farm and run it, with scoped API keys and confirmation for destructive actions. |
 | [`docs/elegoo-centauri-client.md`](docs/elegoo-centauri-client.md) | SDCP protocol notes for the Elegoo Centauri client. |
 | [`docs/superpowers/specs/`](docs/superpowers/specs/) | Original design specs, including the pre-sidecar architecture (historical). |
 | [`CLAUDE.md`](CLAUDE.md) | Repo conventions & quick command reference. |
