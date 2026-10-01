@@ -27,17 +27,22 @@ class ScanResult:
     truncated: bool = False          # the deadline hit before every address was probed
 
 
+_ALLOWED = [ipaddress.ip_network(n) for n in (
+    "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16", "100.64.0.0/10")]   # RFC1918, link-local, CGNAT
+
+
 def parse_range(text: str) -> ipaddress.IPv4Network:
-    """`192.168.7.0/24`, `192.168.7.20` (one host) or `192.168.7.0/255.255.255.0`. Private/CGNAT/link-local only: this
-    endpoint must not be usable to port-scan arbitrary internet hosts."""
+    """`192.168.7.0/24`, `192.168.7.20` (one host) or `192.168.7.0/255.255.255.0`. Only RFC 1918, link-local and CGNAT
+    space (an explicit allowlist — NOT Python's `is_private`, which also admits loopback, 0.0.0.0/8, TEST-NETs and
+    reserved space): this endpoint must not be usable to probe the server itself or arbitrary hosts."""
     try:
         net = ipaddress.ip_network(text.strip(), strict=False)
     except ValueError as e:
         raise ScanRangeError(f"{text!r} is not an IP range ({e})") from e
     if net.version != 4:
         raise ScanRangeError("Only IPv4 ranges are supported")
-    if not (net.is_private or net.is_link_local or net.subnet_of(ipaddress.ip_network("100.64.0.0/10"))):
-        raise ScanRangeError(f"{net} is not a private network")
+    if not any(net.subnet_of(a) for a in _ALLOWED):
+        raise ScanRangeError(f"{net} is not a private LAN network (allowed: 10/8, 172.16/12, 192.168/16, 169.254/16, 100.64/10)")
     if net.num_addresses > MAX_HOSTS + 2:
         raise ScanRangeError(f"{net} has {net.num_addresses} addresses; the limit is a /20 ({MAX_HOSTS})")
     return net  # type: ignore[return-value]
@@ -69,6 +74,8 @@ async def scan(
     for n in networks:
         hosts.extend(str(h) for h in (n.hosts() if n.num_addresses > 2 else n))
     hosts = list(dict.fromkeys(hosts))
+    if len(hosts) > MAX_HOSTS:
+        raise ScanRangeError(f"{len(hosts)} addresses across all ranges; the limit is {MAX_HOSTS} per scan")
 
     classes = [c for c in registry.values() if c.discover_host.__func__ is not _base_discover()]      # type: ignore[attr-defined]
     result = ScanResult(scanned=0)
@@ -90,15 +97,19 @@ async def scan(
     async def listen() -> None:
         from .bambu_mqtt import SSDP_PORTS
         try:
-            for ip, dgram in await net.ssdp_listen(SSDP_PORTS, listen_s):
+            heard = await net.ssdp_listen(SSDP_PORTS, listen_s)
+        except Exception:
+            return                                  # multicast unavailable (Docker bridge, no permissions): sweep only
+        for ip, dgram in heard:
+            try:                                    # one hostile/garbled datagram must not drop the rest
                 if not any(ipaddress.ip_address(ip) in n for n in networks):
                     continue
                 for c in registry.values():
                     d = c.parse_announcement(ip, dgram)
                     if d is not None:
                         keep(d)
-        except Exception:
-            pass                                    # multicast unavailable (Docker bridge, no permissions): sweep only
+            except Exception:
+                continue
 
     tasks = [asyncio.ensure_future(probe(h)) for h in hosts] + [asyncio.ensure_future(listen())]
     done, pending = await asyncio.wait(tasks, timeout=deadline_s)
@@ -107,7 +118,7 @@ async def scan(
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
     result.truncated = result.scanned < len(hosts)
-    result.found = sorted(found.values(), key=lambda d: tuple(int(x) for x in d.ip.split(".")) + (d.printer_type,))   # type: ignore[arg-type]
+    result.found = sorted(found.values(), key=lambda d: (ipaddress.ip_address(d.ip), d.printer_type))
     return result
 
 

@@ -63,6 +63,8 @@ def test_discovery_verification_checks_pass_against_the_virtual_lan(monkeypatch)
     lan.add_bambu("192.168.7.20")
     lan.add_elegoo("192.168.7.40")
     lan.add_moonraker("192.168.7.30")
+    from tests.virtual_printers.virtual_network import bambu_ssdp_reply
+    lan.announcements = [("192.168.7.20", bambu_ssdp_reply("192.168.7.20", "01P00A000000001", "C12", "3DP"))]
     monkeypatch.setenv("THEMIS_VERIFY_BAMBU_HOST", "192.168.7.20")
     monkeypatch.setenv("THEMIS_VERIFY_ELEGOO_HOST", "192.168.7.40")
     monkeypatch.setenv("THEMIS_VERIFY_MOONRAKER_URL", "http://192.168.7.30:7125")

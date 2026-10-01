@@ -11,6 +11,16 @@ function saveRanges(v: string) {
   try { window.localStorage.setItem(STORAGE_KEY, v); } catch { /* storage unavailable: just don't remember */ }
 }
 
+/** The API client throws `"<status> <body>"`; show the server's `detail` when the body is its JSON error. */
+function readable(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const m = msg.match(/^\d{3}\s+(\{.*\})$/s);
+  if (m) {
+    try { const d = JSON.parse(m[1])?.detail; if (typeof d === 'string') return d; } catch { /* fall through */ }
+  }
+  return msg;
+}
+
 /** "Scan network" for the add-printer wizard. The range box matters when Themis and the printers are on different
  *  networks/VLANs (e.g. Themis on 192.168.3.x, printers on 192.168.7.x) or Themis runs in Docker. */
 export function DiscoverPrinters({ onPick }: { onPick: (p: DiscoveredPrinter) => void }) {
@@ -28,7 +38,7 @@ export function DiscoverPrinters({ onPick }: { onPick: (p: DiscoveredPrinter) =>
     try {
       setResult(await discoverPrinters(ranges.split(/[\s,]+/).filter(Boolean)));
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(readable(e));
     } finally {
       setScanning(false);
     }
@@ -59,7 +69,7 @@ export function DiscoverPrinters({ onPick }: { onPick: (p: DiscoveredPrinter) =>
       </div>
 
       {error && <div role="alert" className="small" style={{ color: 'var(--err)', marginTop: 10 }}>{error}</div>}
-      {scanning && <div className="small muted" style={{ marginTop: 10 }}>Scanning — large ranges can take up to 45 s…</div>}
+      {scanning && <div role="status" className="small muted" style={{ marginTop: 10 }}>Scanning — large ranges can take up to 45 s…</div>}
 
       {result && (
         <div style={{ marginTop: 12 }}>

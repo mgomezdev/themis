@@ -329,6 +329,9 @@ class DiscoverRequest(BaseModel):
     ranges: list[str] = Field(default_factory=list, max_length=8)   # CIDR / single IP; empty = this host's /24
 
 
+_discovery_lock = asyncio.Lock()
+
+
 def _discovery_network():
     """Seam for tests: the network discovery runs over."""
     from ...services.discovery_net import RealNetwork
@@ -349,10 +352,18 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
     ranges = [r for r in body.ranges if r.strip()] or discovery.local_ranges()
     if not ranges:
         raise HTTPException(422, "Could not work out this host's network; pass a range such as 192.168.1.0/24")
+    if _discovery_lock.locked():
+        raise HTTPException(409, "A network scan is already running")       # each scan holds hundreds of sockets
+    net = _discovery_network()
     try:
-        result = await discovery.scan(_discovery_network(), ranges, REGISTRY)
+        async with _discovery_lock:
+            result = await discovery.scan(net, ranges, REGISTRY)
     except discovery.ScanRangeError as e:
         raise HTTPException(422, str(e))
+    finally:
+        close = getattr(net, "aclose", None)
+        if close is not None:
+            await close()
     existing: set[str] = set()
     for p in (await session.execute(select(Printer))).scalars().all():
         cfg = p.connection_config or {}

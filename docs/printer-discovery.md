@@ -24,7 +24,8 @@ Multicast and broadcast never cross routers, so discovery **sweeps addresses wit
 printers' range (e.g. Themis on `192.168.3.15`, printers on `192.168.7.0/24`) and it works as long as the Themis host
 can route to it and the firewall lets those ports through. The range is remembered in your browser.
 
-* Ranges must be private (RFC 1918, CGNAT or link-local) and at most a /20; a scan stops after 45 s and says so.
+* Ranges must be RFC 1918 (10/8, 172.16/12, 192.168/16), link-local or CGNAT space — loopback and everything else is refused — and a scan covers at most 4096 addresses in total; it stops after 45 s and says so. Only one scan runs at a time (409 otherwise).
+* A passively heard SSDP announcement is attributed to the address it was *sent from*, never the address inside it.
 * Leaving the range blank scans this host's own /24 — **inside Docker's default bridge network that is the
   container's network, not your LAN**, so type the printers' range.
 * Passive multicast listening needs `network_mode: host` (Linux). Without it the unicast sweep still works.

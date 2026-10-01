@@ -66,10 +66,12 @@ def bambu_from_ssdp(ip: str, datagram: bytes) -> DiscoveredPrinter | None:
         return None
     code = h.get("devmodel.bambu.com")
     serial = h.get("usn") or None
+    # The address is the datagram's SENDER, never its `Location:` header — any LAN host can forge that header and
+    # would otherwise steer the add-printer prefill (and the access code the user types next) to an attacker.
     return DiscoveredPrinter(
-        printer_type="bambu", ip=h.get("location") or ip, model=BAMBU_MODELS.get(code or "", code),
+        printer_type="bambu", ip=ip, model=BAMBU_MODELS.get(code or "", code),
         name=h.get("devname.bambu.com"), serial=serial,
-        connection_config={"ip_address": h.get("location") or ip, "serial_number": serial or ""},
+        connection_config={"ip_address": ip, "serial_number": serial or ""},
     )
 
 
@@ -181,8 +183,6 @@ class BambuMQTTClient(AbstractPrinterClient):
         reply = await net.udp_request(ip, SSDP_PORTS[0], BAMBU_MSEARCH, 1.0)
         found = bambu_from_ssdp(ip, reply) if reply else None
         if found is not None:
-            found.ip = ip
-            found.connection_config["ip_address"] = ip
             return found
         return DiscoveredPrinter(printer_type="bambu", ip=ip, connection_config={"ip_address": ip, "serial_number": ""},
                                  note="Serial number not announced — read it from the printer's screen")

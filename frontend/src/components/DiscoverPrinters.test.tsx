@@ -80,7 +80,7 @@ describe('DiscoverPrinters', () => {
     stubFetch({ 'POST /api/v1/printers/discover': new Reply(422, { detail: '8.8.8.0/24 is not a private network' }) });
     render(<DiscoverPrinters onPick={() => {}} />);
     await openAndScan(user, '8.8.8.0/24');
-    expect((await screen.findByRole('alert')).textContent).toMatch(/422/);
+    expect((await screen.findByRole('alert')).textContent).toBe('8.8.8.0/24 is not a private network');   // the server's reason, not "422 {…}"
   });
 
   it('remembers the range for next time', async () => {

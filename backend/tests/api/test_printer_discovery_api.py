@@ -60,3 +60,49 @@ async def test_bad_ranges_are_rejected_without_scanning(client, lan, ranges):
 async def test_a_range_outside_the_virtual_lan_finds_nothing_and_is_not_an_error(client, lan):
     body = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.50.0/28"]})).json()
     assert body["found"] == [] and body["scanned"] == 14
+
+
+async def test_discovery_needs_the_printers_write_scope(client, lan, session_factory):
+    from app.models import ApiKey
+    from app.services.api_key_service import generate_key, hash_key
+
+    async def key_with(scopes):
+        raw, prefix = generate_key()
+        async with session_factory() as s:
+            s.add(ApiKey(name="k", key_prefix=prefix, key_hash=hash_key(raw), enabled=True, scopes=scopes,
+                         created_at="2026-01-01T00:00:00"))
+            await s.commit()
+        return {"X-Api-Key": raw}
+
+    body = {"ranges": ["192.168.7.0/28"]}
+    assert (await client.post("/api/v1/printers/discover", json=body, headers=await key_with(["printers:read"]))).status_code == 403
+    assert (await client.post("/api/v1/printers/discover", json=body, headers=await key_with(["printers:write"]))).status_code == 200
+
+
+async def test_only_one_scan_runs_at_a_time(client, lan):
+    import asyncio
+    from app.api.routes import printers as routes
+    release = asyncio.Event()
+    real_scan = __import__("app.services.discovery", fromlist=["scan"]).scan
+
+    async def slow_scan(*a, **kw):
+        await release.wait()
+        return await real_scan(*a, **kw)
+
+    with patch("app.services.discovery.scan", slow_scan):
+        first = asyncio.ensure_future(client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/28"]}))
+        for _ in range(50):
+            if routes._discovery_lock.locked():
+                break
+            await asyncio.sleep(0.01)
+        second = await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/28"]})
+        release.set()
+        assert (await first).status_code == 200
+    assert second.status_code == 409
+    assert not routes._discovery_lock.locked()                                    # released afterwards
+
+
+async def test_loopback_and_reserved_ranges_are_rejected_before_any_probe(client, lan):
+    for r in ("127.0.0.1", "0.0.0.0/24", "255.255.255.255", "198.18.0.0/24"):
+        assert (await client.post("/api/v1/printers/discover", json={"ranges": [r]})).status_code == 422
+    assert lan.probes == []

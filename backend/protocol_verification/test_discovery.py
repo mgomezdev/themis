@@ -3,6 +3,8 @@
 THEMIS_VERIFY_* address (see README); the sweep test additionally needs THEMIS_VERIFY_DISCOVERY_RANGE."""
 import asyncio
 import json
+
+import pytest
 from urllib.parse import urlparse
 
 from app.services import discovery
@@ -46,8 +48,12 @@ def test_bambu_discover_host_finds_it_with_a_serial(net, bambu_cfg):
 def test_bambu_multicast_announcements_are_recorded(net, bambu_cfg):
     heard = run(net.ssdp_listen(SSDP_PORTS, 8))
     print("heard", len(heard), "datagrams:", [(ip, d[:60]) for ip, d in heard])
-    parsed = [BambuMQTTClient.parse_announcement(ip, d) for ip, d in heard]
-    assert all(p is not None for p in parsed if p), "an announcement we heard did not parse"      # informational if none heard
+    bambu_shaped = [(ip, d) for ip, d in heard if b"bambulab" in d.lower() or b"devmodel.bambu.com" in d.lower()]
+    if not bambu_shaped:
+        pytest.skip("no Bambu announcement heard in 8 s (multicast may not reach this host, e.g. Docker bridge)")
+    for ip, d in bambu_shaped:
+        found = BambuMQTTClient.parse_announcement(ip, d)
+        assert found is not None and found.ip == ip, f"a Bambu announcement from {ip} did not parse: {d[:120]!r}"
 
 
 # ── Elegoo ───────────────────────────────────────────────────────────────────

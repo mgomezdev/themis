@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import struct
 from typing import Protocol
 
 import httpx
@@ -26,6 +25,17 @@ class Network(Protocol):
 
 
 class RealNetwork:
+    """One instance per scan: owns a single shared httpx client (building a client per address would load the TLS
+    bundle thousands of times on the event loop); call `aclose()` when the scan is over."""
+
+    def __init__(self) -> None:
+        self._http: httpx.AsyncClient | None = None
+
+    async def aclose(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
     async def tcp_open(self, ip: str, port: int, timeout: float) -> bool:
         try:
             _r, w = await asyncio.wait_for(asyncio.open_connection(ip, port), timeout)
@@ -65,9 +75,10 @@ class RealNetwork:
             transport.close()
 
     async def http_get_json(self, url: str, timeout: float) -> tuple[int, dict | None]:
+        if self._http is None:
+            self._http = httpx.AsyncClient(trust_env=False, follow_redirects=False)     # no proxy env, no redirects
         try:
-            async with httpx.AsyncClient(timeout=timeout) as c:
-                r = await c.get(url)
+            r = await asyncio.wait_for(self._http.get(url, timeout=timeout), timeout + 0.5)
         except Exception:
             return 0, None
         try:
@@ -85,20 +96,24 @@ class RealNetwork:
 
         class _Proto(asyncio.DatagramProtocol):
             def datagram_received(self, data, addr):
-                found.append((addr[0], data))
+                if len(found) < 512:                # bound memory against a flood during the listen window
+                    found.append((addr[0], data))
 
         for port in ports:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             try:
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 sock.bind(("", port))
-                mreq = struct.pack("4sl", socket.inet_aton(SSDP_MULTICAST), socket.INADDR_ANY)
+                mreq = socket.inet_aton(SSDP_MULTICAST) + socket.inet_aton("0.0.0.0")
                 sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
                 sock.setblocking(False)
                 transport, _ = await loop.create_datagram_endpoint(_Proto, sock=sock)
                 transports.append(transport)
             except OSError:
                 sock.close()
+            except BaseException:
+                sock.close()                        # cancelled mid-setup: the socket isn't in `transports` yet
+                raise
         try:
             await asyncio.sleep(timeout)
         finally:
