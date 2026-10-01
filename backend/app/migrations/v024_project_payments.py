@@ -28,7 +28,7 @@ async def up(conn) -> None:
     if not existing:
         await conn.execute(text("""
             INSERT INTO project_payments (project_id, amount, received_on, method, note, created_at)
-            SELECT id, amount_paid, substr(created_at, 1, 10), 'other', :note, created_at
+            SELECT id, amount_paid, COALESCE(NULLIF(substr(created_at, 1, 10), ''), date('now')), 'other', :note, created_at
             FROM projects WHERE amount_paid IS NOT NULL AND amount_paid > 0
         """), {"note": OPENING_NOTE})
 

@@ -44,10 +44,15 @@ async def adopt_manual_amount(session: AsyncSession, project: Project) -> None:
     """A project with a hand-entered `amount_paid` but no payment rows gets that amount recorded as one opening
     payment before the first real payment is added — otherwise deriving the total from rows would silently
     drop what was already entered. Dated the project's creation day (as reporting already bucketed it)."""
-    if not project.amount_paid or project.amount_paid <= 0 or await has_payments(session, project.id):
+    if await has_payments(session, project.id):
+        return
+    amount = project.amount_paid
+    if not amount and project.payment_status == "paid" and project.price:
+        amount = project.price   # legacy "marked paid, no amount" counts as paid in full — keep it that way
+    if not amount or amount <= 0:
         return
     session.add(ProjectPayment(
-        project_id=project.id, amount=round(project.amount_paid, 2), received_on=(project.created_at or "")[:10]
+        project_id=project.id, amount=round(amount, 2), received_on=(project.created_at or "")[:10]
         or datetime.now(timezone.utc).date().isoformat(),
         method="other", note=OPENING_NOTE, created_at=datetime.now(timezone.utc).isoformat()))
     await session.flush()

@@ -453,7 +453,12 @@ async def patch_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
-    if (body.amount_paid is not None or body.payment_status is not None) and await has_payments(session, project_id):
+    changes_derived = (
+        (body.amount_paid is not None and round(body.amount_paid, 2) != round(proj.amount_paid or 0.0, 2))
+        or (body.payment_status is not None and body.payment_status != proj.payment_status)
+    )
+    # Echoing the current values back (a client PATCHing the whole object) is fine; changing them is not.
+    if changes_derived and await has_payments(session, project_id):
         raise HTTPException(
             409, "This project's amount paid and payment status come from its recorded payments — "
                  "add, edit or delete a payment instead")
@@ -469,11 +474,11 @@ async def patch_project(
         proj.due_date = body.due_date
     if body.notes is not None:
         proj.notes = body.notes
-    if body.amount_paid is not None:
+    if body.amount_paid is not None and not await has_payments(session, project_id):
         proj.amount_paid = body.amount_paid
     if "price" in body.model_fields_set:
         proj.price = body.price
-    if body.payment_status is not None:
+    if body.payment_status is not None and not await has_payments(session, project_id):
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:
         proj.customer_id = await _valid_customer_id(body.customer_id, session)

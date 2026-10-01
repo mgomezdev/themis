@@ -211,7 +211,7 @@ price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `st
   directly via the Project Builder), independent of whether it's linked to an `orders` row.
 - `amount_paid`/`payment_status`: **derived from `project_payments`** once a project has any payment row
   (`services/payments.py`: unpaid = nothing received; paid = received ≥ `price`; else partial; no price →
-  partial). `PATCH` of either field → 409 while payments exist; with no payment rows they stay manually
+  partial). `PATCH` that *changes* either field → 409 while payments exist (echoing current values is fine); with no payment rows they stay manually
   settable (legacy API clients such as Ordinus, and "marked paid, no amount"). Adding the first payment
   adopts a hand-entered `amount_paid` as an opening payment; creating a project with `amount_paid>0` records
   it as one too; a `price` change re-derives the status; deleting the last payment resets to unpaid/null.

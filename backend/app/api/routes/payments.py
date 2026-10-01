@@ -22,6 +22,13 @@ def _today() -> date:
     return datetime.now(timezone.utc).date()
 
 
+def _cents(amount: float) -> float:
+    rounded = round(amount, 2)
+    if rounded <= 0:
+        raise HTTPException(422, "amount must be at least 0.01")
+    return rounded
+
+
 def _check_not_future(d: date) -> date:
     # A day of slack so a local "today" ahead of UTC isn't rejected.
     if d > _today() + timedelta(days=1):
@@ -77,7 +84,7 @@ async def add_payment(project_id: int, body: PaymentCreate, session: AsyncSessio
     proj = await _project_or_404(project_id, session)
     await adopt_manual_amount(session, proj)
     pay = ProjectPayment(
-        project_id=project_id, amount=round(body.amount, 2),
+        project_id=project_id, amount=_cents(body.amount),
         received_on=_check_not_future(body.received_on or _today()).isoformat(),
         method=body.method, note=(body.note or "").strip() or None,
         created_at=datetime.now(timezone.utc).isoformat(),
@@ -98,7 +105,7 @@ async def update_payment(project_id: int, payment_id: int, body: PaymentPatch,
     proj = await _project_or_404(project_id, session)
     pay = await _payment_or_404(project_id, payment_id, session)
     if body.amount is not None:
-        pay.amount = round(body.amount, 2)
+        pay.amount = _cents(body.amount)
     if body.received_on is not None:
         pay.received_on = _check_not_future(body.received_on).isoformat()
     if body.method is not None:

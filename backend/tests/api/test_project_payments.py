@@ -81,6 +81,37 @@ async def test_creating_a_project_with_an_amount_paid_records_it_as_a_payment(cl
     assert [(r["amount"], r["received_on"]) for r in rows] == [(100.0, TODAY.isoformat())]
 
 
+async def test_a_legacy_paid_without_amount_project_keeps_counting_as_paid_in_full(client):
+    p = await _project(client, price=100)
+    await client.patch(f"/api/v1/projects/{p['id']}", json={"payment_status": "paid"})   # paid, no amount, no rows
+
+    await _pay(client, p["id"], 10)
+
+    rows = (await client.get(f"/api/v1/projects/{p['id']}/payments")).json()
+    assert sorted(r["amount"] for r in rows) == [10.0, 100.0]      # the implicit full payment became explicit
+    assert (await _get(client, p["id"]))["payment_status"] == "paid"
+
+
+async def test_patching_the_current_derived_values_back_is_allowed_but_changing_them_is_not(client):
+    p = await _project(client, price=100)
+    await _pay(client, p["id"], 30)
+    cur = await _get(client, p["id"])
+
+    echo = await client.patch(f"/api/v1/projects/{p['id']}", json={
+        "amount_paid": cur["amount_paid"], "payment_status": cur["payment_status"], "name": "Echoed"})
+    assert echo.status_code == 200 and echo.json()["name"] == "Echoed"
+
+    assert (await client.patch(f"/api/v1/projects/{p['id']}", json={"amount_paid": 31})).status_code == 409
+
+
+async def test_amounts_that_round_to_zero_are_rejected(client):
+    p = await _project(client)
+    assert (await client.post(f"/api/v1/projects/{p['id']}/payments", json={"amount": 0.004})).status_code == 422
+    pay = await _pay(client, p["id"], 5)
+    assert (await client.patch(f"/api/v1/projects/{p['id']}/payments/{pay['id']}", json={"amount": 0.001})).status_code == 422
+    assert (await client.get(f"/api/v1/projects/{p['id']}/payments")).json()[0]["amount"] == 5.0
+
+
 async def test_no_price_means_received_money_reads_partial(client):
     p = await _project(client, price=None)
     await _pay(client, p["id"], 10)
@@ -227,6 +258,7 @@ async def test_migration_turns_existing_amount_paid_into_one_opening_payment(ses
         for name, paid in (("paid some", 50.0), ("paid none", None), ("zero", 0.0)):
             s.add(Project(name=name, created_at="2026-03-05T10:00:00+00:00", updated_at="2026-04-01T00:00:00+00:00",
                           amount_paid=paid, payment_status="partial" if paid else "unpaid"))
+        s.add(Project(name="blank date", created_at="", updated_at="", amount_paid=7.0, payment_status="partial"))
         await s.commit()
         conn = await s.connection()
         await conn.execute(text("DROP TABLE project_payments"))
@@ -236,5 +268,9 @@ async def test_migration_turns_existing_amount_paid_into_one_opening_payment(ses
 
     async with session_factory() as s:
         pays = (await s.execute(select(ProjectPayment))).scalars().all()
-    assert [(p.amount, p.received_on, p.method, p.note) for p in pays] == [
-        (50.0, "2026-03-05", "other", v024_project_payments.OPENING_NOTE)]
+    by_amount = {p.amount: p for p in pays}
+    assert sorted(by_amount) == [7.0, 50.0]
+    assert (by_amount[50.0].received_on, by_amount[50.0].method, by_amount[50.0].note) == (
+        "2026-03-05", "other", v024_project_payments.OPENING_NOTE)
+    assert by_amount[7.0].received_on == datetime.now(timezone.utc).date().isoformat()   # blank created_at → today, not ''
+    assert all(len(p.received_on) == 10 for p in pays)
