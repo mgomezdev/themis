@@ -13,6 +13,7 @@ import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
 import { useMediaQuery } from '../components/useMediaQuery';
+import { ScanSpoolModal } from '../components/ScanSpoolModal';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
 import {
   useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem, completeMaintenanceItem,
@@ -1079,6 +1080,9 @@ export function FleetScreen() {
   const narrow = useMediaQuery('(max-width: 768px)');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const { config: spoolmanConfig } = useSpoolmanConfig();
+  const spoolmanOn = !!(spoolmanConfig?.enabled && spoolmanConfig?.url);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
   const { rows: maintenanceRows, refetch: refetchMaintenance } = useMaintenanceStatus();
@@ -1140,11 +1144,17 @@ export function FleetScreen() {
         <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
+          {spoolmanOn && (
+            <button className="btn sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setScanning(true)}>
+              {Icons.spool} Scan spool
+            </button>
+          )}
           <button className="btn primary sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setAdding(true)}>
             {Icons.plus} Add printer
           </button>
         </div>
       </div>
+      {scanning && <ScanSpoolModal onClose={() => setScanning(false)} onAssigned={refetchFleet} />}
 
       {(layout === 'cards' || narrow) && (
         <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />

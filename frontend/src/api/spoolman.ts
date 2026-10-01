@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import type { SyncResponse } from './laminus';
+import type { LoadedFilament } from './printers';
 import { apiFetch } from './client';
 
 export interface ApiFilament {
@@ -59,6 +60,8 @@ export interface ApiSpool {
   };
   remaining_weight: number;
   used_weight: number;
+  /** Where the spool is stored (Spoolman's free-text location, e.g. "Shelf B · Bin 3"). */
+  location?: string | null;
 }
 
 export interface SpoolmanConfig {
@@ -97,6 +100,32 @@ export function spoolmanSyncTone(s: SpoolmanSyncStatus): SpoolmanSyncTone {
   const staleAfterMs = 2 * s.interval_minutes * 60_000;
   const age = Date.now() - new Date(s.last_sync_at).getTime();
   return age > staleAfterMs ? 'stale' : 'success';
+}
+
+/**
+ * The Spoolman spool id encoded in a scanned/typed label code. Spoolman's QR labels carry
+ * `web+spoolman:s-<id>`; also accepts `s-<id>`, a `/spool/show/<id>` URL, or a bare number.
+ */
+export function parseSpoolCode(text: string): number | null {
+  const t = text.trim();
+  const m = t.match(/web\+spoolman:s-(\d+)/i) ?? t.match(/(?:^|[^\w])s-(\d+)\b/i) ?? t.match(/^s-(\d+)$/i)
+    ?? t.match(/\/spool\/show\/(\d+)/) ?? t.match(/^(\d+)$/);
+  return m ? Number(m[1]) : null;
+}
+
+/** The slot fields to set when `spool` is loaded into a printer slot (profile resolved for the printer's preset). */
+export function slotPatchForSpool(
+  spool: ApiSpool, filaments: ApiFilament[], printerPreset: string | null, current?: Pick<LoadedFilament, 'color' | 'filament_profile'>,
+): Partial<LoadedFilament> {
+  const full = filaments.find(f => f.id === spool.filament.id);
+  const profiles = full && printerPreset ? (parseOrcaProfiles(full)[printerPreset] ?? null) : null;
+  return {
+    spoolman_spool_id: String(spool.id),
+    type: spool.filament.material,
+    color: spool.filament.color_hex ? `#${spool.filament.color_hex}` : (current?.color || ''),
+    filament_profile: profiles?.length === 1 ? profiles[0] : (current?.filament_profile ?? null),
+    name: spoolDisplayName(spool),
+  };
 }
 
 export function spoolDisplayName(spool: ApiSpool): string {
@@ -179,6 +208,23 @@ export function useSpoolmanSyncStatus(): { status: SpoolmanSyncStatus | null; re
   return { status, refetch };
 }
 
+export interface LowStockConfig {
+  /** Grams below which a spool raises a `spool.low` event; null = no default threshold. */
+  default_g: number | null;
+  /** Per-filament thresholds keyed by Spoolman filament id; win over the default. */
+  overrides: Record<string, number>;
+}
+
+export async function getLowStock(): Promise<LowStockConfig> {
+  return request('/api/v1/spoolman/low-stock');
+}
+
+export async function saveLowStock(cfg: LowStockConfig): Promise<LowStockConfig> {
+  return request('/api/v1/spoolman/low-stock', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cfg),
+  });
+}
+
 export async function fetchFilaments(): Promise<ApiFilament[]> {
   return request('/api/v1/spoolman/filaments');
 }
@@ -211,7 +257,7 @@ export function useFilaments(enabled: boolean): ApiFilament[] {
     if (!enabled) { setFilaments([]); return; }
     let alive = true;
     fetchFilaments()
-      .then(data => { if (alive) setFilaments(data); })
+      .then(data => { if (alive) setFilaments(Array.isArray(data) ? data : []); })
       .catch(() => { if (alive) setFilaments([]); });
     return () => { alive = false; };
   }, [enabled]);

@@ -178,6 +178,12 @@ class SpoolmanConfig(Base):
     last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     last_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_sync_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Low-inventory alerts (event `spool.low`): grams below which a spool alerts. A per-filament override
+    # ({spoolman filament id (str): grams}) wins over the default; neither set = no alerts.
+    low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Spool ids already alerted while below their threshold, so each drop alerts once (cleared on refill).
+    low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
 class Customer(Base):

@@ -160,7 +160,9 @@ estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-sl
 Managed via `GET/PUT /api/v1/settings/queue`.
 
 `spoolman_config{enabled, url?, api_key?, sync_interval_minutes:int=15, last_sync_at?, last_attempt_at?,
-last_sync_error?, last_sync_error_code?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
+last_sync_error?, last_sync_error_code?, low_stock_default_g?: float, low_stock_overrides?: {filament_id: grams},
+low_stock_alerted?: [spool_id] (v026)}`. The low-stock trio drives `spool.low` alerts (`services/spool_alerts.py`; managed via
+`GET/PUT /api/v1/spoolman/low-stock`; `low_stock_alerted` is service-written state). Managed via `GET/PUT /api/v1/settings/spoolman`,
 `POST /api/v1/settings/spoolman/test`. The last four sync-status fields are written only by
 `spoolman_sync.record_sync()` (called by the manual `POST /api/v1/spoolman/sync-now` and by
 `spoolman_sync.SpoolmanSyncLoop`'s periodic background sync, paced by `sync_interval_minutes`); a
