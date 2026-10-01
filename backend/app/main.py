@@ -43,6 +43,7 @@ from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
 from .services.slicer_service import SlicerService
 from .services.spoolman_sync import spoolman_sync_loop
+from .version import get_git_sha, get_version
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
@@ -178,7 +179,7 @@ app.include_router(tags_router)
 
 @app.get("/api/v1/health", dependencies=[Depends(_api_key_header)])
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_version(), "git_sha": get_git_sha()}
 
 
 def _resolve_within(root_dir: Path, full_path: str) -> Path | None:

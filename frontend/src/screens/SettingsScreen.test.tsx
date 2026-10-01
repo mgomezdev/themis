@@ -70,6 +70,23 @@ describe('SettingsScreen', () => {
     expect(screen.queryByText('Channel')).toBeNull();
   });
 
+  it('About page shows the short commit sha of the running server', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url === '/api/v1/health') {
+        return new Response(JSON.stringify({ status: 'ok', version: '0.1.0', git_sha: 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678' }), { status: 200 });
+      }
+      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
+      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
+      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    }));
+    render(<SettingsScreen />, { wrapper });
+    await user.click(screen.getByRole('button', { name: /about/i }));
+    await waitFor(() => expect(screen.getByText('a1b2c3d')).toBeTruthy());
+    expect(screen.getByText('Commit')).toBeTruthy();
+  });
+
   it('has no aside sub-nav column', () => {
     const { container } = render(<SettingsScreen />, { wrapper });
     expect(container.querySelector('aside')).toBeNull();
