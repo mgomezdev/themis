@@ -7,6 +7,9 @@ the three subsystems and connects enabled printers. `main.py` also serves the bu
 `register_spa(app, static_dir)` mounts `/assets` and falls every other GET back to `index.html` (no-cache);
 `_resolve_within(root, path)` rejects `..`/absolute/symlink escapes before a file is served. Unknown `/api/*` GETs
 fall through to that catch-all too (200 + index.html, not 404).
+`GET /api/v1/health` (public liveness probe) also reports build identity: `version` (package metadata) and `git_sha`
+(`app/version.py`: `THEMIS_GIT_SHA`, baked in by the Dockerfile `GIT_SHA` build arg / CI; falls back to `git rev-parse`,
+then `"unknown"`). The sidebar footer and Settings → About render it.
 
 ## Routes (`app/api/routes/`)
 

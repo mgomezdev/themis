@@ -16,7 +16,9 @@ RUN pip install --no-cache-dir .
 COPY backend/app/ ./app/
 COPY --from=frontend-build /build/frontend/dist/ /frontend/dist/
 
-ENV THEMIS_STATIC_DIR=/frontend/dist
+ARG GIT_SHA=unknown
+ENV THEMIS_STATIC_DIR=/frontend/dist \
+    THEMIS_GIT_SHA=${GIT_SHA}
 
 RUN mkdir -p /data
 

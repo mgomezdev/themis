@@ -237,3 +237,30 @@ describe('Sidebar identity + printer count', () => {
     expect(screen.getByText('0 printers')).toBeTruthy();
   });
 });
+
+// ─── Build info ───────────────────────────────────────────────────────────────
+
+describe('Sidebar build info', () => {
+  const SHA = 'a1b2c3d4e5f60718293a4b5c6d7e8f9012345678';
+
+  function stubHealth(body: unknown) {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url === '/api/v1/health' ? body : { enabled: false, url: null, has_api_key: false }),
+        { status: 200 })));
+  }
+
+  it('shows the server version and short commit sha, full sha on hover', async () => {
+    stubHealth({ status: 'ok', version: '0.1.0', git_sha: SHA });
+    renderOnFleet(0, 0, 0);
+    const el = await screen.findByTestId('build-info');
+    expect(el.textContent).toBe('v0.1.0 · a1b2c3d');
+    expect(el.getAttribute('title')).toBe(`Build ${SHA}`);
+  });
+
+  it('shows nothing when the health response lacks build info', async () => {
+    stubHealth({ status: 'ok' });
+    renderOnFleet(0, 0, 0);
+    await screen.findByText('Fleet');
+    expect(screen.queryByTestId('build-info')).toBeNull();
+  });
+});

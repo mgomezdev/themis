@@ -33,6 +33,7 @@ import {
 import { StatusPill, Empty } from '../components/ui';
 import { getAdminAccount, setAdminPassword, setAllowLocalLogin, type AdminAccount } from '../api/adminAccount';
 import type { StatusKey } from '../data/types';
+import { useBuildInfo, shortSha } from '../api/version';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -1059,6 +1060,7 @@ function AboutTile({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 }
 
 function AboutPage() {
+  const build = useBuildInfo();
   return (
     <div className="card" style={{ padding: 28 }}>
       <PageHeader title="About Themis" />
@@ -1080,6 +1082,7 @@ function AboutPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
         <AboutTile k="Version" v={__APP_VERSION__} mono />
+        <AboutTile k="Commit" v={build ? shortSha(build.git_sha) : '…'} mono />
       </div>
     </div>
   );
