@@ -14,6 +14,7 @@ import { CustomerPortal } from './screens/CustomerPortal';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
+import { PrinterConsoleScreen } from './screens/PrinterConsoleScreen';
 import { OrdersScreen }    from './screens/OrdersScreen';
 import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
@@ -224,6 +225,7 @@ function AppShell() {
             <Route path="/queue"        element={<QueueScreen />} />
             <Route path="/queue/new"    element={<NewJobScreen />} />
             <Route path="/fleet"        element={<FleetScreen />} />
+            <Route path="/fleet/:id/console" element={<PrinterConsoleScreen />} />
             <Route path="/orders"       element={<OrdersScreen />} />
             <Route path="/orders/new"   element={<NewOrderScreen />} />
             <Route path="/orders/:id/edit" element={<NewOrderScreen />} />

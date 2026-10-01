@@ -227,6 +227,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
             gcode=False,
             fan_control=True,
             temp_control=True,
+            # X/Y jog, single-axis homing and nozzle/chamber setpoints stay off until their SDCP
+            # commands are verified on hardware (only Z jog, home-all and the bed setpoint are known).
+            direct_upload=True,
         )
 
     # ------------------------------------------------------------------

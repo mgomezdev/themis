@@ -136,7 +136,10 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         ]
 
     def get_capabilities(self) -> PrinterCapabilities:
-        return PrinterCapabilities(pause_resume=True, gcode=True, camera=True, temp_control=True)
+        return PrinterCapabilities(
+            pause_resume=True, gcode=True, camera=True, temp_control=True,
+            axis_jog=True, home_axes=True, nozzle_temp=True, direct_upload=True,
+        )
 
     # ---- state properties ----
     @property

@@ -5,7 +5,9 @@ import os
 import socket
 import time as _time
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select, update
@@ -82,6 +84,23 @@ class FanBody(BaseModel):
 
 class BedTempBody(BaseModel):
     celsius: int
+
+
+class JogBody(BaseModel):
+    axis: Literal["X", "Y", "Z"]
+    distance_mm: float = Field(..., ge=-200, le=200)
+
+
+class HomeBody(BaseModel):
+    axes: Literal["all", "X", "Y", "Z"] = "all"
+
+
+class NozzleTempBody(BaseModel):
+    celsius: int = Field(..., ge=0, le=350)
+
+
+class ChamberTempBody(BaseModel):
+    celsius: int = Field(..., ge=0, le=100)
 
 
 def _to_dict(p: Printer) -> dict:
@@ -703,6 +722,144 @@ async def set_bed_temp(
     client = _get_connected_client(printer_id)
     client.set_bed_temp(body.celsius)
     return {"ok": True}
+
+
+def _require_capability(client, name: str, what: str) -> None:
+    if not getattr(client.get_capabilities(), name, False):
+        raise HTTPException(409, f"This printer does not support {what}")
+
+
+def _require_not_printing(client) -> None:
+    if client.is_printing:
+        raise HTTPException(409, "Printer is printing; stop or pause the print first")
+
+
+def _ok_or_502(result) -> dict:
+    if not result:
+        raise HTTPException(502, "Printer rejected the command")
+    return {"ok": True}
+
+
+_CONSOLE_RESPONSES = {
+    404: {"description": "Printer not found"},
+    409: {"description": "Not supported by this printer, or the printer is printing"},
+    502: {"description": "Printer rejected the command"},
+    503: {"description": "Printer not connected"},
+}
+
+
+@router.post(
+    "/{printer_id}/jog",
+    summary="Jog an axis",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def jog_axis(printer_id: int, body: JogBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """Relative move of X, Y or Z by `distance_mm` (negative = other direction). X/Y need the `axis_jog`
+    capability; refused while a print is running."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    if body.axis != "Z":
+        _require_capability(client, "axis_jog", "X/Y jog")
+    _require_not_printing(client)
+    return _ok_or_502(await asyncio.to_thread(client.jog, body.axis, body.distance_mm))
+
+
+@router.post(
+    "/{printer_id}/home",
+    summary="Home axes",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def home_printer(printer_id: int, body: HomeBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """Home all axes, or a single axis (needs the `home_axes` capability). Refused while printing."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_not_printing(client)
+    if body.axes == "all":
+        return _ok_or_502(await asyncio.to_thread(client.home))
+    _require_capability(client, "home_axes", "single-axis homing")
+    return _ok_or_502(await asyncio.to_thread(client.home_axes, body.axes))
+
+
+@router.post(
+    "/{printer_id}/nozzle-temp",
+    summary="Set nozzle temperature",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def set_nozzle_temp(printer_id: int, body: NozzleTempBody, session: AsyncSession = Depends(get_session)) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "nozzle_temp", "a nozzle setpoint")
+    return _ok_or_502(await asyncio.to_thread(client.set_nozzle_temp, body.celsius))
+
+
+@router.post(
+    "/{printer_id}/chamber-temp",
+    summary="Set chamber temperature",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: AsyncSession = Depends(get_session)) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "chamber_temp", "a chamber setpoint")
+    return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
+
+
+_UPLOAD_EXTENSIONS = (".gcode", ".gcode.3mf", ".3mf", ".bgcode")
+_MAX_DIRECT_UPLOAD_BYTES = 300 * 1024 * 1024
+_BUSY_JOB_STATUSES = ("slicing", "sliced", "uploading", "printing", "paused")
+
+
+@router.post(
+    "/{printer_id}/upload",
+    summary="Upload a file to the printer, bypassing the queue",
+    responses={
+        **_CONSOLE_RESPONSES,
+        413: {"description": "File too large"},
+        422: {"description": "Unsupported file type"},
+    },
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def upload_to_printer(
+    printer_id: int,
+    file: UploadFile = File(...),
+    start: bool = Form(False),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Send a .gcode / .3mf / .bgcode file straight to the printer. With `start`, also begin printing it —
+    only when the printer is idle and no queued job holds it; the plate is then marked not-ready (same
+    gate as a queue-started print)."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "direct_upload", "direct upload")
+    name = os.path.basename((file.filename or "").replace("\\", "/"))
+    if not name or not name.lower().endswith(_UPLOAD_EXTENSIONS) or any(c in name for c in "\x00\r\n"):
+        raise HTTPException(422, f"Unsupported file; expected one of {', '.join(_UPLOAD_EXTENSIONS)}")
+    data = await file.read(_MAX_DIRECT_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_DIRECT_UPLOAD_BYTES:
+        raise HTTPException(413, "File is larger than 300 MB")
+    if start:
+        if not client.is_idle:
+            raise HTTPException(409, "Printer is not idle")
+        busy = await session.execute(
+            select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
+        if busy.first() is not None:
+            raise HTTPException(409, "A queued job currently holds this printer")
+    if not await asyncio.to_thread(client.upload_file, data, name):
+        raise HTTPException(502, "Printer rejected the upload")
+    if start:
+        from ...services.abstract_printer_client import StartPrintOptions
+        if not await asyncio.to_thread(client.start_print, name, StartPrintOptions(gcode_path=name)):
+            raise HTTPException(502, "Uploaded, but the printer would not start the print")
+        printer = await session.get(Printer, printer_id)
+        printer_manager.set_awaiting_plate_clear(printer_id, True)
+        if printer is not None:
+            printer.awaiting_plate_clear = True
+            await session.commit()
+    return {"ok": True, "filename": name, "started": start}
 
 
 async def _activate_camera(client) -> None:
