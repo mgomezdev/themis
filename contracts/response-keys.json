@@ -285,5 +285,29 @@
     "material",
     "grams",
     "jobs"
+  ],
+  "printer_file": [
+    "id",
+    "name",
+    "size",
+    "modified_at",
+    "is_dir",
+    "metadata",
+    "printable"
+  ],
+  "printer_files_listing": [
+    "printer_id",
+    "directory",
+    "files",
+    "can_delete",
+    "can_download"
+  ],
+  "printer_files_merged": [
+    "printer_id",
+    "printer_name",
+    "files",
+    "error",
+    "can_delete",
+    "can_download"
   ]
 }

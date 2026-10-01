@@ -27,6 +27,23 @@ async def test_printer_list_and_detail_carry_the_printer_keys(client, create_pri
     assert_carries("printer", (await client.get(f"/api/v1/printers/{printer_id}")).json())
 
 
+async def test_printer_file_responses_carry_their_keys(client, create_printer):
+    from app.services.abstract_printer_client import PrinterFile
+    printer_id = await create_printer(name="Atlas")
+    mock = MagicMock()
+    mock.connected = True
+    mock.get_capabilities.return_value = PrinterCapabilities(file_browser=True, file_delete=True, file_download=True)
+    mock.list_files.return_value = [PrinterFile(id="a.gcode", name="a.gcode", size=1)]
+    printer_manager._clients[printer_id] = mock
+
+    listing = (await client.get(f"/api/v1/printers/{printer_id}/files")).json()
+    assert_carries("printer_files_listing", listing)
+    assert_carries("printer_file", listing["files"][0])
+    merged = (await client.get("/api/v1/printers/files/all")).json()["printers"][0]
+    assert_carries("printer_files_merged", merged)
+    assert_carries("printer_file", merged["files"][0])
+
+
 async def test_fleet_items_carry_the_fleet_keys_offline_and_the_fan_keys_when_connected(client, create_printer):
     offline_id = await create_printer(name="Cold")
     live_id = await create_printer(name="Live", printer_type="elegoo_centauri", connection_config={"ip_address": "10.0.0.1"})

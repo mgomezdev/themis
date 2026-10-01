@@ -1227,6 +1227,30 @@
         }
       }
     },
+    "/api/v1/printers/files/all": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Files stored on every printer",
+        "description": "Merged view: the top-level files of every printer whose driver can list its storage, fetched\nconcurrently. A printer that is offline or times out reports an `error` instead of failing the request.",
+        "operationId": "list_all_printer_files_api_v1_printers_files_all_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List All Printer Files Api V1 Printers Files All Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers": {
       "get": {
         "tags": [
@@ -2493,6 +2517,267 @@
           },
           "422": {
             "description": "Unsupported file type"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List files stored on a printer",
+        "description": "One directory of the printer's own storage (`directory` is an entry id from a previous listing, `/` for\nthe root). Includes slicer metadata (print time, filament) where the protocol offers it.",
+        "operationId": "list_files_on_printer_api_v1_printers__printer_id__files_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "/",
+              "title": "Directory"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Files On Printer Api V1 Printers  Printer Id  Files Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Delete a file from the printer",
+        "description": "Permanently remove a file from the printer's storage. Refused for the file currently being printed.",
+        "operationId": "delete_stored_file_api_v1_printers__printer_id__files_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Stored File Api V1 Printers  Printer Id  Files Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files/print": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Print a file already stored on the printer",
+        "description": "Start a stored file. Same gate as a direct upload-and-print: the printer must be idle, its plate cleared\nand not held by a queue job; it is then marked not-ready like any started print.",
+        "operationId": "print_stored_file_api_v1_printers__printer_id__files_print_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRef"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Print Stored File Api V1 Printers  Printer Id  Files Print Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files/to-library": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Copy a file from the printer into the file library",
+        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused.",
+        "operationId": "copy_stored_file_to_library_api_v1_printers__printer_id__files_to_library_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRef"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Copy Stored File To Library Api V1 Printers  Printer Id  Files To Library Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "413": {
+            "description": "File too large"
+          },
+          "422": {
+            "description": "Not a library file type"
           }
         }
       }
@@ -7964,6 +8249,21 @@
         },
         "type": "object",
         "title": "FilePatch"
+      },
+      "FileRef": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "File Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "FileRef"
       },
       "FleetImportReport": {
         "properties": {
