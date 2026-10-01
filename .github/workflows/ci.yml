@@ -38,6 +38,24 @@ jobs:
         working-directory: backend
         run: pytest -v -ra --cov
 
+  mcp-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mcp-server/pyproject.toml
+
+      - run: pip install -e "mcp-server[dev]"
+
+      # Fake Themis over an httpx MockTransport: no backend, network or MCP client needed.
+      - name: Run MCP server tests
+        working-directory: mcp-server
+        run: pytest -v -ra
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 15
