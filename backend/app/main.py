@@ -25,6 +25,7 @@ from .api.routes.customer_portal import router as customer_portal_router
 from .api.routes.customers import router as customers_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
+from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
 from .api.routes.laminus import router as laminus_router
@@ -170,6 +171,7 @@ app.include_router(jobs_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
 app.include_router(projects_router)
+app.include_router(payments_router)
 app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)

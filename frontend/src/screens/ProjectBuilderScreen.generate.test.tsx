@@ -92,7 +92,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     expect(writes(api)).toEqual(['POST /api/v1/projects', 'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate']);
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
       name: 'Shelf set', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
-      amount_paid: null, price: null, payment_status: 'unpaid', customer_id: null,
+      price: null, customer_id: null,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
       file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0,
@@ -156,8 +156,6 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.type(screen.getByPlaceholderText('Optional notes'), 'rush');
     await userEvent.click(screen.getByRole('checkbox', { name: 'On hold' }));
     await userEvent.type(screen.getByLabelText('Price'), '99.5');
-    await userEvent.type(screen.getByPlaceholderText('0.00'), '12.5');
-    await userEvent.selectOptions(screen.getByDisplayValue('Unpaid'), 'partial');
     fireEvent.change(document.querySelector('input[type="date"]') as HTMLInputElement, { target: { value: '2026-12-01' } });
     await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
     await userEvent.click(await screen.findByTitle('Add Widget.stl'));
@@ -172,7 +170,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
 
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
       name: 'Vela order', customer: 'Vela Robotics', order_type: 'customer', on_hold: true, due_date: '2026-12-01',
-      notes: 'rush', amount_paid: 12.5, price: 99.5, payment_status: 'partial', customer_id: null,   // typed name, no account
+      notes: 'rush', price: 99.5, customer_id: null,   // typed name, no account; payments are recorded on the project page
     });
     expect(api.to('POST', '/api/v1/projects/7/items').map(c => (c.body as { file_id: number; sort_order: number })))
       .toEqual([expect.objectContaining({ file_id: 1, sort_order: 0 }), expect.objectContaining({ file_id: 2, sort_order: 1 })]);
@@ -222,7 +220,7 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
     await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
     await userEvent.click(await screen.findByTitle('Add Widget.stl'));
     const spinbuttons = screen.getAllByRole('spinbutton');
-    const bracketQty = spinbuttons[spinbuttons.length - 2];   // item rows are last; "Amount paid" is a spinbutton too
+    const bracketQty = spinbuttons[spinbuttons.length - 2];   // item rows are last (Price is a spinbutton too)
     fireEvent.change(bracketQty, { target: { value: '5' } });   // (clearing snaps the field back to 1, so type-over would give 15)
 
     await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
