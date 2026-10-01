@@ -7,8 +7,7 @@ filter (All / Printing / Paused / Error / Idle / Offline); tile shows name, stat
 ## Live vs snapshot
 Browsers allow ~6 concurrent HTTP/1.1 connections per origin, and each live MJPEG `<img>` holds one for as long as it
 is open. So the wall shows **at most N live streams** (selector: 0 / 4 / 8 / 16, default 4 — printing/paused tiles get
-them first) and every other tile polls `/snapshot` (default every 5 s, 2 s for the live-limit-0 "all snapshots" mode
-off). Over HTTP/2 (a TLS reverse proxy) the cap can be raised. A tile whose live stream errors (e.g. 429, camera
+them first) and every other tile polls `/snapshot` every 5 s. Over HTTP/2 (a TLS reverse proxy) the cap can be raised. A tile whose live stream errors (e.g. 429, camera
 down) falls back to snapshots on its own.
 
 ## Proxy sharing (`services/camera_hub.py`)

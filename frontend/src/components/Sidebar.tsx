@@ -51,6 +51,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
+    { to: '/wall',      label: 'Camera wall', icon: Icons.camera },
     { to: '/projects',  label: 'Projects',    icon: Icons.layers },
     { to: '/customers', label: 'Customers',   icon: Icons.user },
     { to: '/files',     label: 'Files',       icon: Icons.files },
