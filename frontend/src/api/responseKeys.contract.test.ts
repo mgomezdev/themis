@@ -28,7 +28,7 @@ const FLEET = {
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   current_orca_printer_profile: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -36,7 +36,7 @@ const JOB = {
   overrides: 1, block_reason: 1, actual_filament_grams: 1, actual_seconds: 1, actual_filament_breakdown: 1,
   deduction_skipped: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,
-  eligible_printers: 1, low_stock_warning: 1, filament_cost: 1,
+  eligible_printers: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
 } satisfies Record<keyof ApiJob, 1>;
 
 const JOB_DETAILS = {

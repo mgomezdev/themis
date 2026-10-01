@@ -64,6 +64,7 @@ export interface ApiJob {
   eligible_printers: Array<{ id: number; name: string }>;
   low_stock_warning: LowStockWarning | null;
   filament_cost: number | null;
+  not_before: string | null;   // UTC ISO: the queue won't start this job before then
 }
 
 export interface LowStockWarning {
@@ -270,6 +271,14 @@ export async function setJobCost(jobId: number, filamentCost: number | null): Pr
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ filament_cost: filamentCost }),
+  });
+}
+
+export async function setJobSchedule(jobId: number, notBefore: string | null): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/schedule`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ not_before: notBefore }),
   });
 }
 

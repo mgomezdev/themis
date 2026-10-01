@@ -85,6 +85,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   eligible_printers: [],
   low_stock_warning: null,
   filament_cost: null,
+  not_before: null,
   printer_configs: [
     {
       printer_id: 3,

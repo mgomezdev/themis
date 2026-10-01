@@ -21,6 +21,7 @@ from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, P
 from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
+from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
@@ -93,12 +94,27 @@ class OverrideCheckRequest(BaseModel):
     filament_color: str | None = None
 
 
+def _normalise_not_before(v: str | None) -> str | None:
+    if v is None or v == "":
+        return None
+    try:
+        return scheduling.parse_not_before(v)
+    except ValueError:
+        raise ValueError("not_before must be an ISO-8601 timestamp")
+
+
 class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
     printer_configs: list[PrinterConfigInput]
     overrides: dict | None = None
+    not_before: str | None = None
+
+    @field_validator("not_before")
+    @classmethod
+    def _valid_not_before(cls, v: str | None) -> str | None:
+        return _normalise_not_before(v)
 
 
 def _to_dict(j: Job) -> dict:
@@ -129,6 +145,7 @@ def _to_dict(j: Job) -> dict:
         "estimate_filament_breakdown": j.estimate_filament_breakdown,
         "estimate_preset_label": j.estimate_preset_label,
         "filament_cost": j.filament_cost,
+        "not_before": j.not_before,
     }
 
 
@@ -204,6 +221,7 @@ async def create_job(
         overrides=_clean_overrides(body.overrides),
         queue_position=pos,
         status="queued",
+        not_before=body.not_before,
         created_at=now,
         updated_at=now,
     )
@@ -1035,6 +1053,41 @@ async def get_slice_failures(
         }
         for c in result.scalars().all()
     ]
+
+
+class JobSchedulePatch(BaseModel):
+    not_before: str | None = None
+
+    @field_validator("not_before")
+    @classmethod
+    def _valid_not_before(cls, v: str | None) -> str | None:
+        return _normalise_not_before(v)
+
+
+@router.patch(
+    "/{job_id}/schedule",
+    summary="Set or clear a job's earliest start time",
+    responses={
+        404: {"description": "Job not found"},
+        409: {"description": "Job already started or finished"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def set_job_schedule(
+    job_id: int,
+    body: JobSchedulePatch,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Hold a queued/blocked job until `not_before` (UTC ISO; null clears it and releases the job now)."""
+    job = await _get_or_404(job_id, session)
+    if job.status not in ("queued", "blocked"):
+        raise HTTPException(409, f"Job is {job.status}; only queued or blocked jobs can be rescheduled")
+    job.not_before = body.not_before
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
+    return _to_dict(job)
 
 
 class JobCostPatch(BaseModel):

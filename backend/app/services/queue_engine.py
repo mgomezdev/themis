@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Callable
 
 import httpx
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import get_laminus_sidecar_url, get_library_dir
@@ -31,6 +31,7 @@ from .library_scanner import library_abs_path
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import notification_service
+from . import scheduling
 from . import webhook_service
 
 
@@ -596,10 +597,27 @@ class QueueEngine:
             # Wake on an explicit event (new job, print complete, ...) OR after the
             # configurable check interval, whichever comes first.
             interval = await self._check_interval_seconds()
+            interval = min(interval, await self._seconds_until_next_schedule())
             try:
                 await asyncio.wait_for(self._event.wait(), timeout=interval)
             except asyncio.TimeoutError:
                 pass  # periodic availability re-check
+
+    async def _seconds_until_next_schedule(self) -> float:
+        """Seconds until the earliest future `not_before` of a waiting job (inf if none), so a scheduled job
+        starts on time instead of at the next periodic check. Floor of 1s avoids a hot loop."""
+        try:
+            async with self._factory() as session:
+                nxt = (await session.execute(
+                    select(func.min(Job.not_before)).where(
+                        Job.status.in_(["queued", "blocked", "sliced"]), Job.not_before > _now())
+                )).scalar()
+            if nxt:
+                delta = (datetime.fromisoformat(nxt) - datetime.now(timezone.utc)).total_seconds()
+                return max(1.0, delta)
+        except Exception:
+            logger.exception("Failed to read next scheduled start")
+        return float("inf")
 
     async def _check_interval_seconds(self) -> float:
         minutes = _DEFAULT_CHECK_MINUTES
@@ -622,6 +640,9 @@ class QueueEngine:
         for printer_id in sorted(ready_set):
             try:
                 async with self._factory() as session:
+                    printer = await session.get(Printer, printer_id)
+                    if printer is not None and scheduling.in_quiet_hours(printer.quiet_start, printer.quiet_end):
+                        continue  # quiet hours: don't start anything new on this printer
                     if not await self._try_resume_sliced_job(session, printer_id):
                         await self._try_claim_for_printer(session, printer_id)
             except Exception:
@@ -733,6 +754,8 @@ class QueueEngine:
             .outerjoin(Project, Project.id == Job.project_id)
             .where(Job.status.in_(["queued", "blocked"]))
             .where(or_(Job.project_id.is_(None), Project.stage == "queued"))
+            # A scheduled job that isn't due yet is skipped (not head-of-line): jobs behind it can still run.
+            .where(or_(Job.not_before.is_(None), Job.not_before <= _now()))
             .order_by(Job.queue_position.asc())
             .limit(1)
         )

@@ -55,6 +55,8 @@ export interface ApiPrinter {
   bed_x_mm: number;
   bed_y_mm: number;
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
+  quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
+  quiet_end: string | null;
 }
 
 export interface CreatePrinterBody {
@@ -79,6 +81,8 @@ export interface UpdatePrinterBody {
   bed_x_mm?: number;
   bed_y_mm?: number;
   machine_rate_per_hour?: number | null;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
 }
 
 export interface MachinePreset {
