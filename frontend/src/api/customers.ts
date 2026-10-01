@@ -53,12 +53,21 @@ export interface CustomerProject {
   amount_paid: number | null;
   payment_status: 'unpaid' | 'partial' | 'paid';
   filament_cost_total: number | null;
+  costs?: ExpenseBreakdown & { total: number; machine_hours: number; labour_hours: number };
   outstanding: number;
 }
 
 export type FinancialWindow = '30d' | '60d' | '90d' | 'all';
 
+export interface ExpenseBreakdown {
+  filament: number;
+  machine: number;
+  labour: number;
+  parts: number;
+}
+
 export interface FinancialSummary {
+  expense_breakdown?: ExpenseBreakdown;   // absent on a server that predates job costing
   project_count: number;
   revenue: number;      // amount paid
   expenses: number;     // job filament cost

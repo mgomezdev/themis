@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { CostSettings } from '../components/CostSettings';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useFilaments,
@@ -2098,7 +2099,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -2112,7 +2113,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -2133,6 +2134,7 @@ export function SettingsScreen() {
       items: [
         { id: 'tags',          label: 'Tags',           icon: SettingsIcons.tag,     sub: 'Manage labels across files & jobs' },
         { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Queue interval & profile rescan' },
+        { id: 'costs',         label: 'Costs',          icon: Icons.layers,          sub: 'Machine & labour rates' },
         { id: 'maintenance',   label: 'Maintenance',    icon: SettingsIcons.maintenance, sub: 'Recurring printer upkeep & schedules' },
       ],
     },
@@ -2183,6 +2185,7 @@ export function SettingsScreen() {
       {/* page content */}
       {activePage === 'tags'              && <TagsPage />}
       {activePage === 'print'             && <PrintDefaultsPage />}
+      {activePage === 'costs'             && <CostSettings />}
       {activePage === 'maintenance'        && <MaintenancePage />}
       {activePage === 'spoolman'          && <SpoolmanPage />}
       {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}

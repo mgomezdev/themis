@@ -6,7 +6,7 @@ import { useTopbarOverride } from '../components/topbarOverride';
 import { fmtDate, fmtMoney } from '../data/helpers';
 import {
   getCustomer, updateCustomer, deleteCustomer, portalStatus,
-  type CustomerDetail, type CustomerFields, type CustomerProject, type FinancialSummary, type FinancialWindow,
+  type CustomerDetail, type CustomerFields, type ExpenseBreakdown, type CustomerProject, type FinancialSummary, type FinancialWindow,
 } from '../api/customers';
 import { getCustomerPayments, methodLabel, type CustomerPayment } from '../api/payments';
 
@@ -17,13 +17,18 @@ const WINDOWS: { key: FinancialWindow; label: string }[] = [
   { key: 'all', label: 'All time' },
 ];
 
-const METRICS: { key: keyof FinancialSummary; label: string; hint: string; money: boolean }[] = [
+const METRICS: { key: Exclude<keyof FinancialSummary, 'expense_breakdown'>; label: string; hint: string; money: boolean }[] = [
   { key: 'revenue',       label: 'Revenue',       hint: 'Payments received',                      money: true },
-  { key: 'expenses',      label: 'Expenses',      hint: 'Filament cost of jobs',             money: true },
+  { key: 'expenses',      label: 'Expenses',      hint: 'Filament, machine time, labour & parts',             money: true },
   { key: 'profit',        label: 'Profit',        hint: 'Revenue − expenses',                money: true },
   { key: 'billed',        label: 'Billed',        hint: 'Quoted project prices',             money: true },
   { key: 'outstanding',   label: 'Outstanding',   hint: 'Price − paid, on unpaid projects',  money: true },
   { key: 'project_count', label: 'Projects',      hint: 'Started in the period',             money: false },
+];
+
+const EXPENSE_PARTS: { key: keyof ExpenseBreakdown; label: string }[] = [
+  { key: 'filament', label: 'Filament' }, { key: 'machine', label: 'Machine time' },
+  { key: 'labour', label: 'Labour' }, { key: 'parts', label: 'Parts' },
 ];
 
 const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
@@ -66,7 +71,7 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
             </tr>
           </thead>
           <tbody>
-            {METRICS.map(m => (
+            {METRICS.flatMap(m => [
               <tr key={m.key} style={{ cursor: 'default' }}>
                 <td>
                   <div>{m.label}</div>
@@ -83,13 +88,23 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
                     </td>
                   );
                 })}
-              </tr>
-            ))}
+              </tr>,
+              ...(m.key === 'expenses' ? EXPENSE_PARTS.map(part => (
+                <tr key={`expenses-${part.key}`} data-testid={`expense-${part.key}`} style={{ cursor: 'default' }}>
+                  <td className="small muted" style={{ paddingLeft: 24 }}>{part.label}</td>
+                  {WINDOWS.map(w => (
+                    <td key={w.key} className="small muted" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(financials.windows[w.key].expense_breakdown?.[part.key] ?? 0)}
+                    </td>
+                  ))}
+                </tr>
+              )) : []),
+            ])}
           </tbody>
         </table>
       </div>
       <div className="small muted">
-        Periods are by project start date.
+        Revenue is by the date payments were received; the rest is by project start date. Machine and labour use today&apos;s rates (Settings → Costs).
         {financials.unpriced_unpaid > 0 && (
           <span style={{ color: 'var(--warn)' }}>
             {' '}{financials.unpriced_unpaid} unpaid project{financials.unpriced_unpaid !== 1 ? 's have' : ' has'} no

@@ -7,10 +7,11 @@ import contractRaw from '../../../contracts/response-keys.json?raw';
 import type { LibraryFile } from '../data/types';
 import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
 import type { FleetPrinter } from './fleet';
+import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
 import type { ApiPrinter } from './printers';
-import type { Project, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
+import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails } from './queue';
 
 const contract = JSON.parse(contractRaw) as Record<string, string[]>;
@@ -27,7 +28,7 @@ const FLEET = {
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   current_orca_printer_profile: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -48,7 +49,7 @@ const PROJECT = {
   customer_name: 1, created_at: 1,
   updated_at: 1, items: 1, links: 1, parts: 1, jobs_total: 1, jobs_complete: 1, estimate_filament_grams_total: 1,
   estimate_seconds_total: 1, estimate_filament_grams_remaining: 1, estimate_seconds_remaining: 1,
-  actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1, price_visible: 1, quote_accepted_at: 1,
+  actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1, costs: 1, price_visible: 1, quote_accepted_at: 1,
 } satisfies Record<keyof Project, 1>;
 
 const PROJECT_ITEM = {
@@ -59,7 +60,7 @@ const PROJECT_ITEM = {
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;
 
 const PROJECT_PART = {
-  id: 1, project_id: 1, name: 1, quantity: 1, allocated: 1, sort_order: 1, created_at: 1,
+  id: 1, project_id: 1, name: 1, quantity: 1, allocated: 1, sort_order: 1, created_at: 1, unit_cost: 1,
 } satisfies Record<keyof ProjectPart, 1>;
 
 const PROJECT_JOB = {
@@ -84,6 +85,11 @@ const PROJECT_PAYMENT = {
 } satisfies Record<keyof ProjectPayment, 1>;
 const CUSTOMER_PAYMENT = { ...PROJECT_PAYMENT, project_name: 1 } satisfies Record<keyof CustomerPayment, 1>;
 
+const PROJECT_LABOR = { id: 1, project_id: 1, minutes: 1, logged_on: 1, note: 1, created_at: 1 } satisfies Record<keyof ProjectLabor, 1>;
+const PROJECT_COSTS = {
+  filament: 1, machine: 1, labour: 1, parts: 1, machine_hours: 1, labour_hours: 1, total: 1,
+} satisfies Record<keyof ProjectCosts, 1>;
+const COST_CONFIG = { machine_rate_per_hour: 1, labour_rate_per_hour: 1 } satisfies Record<keyof CostConfig, 1>;
 const PORTAL_PROJECT = {
   id: 1, name: 1, notes: 1, stage: 1, due_date: 1, created_at: 1, updated_at: 1, items: 1, jobs: 1, jobs_total: 1,
   jobs_complete: 1, quote: 1,
@@ -103,6 +109,9 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
     ['project job', contract.project_job, keysOf(PROJECT_JOB)],
     ['library file', contract.library_file, keysOf(LIBRARY_FILE)],
+    ['project labour', contract.project_labor, keysOf(PROJECT_LABOR)],
+    ['project costs', contract.project_costs, keysOf(PROJECT_COSTS)],
+    ['cost config', contract.cost_config, keysOf(COST_CONFIG)],
     ['portal project', contract.portal_project, keysOf(PORTAL_PROJECT)],
     ['portal quote', contract.portal_quote, keysOf(PORTAL_QUOTE)],
     ['portal payment', contract.portal_payment, keysOf(PORTAL_PAYMENT)],
@@ -124,7 +133,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
       'project_payment', 'customer_payment',
       'portal_project', 'portal_quote', 'portal_payment',
-      'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material']);
+      'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
+      'project_labor', 'project_costs', 'cost_config']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

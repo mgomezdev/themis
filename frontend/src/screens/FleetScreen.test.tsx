@@ -403,6 +403,46 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
   });
 });
 
+describe('FleetScreen — edit printer machine rate', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  async function openEdit(printerFetch: (url: string) => Promise<unknown>) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return printerFetch(url);
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+
+  it('keeps Save disabled when the printer failed to load, so a blank form cannot wipe the machine rate', async () => {
+    const calls = await openEdit(() => Promise.reject(new Error('boom')));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const save = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(calls.some(([u]) => /printers\/2$/.test(u))).toBe(true));
+    expect(save.disabled).toBe(true);
+    fireEvent.click(save);
+    expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(false);
+  });
+
+  it('enables Save once loaded and sends the stored machine rate back unchanged', async () => {
+    const calls = await openEdit(() => Promise.resolve({
+      ok: true, json: () => Promise.resolve({ ...MOCK_API_PRINTER, machine_rate_per_hour: 4.5 }) }));
+    const save = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    fireEvent.click(save);
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    const body = JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+    expect(body.machine_rate_per_hour).toBe(4.5);
+  });
+});
+
 // ── Ready-for-work gate + reconnect (fetch-level: asserts the real request and the resulting UI) ───
 describe('FleetScreen — ready-for-work gate and reconnect', () => {
   const AWAITING: FleetPrinter = { ...PRINTER_1, state: 'IDLE', progress: 0, remaining_time: 0, current_print: null, awaiting_plate_clear: true };

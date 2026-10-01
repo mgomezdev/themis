@@ -54,6 +54,7 @@ export interface ApiPrinter {
   no_snapshots_while_idle: boolean;
   bed_x_mm: number;
   bed_y_mm: number;
+  machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
 }
 
 export interface CreatePrinterBody {
@@ -77,6 +78,7 @@ export interface UpdatePrinterBody {
   no_snapshots_while_idle?: boolean;
   bed_x_mm?: number;
   bed_y_mm?: number;
+  machine_rate_per_hour?: number | null;
 }
 
 export interface MachinePreset {
