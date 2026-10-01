@@ -103,6 +103,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
   const [machinePreset, setMachinePreset] = useState<string>('');
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
+  const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
+  const [quietEnd, setQuietEnd] = useState('');
   const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
@@ -125,6 +127,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setDraftConn(conn);
         setMachinePreset(api.current_orca_printer_profile ?? '');
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
+        setQuietStart(api.quiet_start ?? '');
+        setQuietEnd(api.quiet_end ?? '');
         setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
         setLoaded(true);
       })
@@ -157,6 +161,9 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         current_orca_printer_profile: machinePreset || null,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
         machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
+        // Both or neither: a half-filled window is treated as none.
+        quiet_start: quietStart && quietEnd ? quietStart : null,
+        quiet_end: quietStart && quietEnd ? quietEnd : null,
       });
       onSaved();
     } catch (e) {
@@ -285,6 +292,21 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             <div className="tiny muted">
               Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
             </div>
+          </div>
+
+          <div className="col gap-2">
+            <div className="tag-key">Quiet hours</div>
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <input type="time" className="input" aria-label="Quiet hours start" style={{ maxWidth: 130 }}
+                     value={quietStart} onChange={e => setQuietStart(e.target.value)} />
+              <span className="small muted">to</span>
+              <input type="time" className="input" aria-label="Quiet hours end" style={{ maxWidth: 130 }}
+                     value={quietEnd} onChange={e => setQuietEnd(e.target.value)} />
+              {(quietStart || quietEnd) && (
+                <button type="button" className="btn ghost sm" onClick={() => { setQuietStart(''); setQuietEnd(''); }}>Clear</button>
+              )}
+            </div>
+            <span className="tiny muted">This printer won&apos;t start new jobs in this window (server clock, UTC in Docker by default; may wrap midnight). A running print is never interrupted.</span>
           </div>
 
           <div className="col gap-2">

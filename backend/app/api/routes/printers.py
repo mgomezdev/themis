@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +20,7 @@ from ...database import get_session
 from ...models import GcodeFile, Job, JobPrinterConfig, Printer
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
+from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -63,6 +64,20 @@ class PrinterUpdate(BaseModel):
     bed_x_mm: float | None = None
     bed_y_mm: float | None = None
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
+    quiet_start: str | None = None
+    quiet_end: str | None = None
+
+    @model_validator(mode="after")
+    def _quiet_hours_pair(self):
+        for v in (self.quiet_start, self.quiet_end):
+            if v is not None:
+                try:
+                    scheduling.parse_hhmm(v)
+                except ValueError as e:
+                    raise ValueError(str(e))
+        if (self.quiet_start is None) != (self.quiet_end is None):
+            raise ValueError("quiet_start and quiet_end must be set together (or both null)")
+        return self
 
 
 class ActivePresetUpdate(BaseModel):
@@ -120,6 +135,8 @@ def _to_dict(p: Printer) -> dict:
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "bed_x_mm": p.bed_x_mm,
         "bed_y_mm": p.bed_y_mm,
+        "quiet_start": p.quiet_start,
+        "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
         "connected": live_client.connected if live_client else False,
     }
@@ -403,6 +420,8 @@ async def update_printer(
         printer.bed_x_mm = body.bed_x_mm
     if body.bed_y_mm is not None:
         printer.bed_y_mm = body.bed_y_mm
+    if "quiet_start" in body.model_fields_set or "quiet_end" in body.model_fields_set:
+        printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
     if "machine_rate_per_hour" in body.model_fields_set:
         printer.machine_rate_per_hour = body.machine_rate_per_hour
     await session.commit()

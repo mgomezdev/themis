@@ -10,6 +10,22 @@ import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFai
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 import { apiFetch } from '../api/client';
+import { startsIn } from '../lib/schedule';
+
+/** Live "in 2h 15m" label for a scheduled job; ticks every 30s and disappears once the job is due. */
+function StartsIn({ iso }: { iso: string }) {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const label = startsIn(iso);
+  return (
+    <span className="num" style={{ color: 'var(--accent-hi)' }} title={`Scheduled for ${new Date(iso).toLocaleString()}`}>
+      {label ?? 'due'}
+    </span>
+  );
+}
 
 // ---- DisplayJob: flattened shape for rendering ----
 interface DisplayJob {
@@ -19,6 +35,7 @@ interface DisplayJob {
   plateName: string;
   status: string;
   blockReason: string | null;
+  notBefore: string | null;
   materials: string[];
   eligiblePrinters: Array<{ id: number; name: string }>;
   estTime: number;
@@ -232,6 +249,9 @@ function JobCardRich({
                 }
               />
             ) : null}
+            {!isActive && !isFailed && (job.status === 'queued' || isBlocked) && startsIn(job.notBefore) && (
+              <Kv k="Starts" v={<StartsIn iso={job.notBefore!} />} />
+            )}
             {!isActive && !isFailed && (
               <Kv k="Slicing" v={
                 isBlocked && job.blockReason?.toLowerCase().includes('slice')
@@ -782,6 +802,7 @@ export function QueueScreen() {
         plateName: `Plate ${j.plate_number}`,
         status: j.status,
         blockReason: j.block_reason ?? null,
+        notBefore: j.not_before ?? null,
         materials: j.materials ?? [],
         eligiblePrinters: j.eligible_printers ?? [],
         estTime,
