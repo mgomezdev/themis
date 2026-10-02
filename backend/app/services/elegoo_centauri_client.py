@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import logging
+import os
 import threading
 import time
 import uuid
@@ -16,6 +17,8 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
+    DiscoveredPrinter,
     PrinterCapabilities,
     PrinterFile,
     StartPrintOptions,
@@ -92,6 +95,7 @@ _TEMP_MAP = {
 class ElegooState:
     connected: bool = False
     current_status: list = field(default_factory=list)
+    error_number: int = 0
     print_state: str = "standby"
     filename: str | None = None
     task_id: str | None = None
@@ -174,6 +178,28 @@ class ElegooCentauriClient(AbstractPrinterClient):
     # ------------------------------------------------------------------
 
     @classmethod
+    async def discover_host(cls, net, ip: str):
+        """SDCP discovery: the datagram `M99999` to UDP 3000 is answered with a JSON description (documented in the
+        SDCP spec; usually sent as a broadcast, here unicast to each address so it works across VLANs)."""
+        reply = await net.udp_request(ip, 3000, b"M99999", 1.0)
+        return cls.parse_discovery_reply(ip, reply) if reply else None
+
+    @staticmethod
+    def parse_discovery_reply(ip: str, datagram: bytes):
+        try:
+            d = json.loads(datagram.decode("utf-8", "replace"))["Data"]
+        except Exception:
+            return None
+        if not isinstance(d, dict) or "MainboardID" not in d:
+            return None
+        found_ip = d.get("MainboardIP") or ip
+        return DiscoveredPrinter(
+            printer_type="elegoo_centauri", ip=ip, model=d.get("MachineName"), name=d.get("Name"),
+            serial=d.get("MainboardID"), connection_config={"ip_address": ip, "port": DEFAULT_PORT},
+            note=None if found_ip == ip else f"Printer reports its own address as {found_ip}",
+        )
+
+    @classmethod
     def connection_fields(cls) -> list[ConnectionField]:
         return [
             ConnectionField(
@@ -227,6 +253,12 @@ class ElegooCentauriClient(AbstractPrinterClient):
             gcode=False,
             fan_control=True,
             temp_control=True,
+            # X/Y jog, single-axis homing and nozzle/chamber setpoints stay off until their SDCP
+            # commands are verified on hardware (only Z jog, home-all and the bed setpoint are known).
+            direct_upload=True,
+            # SDCP file list + delete are implemented; download is not (no documented read command).
+            file_browser=True,
+            file_delete=True,
         )
 
     # ------------------------------------------------------------------
@@ -397,6 +429,10 @@ class ElegooCentauriClient(AbstractPrinterClient):
             new.print_state = "standby"
 
         # PrintInfo fields (present during and after prints)
+        try:
+            new.error_number = int(print_info.get("ErrorNumber") or 0)
+        except (TypeError, ValueError):
+            new.error_number = 0
         new.filename = print_info.get("Filename") or None
         new.task_id = print_info.get("TaskId") or None
         new.total_ticks = float(print_info.get("TotalTicks", 0))
@@ -607,6 +643,11 @@ class ElegooCentauriClient(AbstractPrinterClient):
     # Axis control (native SDCP, not G-code)
     # ------------------------------------------------------------------
 
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import sdcp_alarms
+        with self._lock:
+            return sdcp_alarms(self.state.error_number)
+
     def home(self) -> bool:
         return self._send(_Cmd.EDIT_AXIS_ZERO, {"Axis": "XYZ"})
 
@@ -712,14 +753,16 @@ class ElegooCentauriClient(AbstractPrinterClient):
         return [
             PrinterFile(
                 id=f.get("name", ""),
-                name=f.get("name", ""),
+                name=os.path.basename(f.get("name", "").rstrip("/")) or f.get("name", ""),
                 size=int(f.get("size", 0)),
             )
             for f in resp.get("FileList", [])
         ]
 
-    def delete_file(self, remote_path: str) -> bool:
-        return self._send(_Cmd.DELETE_FILE, {"FileList": [remote_path], "FolderList": []})
+    def delete_file(self, file_id: str) -> bool:
+        if ".." in file_id or any(c in file_id for c in "\x00\r\n"):
+            return False           # ids are absolute /local/... paths, so only traversal and control chars are refused
+        return self._send(_Cmd.DELETE_FILE, {"FileList": [file_id], "FolderList": []})
 
     def get_loaded_filaments(self) -> list:
         return [{

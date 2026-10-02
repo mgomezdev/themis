@@ -77,7 +77,7 @@ Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker contain
 **OrcaSlicer profiles:** in Docker, `/root/.config/OrcaSlicer` is bind-mounted read-only from the host. For local dev `app.config` resolves the config dir and executable per-platform (Windows → `%APPDATA%\OrcaSlicer` and `…\Program Files\OrcaSlicer\orca-slicer.exe`), so no env vars are needed; `ORCA_CONFIG_DIR` / `ORCA_EXECUTABLE` still override. `ProfileIndex` resolves preset inheritance and filters by `compatible_printers` against the printer's `current_orca_printer_profile`.
 
 ### Database
-SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `uploaded_files`, `orders`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`, `customers`, `admin_account`. A job links to at most one order via `jobs.order_id`. Versioned Flyway-style migrations live in `backend/app/migrations/` (v001–v023); `runner.py` applies them in order on startup. To add a migration: create `vNNN_<name>.py` with `version`, `name`, `up(conn)` (and optionally `down(conn)`), then import and register it in `runner.py`.
+SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite. Tables: `printers`, `uploaded_files`, `orders`, `jobs`, `job_printer_configs`, `gcode_files`, `queue_config`, `spoolman_config`, `customers`, `admin_account`. A job links to at most one order via `jobs.order_id`. Versioned Flyway-style migrations live in `backend/app/migrations/` (v001–v026); `runner.py` applies them in order on startup. To add a migration: create `vNNN_<name>.py` with `version`, `name`, `up(conn)` (and optionally `down(conn)`), then import and register it in `runner.py`.
 
 ### Volumes (Docker)
 - `/data` — SQLite file + uploaded 3MF files + sliced gcode cache
@@ -104,6 +104,11 @@ that have already bitten this project:
 - **Coverage floors are ratchets** (`fail_under` in `backend/pyproject.toml`, thresholds in
   `frontend/vitest.config.ts`, both ~2 points under measured): raise them when coverage grows, never lower
   one to make a change pass.
+- **Hardware-dependent protocols:** implement against the *documented* protocol, drive the gate/action tests with a
+  virtual printer (`backend/tests/virtual_printers/`), and add a manual check in `backend/protocol_verification/`
+  that asserts each assumption the virtual printer encodes against a real device (read-only by default, writes
+  opt-in via env, never part of the gates — see its README). `tests/test_verification_suite_against_virtual_printers.py`
+  runs those checks against the virtual printers so the suite and the fakes can't drift.
 - **Frontend tests:** `src/test/fetchStub.ts` (`stubFetch` + `Reply`) for API-level tests; don't fake
   `setInterval`/`setTimeout` around Testing Library `waitFor` (it hangs) — spy on them instead; flush
   effects (`await act(async () => {})`) before firing window key events.
@@ -133,10 +138,6 @@ for everything except review.
   base/head SHA, the plan file path, and `docs/agent/backend-review.md` / `docs/agent/frontend-review.md`
   as applicable (see Review guidelines below) — it reads what it needs itself.
 - **Commit**: main session, after addressing whatever the reviewer flags.
-- **Screenshot check (human-in-the-loop)**: for any change with a visible UI effect, before creating the
-  PR, run the app with representative sample data, screenshot every affected screen, and send the
-  screenshots to the user in the session. Create the PR only after the user OKs them, and put the same
-  screenshots in the PR description.
 
 **Enforcement:** a `PreToolUse` hook (`.claude/hooks/gate-pr-review.js`, wired in `.claude/settings.json`)
 blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShell both covered) unless

@@ -33,6 +33,11 @@ const CUSTOMER = {
   },
 };
 
+const PAYMENTS = [
+  { id: 3, project_id: 1, project_name: 'Brackets', amount: 20, received_on: '2026-09-20', method: 'card', note: 'deposit', created_at: '' },
+  { id: 2, project_id: 2, project_name: 'Old Order', amount: 100, received_on: '2026-03-02', method: 'bank_transfer', note: null, created_at: '' },
+];
+
 function renderScreen() {
   return render(
     <MemoryRouter initialEntries={['/customers/7']}>
@@ -51,12 +56,66 @@ beforeEach(() => {
     if (init?.method === 'DELETE') return new Response('{"deleted":7,"projects_unlinked":2}', { status: 200 });
     if (init?.method === 'PATCH') return new Response(JSON.stringify({ ...CUSTOMER, ...JSON.parse(init.body as string) }), { status: 200 });
     if (url.endsWith('/api/v1/customers/7')) return new Response(JSON.stringify(CUSTOMER), { status: 200 });
+    if (url.endsWith('/api/v1/customers/7/payments')) return new Response(JSON.stringify(PAYMENTS), { status: 200 });
     return new Response('{}', { status: 404 });
   });
   vi.stubGlobal('fetch', fetchMock);
 });
 
 describe('CustomerDetailScreen', () => {
+  it('treats a malformed payments response as no payments instead of crashing the page', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/api/v1/customers/7') ? new Response(JSON.stringify(CUSTOMER), { status: 200 })
+        : new Response('{}', { status: 200 }));
+    renderScreen();
+
+    expect(await within(await screen.findByTestId('payment-history')).findByText('No payments recorded yet.')).toBeTruthy();
+    expect(screen.getByText('Financial summary')).toBeTruthy();
+  });
+
+  it('breaks expenses into filament, machine, labour and parts for every period', async () => {
+    const withBreakdown = {
+      ...CUSTOMER,
+      financials: { ...CUSTOMER.financials, windows: Object.fromEntries(Object.entries(CUSTOMER.financials.windows).map(([k, w]) => [
+        k, { ...w, expense_breakdown: k === 'all' ? { filament: 15.5, machine: 40, labour: 22.5, parts: 5 } : { filament: 3, machine: 0, labour: 0, parts: 0 } },
+      ])) },
+    };
+    fetchMock.mockImplementation(async (url: string) =>
+      url.endsWith('/api/v1/customers/7') ? new Response(JSON.stringify(withBreakdown), { status: 200 })
+        : new Response('[]', { status: 200 }));
+    renderScreen();
+
+    const table = within(await screen.findByTestId('financial-table'));
+    const row = (key: string) => within(table.getByTestId(`expense-${key}`)).getAllByRole('cell').map(c => c.textContent);
+    expect(row('filament')).toEqual(['Filament', '$3.00', '$3.00', '$3.00', '$15.50']);   // 30d, 60d, 90d, all time
+    expect(row('machine')).toEqual(['Machine time', '$0.00', '$0.00', '$0.00', '$40.00']);
+    expect(row('labour')).toEqual(['Labour', '$0.00', '$0.00', '$0.00', '$22.50']);
+    expect(row('parts')).toEqual(['Parts', '$0.00', '$0.00', '$0.00', '$5.00']);
+  });
+
+  it('shows zeros for the breakdown against a server that does not report one', async () => {
+    renderScreen();
+    const table = within(await screen.findByTestId('financial-table'));
+    expect(within(table.getByTestId('expense-machine')).getAllByRole('cell').map(c => c.textContent)).toEqual(
+      ['Machine time', '$0.00', '$0.00', '$0.00', '$0.00']);
+  });
+
+  it('lists the payment history across projects, newest first, linking each to its project', async () => {
+    renderScreen();
+
+    const card = within(await screen.findByTestId('payment-history'));
+    await card.findByText('Brackets');
+    const rows = card.getAllByRole('row').slice(1).map(r => within(r));
+    expect(rows).toHaveLength(2);
+    expect(rows[0].getByText('Brackets')).toBeTruthy();       // the API order (newest first) is kept
+    expect(rows[0].getByText('Card')).toBeTruthy();
+    expect(rows[0].getByText('deposit')).toBeTruthy();
+    expect(rows[0].getByText('$20.00')).toBeTruthy();
+    expect(rows[1].getByText('Bank transfer')).toBeTruthy();
+    expect(rows[1].getByText('$100.00')).toBeTruthy();
+    expect(card.getByRole('link', { name: 'Old Order' }).getAttribute('href')).toBe('/projects/2');
+  });
+
   it('shows the financial summary for every period', async () => {
     renderScreen();
     const table = await screen.findByTestId('financial-table');
@@ -70,12 +129,14 @@ describe('CustomerDetailScreen', () => {
 
   it('splits projects into current and past', async () => {
     renderScreen();
-    await screen.findByText('Brackets');
-    expect(screen.queryByText('Old Order')).toBeNull();
+    await screen.findByText('Brackets', { selector: 'td a' });
+    // The payment history below also names projects, so look in the projects table only.
+    const projects = () => within(screen.getAllByRole('table').find(t => t.textContent?.includes('Progress')) as HTMLElement);
+    expect(projects().queryByText('Old Order')).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: /past/i }));
-    expect(screen.getByText('Old Order')).toBeTruthy();
-    expect(screen.queryByText('Brackets')).toBeNull();
-    await userEvent.click(screen.getByText('Old Order'));
+    expect(projects().getByText('Old Order')).toBeTruthy();
+    expect(projects().queryByText('Brackets')).toBeNull();
+    await userEvent.click(projects().getByText('Old Order'));
     expect(await screen.findByText('project page')).toBeTruthy();
   });
 

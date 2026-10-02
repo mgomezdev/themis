@@ -25,6 +25,17 @@ class PrinterCapabilities:
     camera: bool = False
     fan_control: bool = False
     temp_control: bool = False
+    # Console (BIZ-164). Z jog, home-all and the bed setpoint are the baseline; these gate the rest.
+    axis_jog: bool = False        # X/Y jog
+    home_axes: bool = False       # home a single axis
+    nozzle_temp: bool = False     # nozzle setpoint
+    chamber_temp: bool = False    # chamber setpoint
+    direct_upload: bool = False   # upload (and optionally start) a file outside the queue
+    # File browser (BIZ-169): list what is stored on the printer; delete / download are separate because
+    # not every protocol exposes them.
+    file_browser: bool = False
+    file_delete: bool = False
+    file_download: bool = False
 
 
 @dataclass
@@ -40,12 +51,46 @@ class StartPrintOptions:
     gcode_path: str | None = None
 
 
+class FileTooLargeError(Exception):
+    """A download was aborted because it would exceed the caller's size cap."""
+
+
+SEVERITIES = ("info", "warning", "error", "fatal")           # ascending
+
+
+@dataclass(frozen=True)
+class Alarm:
+    """A problem a printer currently reports, in the shape every vendor is normalised to. `code` is the stable
+    identity (a printer re-reporting the same code is the same alarm); `message` is human text."""
+    code: str
+    severity: str                       # one of SEVERITIES
+    message: str
+    source: str | None = None           # "hms" | "klipper" | "sdcp" …
+    help_url: str | None = None
+
+
+@dataclass
+class DiscoveredPrinter:
+    """A printer found on the network, ready to pre-fill the add form (secrets such as access codes stay blank)."""
+    printer_type: str
+    ip: str
+    model: str | None = None
+    name: str | None = None
+    serial: str | None = None
+    connection_config: dict = field(default_factory=dict)
+    note: str | None = None                  # e.g. "Requires an API key"
+
+
 @dataclass
 class PrinterFile:
+    """One entry in a printer's storage. `id` is what the other file operations (print/delete/download) take
+    back — a path in the vendor's own addressing — while `name` is for display."""
     id: str
     name: str
     size: int
-    modified_at: str | None = None
+    modified_at: str | None = None          # UTC ISO-8601 when the protocol reports it
+    is_dir: bool = False
+    metadata: dict | None = None            # {"estimated_seconds", "filament_grams", "filament_mm", "slicer"} when known
 
 
 @dataclass
@@ -99,6 +144,20 @@ class AbstractPrinterClient(ABC):
     def home(self) -> bool:
         return self.send_gcode("G28")
 
+    def jog(self, axis: str, distance_mm: float) -> bool:
+        """Relative move of one axis (X/Y/Z). Default: G-code; vendors with a native command override."""
+        axis = axis.upper()
+        if not self.send_gcode("G91"):
+            return False
+        try:
+            return bool(self.send_gcode(f"G1 {axis}{distance_mm}"))
+        finally:
+            self.send_gcode("G90")      # never leave the printer in relative mode
+
+    def home_axes(self, axes: str) -> bool:
+        """Home specific axes (e.g. 'X', 'XY'). Default: G28 with the listed axes."""
+        return self.send_gcode("G28 " + " ".join(axes.upper()))
+
     def jog_z(self, distance_mm: float, force: bool = False) -> bool:
         if force:
             self.send_gcode("M211 S0")
@@ -116,6 +175,12 @@ class AbstractPrinterClient(ABC):
         return False
 
     def set_bed_temp(self, celsius: int) -> bool:
+        return False
+
+    def set_nozzle_temp(self, celsius: int) -> bool:
+        return self.send_gcode(f"M104 S{int(celsius)}") if self.gcode_supported else False
+
+    def set_chamber_temp(self, celsius: int) -> bool:
         return False
 
     @property
@@ -148,6 +213,26 @@ class AbstractPrinterClient(ABC):
     def is_printing(self) -> bool:
         return False
 
+    # --- Alarms (BIZ-157) ---
+
+    def get_alarms(self) -> list[Alarm]:
+        """The problems the printer reports RIGHT NOW (empty = healthy). Called on every state update, so it must
+        be a cheap read of already-parsed state. Default: this vendor reports none."""
+        return []
+
+    # --- Network discovery (classmethods; BIZ-153) ---
+
+    @classmethod
+    async def discover_host(cls, net, ip: str) -> DiscoveredPrinter | None:
+        """Probe ONE address for this vendor's printer using its documented discovery signature. `net` is a
+        `discovery_net.Network`. Default: this vendor can't be discovered."""
+        return None
+
+    @classmethod
+    def parse_announcement(cls, ip: str, datagram: bytes) -> DiscoveredPrinter | None:
+        """Parse a passively heard multicast announcement (same-subnet discovery). Default: none."""
+        return None
+
     # --- Connection field descriptor (classmethod) ---
 
     @classmethod
@@ -179,6 +264,14 @@ class AbstractPrinterClient(ABC):
 
     def list_files(self, directory: str = "/") -> list[PrinterFile]:
         return []
+
+    def delete_file(self, file_id: str) -> bool:
+        return False
+
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
+        """Fetch a stored file's bytes (None = unsupported or failed). Raises FileTooLargeError as soon as more
+        than `max_bytes` have arrived, without buffering the rest."""
+        return None
 
     def storage_info(self) -> dict | None:
         return None

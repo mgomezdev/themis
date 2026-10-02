@@ -269,6 +269,30 @@
         }
       }
     },
+    "/api/v1/cameras/stats": {
+      "get": {
+        "tags": [
+          "cameras"
+        ],
+        "summary": "Camera proxy load",
+        "description": "Open shared upstream streams (viewers, frames, bytes in/out), the stream cap, and how many snapshot requests\nwere answered from a live frame / cache / coalesced grab versus a real grab. Use it to size a camera wall.",
+        "operationId": "camera_stats_api_v1_cameras_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Camera Stats Api V1 Cameras Stats Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customers": {
       "get": {
         "tags": [
@@ -547,6 +571,56 @@
         }
       }
     },
+    "/api/v1/customers/{customer_id}/payments": {
+      "get": {
+        "tags": [
+          "customers"
+        ],
+        "summary": "Payment history across a customer's projects (newest first)",
+        "operationId": "customer_payments_api_v1_customers__customer_id__payments_get",
+        "parameters": [
+          {
+            "name": "customer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Customer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Customer Payments Api V1 Customers  Customer Id  Payments Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Customer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/customer/projects": {
       "get": {
         "tags": [
@@ -693,6 +767,51 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Update Draft Api V1 Customer Projects  Project Id  Patch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/customer/projects/{project_id}/quote/accept": {
+      "post": {
+        "tags": [
+          "customer"
+        ],
+        "summary": "Accept the quote",
+        "description": "Records that the customer agreed to the quote they can see, and moves a draft request on to planning.\nIdempotent: accepting again changes nothing. 409 when there is no visible quote to accept.",
+        "operationId": "accept_quote_api_v1_customer_projects__project_id__quote_accept_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Accept Quote Api V1 Customer Projects  Project Id  Quote Accept Post"
                 }
               }
             }
@@ -1132,6 +1251,30 @@
         }
       }
     },
+    "/api/v1/printers/files/all": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Files stored on every printer",
+        "description": "Merged view: the top-level files of every printer whose driver can list its storage, fetched\nconcurrently. A printer that is offline or times out reports an `error` instead of failing the request.",
+        "operationId": "list_all_printer_files_api_v1_printers_files_all_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List All Printer Files Api V1 Printers Files All Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers": {
       "get": {
         "tags": [
@@ -1270,6 +1413,43 @@
           },
           "502": {
             "description": "Laminus sidecar unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/discover": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Scan the network for printers",
+        "description": "Sweep `ranges` (e.g. `192.168.7.0/24` \u2014 printers on another VLAN need their range given explicitly) and list\nwhat answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers\nalready added (same IP) are flagged. Secrets (access codes, API keys) are never discovered.",
+        "operationId": "discover_printers_api_v1_printers_discover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DiscoverRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Discover Printers Api V1 Printers Discover Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Malformed, oversized or non-private range"
           }
         }
       }
@@ -2036,6 +2216,596 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/jog": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Jog an axis",
+        "description": "Relative move of X, Y or Z by `distance_mm` (negative = other direction). X/Y need the `axis_jog`\ncapability; refused while a print is running.",
+        "operationId": "jog_axis_api_v1_printers__printer_id__jog_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JogBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Jog Axis Api V1 Printers  Printer Id  Jog Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/home": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Home axes",
+        "description": "Home all axes, or a single axis (needs the `home_axes` capability). Refused while printing.",
+        "operationId": "home_printer_api_v1_printers__printer_id__home_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HomeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Home Printer Api V1 Printers  Printer Id  Home Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/nozzle-temp": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set nozzle temperature",
+        "operationId": "set_nozzle_temp_api_v1_printers__printer_id__nozzle_temp_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NozzleTempBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Nozzle Temp Api V1 Printers  Printer Id  Nozzle Temp Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/chamber-temp": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Set chamber temperature",
+        "operationId": "set_chamber_temp_api_v1_printers__printer_id__chamber_temp_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChamberTempBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Chamber Temp Api V1 Printers  Printer Id  Chamber Temp Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/upload": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Upload a file to the printer, bypassing the queue",
+        "description": "Send a .gcode / .3mf / .bgcode file straight to the printer. With `start`, also begin printing it \u2014\nonly when the printer is idle and no queued job holds it; the plate is then marked not-ready (same\ngate as a queue-started print).",
+        "operationId": "upload_to_printer_api_v1_printers__printer_id__upload_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_to_printer_api_v1_printers__printer_id__upload_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Upload To Printer Api V1 Printers  Printer Id  Upload Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer is printing"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "413": {
+            "description": "File too large"
+          },
+          "422": {
+            "description": "Unsupported file type"
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List files stored on a printer",
+        "description": "One directory of the printer's own storage (`directory` is an entry id from a previous listing, `/` for\nthe root). Includes slicer metadata (print time, filament) where the protocol offers it.",
+        "operationId": "list_files_on_printer_api_v1_printers__printer_id__files_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "directory",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "/",
+              "title": "Directory"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response List Files On Printer Api V1 Printers  Printer Id  Files Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Delete a file from the printer",
+        "description": "Permanently remove a file from the printer's storage. Refused for the file currently being printed.",
+        "operationId": "delete_stored_file_api_v1_printers__printer_id__files_delete",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "file_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Stored File Api V1 Printers  Printer Id  Files Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files/print": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Print a file already stored on the printer",
+        "description": "Start a stored file. Same gate as a direct upload-and-print: the printer must be idle, its plate cleared\nand not held by a queue job; it is then marked not-ready like any started print.",
+        "operationId": "print_stored_file_api_v1_printers__printer_id__files_print_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRef"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Print Stored File Api V1 Printers  Printer Id  Files Print Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printers/{printer_id}/files/to-library": {
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Copy a file from the printer into the file library",
+        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused.",
+        "operationId": "copy_stored_file_to_library_api_v1_printers__printer_id__files_to_library_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileRef"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Copy Stored File To Library Api V1 Printers  Printer Id  Files To Library Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "409": {
+            "description": "Not supported by this printer, or the printer/queue state forbids it"
+          },
+          "502": {
+            "description": "Printer rejected the command"
+          },
+          "503": {
+            "description": "Printer not connected"
+          },
+          "413": {
+            "description": "File too large"
+          },
+          "422": {
+            "description": "Not a library file type"
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/camera": {
       "get": {
         "tags": [
@@ -2153,6 +2923,73 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/fleet/analytics": {
+      "get": {
+        "tags": [
+          "fleet"
+        ],
+        "summary": "Fleet analytics over a date range",
+        "description": "Success rate, print time, filament use and cost \u2014 fleet-wide, per printer and per material \u2014 for jobs\nthat reached a terminal state in the range. Definitions: `app/services/fleet_analytics.py`.",
+        "operationId": "fleet_analytics_summary_api_v1_fleet_analytics_get",
+        "parameters": [
+          {
+            "name": "start",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "First day (UTC), inclusive. Default: 29 days before `end`.",
+              "title": "Start"
+            },
+            "description": "First day (UTC), inclusive. Default: 29 days before `end`."
+          },
+          {
+            "name": "end",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Last day (UTC), inclusive. Default: today (UTC).",
+              "title": "End"
+            },
+            "description": "Last day (UTC), inclusive. Default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Fleet Analytics Summary Api V1 Fleet Analytics Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Inverted or over-long date range"
           }
         }
       }
@@ -3562,6 +4399,67 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/schedule": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Set or clear a job's earliest start time",
+        "description": "Hold a queued/blocked job until `not_before` (UTC ISO; null clears it and releases the job now).",
+        "operationId": "set_job_schedule_api_v1_jobs__job_id__schedule_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSchedulePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Schedule Api V1 Jobs  Job Id  Schedule Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job already started or finished"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/cost": {
       "patch": {
         "tags": [
@@ -3667,6 +4565,437 @@
           },
           "404": {
             "description": "Job not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "List printer alarms",
+        "description": "Alarms newest first. `active` = still reported by the printer; `unacknowledged` = active and not yet\nacknowledged; `all` includes resolved history.",
+        "operationId": "list_alarms_api_v1_alarms_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(active|unacknowledged|all)$",
+              "default": "active",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "printer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Printer Id"
+            }
+          },
+          {
+            "name": "min_severity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(info|warning|error|fatal)$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Severity"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Alarms Api V1 Alarms Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/summary": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Active alarm counts",
+        "description": "Unacknowledged active alarms: total, worst severity, and per printer \u2014 what badges show.",
+        "operationId": "alarm_summary_api_v1_alarms_summary_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Alarm Summary Api V1 Alarms Summary Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/settings": {
+      "get": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Alarm notification settings",
+        "operationId": "get_alarm_settings_api_v1_alarms_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Get Alarm Settings Api V1 Alarms Settings Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Update alarm notification settings",
+        "description": "Lowest severity that raises a `printer.alarm` webhook/notification. The feed itself always shows everything.",
+        "operationId": "update_alarm_settings_api_v1_alarms_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlarmSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Alarm Settings Api V1 Alarms Settings Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unknown severity"
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/{alarm_id}/acknowledge": {
+      "post": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Acknowledge an alarm",
+        "description": "Silence an alarm in badges and the unacknowledged list. It stays active until the printer stops reporting it.",
+        "operationId": "acknowledge_api_v1_alarms__alarm_id__acknowledge_post",
+        "parameters": [
+          {
+            "name": "alarm_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Alarm Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Acknowledge Api V1 Alarms  Alarm Id  Acknowledge Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Alarm not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/alarms/acknowledge-all": {
+      "post": {
+        "tags": [
+          "alarms"
+        ],
+        "summary": "Acknowledge every active alarm",
+        "operationId": "acknowledge_all_api_v1_alarms_acknowledge_all_post",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Acknowledge All Api V1 Alarms Acknowledge All Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/labor": {
+      "get": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "List logged labour (newest first)",
+        "operationId": "list_labor_api_v1_projects__project_id__labor_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Labor Api V1 Projects  Project Id  Labor Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "Log labour time",
+        "description": "Setup, post-processing, assembly, packing\u2026 priced at the shop labour rate (Settings \u2192 Costs).",
+        "operationId": "add_labor_api_v1_projects__project_id__labor_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaborCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Labor Api V1 Projects  Project Id  Labor Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Invalid entry"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/labor/{labor_id}": {
+      "delete": {
+        "tags": [
+          "labor"
+        ],
+        "summary": "Delete a labour entry",
+        "operationId": "delete_labor_api_v1_projects__project_id__labor__labor_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "labor_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Labor Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Labor Api V1 Projects  Project Id  Labor  Labor Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or entry not found"
           },
           "422": {
             "description": "Validation Error",
@@ -5406,6 +6735,226 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}/payments": {
+      "get": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "List project payments (newest first)",
+        "operationId": "list_payments_api_v1_projects__project_id__payments_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Payments Api V1 Projects  Project Id  Payments Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Record a payment",
+        "description": "Adds the payment and re-derives the project's amount paid and payment status.",
+        "operationId": "add_payment_api_v1_projects__project_id__payments_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Add Payment Api V1 Projects  Project Id  Payments Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project not found"
+          },
+          "422": {
+            "description": "Invalid payment"
+          }
+        }
+      }
+    },
+    "/api/v1/projects/{project_id}/payments/{payment_id}": {
+      "patch": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Edit a payment",
+        "operationId": "update_payment_api_v1_projects__project_id__payments__payment_id__patch",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaymentPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Update Payment Api V1 Projects  Project Id  Payments  Payment Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or payment not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "payments"
+        ],
+        "summary": "Delete a payment",
+        "description": "Removes the payment and re-derives the project's totals. Deleting the last payment returns the\nproject to unpaid / no amount (the legacy manual fields are then editable again).",
+        "operationId": "delete_payment_api_v1_projects__project_id__payments__payment_id__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "payment_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Payment Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Delete Payment Api V1 Projects  Project Id  Payments  Payment Id  Delete"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Project or payment not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/public/projects/{token}": {
       "get": {
         "tags": [
@@ -5516,6 +7065,67 @@
           },
           "422": {
             "description": "Job is not in an active status and cannot be reordered"
+          }
+        }
+      }
+    },
+    "/api/v1/settings/costs": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get the shop cost model",
+        "operationId": "get_cost_config_api_v1_settings_costs_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostConfigModel"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Set the shop cost model",
+        "description": "Re-prices every project's machine and labour expenses immediately \u2014 past jobs included.",
+        "operationId": "put_cost_config_api_v1_settings_costs_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CostConfigModel"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostConfigModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
@@ -6080,6 +7690,67 @@
         }
       }
     },
+    "/api/v1/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Low-inventory alert thresholds",
+        "operationId": "get_low_stock_api_v1_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Set low-inventory alert thresholds",
+        "description": "Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one\nre-arms spools that are no longer below it.",
+        "operationId": "put_low_stock_api_v1_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStockConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/tags": {
       "get": {
         "tags": [
@@ -6314,6 +7985,19 @@
         ],
         "title": "ActivePresetUpdate"
       },
+      "AlarmSettings": {
+        "properties": {
+          "min_severity": {
+            "type": "string",
+            "title": "Min Severity"
+          }
+        },
+        "type": "object",
+        "required": [
+          "min_severity"
+        ],
+        "title": "AlarmSettings"
+      },
       "ApiKeyCreate": {
         "properties": {
           "name": {
@@ -6406,6 +8090,40 @@
         ],
         "title": "Body_upload_to_draft_api_v1_customer_projects__project_id__files_post"
       },
+      "Body_upload_to_printer_api_v1_printers__printer_id__upload_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          },
+          "start": {
+            "type": "boolean",
+            "title": "Start",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_to_printer_api_v1_printers__printer_id__upload_post"
+      },
+      "ChamberTempBody": {
+        "properties": {
+          "celsius": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Celsius"
+          }
+        },
+        "type": "object",
+        "required": [
+          "celsius"
+        ],
+        "title": "ChamberTempBody"
+      },
       "CompleteManuallyBody": {
         "properties": {
           "printer_id": {
@@ -6435,6 +8153,27 @@
           "resolutions"
         ],
         "title": "ConfirmRemapBody"
+      },
+      "CostConfigModel": {
+        "properties": {
+          "machine_rate_per_hour": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Machine Rate Per Hour",
+            "default": 0.0
+          },
+          "labour_rate_per_hour": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Labour Rate Per Hour",
+            "default": 0.0
+          }
+        },
+        "type": "object",
+        "title": "CostConfigModel",
+        "description": "Shop-wide hourly rates used for every project's expenses (applied live \u2014 see services/job_costs.py)."
       },
       "CustomerCreate": {
         "properties": {
@@ -6610,6 +8349,20 @@
         },
         "type": "object",
         "title": "DiscordChannelConfig"
+      },
+      "DiscoverRequest": {
+        "properties": {
+          "ranges": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Ranges"
+          }
+        },
+        "type": "object",
+        "title": "DiscoverRequest"
       },
       "DraftCreate": {
         "properties": {
@@ -6810,6 +8563,21 @@
         "type": "object",
         "title": "FilePatch"
       },
+      "FileRef": {
+        "properties": {
+          "file_id": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "File Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file_id"
+        ],
+        "title": "FileRef"
+      },
       "FleetImportReport": {
         "properties": {
           "imported": {
@@ -6886,6 +8654,23 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "HomeBody": {
+        "properties": {
+          "axes": {
+            "type": "string",
+            "enum": [
+              "all",
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Axes",
+            "default": "all"
+          }
+        },
+        "type": "object",
+        "title": "HomeBody"
       },
       "JobConfigsUpdate": {
         "properties": {
@@ -6972,6 +8757,17 @@
               }
             ],
             "title": "Overrides"
+          },
+          "not_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Before"
           }
         },
         "type": "object",
@@ -6980,6 +8776,48 @@
           "printer_configs"
         ],
         "title": "JobCreate"
+      },
+      "JobSchedulePatch": {
+        "properties": {
+          "not_before": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Not Before"
+          }
+        },
+        "type": "object",
+        "title": "JobSchedulePatch"
+      },
+      "JogBody": {
+        "properties": {
+          "axis": {
+            "type": "string",
+            "enum": [
+              "X",
+              "Y",
+              "Z"
+            ],
+            "title": "Axis"
+          },
+          "distance_mm": {
+            "type": "number",
+            "maximum": 200.0,
+            "minimum": -200.0,
+            "title": "Distance Mm"
+          }
+        },
+        "type": "object",
+        "required": [
+          "axis",
+          "distance_mm"
+        ],
+        "title": "JogBody"
       },
       "JogZBody": {
         "properties": {
@@ -6993,6 +8831,45 @@
           "distance_mm"
         ],
         "title": "JogZBody"
+      },
+      "LaborCreate": {
+        "properties": {
+          "minutes": {
+            "type": "integer",
+            "maximum": 44640.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Minutes"
+          },
+          "logged_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logged On"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "minutes"
+        ],
+        "title": "LaborCreate"
       },
       "LightBody": {
         "properties": {
@@ -7040,6 +8917,33 @@
           "password"
         ],
         "title": "LoginBody"
+      },
+      "LowStockConfig": {
+        "properties": {
+          "default_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default G"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "title": "LowStockConfig",
+        "description": "Grams below which a spool raises a `spool.low` event. `overrides` maps a Spoolman filament id (as a\nstring) to its own threshold and wins over `default_g`; with neither set nothing alerts."
       },
       "MaintenanceItemCreate": {
         "properties": {
@@ -7251,6 +9155,21 @@
           "config"
         ],
         "title": "NotificationTestIn"
+      },
+      "NozzleTempBody": {
+        "properties": {
+          "celsius": {
+            "type": "integer",
+            "maximum": 350.0,
+            "minimum": 0.0,
+            "title": "Celsius"
+          }
+        },
+        "type": "object",
+        "required": [
+          "celsius"
+        ],
+        "title": "NozzleTempBody"
       },
       "NtfyChannelConfig": {
         "properties": {
@@ -7632,6 +9551,118 @@
         ],
         "title": "PasswordBody"
       },
+      "PaymentCreate": {
+        "properties": {
+          "amount": {
+            "type": "number",
+            "maximum": 1000000000.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Amount"
+          },
+          "received_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received On"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "cash",
+              "card",
+              "bank_transfer",
+              "check",
+              "other"
+            ],
+            "title": "Method",
+            "default": "other"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "required": [
+          "amount"
+        ],
+        "title": "PaymentCreate"
+      },
+      "PaymentPatch": {
+        "properties": {
+          "amount": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000000.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Amount"
+          },
+          "received_on": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received On"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "cash",
+                  "card",
+                  "bank_transfer",
+                  "check",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Method"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 500
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "type": "object",
+        "title": "PaymentPatch"
+      },
       "PositionUpdate": {
         "properties": {
           "job_id": {
@@ -7794,6 +9825,19 @@
             "type": "number",
             "title": "Bed Y Mm",
             "default": 256.0
+          },
+          "machine_rate_per_hour": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Rate Per Hour"
           }
         },
         "type": "object",
@@ -7934,6 +9978,41 @@
               }
             ],
             "title": "Bed Y Mm"
+          },
+          "machine_rate_per_hour": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Rate Per Hour"
+          },
+          "quiet_start": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet Start"
+          },
+          "quiet_end": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quiet End"
           }
         },
         "type": "object",
@@ -8276,6 +10355,19 @@
             "type": "integer",
             "title": "Sort Order",
             "default": 0
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
           }
         },
         "type": "object",
@@ -8329,6 +10421,19 @@
               }
             ],
             "title": "Sort Order"
+          },
+          "unit_cost": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 1000000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit Cost"
           }
         },
         "type": "object",
@@ -8423,6 +10528,17 @@
               }
             ],
             "title": "Price"
+          },
+          "price_visible": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Price Visible"
           },
           "payment_status": {
             "anyOf": [

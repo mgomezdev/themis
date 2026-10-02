@@ -6,8 +6,9 @@ import { useTopbarOverride } from '../components/topbarOverride';
 import { fmtDate, fmtMoney } from '../data/helpers';
 import {
   getCustomer, updateCustomer, deleteCustomer, portalStatus,
-  type CustomerDetail, type CustomerFields, type CustomerProject, type FinancialSummary, type FinancialWindow,
+  type CustomerDetail, type CustomerFields, type ExpenseBreakdown, type CustomerProject, type FinancialSummary, type FinancialWindow,
 } from '../api/customers';
+import { getCustomerPayments, methodLabel, type CustomerPayment } from '../api/payments';
 
 const WINDOWS: { key: FinancialWindow; label: string }[] = [
   { key: '30d', label: '30 days' },
@@ -16,13 +17,18 @@ const WINDOWS: { key: FinancialWindow; label: string }[] = [
   { key: 'all', label: 'All time' },
 ];
 
-const METRICS: { key: keyof FinancialSummary; label: string; hint: string; money: boolean }[] = [
-  { key: 'revenue',       label: 'Revenue',       hint: 'Amount paid',                       money: true },
-  { key: 'expenses',      label: 'Expenses',      hint: 'Filament cost of jobs',             money: true },
+const METRICS: { key: Exclude<keyof FinancialSummary, 'expense_breakdown'>; label: string; hint: string; money: boolean }[] = [
+  { key: 'revenue',       label: 'Revenue',       hint: 'Payments received',                      money: true },
+  { key: 'expenses',      label: 'Expenses',      hint: 'Filament, machine time, labour & parts',             money: true },
   { key: 'profit',        label: 'Profit',        hint: 'Revenue − expenses',                money: true },
   { key: 'billed',        label: 'Billed',        hint: 'Quoted project prices',             money: true },
   { key: 'outstanding',   label: 'Outstanding',   hint: 'Price − paid, on unpaid projects',  money: true },
   { key: 'project_count', label: 'Projects',      hint: 'Started in the period',             money: false },
+];
+
+const EXPENSE_PARTS: { key: keyof ExpenseBreakdown; label: string }[] = [
+  { key: 'filament', label: 'Filament' }, { key: 'machine', label: 'Machine time' },
+  { key: 'labour', label: 'Labour' }, { key: 'parts', label: 'Parts' },
 ];
 
 const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
@@ -65,7 +71,7 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
             </tr>
           </thead>
           <tbody>
-            {METRICS.map(m => (
+            {METRICS.flatMap(m => [
               <tr key={m.key} style={{ cursor: 'default' }}>
                 <td>
                   <div>{m.label}</div>
@@ -82,13 +88,23 @@ function FinancialSummaryCard({ financials }: { financials: CustomerDetail['fina
                     </td>
                   );
                 })}
-              </tr>
-            ))}
+              </tr>,
+              ...(m.key === 'expenses' ? EXPENSE_PARTS.map(part => (
+                <tr key={`expenses-${part.key}`} data-testid={`expense-${part.key}`} style={{ cursor: 'default' }}>
+                  <td className="small muted" style={{ paddingLeft: 24 }}>{part.label}</td>
+                  {WINDOWS.map(w => (
+                    <td key={w.key} className="small muted" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtMoney(financials.windows[w.key].expense_breakdown?.[part.key] ?? 0)}
+                    </td>
+                  ))}
+                </tr>
+              )) : []),
+            ])}
           </tbody>
         </table>
       </div>
       <div className="small muted">
-        Periods are by project start date.
+        Revenue is by the date payments were received; the rest is by project start date. Machine and labour use today&apos;s rates (Settings → Costs).
         {financials.unpriced_unpaid > 0 && (
           <span style={{ color: 'var(--warn)' }}>
             {' '}{financials.unpriced_unpaid} unpaid project{financials.unpriced_unpaid !== 1 ? 's have' : ' has'} no
@@ -176,6 +192,46 @@ function ProjectsCard({ customerId, projects }: { customerId: number; projects: 
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Every payment this customer has made across their projects, newest first. */
+function PaymentHistoryCard({ customerId }: { customerId: number }) {
+  const [payments, setPayments] = useState<CustomerPayment[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getCustomerPayments(customerId)
+      .then(p => { if (alive) setPayments(Array.isArray(p) ? p : []); })
+      .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { alive = false; };
+  }, [customerId]);
+
+  return (
+    <div className="card" style={{ padding: 20 }} data-testid="payment-history">
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>Payment history</div>
+      {error ? <div style={{ color: 'var(--err)', fontSize: 13 }}>{error}</div>
+        : payments === null ? <div className="muted small">Loading…</div>
+        : payments.length === 0 ? <div style={{ color: 'var(--text-4)', fontSize: 13 }}>No payments recorded yet.</div>
+        : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="tbl">
+              <thead><tr><th>Received</th><th>Project</th><th>Method</th><th>Note</th><th style={{ textAlign: 'right' }}>Amount</th></tr></thead>
+              <tbody>
+                {payments.map(p => (
+                  <tr key={p.id}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{fmtDate(p.received_on)}</td>
+                    <td><Link to={`/projects/${p.project_id}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>{p.project_name}</Link></td>
+                    <td>{methodLabel(p.method)}</td>
+                    <td className="muted">{p.note ?? ''}</td>
+                    <td style={{ textAlign: 'right' }}>{fmtMoney(p.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
     </div>
   );
 }
@@ -311,6 +367,7 @@ export function CustomerDetailScreen() {
       <DetailsCard customer={customer} onSaved={reload} />
       <FinancialSummaryCard financials={customer.financials} />
       <ProjectsCard customerId={customer.id} projects={customer.projects} />
+      <PaymentHistoryCard customerId={customer.id} />
     </div>
   );
 }

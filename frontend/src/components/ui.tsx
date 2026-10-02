@@ -85,7 +85,7 @@ export function VideoTile({
     return () => clearInterval(id);
   }, [live, printerId, paused, interval]);
 
-  const showCamera = live && printerId && !imgError;
+  const showCamera = live && printerId && !imgError && !paused;    // an idle printer set to be left alone is not even fetched once
 
   return (
     <div className={`video ${live ? 'live' : ''}`}>

@@ -5,9 +5,15 @@
 import { describe, expect, it } from 'vitest';
 import contractRaw from '../../../contracts/response-keys.json?raw';
 import type { LibraryFile } from '../data/types';
+import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
 import type { FleetPrinter } from './fleet';
+import type { CostConfig, ProjectLabor } from './costs';
+import type { PortalPayment, PortalProject, PortalQuote } from './customers';
+import type { CustomerPayment, ProjectPayment } from './payments';
+import type { AlarmSummary, PrinterAlarm } from './alarms';
 import type { ApiPrinter } from './printers';
-import type { Project, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
+import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
+import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails } from './queue';
 
 const contract = JSON.parse(contractRaw) as Record<string, string[]>;
@@ -18,13 +24,13 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 const FLEET = {
   id: 1, name: 1, printer_type: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
-  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1,
+  capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   current_orca_printer_profile: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
-  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1,
+  no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
@@ -32,7 +38,7 @@ const JOB = {
   overrides: 1, block_reason: 1, actual_filament_grams: 1, actual_seconds: 1, actual_filament_breakdown: 1,
   deduction_skipped: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,
-  eligible_printers: 1, low_stock_warning: 1, filament_cost: 1,
+  eligible_printers: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
 } satisfies Record<keyof ApiJob, 1>;
 
 const JOB_DETAILS = {
@@ -45,7 +51,7 @@ const PROJECT = {
   customer_name: 1, created_at: 1,
   updated_at: 1, items: 1, links: 1, parts: 1, jobs_total: 1, jobs_complete: 1, estimate_filament_grams_total: 1,
   estimate_seconds_total: 1, estimate_filament_grams_remaining: 1, estimate_seconds_remaining: 1,
-  actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1,
+  actual_filament_grams: 1, actual_seconds: 1, filament_cost_total: 1, costs: 1, price_visible: 1, quote_accepted_at: 1,
 } satisfies Record<keyof Project, 1>;
 
 const PROJECT_ITEM = {
@@ -56,7 +62,7 @@ const PROJECT_ITEM = {
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;
 
 const PROJECT_PART = {
-  id: 1, project_id: 1, name: 1, quantity: 1, allocated: 1, sort_order: 1, created_at: 1,
+  id: 1, project_id: 1, name: 1, quantity: 1, allocated: 1, sort_order: 1, created_at: 1, unit_cost: 1,
 } satisfies Record<keyof ProjectPart, 1>;
 
 const PROJECT_JOB = {
@@ -68,6 +74,44 @@ const LIBRARY_FILE = {
   id: 1, original_filename: 1, relative_path: 1, folder: 1, size_bytes: 1, plate_count: 1, uploaded_at: 1, missing: 1,
   tags: 1, thumbnail_url: 1, plate_thumbnails: 1,
 } satisfies Record<keyof LibraryFile, 1>;
+
+const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;
+const ANALYTICS_RANGE = { start: 1, end: 1, days: 1 } satisfies Record<keyof AnalyticsRange, 1>;
+const ANALYTICS_TOTALS = {
+  completed: 1, failed: 1, cancelled: 1, success_rate: 1, print_seconds: 1, filament_grams: 1, filament_cost: 1,
+} satisfies Record<keyof AnalyticsStats, 1>;
+const PRINTER_FILE = {
+  id: 1, name: 1, size: 1, modified_at: 1, is_dir: 1, metadata: 1, printable: 1,
+} satisfies Record<keyof PrinterFileEntry, 1>;
+const PRINTER_FILES_LISTING = {
+  printer_id: 1, directory: 1, files: 1, can_delete: 1, can_download: 1,
+} satisfies Record<keyof PrinterFilesListing, 1>;
+const PRINTER_FILES_MERGED = {
+  printer_id: 1, printer_name: 1, files: 1, error: 1, can_delete: 1, can_download: 1,
+} satisfies Record<keyof MergedPrinterFiles, 1>;
+const PRINTER_ALARM = {
+  id: 1, printer_id: 1, printer_name: 1, code: 1, severity: 1, message: 1, source: 1, help_url: 1, first_seen: 1, last_seen: 1,
+  resolved_at: 1, acknowledged_at: 1, active: 1,
+} satisfies Record<keyof PrinterAlarm, 1>;
+const ALARM_SUMMARY = { count: 1, worst: 1, printers: 1 } satisfies Record<keyof AlarmSummary, 1>;
+const ANALYTICS_PRINTER = { ...ANALYTICS_TOTALS, printer_id: 1, name: 1, utilization_pct: 1 } satisfies Record<keyof AnalyticsPrinter, 1>;
+const ANALYTICS_MATERIAL = { material: 1, grams: 1, jobs: 1 } satisfies Record<keyof AnalyticsMaterial, 1>;
+const PROJECT_PAYMENT = {
+  id: 1, project_id: 1, amount: 1, received_on: 1, method: 1, note: 1, created_at: 1,
+} satisfies Record<keyof ProjectPayment, 1>;
+const CUSTOMER_PAYMENT = { ...PROJECT_PAYMENT, project_name: 1 } satisfies Record<keyof CustomerPayment, 1>;
+
+const PROJECT_LABOR = { id: 1, project_id: 1, minutes: 1, logged_on: 1, note: 1, created_at: 1 } satisfies Record<keyof ProjectLabor, 1>;
+const PROJECT_COSTS = {
+  filament: 1, machine: 1, labour: 1, parts: 1, machine_hours: 1, labour_hours: 1, total: 1,
+} satisfies Record<keyof ProjectCosts, 1>;
+const COST_CONFIG = { machine_rate_per_hour: 1, labour_rate_per_hour: 1 } satisfies Record<keyof CostConfig, 1>;
+const PORTAL_PROJECT = {
+  id: 1, name: 1, notes: 1, stage: 1, due_date: 1, created_at: 1, updated_at: 1, items: 1, jobs: 1, jobs_total: 1,
+  jobs_complete: 1, quote: 1,
+} satisfies Record<keyof PortalProject, 1>;
+const PORTAL_QUOTE = { price: 1, paid: 1, balance: 1, accepted_at: 1, payments: 1 } satisfies Record<keyof PortalQuote, 1>;
+const PORTAL_PAYMENT = { id: 1, received_on: 1, amount: 1, method: 1 } satisfies Record<keyof PortalPayment, 1>;
 
 describe('contracts/response-keys.json matches the frontend interfaces', () => {
   const cases: [string, string[], string[]][] = [
@@ -81,6 +125,24 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
     ['project job', contract.project_job, keysOf(PROJECT_JOB)],
     ['library file', contract.library_file, keysOf(LIBRARY_FILE)],
+    ['project labour', contract.project_labor, keysOf(PROJECT_LABOR)],
+    ['project costs', contract.project_costs, keysOf(PROJECT_COSTS)],
+    ['cost config', contract.cost_config, keysOf(COST_CONFIG)],
+    ['portal project', contract.portal_project, keysOf(PORTAL_PROJECT)],
+    ['portal quote', contract.portal_quote, keysOf(PORTAL_QUOTE)],
+    ['portal payment', contract.portal_payment, keysOf(PORTAL_PAYMENT)],
+    ['analytics', contract.analytics, keysOf(ANALYTICS)],
+    ['analytics range', contract.analytics_range, keysOf(ANALYTICS_RANGE)],
+    ['analytics totals', contract.analytics_totals, keysOf(ANALYTICS_TOTALS)],
+    ['printer alarm', contract.printer_alarm, keysOf(PRINTER_ALARM)],
+    ['alarm summary', contract.alarm_summary, keysOf(ALARM_SUMMARY)],
+    ['printer file', contract.printer_file, keysOf(PRINTER_FILE)],
+    ['printer files listing', contract.printer_files_listing, keysOf(PRINTER_FILES_LISTING)],
+    ['printer files merged', contract.printer_files_merged, keysOf(PRINTER_FILES_MERGED)],
+    ['analytics printer', contract.analytics_printer, keysOf(ANALYTICS_PRINTER)],
+    ['analytics material', contract.analytics_material, keysOf(ANALYTICS_MATERIAL)],
+    ['project payment', contract.project_payment, keysOf(PROJECT_PAYMENT)],
+    ['customer payment', contract.customer_payment, keysOf(CUSTOMER_PAYMENT)],
   ];
 
   it.each(cases)('%s', (_name, fromContract, fromInterface) => {
@@ -89,7 +151,12 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
 
   it('has no unexamined entries (every contract list is compared above)', () => {
     const used = new Set(['_doc', 'fleet_printer', 'fleet_printer_connected_only', 'printer', 'queue_job', 'job_details_core',
-      'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file']);
+      'job_details_extra', 'project', 'project_item', 'project_link', 'project_part', 'project_job', 'library_file',
+      'project_payment', 'customer_payment',
+      'portal_project', 'portal_quote', 'portal_payment',
+      'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
+      'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
+      'project_labor', 'project_costs', 'cost_config']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

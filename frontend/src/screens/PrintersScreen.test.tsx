@@ -25,6 +25,8 @@ const mockPrinters = [
     no_snapshots_while_idle: false,
     bed_x_mm: 256,
     bed_y_mm: 256,
+    quiet_start: null,
+    quiet_end: null,
   },
 ];
 
@@ -180,6 +182,9 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   no_snapshots_while_idle: false,
   bed_x_mm: 256,
   bed_y_mm: 256,
+  machine_rate_per_hour: null,
+  quiet_start: null,
+  quiet_end: null,
 };
 
 const INTEGRATION_TYPES: PrinterType[] = [

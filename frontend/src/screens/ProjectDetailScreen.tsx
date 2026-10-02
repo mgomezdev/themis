@@ -11,6 +11,8 @@ import {
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
+import { PaymentsCard } from '../components/PaymentsCard';
+import { CostsCard } from '../components/CostsCard';
 import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
 
 const STAGE_LABEL = { draft: 'Draft', planning: 'Planning', queued: 'Queued' } as const;
@@ -65,6 +67,13 @@ export function ProjectDetailScreen() {
     if (!project) return;
     setStageError('');
     try { setProject(await patchProject(project.id, { customer_id: value ? Number(value) : null })); }
+    catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
+  }
+
+  async function handlePriceVisible(visible: boolean) {
+    if (!project) return;
+    setStageError('');
+    try { setProject(await patchProject(project.id, { price_visible: visible })); }
     catch (e) { setStageError(e instanceof Error ? e.message : String(e)); }
   }
 
@@ -239,6 +248,17 @@ export function ProjectDetailScreen() {
               )}
               {project.filament_cost_total != null && (
                 <span>Filament cost: ${project.filament_cost_total.toFixed(2)}</span>
+              )}
+              {project.customer_id != null && (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                       title={project.price == null ? 'Set a price first' : 'Show the price, what has been paid and the balance in the customer portal'}>
+                  <input type="checkbox" checked={project.price_visible} disabled={project.price == null}
+                         onChange={e => handlePriceVisible(e.target.checked)} />
+                  Show price to customer
+                </label>
+              )}
+              {project.quote_accepted_at && (
+                <span style={{ color: 'var(--ok)' }}>Quote accepted {new Date(project.quote_accepted_at).toLocaleDateString()}</span>
               )}
               <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 Account
@@ -542,6 +562,12 @@ export function ProjectDetailScreen() {
           </div>
         )}
       </div>
+
+      {/* ── Payments ───────────────────────────────────────────────────── */}
+      <PaymentsCard projectId={project.id} price={project.price} onChanged={reload} />
+
+      {/* ── Expenses (filament + machine + labour + parts) ─────────────── */}
+      {project.costs && <CostsCard projectId={project.id} costs={project.costs} onChanged={reload} />}
 
       {/* ── Non-printed parts ──────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>

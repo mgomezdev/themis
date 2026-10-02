@@ -16,7 +16,7 @@ const ITEM = {
 const project = (over: object = {}) => ({
   id: 42, name: 'Shelf set', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
   result_file_id: null, source_app: null, source_user: null, source_layout_id: null, amount_paid: null,
-  payment_status: 'unpaid', stage: 'planning', customer_id: null, created_at: '', updated_at: '',
+  payment_status: 'unpaid', price_visible: false, quote_accepted_at: null, price: null, stage: 'planning', customer_id: null, created_at: '', updated_at: '',
   items: [ITEM], links: [], parts: [], jobs_total: 0, jobs_complete: 0,
   estimate_filament_grams_total: null, estimate_seconds_total: null, estimate_filament_grams_remaining: null,
   estimate_seconds_remaining: null, actual_filament_grams: null, actual_seconds: null, filament_cost_total: null,
@@ -37,6 +37,7 @@ function open(over: Record<string, unknown> = {}, initial: object = project()) {
   const api = stubFetch({
     'GET /api/v1/projects/42': () => state.project,
     'GET /api/v1/projects/42/jobs': [],
+    'GET /api/v1/projects/42/payments': [],
     'GET /api/v1/printers': PRINTERS,
     'GET /api/v1/printers/1/profiles': { print_profiles: ['0.20mm Standard'], filament_profiles: [] },
     'GET /api/v1/printers/2/profiles': { print_profiles: ['0.20mm Standard'], filament_profiles: [] },
@@ -215,12 +216,50 @@ describe('ProjectDetailScreen - generating jobs', () => {
   });
 });
 
+describe('ProjectDetailScreen - quote visibility', () => {
+  const toggle = () => screen.getByRole('checkbox', { name: 'Show price to customer' }) as HTMLInputElement;
+
+  it('lets staff show the price to the customer and hide it again', async () => {
+    const { api } = open({
+      'PATCH /api/v1/projects/42': (c: { body: { price_visible: boolean } }) =>
+        project({ customer_id: 3, customer_name: 'Vela', price: 100, price_visible: c.body.price_visible }),
+    }, project({ customer_id: 3, customer_name: 'Vela', price: 100, price_visible: false }));
+    await ready();
+    expect(toggle().checked).toBe(false);
+
+    await userEvent.click(toggle());
+    await waitFor(() => expect(toggle().checked).toBe(true));
+    await userEvent.click(toggle());
+    await waitFor(() => expect(toggle().checked).toBe(false));
+
+    expect(api.to('PATCH', '/api/v1/projects/42').map(c => c.body)).toEqual([{ price_visible: true }, { price_visible: false }]);
+  });
+
+  it('is disabled until there is a price, and absent for a project with no customer account', async () => {
+    open({}, project({ customer_id: 3, customer_name: 'Vela', price: null }));
+    await ready();
+    expect(toggle().disabled).toBe(true);
+  });
+
+  it('is not offered for a project without a customer account', async () => {
+    open({}, project({ customer_id: null, price: 100 }));
+    await ready();
+    expect(screen.queryByRole('checkbox', { name: 'Show price to customer' })).toBeNull();
+  });
+
+  it('shows when the customer accepted the quote', async () => {
+    open({}, project({ customer_id: 3, customer_name: 'Vela', price: 100, price_visible: true, quote_accepted_at: '2026-09-20T10:00:00Z' }));
+    await ready();
+    expect(screen.getByText(/Quote accepted/)).toBeTruthy();
+  });
+});
+
 describe('ProjectDetailScreen - customer account', () => {
   const CUSTOMERS = [
     { id: 3, name: 'Vela Robotics', email: 'ops@vela.test', enabled: true, created_at: '' },
     { id: 4, name: 'Ada', email: 'ada@x.test', enabled: true, created_at: '' },
   ];
-  const account = () => screen.getByRole('combobox') as HTMLSelectElement;
+  const account = () => screen.getByLabelText('Account') as HTMLSelectElement;
 
   it('does not load customers until the account picker is focused, and only once', async () => {
     const { api } = open({ 'GET /api/v1/customers': CUSTOMERS });

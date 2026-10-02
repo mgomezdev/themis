@@ -6,6 +6,8 @@ import logging
 import socket
 import ssl
 import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar, Optional
 
@@ -14,7 +16,11 @@ import paho.mqtt.client as mqtt
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
+    DiscoveredPrinter,
     PrinterCapabilities,
+    FileTooLargeError,
+    PrinterFile,
     StartPrintOptions,
 )
 
@@ -22,6 +28,96 @@ logger = logging.getLogger(__name__)
 
 MQTT_PORT = 8883
 FTPS_PORT = 990  # Bambu LAN file transfer is implicit FTPS
+
+
+# SSDP (OpenBambuAPI "ssdp"): printers announce `NOTIFY * HTTP/1.1` to 239.255.255.250 on UDP 1990 (2021 on newer
+# firmware) and answer an `M-SEARCH` for this search target. Headers carry the serial (USN), model code, name.
+SSDP_PORTS = (1990, 2021)
+BAMBU_SSDP_ST = "urn:bambulab-com:device:3dprinter:1"
+BAMBU_MSEARCH = (
+    "M-SEARCH * HTTP/1.1\r\nHOST: 239.255.255.250:1990\r\nMAN: \"ssdp:discover\"\r\nMX: 1\r\n"
+    f"ST: {BAMBU_SSDP_ST}\r\n\r\n"
+).encode()
+BAMBU_MODELS = {                                  # DevModel.bambu.com → product name
+    "BL-P001": "X1 / X1 Carbon", "BL-P002": "X1E", "C11": "P1P", "C12": "P1S",
+    "N1": "A1 mini", "N2S": "A1", "O1D": "H2D",
+}
+
+
+def parse_ssdp_headers(datagram: bytes) -> dict[str, str]:
+    """Header name (lower-cased) → value of an SSDP NOTIFY / M-SEARCH response; {} if it isn't one."""
+    try:
+        text = datagram.decode("utf-8", "replace")
+    except Exception:
+        return {}
+    lines = text.replace("\r", "").split("\n")
+    if not lines or not (lines[0].startswith("NOTIFY") or lines[0].startswith("HTTP/1.1 200")):
+        return {}
+    out: dict[str, str] = {}
+    for line in lines[1:]:
+        if ":" in line:
+            k, v = line.split(":", 1)
+            out[k.strip().lower()] = v.strip()
+    return out
+
+
+def bambu_from_ssdp(ip: str, datagram: bytes) -> DiscoveredPrinter | None:
+    h = parse_ssdp_headers(datagram)
+    if h.get("nt", h.get("st", "")) != BAMBU_SSDP_ST and "devmodel.bambu.com" not in h:
+        return None
+    code = h.get("devmodel.bambu.com")
+    serial = h.get("usn") or None
+    # The address is the datagram's SENDER, never its `Location:` header — any LAN host can forge that header and
+    # would otherwise steer the add-printer prefill (and the access code the user types next) to an attacker.
+    return DiscoveredPrinter(
+        printer_type="bambu", ip=ip, model=BAMBU_MODELS.get(code or "", code),
+        name=h.get("devname.bambu.com"), serial=serial,
+        connection_config={"ip_address": ip, "serial_number": serial or ""},
+    )
+
+
+# Directories of the printer's SD card that hold printable files (OpenBambuAPI ftp docs: sliced projects are
+# STORed to the root; Bambu Studio / Handy use /cache). Listed together, ids are paths relative to the root.
+_FILE_DIRS = ("", "cache")
+_PRINTABLE_SUFFIXES = (".3mf", ".gcode")
+_MONTHS = {m: i for i, m in enumerate(
+    ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"), 1)}
+
+
+def parse_unix_list_line(line: str) -> tuple[str, int, bool, str | None] | None:
+    """Parse one `ls -l` style FTP LIST line -> (name, size, is_dir, modified_iso|None); None if unparseable.
+
+    `-rw-r--r--    1 0        0         1234567 Oct 01 12:30 My Part.gcode.3mf`
+    `drwxr-xr-x    2 0        0            4096 Sep 14  2025 cache`
+    The date is "Mon DD HH:MM" (this/last year, no year given) or "Mon DD  YYYY". Names may contain spaces.
+    """
+    parts = line.rstrip("\r\n").split(None, 8)
+    if len(parts) < 9 or parts[0][:1] not in ("-", "d", "l"):
+        return None
+    try:
+        size = int(parts[4])
+    except ValueError:
+        return None
+    name = parts[8]
+    if parts[0][0] == "l" and " -> " in name:
+        name = name.split(" -> ", 1)[0]
+    modified = None
+    month = _MONTHS.get(parts[5])
+    if month:
+        try:
+            day = int(parts[6])
+            if ":" in parts[7]:
+                hh, mm = (int(x) for x in parts[7].split(":"))
+                now = datetime.now(timezone.utc)
+                dt = datetime(now.year, month, day, hh, mm, tzinfo=timezone.utc)
+                if dt > now:                       # a time-of-day date is never in the future: it was last year
+                    dt = dt.replace(year=now.year - 1)
+            else:
+                dt = datetime(int(parts[7]), month, day, tzinfo=timezone.utc)
+            modified = dt.isoformat()
+        except ValueError:
+            pass
+    return name, size, parts[0][0] == "d", modified
 
 
 def _as_bool(v) -> bool:
@@ -76,6 +172,25 @@ class PrinterState:
 
 class BambuMQTTClient(AbstractPrinterClient):
     printer_type: ClassVar[str] = "bambu"
+
+    @classmethod
+    async def discover_host(cls, net, ip: str):
+        """A Bambu printer in LAN mode exposes MQTT (8883) and FTPS (990). Both open is the signature; a unicast
+        SSDP M-SEARCH (works across VLANs, unlike multicast) adds serial / model / name when the printer answers."""
+        import asyncio
+        mqtt_open, ftps_open = await asyncio.gather(net.tcp_open(ip, MQTT_PORT, 1.0), net.tcp_open(ip, FTPS_PORT, 1.0))
+        if not (mqtt_open and ftps_open):
+            return None
+        reply = await net.udp_request(ip, SSDP_PORTS[0], BAMBU_MSEARCH, 1.0)
+        found = bambu_from_ssdp(ip, reply) if reply else None
+        if found is not None:
+            return found
+        return DiscoveredPrinter(printer_type="bambu", ip=ip, connection_config={"ip_address": ip, "serial_number": ""},
+                                 note="Serial number not announced — read it from the printer's screen")
+
+    @classmethod
+    def parse_announcement(cls, ip: str, datagram: bytes):
+        return bambu_from_ssdp(ip, datagram)
 
     def orca_export_args(self, file_base: str) -> list[str]:
         # Bambu printers ingest the sliced .gcode.3mf (not raw gcode); name it
@@ -159,30 +274,97 @@ class BambuMQTTClient(AbstractPrinterClient):
     def file_upload_supported(self) -> bool:
         return True
 
-    def upload_file(self, data: bytes, filename: str) -> bool:
-        """Upload the sliced .gcode.3mf to the printer over implicit FTPS (port 990,
-        credentials bblp / access_code, self-signed TLS)."""
+    @contextmanager
+    def _ftps(self):
+        """Logged-in implicit-FTPS session (port 990, user `bblp`, access code, self-signed TLS, encrypted data
+        channel). Always closed on exit."""
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        ftp = None
+        ftp = _ImplicitFTP_TLS(context=ctx)
         try:
-            ftp = _ImplicitFTP_TLS(context=ctx)
             ftp.connect(self._ip, FTPS_PORT, timeout=30)
             ftp.login("bblp", self._access_code)
-            ftp.prot_p()  # encrypt the data channel too
-            ftp.storbinary(f"STOR {filename}", io.BytesIO(data))
-            ftp.quit()
+            ftp.prot_p()
+            yield ftp
+            try:
+                ftp.quit()
+            except Exception:
+                pass
+        finally:
+            try:
+                ftp.close()
+            except Exception:
+                pass
+
+    def upload_file(self, data: bytes, filename: str) -> bool:
+        """Upload the sliced .gcode.3mf to the printer over implicit FTPS."""
+        try:
+            with self._ftps() as ftp:
+                ftp.storbinary(f"STOR {filename}", io.BytesIO(data))
             return True
         except Exception:
             logger.exception("FTPS upload to %s:%d failed (%s, %d bytes)",
                              self._ip, FTPS_PORT, filename, len(data))
-            if ftp is not None:
-                try:
-                    ftp.close()
-                except Exception:
-                    pass
             return False
+
+    def list_files(self, directory: str = "/") -> list[PrinterFile]:
+        """Printable files (.3mf / .gcode) on the SD card: the root plus /cache (`directory` is ignored — the
+        listing is flat). No per-file metadata (that would mean downloading each archive). Connection, login
+        and listing failures RAISE so callers can tell "no files" from "couldn't look"; only a missing /cache
+        (a 550 on that LIST) is tolerated."""
+        out: list[PrinterFile] = []
+        with self._ftps() as ftp:
+            for d in _FILE_DIRS:
+                lines: list[str] = []
+                try:
+                    ftp.retrlines(f"LIST /{d}" if d else "LIST", lines.append)
+                except ftplib.error_perm:
+                    if not d:
+                        raise                      # the root must list; only /cache may legitimately be absent
+                    continue
+                for line in lines:
+                    parsed = parse_unix_list_line(line)
+                    if parsed is None:
+                        continue
+                    name, size, is_dir, modified = parsed
+                    if is_dir or not name.lower().endswith(_PRINTABLE_SUFFIXES):
+                        continue
+                    out.append(PrinterFile(id=f"{d}/{name}" if d else name, name=name, size=size,
+                                           modified_at=modified))
+        return out
+
+    def delete_file(self, file_id: str) -> bool:
+        try:
+            self._validate_file_id(file_id)
+            with self._ftps() as ftp:
+                ftp.delete(file_id)
+            return True
+        except Exception:
+            logger.exception("FTPS delete of %s on %s failed", file_id, self._ip)
+            return False
+
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
+        try:
+            self._validate_file_id(file_id)
+            chunks: list[bytes] = []
+            total = 0
+
+            def take(chunk: bytes) -> None:
+                nonlocal total
+                total += len(chunk)
+                if max_bytes is not None and total > max_bytes:
+                    raise FileTooLargeError(f"{file_id} is larger than {max_bytes} bytes")
+                chunks.append(chunk)
+
+            with self._ftps() as ftp:
+                ftp.retrbinary(f"RETR {file_id}", take)
+            return b"".join(chunks)
+        except FileTooLargeError:
+            raise
+        except Exception:
+            logger.exception("FTPS download of %s from %s failed", file_id, self._ip)
+            return None
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
@@ -195,6 +377,13 @@ class BambuMQTTClient(AbstractPrinterClient):
             camera=True,
             bed_levelling=True,
             vibration_cali=True,
+            axis_jog=True,
+            home_axes=True,
+            nozzle_temp=True,
+            direct_upload=True,
+            file_browser=True,
+            file_delete=True,
+            file_download=True,
         )
 
     @property
@@ -216,6 +405,10 @@ class BambuMQTTClient(AbstractPrinterClient):
     @property
     def is_printing(self) -> bool:
         return self.state.state in ("RUNNING", "PAUSE")
+
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import hms_alarms
+        return hms_alarms(self.state.hms_errors)
 
     def request_status_update(self) -> None:
         self._publish({"pushing": {"command": "pushall", "version": 1, "push_target": 1}})
@@ -362,6 +555,8 @@ class BambuMQTTClient(AbstractPrinterClient):
                 "FINISH": "FINISH",
                 "FAILED": "FAILED",
             }.get(raw, "unknown")
+        if "hms" in p and isinstance(p["hms"], list):
+            self.state.hms_errors = p["hms"]          # present = the full current list (empty list = all cleared)
         if "stg_cur" in p:
             self.state.stg_cur = p["stg_cur"]
         if "subtask_name" in p:

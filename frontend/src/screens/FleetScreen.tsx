@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Link, useInRouterContext } from 'react-router-dom';
 import { useFleetData } from '../api/fleet';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
+import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
@@ -12,6 +14,8 @@ import { MachinePicker } from '../components/MachinePicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
+import { useMediaQuery } from '../components/useMediaQuery';
+import { ScanSpoolModal } from '../components/ScanSpoolModal';
 import { MaintenanceItemForm, emptyDraft, type ItemDraft } from '../components/MaintenanceItemForm';
 import {
   useFleetVendorModels, resolveVendorModelForProfile, createMaintenanceItem, completeMaintenanceItem,
@@ -77,6 +81,16 @@ function FanTelem({ label, pct, maxRpm = 7000 }: { label: string; pct: number; m
   );
 }
 
+/** Link to the printer console (a plain anchor when rendered outside a router, e.g. in isolated tests). */
+function ConsoleLink({ printerId }: { printerId: string }) {
+  const inRouter = useInRouterContext();
+  const href = `/fleet/${printerId}/console`;
+  const content = <>{Icons.printer} Console</>;
+  return inRouter
+    ? <Link className="btn sm" to={href} title="Open the printer console">{content}</Link>
+    : <a className="btn sm" href={href} title="Open the printer console">{content}</a>;
+}
+
 // ── Edit printer modal ───────────────────────────────────────────────────────
 
 function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClose }: {
@@ -90,8 +104,12 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
   const [machinePreset, setMachinePreset] = useState<string>('');
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
+  const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
+  const [quietEnd, setQuietEnd] = useState('');
+  const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; error?: string } | null>(null);
@@ -110,6 +128,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setDraftConn(conn);
         setMachinePreset(api.current_orca_printer_profile ?? '');
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
+        setQuietStart(api.quiet_start ?? '');
+        setQuietEnd(api.quiet_end ?? '');
+        setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
+        setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
@@ -139,6 +161,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         connection_config: draftConn,
         current_orca_printer_profile: machinePreset || null,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
+        machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
+        // Both or neither: a half-filled window is treated as none.
+        quiet_start: quietStart && quietEnd ? quietStart : null,
+        quiet_end: quietStart && quietEnd ? quietEnd : null,
       });
       onSaved();
     } catch (e) {
@@ -260,6 +286,31 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           </div>
 
           <div className="col gap-2">
+            <div className="tag-key">Machine cost</div>
+            <label className="label" htmlFor="machine-rate">Machine rate ($ per hour of print time)</label>
+            <input id="machine-rate" className="input" type="number" min="0" step="0.01" style={{ maxWidth: 160 }}
+                   placeholder="Shop rate" value={machineRate} onChange={e => setMachineRate(e.target.value)} />
+            <div className="tiny muted">
+              Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
+            </div>
+          </div>
+
+          <div className="col gap-2">
+            <div className="tag-key">Quiet hours</div>
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <input type="time" className="input" aria-label="Quiet hours start" style={{ maxWidth: 130 }}
+                     value={quietStart} onChange={e => setQuietStart(e.target.value)} />
+              <span className="small muted">to</span>
+              <input type="time" className="input" aria-label="Quiet hours end" style={{ maxWidth: 130 }}
+                     value={quietEnd} onChange={e => setQuietEnd(e.target.value)} />
+              {(quietStart || quietEnd) && (
+                <button type="button" className="btn ghost sm" onClick={() => { setQuietStart(''); setQuietEnd(''); }}>Clear</button>
+              )}
+            </div>
+            <span className="tiny muted">This printer won&apos;t start new jobs in this window (server clock, UTC in Docker by default; may wrap midnight). A running print is never interrupted.</span>
+          </div>
+
+          <div className="col gap-2">
             <div className="tag-key">Camera</div>
             <div className="row gap-3" style={{ alignItems: 'center' }}>
               <button
@@ -310,7 +361,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           )}
           <div className="row gap-2">
             <button className="btn" onClick={onClose}>Cancel</button>
-            <button className="btn primary" onClick={save} disabled={saving}>
+            <button className="btn primary" onClick={save} disabled={saving || !loaded}>
               {Icons.check} {saving ? 'Saving…' : 'Save changes'}
             </button>
           </div>
@@ -544,12 +595,12 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         ...cardCueStyle(p),
       }}>
         {/* Header */}
-        <div className="row between" style={{
+        <div className="row between wrap" style={{
           padding: '14px 18px', background: 'var(--bg-3)',
-          borderBottom: '1px solid var(--border-1)', gap: 16, alignItems: 'center',
+          borderBottom: '1px solid var(--border-1)', gap: 12, alignItems: 'center',
         }}>
-          <div className="col" style={{ minWidth: 0, flex: 1 }}>
-            <div className="row gap-2" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+          <div className="col" style={{ minWidth: 0, flex: '1 1 220px' }}>
+            <div className="row gap-2 wrap" style={{ alignItems: 'baseline' }}>
               <DueMaintenanceHat dueItemNames={(dueRowsByPrinter[p.id] ?? []).map(r => r.item_name)} />
               {editingName ? (
                 <input autoFocus className="input" value={nickname}
@@ -574,7 +625,8 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               <span className="num">{p.buildVolume}</span> mm · {p.chamber ? 'enclosed' : 'open frame'} · capable: {p.capabilities.join(' · ')}
             </div>
           </div>
-          <div className="row gap-2" style={{ flexShrink: 0, alignItems: 'center' }}>
+          <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+            <AlarmBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
               <button
@@ -604,6 +656,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
               {p.queueOn ? <>{Icons.queue} Queue on</> : <>{Icons.queue} Queue off</>}
             </button>
             <button className="btn sm">{Icons.camera} Snapshot</button>
+            <ConsoleLink printerId={p.id} />
             <button className="btn icon sm" title="Add maintenance item" onClick={() => setAddingMaintenance(true)}>
               👷
             </button>
@@ -615,7 +668,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
         </div>
 
         {/* Body */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.6fr) minmax(300px, 1fr)', gap: 18, padding: 18 }}>
+        <div className="fleet-expanded">
           {/* LEFT */}
           <div className="col gap-4" style={{ minWidth: 0 }}>
             <VideoTile
@@ -811,6 +864,22 @@ function ReadyForWorkButton({ printerId, refetchFleet, block }: {
 }
 
 // ── PrinterTile ───────────────────────────────────────────────────────────────
+/** Unacknowledged-alarm badge; links to that printer's alarms. */
+function AlarmBadge({ printer: p }: { printer: Printer }) {
+  const inRouter = useInRouterContext();
+  if (!p.alarmCount || !p.alarmSeverity) return null;
+  const props = {
+    onClick: (e: React.MouseEvent) => e.stopPropagation(), 'data-testid': 'alarm-badge',
+    title: `${p.alarmCount} active alarm${p.alarmCount === 1 ? '' : 's'} (worst: ${p.alarmSeverity})`,
+    style: { color: SEVERITY_COLOR[p.alarmSeverity], border: `1px solid ${SEVERITY_COLOR[p.alarmSeverity]}`, borderRadius: 999,
+             padding: '1px 8px', fontSize: 11, fontWeight: 600, textDecoration: 'none' },
+  };
+  const to = `/alarms?printer=${p.id}`;
+  return inRouter
+    ? <Link to={to} {...props}>{Icons.alert} {p.alarmCount}</Link>      // client-side navigation: keeps the SPA state
+    : <a href={to} {...props}>{Icons.alert} {p.alarmCount}</a>;
+}
+
 function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, dueRowsByPrinter }: { printer: Printer; onClick: () => void; refetchFleet: () => void; snapshotIntervalMs?: number; dueRowsByPrinter: Record<string, MaintenanceStatusRow[]> }) {
   const isPrinting = p.status === 'printing';
   return (
@@ -823,6 +892,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
           {!p.queueOn && <QueueOffBadge />}
+          <AlarmBadge printer={p} />
           <StatusPill status={p.status} />
         </div>
       </div>
@@ -998,7 +1068,7 @@ function LayoutToggle({ value, onChange }: { value: Layout; onChange: (v: Layout
     { id: 'rows',  label: 'Rows',  icon: Icons.layers },
   ];
   return (
-    <div className="row" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
+    <div className="row layout-toggle" style={{ gap: 0, padding: 2, borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--border-1)' }}>
       {opts.map(o => {
         const on = value === o.id;
         return (
@@ -1074,8 +1144,13 @@ function FleetRows({ printers, expandedId, onToggle, onAdd, printerTypes, refetc
 export function FleetScreen() {
   const [printers, refetchFleet] = useFleetData();
   const [layout, setLayout] = useState<Layout>('cards');
+  // The row table has seven fixed columns; on a phone the card layout is the only one that fits.
+  const narrow = useMediaQuery('(max-width: 768px)');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const { config: spoolmanConfig } = useSpoolmanConfig();
+  const spoolmanOn = !!(spoolmanConfig?.enabled && spoolmanConfig?.url);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
   const { rows: maintenanceRows, refetch: refetchMaintenance } = useMaintenanceStatus();
@@ -1124,29 +1199,35 @@ export function FleetScreen() {
 
   return (
     <div className="col gap-5">
-      <div className="row between">
+      <div className="row between wrap">
         <div>
           <div className="tag-key" style={{ marginBottom: 2 }}>Workshop</div>
-          <div className="row gap-3" style={{ alignItems: 'baseline', whiteSpace: 'nowrap' }}>
+          <div className="row gap-3 wrap" style={{ alignItems: 'baseline' }}>
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.02em' }}>
               {printers.length} printers
             </div>
             <div className="muted small">{fleetSummary}</div>
           </div>
         </div>
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
-          <LayoutToggle value={layout} onChange={setLayout} />
+        <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+          {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
+          {spoolmanOn && (
+            <button className="btn sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setScanning(true)}>
+              {Icons.spool} Scan spool
+            </button>
+          )}
           <button className="btn primary sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setAdding(true)}>
             {Icons.plus} Add printer
           </button>
         </div>
       </div>
+      {scanning && <ScanSpoolModal onClose={() => setScanning(false)} onAssigned={refetchFleet} />}
 
-      {layout === 'cards' && (
+      {(layout === 'cards' || narrow) && (
         <FleetGrid printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
-      {layout === 'rows' && (
+      {layout === 'rows' && !narrow && (
         <FleetRows printers={printers} expandedId={expandedId} onToggle={toggle} onAdd={() => setAdding(true)} printerTypes={printerTypes} refetchFleet={refetchFleet} snapshotIntervalMs={snapshotIntervalMs} dueRowsByPrinter={dueRowsByPrinter} refetchMaintenance={refetchMaintenance} fleetModels={fleetModels} />
       )}
     </div>

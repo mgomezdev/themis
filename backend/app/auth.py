@@ -111,7 +111,7 @@ async def _resolve_raw_key(raw: str | None, session: AsyncSession) -> ApiKey | N
 
 def _path_allows_query_param(path: str) -> bool:
     """Check if a path is allowed to use ?key= query param for auth."""
-    return "/thumbnails/" in path or path.endswith("/snapshot")
+    return "/thumbnails/" in path or path.endswith(("/snapshot", "/camera"))   # <img src> can't send headers
 
 
 async def _resolve_key(request: Request, session: AsyncSession) -> ApiKey | None:

@@ -4,6 +4,8 @@ import itertools
 import json
 import logging
 import threading
+import urllib.parse
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar
 
@@ -13,7 +15,11 @@ import websocket
 from .abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
+    Alarm,
+    DiscoveredPrinter,
+    FileTooLargeError,
     PrinterCapabilities,
+    PrinterFile,
     StartPrintOptions,
 )
 
@@ -34,6 +40,7 @@ _NORM_STATE = {
 # Objects we subscribe to / query for live status.
 _SUBSCRIBE_OBJECTS = {
     "print_stats": None,
+    "webhooks": None,
     "display_status": None,
     "heater_bed": None,
     "extruder": None,
@@ -62,6 +69,9 @@ class SnapmakerState:
     extruder_temps: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     extruder_targets: list = field(default_factory=lambda: [0.0, 0.0, 0.0, 0.0])
     active_extruder: int = 0
+    klippy_state: str | None = None      # webhooks.state
+    klippy_message: str | None = None    # webhooks.state_message
+    print_message: str | None = None     # print_stats.message
     raw: dict = field(default_factory=dict)
 
     @property
@@ -123,6 +133,31 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._prev_print_state = "standby"
         self._rpc_id = itertools.count(1)
 
+    def get_alarms(self) -> list[Alarm]:
+        from .alarm_codes import klipper_alarms
+        with self._lock:
+            s = self.state
+            return klipper_alarms({"state": s.klippy_state, "state_message": s.klippy_message},
+                                  {"state": s.print_state, "message": s.print_message})
+
+    # ---- discovery (Moonraker web API: GET /server/info, GET /printer/info) ----
+    @classmethod
+    async def discover_host(cls, net, ip: str):
+        """Moonraker answers `GET /server/info` on :7125 with `result.moonraker_version`; with an API key configured
+        and the caller untrusted it answers 401/403 — still a Moonraker, flagged as needing a key."""
+        status, body = await net.http_get_json(f"http://{ip}:{DEFAULT_PORT}/server/info", 1.0)
+        cfg = {"ip_address": ip, "port": DEFAULT_PORT}
+        if status in (401, 403):
+            return DiscoveredPrinter(printer_type="snapmaker_extended", ip=ip, model="Moonraker / Klipper",
+                                     connection_config=cfg, note="Requires an API key")
+        result = (body or {}).get("result")
+        if status != 200 or not isinstance(result, dict) or "moonraker_version" not in result:
+            return None
+        _s, info = await net.http_get_json(f"http://{ip}:{DEFAULT_PORT}/printer/info", 1.0)
+        hostname = ((info or {}).get("result") or {}).get("hostname")
+        return DiscoveredPrinter(printer_type="snapmaker_extended", ip=ip, model="Moonraker / Klipper",
+                                 name=hostname, connection_config=cfg)
+
     # ---- ABC metadata ----
     @classmethod
     def connection_fields(cls) -> list[ConnectionField]:
@@ -136,7 +171,11 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         ]
 
     def get_capabilities(self) -> PrinterCapabilities:
-        return PrinterCapabilities(pause_resume=True, gcode=True, camera=True, temp_control=True)
+        return PrinterCapabilities(
+            pause_resume=True, gcode=True, camera=True, temp_control=True,
+            axis_jog=True, home_axes=True, nozzle_temp=True, direct_upload=True,
+            file_browser=True, file_delete=True, file_download=True,
+        )
 
     # ---- state properties ----
     @property
@@ -260,13 +299,24 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         elif method == "notify_klippy_ready":
             with self._lock:
                 self.state.klippy_ready = True
+                self.state.klippy_state, self.state.klippy_message = "ready", None
             self._fire_state_change()
         elif method in ("notify_klippy_disconnected", "notify_klippy_shutdown"):
             with self._lock:
                 self.state.klippy_ready = False
+                if method == "notify_klippy_shutdown":
+                    self.state.klippy_state = "shutdown"
             self._fire_state_change()
+            if method == "notify_klippy_shutdown":
+                # Moonraker doesn't push `webhooks` updates once Klippy is gone: ask for the reason (`printer.info`
+                # → state + state_message) so the alarm says WHY, not just "shutdown".
+                self._ws_send("printer.info", {})
         elif "result" in data:
             result = data["result"]
+            if isinstance(result, dict) and "state_message" in result and result.get("state") in ("startup", "ready", "shutdown", "error"):
+                with self._lock:                               # `printer.info` reply
+                    self.state.klippy_state, self.state.klippy_message = result["state"], result.get("state_message")
+                self._fire_state_change()
             if isinstance(result, dict):
                 if "klippy_state" in result:
                     with self._lock:
@@ -278,8 +328,16 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
     def _apply_status(self, status: dict) -> None:
         with self._lock:
             self.state.raw = status
+            wh = status.get("webhooks")
+            if wh:
+                if "state" in wh:
+                    self.state.klippy_state = wh["state"]
+                if "state_message" in wh:
+                    self.state.klippy_message = wh["state_message"]
             ps = status.get("print_stats")
             if ps:
+                if "message" in ps:
+                    self.state.print_message = ps.get("message") or None
                 if "state" in ps:
                     self.state.print_state = ps["state"]
                 if "filename" in ps:
@@ -355,6 +413,79 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         except Exception:
             logger.exception("Snapmaker %s: gcode upload failed (%s)", self._ip, filename)
             return False
+
+    # ---- file browser (Moonraker file_manager API; root "gcodes") ----
+    @staticmethod
+    def _gcodes_url_path(file_id: str) -> str:
+        """`/server/files/gcodes/<quoted path>` — each segment quoted, `..` and absolute paths refused."""
+        segments = [s for s in file_id.split("/") if s]
+        if not segments or any(s in (".", "..") for s in segments):
+            raise ValueError(f"Invalid file id: {file_id!r}")
+        return "/server/files/gcodes/" + "/".join(urllib.parse.quote(s, safe="") for s in segments)
+
+    def list_files(self, directory: str = "/") -> list[PrinterFile]:
+        """One directory of the gcodes root with slicer metadata inline (`extended=true`): estimated time,
+        filament length/weight, slicer. Directories come first as `is_dir` entries whose id is the path to
+        pass back as `directory`."""
+        rel = directory.strip("/")
+        if any(s in (".", "..") for s in rel.split("/")):
+            raise ValueError(f"Invalid directory: {directory!r}")
+        path = "gcodes" + (f"/{rel}" if rel else "")
+        # Failures raise (httpx errors / KeyError): callers must be able to tell "empty" from "couldn't look".
+        r = httpx.get(f"{self._http_base}/server/files/directory", params={"path": path, "extended": "true"},
+                      headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        result = r.json()["result"]
+        prefix = f"{rel}/" if rel else ""
+
+        def iso(ts) -> str | None:
+            try:
+                return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+            except (TypeError, ValueError, OverflowError, OSError):
+                return None
+
+        out = [PrinterFile(id=f"{prefix}{d['dirname']}", name=d["dirname"], size=0, modified_at=iso(d.get("modified")),
+                           is_dir=True) for d in result.get("dirs", []) if d.get("dirname")]
+        for f in result.get("files", []):
+            if not f.get("filename"):
+                continue
+            meta = {k: v for k, v in {
+                "estimated_seconds": f.get("estimated_time"),
+                "filament_mm": f.get("filament_total"),
+                "filament_grams": f.get("filament_weight_total"),
+                "slicer": f.get("slicer"),
+            }.items() if v is not None}
+            out.append(PrinterFile(id=f"{prefix}{f['filename']}", name=f["filename"], size=int(f.get("size") or 0),
+                                   modified_at=iso(f.get("modified")), metadata=meta or None))
+        return out
+
+    def delete_file(self, file_id: str) -> bool:
+        try:
+            r = httpx.delete(f"{self._http_base}{self._gcodes_url_path(file_id)}", headers=self._headers(), timeout=30)
+            r.raise_for_status()
+            return True
+        except Exception:
+            logger.exception("Snapmaker %s: delete of %s failed", self._ip, file_id)
+            return False
+
+    def download_file(self, file_id: str, max_bytes: int | None = None) -> bytes | None:
+        try:
+            chunks: list[bytes] = []
+            total = 0
+            with httpx.stream("GET", f"{self._http_base}{self._gcodes_url_path(file_id)}",
+                              headers=self._headers(), timeout=120) as r:
+                r.raise_for_status()
+                for chunk in r.iter_bytes():
+                    total += len(chunk)
+                    if max_bytes is not None and total > max_bytes:
+                        raise FileTooLargeError(f"{file_id} is larger than {max_bytes} bytes")
+                    chunks.append(chunk)
+            return b"".join(chunks)
+        except FileTooLargeError:
+            raise
+        except Exception:
+            logger.exception("Snapmaker %s: download of %s failed", self._ip, file_id)
+            return None
 
     def start_print(self, file_name: str, options: StartPrintOptions | None = None) -> bool:
         return self._post("/printer/print/start", params={"filename": file_name})

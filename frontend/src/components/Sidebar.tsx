@@ -3,6 +3,7 @@ import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
 import { SpoolmanStatusChip } from './SpoolmanStatusChip';
 import { useSpoolmanConfig } from '../api/spoolman';
+import { useBuildInfo, shortSha } from '../api/version';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
 
@@ -10,6 +11,8 @@ interface SidebarProps {
   queueCounts: QueueCounts;
   operatorName: string | null;
   printerCount: number;
+  alarmCount?: number;
+  alarmWorst?: 'info' | 'warning' | 'error' | 'fatal' | null;
   collapsed?: boolean;
   onToggle?: () => void;
 }
@@ -44,24 +47,30 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
   );
 }
 
-export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = false, onToggle = () => {} }: SidebarProps) {
+export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 0, alarmWorst = null, collapsed = false, onToggle = () => {} }: SidebarProps) {
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
+    { to: '/wall',      label: 'Camera wall', icon: Icons.camera },
     { to: '/projects',  label: 'Projects',    icon: Icons.layers },
     { to: '/customers', label: 'Customers',   icon: Icons.user },
     { to: '/files',     label: 'Files',       icon: Icons.files },
+    { to: '/printer-files', label: 'Printer files', icon: Icons.printer },
+    { to: '/alarms',    label: 'Alarms',      icon: Icons.alert },
     { to: '/history',   label: 'History',     icon: Icons.clock },
+    { to: '/analytics', label: 'Analytics',   icon: Icons.chart },
   ];
 
   const location = useLocation();
   const isSettingsRoute = location.pathname.startsWith('/settings');
   const { config: spoolmanCfg } = useSpoolmanConfig();
+  const build = useBuildInfo();
   const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
 
   const settingsSubItems = [
     { to: '/settings/tags',             label: 'Tags' },
     { to: '/settings/print',            label: 'Print defaults' },
+    { to: '/settings/costs',            label: 'Costs' },
     { to: '/settings/maintenance',       label: 'Maintenance' },
     { to: '/settings/spoolman',         label: 'Spoolman' },
     ...(spoolmanEnabled ? [{ to: '/settings/spoolman-mappings', label: 'Filament Mappings' }] : []),
@@ -104,6 +113,13 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
             {it.icon}
             <span className="label">{it.label}</span>
             {it.to === '/queue' && <QueueBadges counts={queueCounts} />}
+            {it.to === '/alarms' && alarmCount > 0 && (
+              <span data-testid="badge-alarms" className="count num" aria-label={`${alarmCount} unacknowledged alarm${alarmCount === 1 ? '' : 's'}`}
+                    style={{ marginLeft: 'auto', background: 'rgba(239,68,68,0.12)', borderColor: 'rgba(239,68,68,0.3)',
+                             color: alarmWorst === 'info' || alarmWorst === 'warning' ? 'var(--warn)' : 'var(--err)' }}>
+                {alarmCount}
+              </span>
+            )}
           </NavLink>
         ))}
       </div>
@@ -129,6 +145,13 @@ export function Sidebar({ queueCounts, operatorName, printerCount, collapsed = f
         <LaminusStatusChip />
         <SpoolmanStatusChip />
       </div>
+
+      {!collapsed && build && (
+        <div data-testid="build-info" className="muted small num" title={`Build ${build.git_sha}`}
+             style={{ padding: '0 14px 6px', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+          v{build.version} · {shortSha(build.git_sha)}
+        </div>
+      )}
 
       <div className="sidebar-toggle">
         <button className="btn ghost icon sm" onClick={onToggle}

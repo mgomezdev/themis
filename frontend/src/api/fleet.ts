@@ -18,12 +18,17 @@ export interface FleetPrinter {
   remaining_time: number;
   layer_num: number | null;
   total_layers: number | null;
-  temperatures: { nozzle?: number; bed?: number; chamber?: number; bed_target?: number };
+  temperatures: {
+    nozzle?: number; bed?: number; chamber?: number;
+    nozzle_target?: number; bed_target?: number; chamber_target?: number;
+  };
   capabilities: Record<string, boolean>;
   current_print: string | null;
   fan_model: number;
   fan_aux: number;
   fan_box: number;
+  alarm_count?: number;                 // active, unacknowledged
+  alarm_severity?: 'info' | 'warning' | 'error' | 'fatal' | null;
 }
 
 const ACCENT: Record<string, string> = {
@@ -87,6 +92,8 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     queueOn: p.queue_on ?? true,
     awaitingPlateClear: p.awaiting_plate_clear ?? false,
     noSnapshotsWhileIdle: p.no_snapshots_while_idle ?? false,
+    alarmCount: p.alarm_count ?? 0,
+    alarmSeverity: p.alarm_severity ?? null,
   };
 }
 
@@ -96,7 +103,8 @@ async function fetchFleetPrinters(): Promise<FleetPrinter[]> {
   return resp.json();
 }
 
-export function useFleetData(): [Printer[], () => void] {
+/** Live fleet in the API's own shape (raw temperatures + capability flags), kept fresh over the WebSocket. */
+export function useFleetRaw(): [FleetPrinter[], () => void] {
   const [raw, setRaw] = useState<FleetPrinter[]>([]);
   const [fetchTick, setFetchTick] = useState(0);
 
@@ -128,5 +136,10 @@ export function useFleetData(): [Printer[], () => void] {
     }, refetch);
   }, [refetch]);
 
+  return [raw, refetch];
+}
+
+export function useFleetData(): [Printer[], () => void] {
+  const [raw, refetch] = useFleetRaw();
   return [raw.map(toFleetPrinter), refetch];
 }

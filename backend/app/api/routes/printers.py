@@ -5,9 +5,11 @@ import os
 import socket
 import time as _time
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,8 +18,10 @@ import shutil
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobPrinterConfig, Printer
+from ...services import camera_hub
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
+from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -45,6 +49,7 @@ class PrinterCreate(BaseModel):
     no_snapshots_while_idle: bool = False
     bed_x_mm: float = 256.0
     bed_y_mm: float = 256.0
+    machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
 class PrinterUpdate(BaseModel):
@@ -59,6 +64,21 @@ class PrinterUpdate(BaseModel):
     no_snapshots_while_idle: bool | None = None
     bed_x_mm: float | None = None
     bed_y_mm: float | None = None
+    machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
+    quiet_start: str | None = None
+    quiet_end: str | None = None
+
+    @model_validator(mode="after")
+    def _quiet_hours_pair(self):
+        for v in (self.quiet_start, self.quiet_end):
+            if v is not None:
+                try:
+                    scheduling.parse_hhmm(v)
+                except ValueError as e:
+                    raise ValueError(str(e))
+        if (self.quiet_start is None) != (self.quiet_end is None):
+            raise ValueError("quiet_start and quiet_end must be set together (or both null)")
+        return self
 
 
 class ActivePresetUpdate(BaseModel):
@@ -82,6 +102,23 @@ class BedTempBody(BaseModel):
     celsius: int
 
 
+class JogBody(BaseModel):
+    axis: Literal["X", "Y", "Z"]
+    distance_mm: float = Field(..., ge=-200, le=200)
+
+
+class HomeBody(BaseModel):
+    axes: Literal["all", "X", "Y", "Z"] = "all"
+
+
+class NozzleTempBody(BaseModel):
+    celsius: int = Field(..., ge=0, le=350)
+
+
+class ChamberTempBody(BaseModel):
+    celsius: int = Field(..., ge=0, le=100)
+
+
 def _to_dict(p: Printer) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
@@ -99,6 +136,9 @@ def _to_dict(p: Printer) -> dict:
         "no_snapshots_while_idle": p.no_snapshots_while_idle,
         "bed_x_mm": p.bed_x_mm,
         "bed_y_mm": p.bed_y_mm,
+        "quiet_start": p.quiet_start,
+        "quiet_end": p.quiet_end,
+        "machine_rate_per_hour": p.machine_rate_per_hour,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -121,6 +161,62 @@ def _get_connected_client(printer_id: int):
 async def list_printer_types() -> list[dict]:
     """Available printer driver types with display name and required connection config fields."""
     return get_printer_types_for_ui()
+
+
+def _stem(name: str) -> str:
+    base = os.path.basename(name.replace("\\", "/")).lower()
+    for ext in (".gcode.3mf", ".3mf", ".gcode", ".bgcode"):
+        if base.endswith(ext):
+            return base[: -len(ext)]
+    return base
+
+
+def _file_dict(f) -> dict:
+    return {
+        "id": f.id, "name": f.name, "size": f.size, "modified_at": f.modified_at, "is_dir": f.is_dir,
+        "metadata": f.metadata,
+        "printable": (not f.is_dir) and f.name.lower().endswith((".gcode", ".3mf", ".bgcode")),
+    }
+
+
+_LIST_TIMEOUT_S = 25
+
+
+async def _list_printer_files(client, directory: str) -> list[dict]:
+    files = await asyncio.wait_for(asyncio.to_thread(client.list_files, directory), _LIST_TIMEOUT_S)
+    return sorted((_file_dict(f) for f in files), key=lambda d: (not d["is_dir"], d["name"].lower()))
+
+
+@router.get(
+    "/files/all",
+    summary="Files stored on every printer",
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def list_all_printer_files(session: AsyncSession = Depends(get_session)) -> dict:
+    """Merged view: the top-level files of every printer whose driver can list its storage, fetched
+    concurrently. A printer that is offline or times out reports an `error` instead of failing the request."""
+    printers = (await session.execute(select(Printer).order_by(Printer.id))).scalars().all()
+
+    async def one(p: Printer) -> dict | None:
+        entry = {"printer_id": p.id, "printer_name": p.name, "files": [], "error": None,
+                 "can_delete": False, "can_download": False}
+        client = printer_manager._clients.get(p.id)
+        if client is None or not client.connected:
+            entry["error"] = "Printer not connected"
+            return entry
+        caps = client.get_capabilities()
+        if not caps.file_browser:
+            return None
+        entry["can_delete"], entry["can_download"] = caps.file_delete, caps.file_download
+        try:
+            entry["files"] = await _list_printer_files(client, "/")
+        except asyncio.TimeoutError:
+            entry["error"] = "Timed out listing files"
+        except Exception as e:
+            entry["error"] = f"Could not list files: {e}"
+        return entry
+
+    return {"printers": [e for e in await asyncio.gather(*(one(p) for p in printers)) if e is not None]}
 
 
 @router.get("", summary="List printers", dependencies=[Depends(require_scope("printers:read"))])
@@ -158,6 +254,7 @@ async def create_printer(
         no_snapshots_while_idle=body.no_snapshots_while_idle,
         bed_x_mm=body.bed_x_mm,
         bed_y_mm=body.bed_y_mm,
+        machine_rate_per_hour=body.machine_rate_per_hour,
     )
     session.add(printer)
     await session.commit()
@@ -227,6 +324,62 @@ async def rescan_profiles(session: AsyncSession = Depends(get_session)) -> dict:
 class TestConnectionRequest(BaseModel):
     printer_type: str
     connection_config: dict
+
+
+class DiscoverRequest(BaseModel):
+    ranges: list[str] = Field(default_factory=list, max_length=8)   # CIDR / single IP; empty = this host's /24
+
+
+_discovery_lock = asyncio.Lock()
+
+
+def _discovery_network():
+    """Seam for tests: the network discovery runs over."""
+    from ...services.discovery_net import RealNetwork
+    return RealNetwork()
+
+
+@router.post(
+    "/discover",
+    summary="Scan the network for printers",
+    responses={422: {"description": "Malformed, oversized or non-private range"}},
+    dependencies=[Depends(require_scope("printers:write"))],
+)
+async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depends(get_session)) -> dict:
+    """Sweep `ranges` (e.g. `192.168.7.0/24` — printers on another VLAN need their range given explicitly) and list
+    what answers to a vendor's documented discovery signature. Private ranges only, at most a /20 each. Printers
+    already added (same IP) are flagged. Secrets (access codes, API keys) are never discovered."""
+    from ...services import discovery
+    ranges = [r for r in body.ranges if r.strip()] or discovery.local_ranges()
+    if not ranges:
+        raise HTTPException(422, "Could not work out this host's network; pass a range such as 192.168.1.0/24")
+    if _discovery_lock.locked():
+        raise HTTPException(409, "A network scan is already running")       # each scan holds hundreds of sockets
+    net = _discovery_network()
+    try:
+        async with _discovery_lock:
+            result = await discovery.scan(net, ranges, REGISTRY)
+    except discovery.ScanRangeError as e:
+        raise HTTPException(422, str(e))
+    finally:
+        close = getattr(net, "aclose", None)
+        if close is not None:
+            await close()
+    existing: set[str] = set()
+    for p in (await session.execute(select(Printer))).scalars().all():
+        cfg = p.connection_config or {}
+        for key in ("ip_address", "host"):
+            if cfg.get(key):
+                existing.add(str(cfg[key]).strip())
+    names = {t["printer_type"]: t["display_name"] for t in get_printer_types_for_ui()}
+    return {
+        "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
+        "found": [{
+            "printer_type": d.printer_type, "display_name": names.get(d.printer_type, d.printer_type),
+            "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
+            "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
+        } for d in result.found],
+    }
 
 
 _TEST_CONNECT_POLL_S = 15.0  # MQTT/TLS handshake + first report can take well over 5s
@@ -380,6 +533,10 @@ async def update_printer(
         printer.bed_x_mm = body.bed_x_mm
     if body.bed_y_mm is not None:
         printer.bed_y_mm = body.bed_y_mm
+    if "quiet_start" in body.model_fields_set or "quiet_end" in body.model_fields_set:
+        printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
+    if "machine_rate_per_hour" in body.model_fields_set:
+        printer.machine_rate_per_hour = body.machine_rate_per_hour
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)
@@ -435,6 +592,9 @@ async def delete_printer(
         .where(Job.assigned_printer_id == printer_id)
         .values(assigned_printer_id=None)
     )
+    await session.execute(
+        update(Job).where(Job.printed_on_printer_id == printer_id).values(printed_on_printer_id=None)
+    )
 
     if affected_job_ids:
         remaining = set((await session.execute(
@@ -455,6 +615,8 @@ async def delete_printer(
     await session.delete(printer)
     await session.commit()
     printer_manager.disconnect_printer(printer_id)
+    if printer_manager._on_state_broadcast is not None:   # its alarms went with it (FK cascade)
+        await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
 
 @router.post(
@@ -696,6 +858,297 @@ async def set_bed_temp(
     return {"ok": True}
 
 
+def _require_capability(client, name: str, what: str) -> None:
+    if not getattr(client.get_capabilities(), name, False):
+        raise HTTPException(409, f"This printer does not support {what}")
+
+
+def _require_not_printing(client) -> None:
+    """Motion and nozzle changes need a printer that is positively idle (the queue's own notion), not merely
+    "not printing": states like Bambu's PREPARE (heating/levelling) are neither."""
+    if client.is_printing or not client.is_idle:
+        raise HTTPException(409, "Printer is busy; wait for it to be idle (or stop the print) first")
+
+
+def _ok_or_502(result) -> dict:
+    if not result:
+        raise HTTPException(502, "Printer rejected the command")
+    return {"ok": True}
+
+
+_CONSOLE_RESPONSES = {
+    404: {"description": "Printer not found"},
+    409: {"description": "Not supported by this printer, or the printer is printing"},
+    502: {"description": "Printer rejected the command"},
+    503: {"description": "Printer not connected"},
+}
+
+
+@router.post(
+    "/{printer_id}/jog",
+    summary="Jog an axis",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def jog_axis(printer_id: int, body: JogBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """Relative move of X, Y or Z by `distance_mm` (negative = other direction). X/Y need the `axis_jog`
+    capability; refused while a print is running."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    if body.axis != "Z":
+        _require_capability(client, "axis_jog", "X/Y jog")
+    _require_not_printing(client)
+    if body.axis == "Z":      # vendors with a native Z command (Elegoo SDCP) override jog_z, not jog
+        return _ok_or_502(await asyncio.to_thread(client.jog_z, body.distance_mm))
+    return _ok_or_502(await asyncio.to_thread(client.jog, body.axis, body.distance_mm))
+
+
+@router.post(
+    "/{printer_id}/home",
+    summary="Home axes",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def home_printer(printer_id: int, body: HomeBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """Home all axes, or a single axis (needs the `home_axes` capability). Refused while printing."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_not_printing(client)
+    if body.axes == "all":
+        return _ok_or_502(await asyncio.to_thread(client.home))
+    _require_capability(client, "home_axes", "single-axis homing")
+    return _ok_or_502(await asyncio.to_thread(client.home_axes, body.axes))
+
+
+@router.post(
+    "/{printer_id}/nozzle-temp",
+    summary="Set nozzle temperature",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def set_nozzle_temp(printer_id: int, body: NozzleTempBody, session: AsyncSession = Depends(get_session)) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "nozzle_temp", "a nozzle setpoint")
+    _require_not_printing(client)      # M104 mid-print would cool the nozzle and ruin the print
+    return _ok_or_502(await asyncio.to_thread(client.set_nozzle_temp, body.celsius))
+
+
+@router.post(
+    "/{printer_id}/chamber-temp",
+    summary="Set chamber temperature",
+    responses=_CONSOLE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def set_chamber_temp(printer_id: int, body: ChamberTempBody, session: AsyncSession = Depends(get_session)) -> dict:
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "chamber_temp", "a chamber setpoint")
+    return _ok_or_502(await asyncio.to_thread(client.set_chamber_temp, body.celsius))
+
+
+_direct_start_locks: dict[tuple[int, int], asyncio.Lock] = {}     # keyed by (event loop, printer)
+
+
+async def _start_stored_file(client, file_id: str, failure: str) -> None:
+    from ...services.abstract_printer_client import StartPrintOptions
+    opts = StartPrintOptions(gcode_path=os.path.basename(file_id))     # same options the queue engine passes
+    if not await asyncio.to_thread(client.start_print, file_id, opts):
+        raise HTTPException(502, failure)
+
+
+async def _direct_start(session: AsyncSession, client, printer_id: int, steps) -> None:
+    """Run `steps` (which end in a start_print) on a printer that is idle, uncleared-plate-free and not held by
+    a queue job. The printer is claimed (plate gate set) BEFORE the steps so the queue engine cannot race them,
+    and released again if nothing ended up printing."""
+    # One direct start per printer at a time: the checks below await, so without this two concurrent requests
+    # could both pass them before either has claimed the printer.
+    async with _direct_start_locks.setdefault((id(asyncio.get_running_loop()), printer_id), asyncio.Lock()):
+        if not client.is_idle:
+            raise HTTPException(409, "Printer is not idle")
+        if printer_manager.is_awaiting_plate_clear(printer_id):
+            raise HTTPException(409, "The previous plate has not been cleared; mark the printer ready first")
+        busy = await session.execute(
+            select(Job.id).where(Job.assigned_printer_id == printer_id, Job.status.in_(_BUSY_JOB_STATUSES)).limit(1))
+        if busy.first() is not None:
+            raise HTTPException(409, "A queued job currently holds this printer")
+        printer = await session.get(Printer, printer_id)
+        await _set_plate_gate(session, printer, printer_id, True)
+        started = False
+        try:
+            await steps()
+            started = True
+        finally:
+            if not started:
+                await _set_plate_gate(session, printer, printer_id, False)
+
+
+async def _set_plate_gate(session: AsyncSession, printer, printer_id: int, value: bool) -> None:
+    printer_manager.set_awaiting_plate_clear(printer_id, value)
+    if printer is not None:
+        printer.awaiting_plate_clear = value
+        await session.commit()
+
+
+_UPLOAD_EXTENSIONS = (".gcode", ".gcode.3mf", ".3mf", ".bgcode")
+_MAX_DIRECT_UPLOAD_BYTES = 300 * 1024 * 1024
+_BUSY_JOB_STATUSES = ("slicing", "sliced", "uploading", "printing", "paused")
+
+
+@router.post(
+    "/{printer_id}/upload",
+    summary="Upload a file to the printer, bypassing the queue",
+    responses={
+        **_CONSOLE_RESPONSES,
+        413: {"description": "File too large"},
+        422: {"description": "Unsupported file type"},
+    },
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def upload_to_printer(
+    printer_id: int,
+    file: UploadFile = File(...),
+    start: bool = Form(False),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Send a .gcode / .3mf / .bgcode file straight to the printer. With `start`, also begin printing it —
+    only when the printer is idle and no queued job holds it; the plate is then marked not-ready (same
+    gate as a queue-started print)."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "direct_upload", "direct upload")
+    name = os.path.basename((file.filename or "").replace("\\", "/"))
+    if not name or not name.lower().endswith(_UPLOAD_EXTENSIONS) or any(c in name for c in "\x00\r\n"):
+        raise HTTPException(422, f"Unsupported file; expected one of {', '.join(_UPLOAD_EXTENSIONS)}")
+    data = await file.read(_MAX_DIRECT_UPLOAD_BYTES + 1)
+    if len(data) > _MAX_DIRECT_UPLOAD_BYTES:
+        raise HTTPException(413, "File is larger than 300 MB")
+    if not start:
+        if not await asyncio.to_thread(client.upload_file, data, name):
+            raise HTTPException(502, "Printer rejected the upload")
+        return {"ok": True, "filename": name, "started": False}
+
+    async def steps() -> None:
+        if not await asyncio.to_thread(client.upload_file, data, name):
+            raise HTTPException(502, "Printer rejected the upload")
+        await _start_stored_file(client, name, "Uploaded, but the printer would not start the print")
+
+    await _direct_start(session, client, printer_id, steps)
+    return {"ok": True, "filename": name, "started": True}
+
+
+class FileRef(BaseModel):
+    file_id: str = Field(..., min_length=1, max_length=1024)
+
+
+_FILE_RESPONSES = {
+    **_CONSOLE_RESPONSES,
+    409: {"description": "Not supported by this printer, or the printer/queue state forbids it"},
+}
+
+
+@router.get(
+    "/{printer_id}/files",
+    summary="List files stored on a printer",
+    responses=_FILE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def list_files_on_printer(
+    printer_id: int, directory: str = "/", session: AsyncSession = Depends(get_session),
+) -> dict:
+    """One directory of the printer's own storage (`directory` is an entry id from a previous listing, `/` for
+    the root). Includes slicer metadata (print time, filament) where the protocol offers it."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "file_browser", "browsing its files")
+    try:
+        files = await _list_printer_files(client, directory)
+    except asyncio.TimeoutError:
+        raise HTTPException(502, "Timed out listing files")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:                       # login refused, port closed, 4xx/5xx from the printer…
+        raise HTTPException(502, f"Could not list files: {e}")
+    caps = client.get_capabilities()
+    return {"printer_id": printer_id, "directory": directory, "files": files,
+            "can_delete": caps.file_delete, "can_download": caps.file_download}
+
+
+@router.post(
+    "/{printer_id}/files/print",
+    summary="Print a file already stored on the printer",
+    responses=_FILE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def print_stored_file(printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session)) -> dict:
+    """Start a stored file. Same gate as a direct upload-and-print: the printer must be idle, its plate cleared
+    and not held by a queue job; it is then marked not-ready like any started print."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "file_browser", "browsing its files")
+    if not body.file_id.lower().endswith((".gcode", ".3mf", ".bgcode")):
+        raise HTTPException(422, "Not a printable file")
+
+    async def steps() -> None:
+        await _start_stored_file(client, body.file_id, "The printer would not start the print")
+
+    await _direct_start(session, client, printer_id, steps)
+    return {"ok": True, "file_id": body.file_id, "started": True}
+
+
+@router.delete(
+    "/{printer_id}/files",
+    summary="Delete a file from the printer",
+    responses=_FILE_RESPONSES,
+    dependencies=[Depends(require_scope("printers:control"))],
+)
+async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSession = Depends(get_session)) -> dict:
+    """Permanently remove a file from the printer's storage. Refused for the file currently being printed."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "file_delete", "deleting files")
+    if not client.is_idle:
+        # Not idle covers the start-up window too (heating/levelling) when state isn't RUNNING yet. Firmwares
+        # report the running file inconsistently (with/without extension, with a path), so compare stems, and
+        # when the name is unknown refuse rather than guess.
+        current = printer_manager.get_normalized_state(printer_id).get("current_print") or ""
+        if not current or _stem(current) == _stem(file_id):
+            raise HTTPException(409, "That file is (or may be) being printed right now")
+    return _ok_or_502(await asyncio.to_thread(client.delete_file, file_id))
+
+
+@router.post(
+    "/{printer_id}/files/to-library",
+    summary="Copy a file from the printer into the file library",
+    responses={**_FILE_RESPONSES, 413: {"description": "File too large"}, 422: {"description": "Not a library file type"}},
+    dependencies=[Depends(require_scope("files:write"))],
+)
+async def copy_stored_file_to_library(
+    printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
+    deduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused."""
+    await _get_or_404(printer_id, session)
+    client = _get_connected_client(printer_id)
+    _require_capability(client, "file_download", "downloading files")
+    name = os.path.basename(body.file_id)
+    if not name.lower().endswith((".3mf", ".stl")):
+        raise HTTPException(422, "Only .3mf and .stl files can be added to the library")
+    from ...services.abstract_printer_client import FileTooLargeError
+    try:
+        data = await asyncio.to_thread(client.download_file, body.file_id, _MAX_DIRECT_UPLOAD_BYTES)
+    except FileTooLargeError:
+        raise HTTPException(413, "File is larger than 300 MB")     # aborted mid-transfer, never fully buffered
+    if data is None:
+        raise HTTPException(502, "The printer would not hand over the file")
+    from io import BytesIO
+    from starlette.datastructures import UploadFile as StarletteUpload
+    from .files import upload_file as library_upload
+    # The route's own BackgroundTasks, so the thumbnail job the library upload queues actually runs.
+    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), background_tasks,
+                                "/From Printers", session)
+
+
 async def _activate_camera(client) -> None:
     """Enable the camera stream; runs the blocking call off the event loop."""
     if hasattr(client, "start_video_stream"):
@@ -727,42 +1180,43 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    await _activate_camera(client)
-
     if client.camera_mjpeg_url:
-        raw = stream_mjpeg(client.camera_mjpeg_url)
+        mjpeg_url, rtsp_url = client.camera_mjpeg_url, None
     elif client.camera_rtsp_url:
         from ...config import get_ffmpeg_executable
         if not shutil.which(get_ffmpeg_executable()):
             raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        raw = stream_rtsp_ffmpeg(client.camera_rtsp_url)
+        mjpeg_url, rtsp_url = None, client.camera_rtsp_url
     else:
         raise HTTPException(404, "No camera URL configured")
 
-    # Ping keepalive: Elegoo drops the MJPEG stream after 60 s of silence; ping every 45 s.
-    stop = asyncio.Event()
+    if not camera_hub.hub.has_stream(printer_id):
+        await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
 
-    async def _ping_loop():
-        while not stop.is_set():
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=45)
-            except asyncio.TimeoutError:
-                if hasattr(client, "ping_video_stream"):
-                    client.ping_video_stream()
+    async def upstream():
+        raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
+        async for chunk in raw:
+            yield chunk
 
-    ping_task = asyncio.create_task(_ping_loop())
+    # One upstream connection / ffmpeg per printer however many viewers (camera wall, several browsers);
+    # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
+    ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
+    if camera_hub.hub.is_full_for(printer_id):
+        raise HTTPException(429, "Too many camera streams open")
 
     async def _stream():
+        frames = camera_hub.hub.subscribe(printer_id, upstream, ping)
         try:
-            async for chunk in raw:
-                yield chunk
+            async for part in frames:
+                yield part
+        except camera_hub.HubFull:
+            return
         finally:
-            stop.set()
-            ping_task.cancel()
+            await frames.aclose()
 
     return StreamingResponse(
         _stream(),
-        media_type="multipart/x-mixed-replace; boundary=frame",
+        media_type=f"multipart/x-mixed-replace; boundary={camera_hub.BOUNDARY}",
     )
 
 
@@ -788,10 +1242,12 @@ async def snapshot_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    await _activate_camera(client)
+    async def grab():
+        await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
+        return await grab_snapshot_from_client(client)
 
     try:
-        jpeg = await grab_snapshot_from_client(client)
+        jpeg = await camera_hub.hub.snapshot(printer_id, grab)
     except Exception as exc:
         raise HTTPException(503, f"Camera unavailable: {exc}")
 

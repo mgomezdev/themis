@@ -140,4 +140,29 @@ describe('SlotSpoolPicker', () => {
     expect(screen.getByText(/No mapped profiles/)).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Generic PLA' })).toBeTruthy();
   });
+
+  it('shows where each spool is stored and what is left, in the list and once chosen', async () => {
+    const located = [{ ...spool2, location: ' Shelf B · Bin 3 ' }, spool5];
+    const { rerender } = render(
+      <SlotSpoolPicker slot={baseSlot} printerPreset={null} spools={located}
+        filaments={filaments} filamentProfiles={filamentProfiles} onChange={vi.fn()} />
+    );
+    await userEvent.click(screen.getByPlaceholderText('Search spools…'));
+    expect(screen.getByText('Shelf B · Bin 3 · 324g left')).toBeTruthy();   // trimmed location + grams
+    expect(screen.getByText('980g left')).toBeTruthy();                      // no location → grams only
+
+    rerender(
+      <SlotSpoolPicker slot={{ ...baseSlot, spoolman_spool_id: '2' }} printerPreset={null} spools={located}
+        filaments={filaments} filamentProfiles={filamentProfiles} onChange={vi.fn()} />
+    );
+    expect(screen.getByTestId('spool-location').textContent).toBe('Stored at Shelf B · Bin 3');
+  });
+
+  it('shows no location line for a spool without one', () => {
+    render(
+      <SlotSpoolPicker slot={{ ...baseSlot, spoolman_spool_id: '5' }} printerPreset={null} spools={spools}
+        filaments={filaments} filamentProfiles={filamentProfiles} onChange={vi.fn()} />
+    );
+    expect(screen.queryByTestId('spool-location')).toBeNull();
+  });
 });

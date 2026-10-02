@@ -14,17 +14,23 @@ import { CustomerPortal } from './screens/CustomerPortal';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
+import { PrinterConsoleScreen } from './screens/PrinterConsoleScreen';
 import { OrdersScreen }    from './screens/OrdersScreen';
 import { NewJobScreen }    from './screens/NewJobScreen';
 import { NewOrderScreen }  from './screens/NewOrderScreen';
 import { JobDetailScreen } from './screens/JobDetailScreen';
 import { EditJobScreen }    from './screens/EditJobScreen';
 import { FilesScreen }          from './screens/FilesScreen';
+import { PrinterFilesScreen }   from './screens/PrinterFilesScreen';
+import { AlarmsScreen }         from './screens/AlarmsScreen';
+import { CameraWallScreen }    from './screens/CameraWallScreen';
+import { useAlarmSummary }      from './api/alarms';
 import { SettingsScreen }       from './screens/SettingsScreen';
 import { ProjectsScreen }       from './screens/ProjectsScreen';
 import { ProjectBuilderScreen } from './screens/ProjectBuilderScreen';
 import { ProjectDetailScreen }  from './screens/ProjectDetailScreen';
 import { HistoryScreen }        from './screens/HistoryScreen';
+import { AnalyticsScreen }      from './screens/AnalyticsScreen';
 import { SharedProjectScreen }  from './screens/SharedProjectScreen';
 import { CustomersScreen }      from './screens/CustomersScreen';
 import { CustomerDetailScreen } from './screens/CustomerDetailScreen';
@@ -71,12 +77,37 @@ const BOTTOM_NAV_ITEMS = [
   { to: '/settings', label: 'Settings', icon: 'settings' },
 ] as const;
 
+// Destinations the four-slot bar has no room for; reachable from its "More" sheet.
+const MORE_NAV_ITEMS = [
+  { to: '/customers', label: 'Customers', icon: 'user'  },
+  { to: '/files',     label: 'Files',     icon: 'files' },
+  { to: '/printer-files', label: 'Printer files', icon: 'printer' },
+  { to: '/wall',      label: 'Camera wall', icon: 'camera' },
+  { to: '/alarms',    label: 'Alarms',    icon: 'alert' },
+  { to: '/history',   label: 'History',   icon: 'clock' },
+  { to: '/analytics', label: 'Analytics', icon: 'chart' },
+] as const;
+
 function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: number; blocked: number } }) {
   const location = useLocation();
+  const [moreOpen, setMoreOpen] = useState(false);
+  useEffect(() => setMoreOpen(false), [location.pathname]);
   const navigate = useNavigate();
   const path = '/' + location.pathname.split('/').filter(Boolean)[0];
   const total = queueCounts.active + queueCounts.pending + queueCounts.blocked;
   return (
+    <>
+    {moreOpen && (
+      <div className="more-sheet" role="menu" aria-label="More destinations">
+        {MORE_NAV_ITEMS.map(item => (
+          <button key={item.to} role="menuitem" className={`more-sheet-item ${path === item.to ? 'active' : ''}`}
+                  onClick={() => navigate(item.to)}>
+            {Icons[item.icon]}
+            <span>{item.label}</span>
+          </button>
+        ))}
+      </div>
+    )}
     <nav className="bottom-nav">
       {BOTTOM_NAV_ITEMS.map(item => (
         <button
@@ -91,7 +122,13 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
           <span>{item.label}</span>
         </button>
       ))}
+      <button className={`bottom-nav-item ${moreOpen || MORE_NAV_ITEMS.some(i => i.to === path) ? 'active' : ''}`}
+              aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen(o => !o)}>
+        {Icons.more}
+        <span>More</span>
+      </button>
     </nav>
+    </>
   );
 }
 
@@ -99,6 +136,7 @@ function AppShell() {
   const { jobs } = useQueue();
   const { config: queueConfig } = useQueueConfig();
   const [printers] = useFleetData();
+  const alarmSummary = useAlarmSummary();
   const queueCounts = useMemo(() => ({
     active:  jobs.filter(j => ['printing','paused','slicing','uploading'].includes(j.status)).length,
     pending: jobs.filter(j => j.status === 'queued').length,
@@ -143,6 +181,9 @@ function AppShell() {
     '/jobs/edit':   { title: 'Edit job settings', crumbs: ['Workshop', 'Job queue'] },
     '/files':      { title: 'Model library',     crumbs: ['Workshop'],
                      actions: <button className="btn primary sm">{Icons.upload} Upload</button> },
+    '/printer-files': { title: 'Printer files',    crumbs: ['Workshop'] },
+    '/alarms':       { title: 'Alarms',           crumbs: ['Workshop'] },
+    '/wall':         { title: 'Camera wall',      crumbs: ['Workshop'] },
     '/projects':        { title: 'Projects',      crumbs: ['Workshop'],
                          actions: <button className="btn primary sm" onClick={() => navigate('/projects/new')}>{Icons.plus} New project</button> },
     '/projects/new':    { title: 'New project',  crumbs: ['Workshop', { label: 'Projects', to: '/projects' }] },
@@ -152,6 +193,7 @@ function AppShell() {
                            actions: <button className="btn primary sm" onClick={() => navigate('/customers?new=1')}>{Icons.plus} New customer</button> },
     '/customers/detail': { title: 'Customer',  crumbs: ['Workshop', { label: 'Customers', to: '/customers' }] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
+    '/analytics':  { title: 'Analytics',         crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -181,7 +223,7 @@ function AppShell() {
 
   return (
     <div className="app" data-nav={navCollapsed ? 'collapsed' : 'expanded'}>
-      <Sidebar queueCounts={queueCounts}
+      <Sidebar queueCounts={queueCounts} alarmCount={alarmSummary.count} alarmWorst={alarmSummary.worst}
                operatorName={queueConfig?.operator_name ?? null} printerCount={printers.length}
                collapsed={navCollapsed} onToggle={() => setNavCollapsed(c => !c)} />
       <div className="main">
@@ -194,12 +236,16 @@ function AppShell() {
             <Route path="/queue"        element={<QueueScreen />} />
             <Route path="/queue/new"    element={<NewJobScreen />} />
             <Route path="/fleet"        element={<FleetScreen />} />
+            <Route path="/fleet/:id/console" element={<PrinterConsoleScreen />} />
             <Route path="/orders"       element={<OrdersScreen />} />
             <Route path="/orders/new"   element={<NewOrderScreen />} />
             <Route path="/orders/:id/edit" element={<NewOrderScreen />} />
             <Route path="/jobs/:id"        element={<JobDetailScreen />} />
             <Route path="/jobs/:id/edit"   element={<EditJobScreen />} />
             <Route path="/files"           element={<FilesScreen />} />
+            <Route path="/printer-files"   element={<PrinterFilesScreen />} />
+            <Route path="/alarms"          element={<AlarmsScreen />} />
+            <Route path="/wall"            element={<CameraWallScreen />} />
             <Route path="/projects"            element={<ProjectsScreen />} />
             <Route path="/projects/new"        element={<ProjectBuilderScreen />} />
             <Route path="/projects/:id"        element={<ProjectDetailScreen />} />
@@ -207,6 +253,7 @@ function AppShell() {
             <Route path="/customers"      element={<CustomersScreen />} />
             <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
+            <Route path="/analytics"      element={<AnalyticsScreen />} />
             {/* Customers used to live under Settings. */}
             <Route path="/settings/customers" element={<Navigate to="/customers" replace />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />

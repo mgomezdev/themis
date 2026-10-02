@@ -243,6 +243,23 @@ describe('App - navigation chrome', () => {
     expect(active()).toEqual(['Fleet']);
   });
 
+  it('bottom bar "More" sheet reaches the screens with no slot, highlights the bar, and closes on navigation', async () => {
+    boot('/fleet');
+    await screenText();
+    const bar = document.querySelector('nav.bottom-nav') as HTMLElement;
+
+    expect(screen.queryByRole('menu')).toBeNull();
+    await userEvent.click(within(bar).getByRole('button', { name: 'More' }));
+    const menu = screen.getByRole('menu', { name: 'More destinations' });
+    expect(within(menu).getAllByRole('menuitem').map(i => i.textContent)).toEqual(['Customers', 'Files', 'Printer files', 'Camera wall', 'Alarms', 'History', 'Analytics']);
+
+    await userEvent.click(within(menu).getByRole('menuitem', { name: 'History' }));
+
+    expect(pathname()).toBe('/history');
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(Array.from(bar.querySelectorAll('.active')).map(b => b.textContent)).toEqual(['More']);
+  });
+
   it('sidebar lists the settings pages only while on a settings route', async () => {
     boot('/fleet');
     await screenText();

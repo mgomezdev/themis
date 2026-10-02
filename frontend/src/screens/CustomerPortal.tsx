@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { clearApiKey } from '../auth/apiKeyStore';
 import {
-  createDraft, listMyProjects, updateDraft, uploadToDraft, type PortalProject,
+  acceptQuote, createDraft, listMyProjects, updateDraft, uploadToDraft, type PortalProject,
 } from '../api/customers';
+import { methodLabel } from '../api/payments';
+import { fmtDate, fmtMoney } from '../data/helpers';
 
 const STAGE_LABEL: Record<string, string> = { draft: 'Draft', planning: 'Planning', queued: 'In production' };
 
@@ -49,6 +51,59 @@ function DraftEditor({ project, onSaved }: { project: PortalProject; onSaved: (p
   );
 }
 
+/** The customer's view of what a project costs, what they've paid and what's left. Shown only once staff allow it. */
+function QuoteCard({ project, onChanged }: { project: PortalProject; onChanged: (p: PortalProject) => void }) {
+  const q = project.quote;
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!q) return null;
+
+  async function accept() {
+    setBusy(true); setError(null);
+    try { onChanged(await acceptQuote(project.id)); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div data-testid="quote" style={{ marginTop: 16 }}>
+      <div className="tag-key">Quote</div>
+      <div className="row gap-4" style={{ marginTop: 6, flexWrap: 'wrap' }}>
+        <div><div className="small muted">Price</div><div className="num" style={{ fontSize: 18 }}>{fmtMoney(q.price)}</div></div>
+        <div><div className="small muted">Paid</div><div className="num" style={{ fontSize: 18 }}>{fmtMoney(q.paid)}</div></div>
+        <div>
+          <div className="small muted">Balance</div>
+          <div className="num" data-testid="quote-balance" style={{ fontSize: 18, color: q.balance > 0 ? 'var(--warn)' : 'var(--ok)' }}>
+            {q.balance > 0 ? fmtMoney(q.balance) : 'Paid in full'}
+          </div>
+        </div>
+      </div>
+
+      {q.payments.length > 0 && (
+        <table className="small" style={{ width: '100%', marginTop: 8 }}>
+          <thead><tr><th align="left">Received</th><th align="left">Method</th><th align="right">Amount</th></tr></thead>
+          <tbody>
+            {q.payments.map(p => (
+              <tr key={p.id}><td>{fmtDate(p.received_on)}</td><td>{methodLabel(p.method)}</td><td align="right">{fmtMoney(p.amount)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      <div className="row gap-2" style={{ marginTop: 10, alignItems: 'center' }}>
+        {q.accepted_at ? (
+          <span className="small" style={{ color: 'var(--ok)' }}>
+            You accepted this quote on {new Date(q.accepted_at).toLocaleDateString()}.
+          </span>
+        ) : (
+          <button className="btn primary sm" disabled={busy} onClick={accept}>Accept quote</button>
+        )}
+        {error && <span className="small" style={{ color: 'var(--err)' }}>{error}</span>}
+      </div>
+    </div>
+  );
+}
+
 function ProjectDetail({ project, onChanged }: { project: PortalProject; onChanged: (p: PortalProject) => void }) {
   return (
     <div className="card" style={{ padding: 20 }}>
@@ -61,6 +116,8 @@ function ProjectDetail({ project, onChanged }: { project: PortalProject; onChang
       ) : (
         project.notes && <p className="small muted" style={{ whiteSpace: 'pre-wrap' }}>{project.notes}</p>
       )}
+
+      <QuoteCard project={project} onChanged={onChanged} />
 
       <div style={{ marginTop: 16 }}>
         <div className="tag-key">Files</div>
@@ -120,6 +177,10 @@ export function CustomerPortal() {
   }
 
   const selected = projects?.find(p => p.id === selectedId) ?? null;
+  // Money overview across the projects whose price staff have made visible (others contribute nothing).
+  const quoted = (projects ?? []).filter(p => p.quote);
+  const owed = quoted.reduce((sum, p) => sum + (p.quote?.balance ?? 0), 0);
+  const owing = quoted.filter(p => (p.quote?.balance ?? 0) > 0).length;
 
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', padding: 24 }}>
@@ -128,6 +189,16 @@ export function CustomerPortal() {
         <button className="btn ghost sm" onClick={signOut}>Sign out</button>
       </div>
       {error && <div className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{error}</div>}
+
+      {quoted.length > 0 && (
+        <div className="card" data-testid="balance-overview" style={{ padding: '12px 16px', marginBottom: 16 }}>
+          <div className="small muted">Outstanding balance</div>
+          <div className="num" style={{ fontSize: 22, color: owed > 0 ? 'var(--warn)' : 'var(--ok)' }}>
+            {owed > 0 ? fmtMoney(owed) : 'All paid up'}
+          </div>
+          {owed > 0 && <div className="small muted">across {owing} {owing === 1 ? 'project' : 'projects'}</div>}
+        </div>
+      )}
 
       <form onSubmit={submitNew} className="row gap-2" style={{ marginBottom: 16 }}>
         <input className="input" value={newName} onChange={e => setNewName(e.target.value)}
@@ -146,6 +217,7 @@ export function CustomerPortal() {
                 <div style={{ fontWeight: 500 }}>{p.name}</div>
                 <div className="tiny muted">
                   {STAGE_LABEL[p.stage] ?? p.stage} · {p.jobs_complete}/{p.jobs_total} jobs
+                  {p.quote && p.quote.balance > 0 ? ` · ${fmtMoney(p.quote.balance)} due` : ''}
                 </div>
               </button>
             ))}

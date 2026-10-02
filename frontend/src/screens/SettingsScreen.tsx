@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { CostSettings } from '../components/CostSettings';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools,
+  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useFilaments,
   useSpoolmanConfig, useSpoolmanSyncStatus, spoolmanSyncTone, type SpoolmanSyncStatus,
 } from '../api/spoolman';
+import { LowStockSettings } from '../components/LowStockSettings';
 import { getQueueConfig, saveQueueConfig, type QueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
@@ -33,6 +35,7 @@ import {
 import { StatusPill, Empty } from '../components/ui';
 import { getAdminAccount, setAdminPassword, setAllowLocalLogin, type AdminAccount } from '../api/adminAccount';
 import type { StatusKey } from '../data/types';
+import { useBuildInfo, shortSha } from '../api/version';
 
 // =========================================================================
 // Local icons not in the main Icons set
@@ -817,6 +820,7 @@ function SpoolmanPage() {
 
   const { status: syncStatus, refetch: refetchSyncStatus } = useSpoolmanSyncStatus();
   const spools = useSpools(s.connectionStatus === 'connected');
+  const filaments = useFilaments(s.connectionStatus === 'connected');
 
   const stats = useMemo(() => ({
     spools: spools.length,
@@ -962,6 +966,8 @@ function SpoolmanPage() {
             </div>
           )}
 
+          {isConnected && <LowStockSettings filaments={filaments} />}
+
           {s.enabled && syncStatus && <SyncDetails status={syncStatus} />}
 
           <div style={{ marginTop: 24, marginBottom: 4, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
@@ -1059,6 +1065,7 @@ function AboutTile({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 }
 
 function AboutPage() {
+  const build = useBuildInfo();
   return (
     <div className="card" style={{ padding: 28 }}>
       <PageHeader title="About Themis" />
@@ -1080,6 +1087,7 @@ function AboutPage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
         <AboutTile k="Version" v={__APP_VERSION__} mono />
+        <AboutTile k="Commit" v={build ? shortSha(build.git_sha) : '…'} mono />
       </div>
     </div>
   );
@@ -1229,7 +1237,7 @@ function FleetBackupPage() {
 // Webhook page
 // =========================================================================
 
-const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
 
 function WebhookPage() {
   const [url, setUrl] = useState('');
@@ -1300,7 +1308,7 @@ function WebhookPage() {
           style={{ width: '100%' }}
         />
       </FieldRow>
-      <FieldRow label="Events" hint="Which job state transitions fire a request.">
+      <FieldRow label="Events" hint="Which events fire a request: job state changes, and spools running low.">
         <div className="col" style={{ gap: 10 }}>
           {ALL_WEBHOOK_EVENTS.map(ev => (
             <label key={ev} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
@@ -1324,7 +1332,7 @@ function WebhookPage() {
 // Notifications page
 // =========================================================================
 
-const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked'];
+const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
 
 function EventCheckboxes({ events, onToggle }: { events: string[]; onToggle: (ev: string) => void }) {
   return (
@@ -2091,7 +2099,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -2105,7 +2113,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -2126,6 +2134,7 @@ export function SettingsScreen() {
       items: [
         { id: 'tags',          label: 'Tags',           icon: SettingsIcons.tag,     sub: 'Manage labels across files & jobs' },
         { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Queue interval & profile rescan' },
+        { id: 'costs',         label: 'Costs',          icon: Icons.layers,          sub: 'Machine & labour rates' },
         { id: 'maintenance',   label: 'Maintenance',    icon: SettingsIcons.maintenance, sub: 'Recurring printer upkeep & schedules' },
       ],
     },
@@ -2176,6 +2185,7 @@ export function SettingsScreen() {
       {/* page content */}
       {activePage === 'tags'              && <TagsPage />}
       {activePage === 'print'             && <PrintDefaultsPage />}
+      {activePage === 'costs'             && <CostSettings />}
       {activePage === 'maintenance'        && <MaintenancePage />}
       {activePage === 'spoolman'          && <SpoolmanPage />}
       {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}

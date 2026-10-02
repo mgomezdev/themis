@@ -107,7 +107,7 @@ async def send_email(
 async def dispatch(
     cfg: "NotificationConfig",
     event: str,
-    job_id: int,
+    job_id: int | None,
     title: str,
     message: str,
 ) -> None:

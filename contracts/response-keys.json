@@ -17,7 +17,9 @@
     "total_layers",
     "temperatures",
     "capabilities",
-    "current_print"
+    "current_print",
+    "alarm_count",
+    "alarm_severity"
   ],
   "fleet_printer_connected_only": [
     "fan_model",
@@ -39,7 +41,10 @@
     "build_plate_type",
     "no_snapshots_while_idle",
     "bed_x_mm",
-    "bed_y_mm"
+    "bed_y_mm",
+    "machine_rate_per_hour",
+    "quiet_start",
+    "quiet_end"
   ],
   "queue_job": [
     "id",
@@ -74,7 +79,8 @@
     "estimate_preset_label",
     "created_at",
     "updated_at",
-    "filament_cost"
+    "filament_cost",
+    "not_before"
   ],
   "job_details_extra": [
     "file",
@@ -115,7 +121,10 @@
     "estimate_seconds_remaining",
     "actual_filament_grams",
     "actual_seconds",
-    "filament_cost_total"
+    "filament_cost_total",
+    "costs",
+    "price_visible",
+    "quote_accepted_at"
   ],
   "project_item": [
     "id",
@@ -145,7 +154,8 @@
     "quantity",
     "allocated",
     "sort_order",
-    "created_at"
+    "created_at",
+    "unit_cost"
   ],
   "project_job": [
     "id",
@@ -173,5 +183,153 @@
     "tags",
     "thumbnail_url",
     "plate_thumbnails"
+  ],
+  "project_payment": [
+    "id",
+    "project_id",
+    "amount",
+    "received_on",
+    "method",
+    "note",
+    "created_at"
+  ],
+  "customer_payment": [
+    "id",
+    "project_id",
+    "amount",
+    "received_on",
+    "method",
+    "note",
+    "created_at",
+    "project_name"
+  ],
+  "project_labor": [
+    "id",
+    "project_id",
+    "minutes",
+    "logged_on",
+    "note",
+    "created_at"
+  ],
+  "project_costs": [
+    "filament",
+    "machine",
+    "labour",
+    "parts",
+    "machine_hours",
+    "labour_hours",
+    "total"
+  ],
+  "cost_config": [
+    "machine_rate_per_hour",
+    "labour_rate_per_hour"
+  ],
+  "portal_project": [
+    "id",
+    "name",
+    "notes",
+    "stage",
+    "due_date",
+    "created_at",
+    "updated_at",
+    "items",
+    "jobs",
+    "jobs_total",
+    "jobs_complete",
+    "quote"
+  ],
+  "portal_quote": [
+    "price",
+    "paid",
+    "balance",
+    "accepted_at",
+    "payments"
+  ],
+  "portal_payment": [
+    "id",
+    "received_on",
+    "amount",
+    "method"
+  ],
+  "analytics": [
+    "range",
+    "totals",
+    "printers",
+    "materials"
+  ],
+  "analytics_range": [
+    "start",
+    "end",
+    "days"
+  ],
+  "analytics_totals": [
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_printer": [
+    "printer_id",
+    "name",
+    "utilization_pct",
+    "completed",
+    "failed",
+    "cancelled",
+    "success_rate",
+    "print_seconds",
+    "filament_grams",
+    "filament_cost"
+  ],
+  "analytics_material": [
+    "material",
+    "grams",
+    "jobs"
+  ],
+  "printer_file": [
+    "id",
+    "name",
+    "size",
+    "modified_at",
+    "is_dir",
+    "metadata",
+    "printable"
+  ],
+  "printer_files_listing": [
+    "printer_id",
+    "directory",
+    "files",
+    "can_delete",
+    "can_download"
+  ],
+  "printer_files_merged": [
+    "printer_id",
+    "printer_name",
+    "files",
+    "error",
+    "can_delete",
+    "can_download"
+  ],
+  "printer_alarm": [
+    "id",
+    "printer_id",
+    "printer_name",
+    "code",
+    "severity",
+    "message",
+    "source",
+    "help_url",
+    "first_seen",
+    "last_seen",
+    "resolved_at",
+    "acknowledged_at",
+    "active"
+  ],
+  "alarm_summary": [
+    "count",
+    "worst",
+    "printers"
   ]
 }

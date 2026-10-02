@@ -54,6 +54,9 @@ export interface ApiPrinter {
   no_snapshots_while_idle: boolean;
   bed_x_mm: number;
   bed_y_mm: number;
+  machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
+  quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
+  quiet_end: string | null;
 }
 
 export interface CreatePrinterBody {
@@ -77,6 +80,9 @@ export interface UpdatePrinterBody {
   no_snapshots_while_idle?: boolean;
   bed_x_mm?: number;
   bed_y_mm?: number;
+  machine_rate_per_hour?: number | null;
+  quiet_start?: string | null;
+  quiet_end?: string | null;
 }
 
 export interface MachinePreset {
@@ -186,6 +192,50 @@ export function setBedTemp(id: string, celsius: number): Promise<void> {
   });
 }
 
+export type Axis = 'X' | 'Y' | 'Z';
+
+export function jogAxis(id: string | number, axis: Axis, distanceMm: number): Promise<void> {
+  return request(`${BASE}/${id}/jog`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ axis, distance_mm: distanceMm }),
+  });
+}
+
+export function homePrinter(id: string | number, axes: 'all' | Axis = 'all'): Promise<void> {
+  return request(`${BASE}/${id}/home`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ axes }),
+  });
+}
+
+export function setNozzleTemp(id: string | number, celsius: number): Promise<void> {
+  return request(`${BASE}/${id}/nozzle-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ celsius }),
+  });
+}
+
+export function setChamberTemp(id: string | number, celsius: number): Promise<void> {
+  return request(`${BASE}/${id}/chamber-temp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ celsius }),
+  });
+}
+
+/** Send a gcode/3mf/bgcode file straight to the printer, bypassing the queue; `start` also begins printing it. */
+export function uploadToPrinter(
+  id: string | number, file: File, start: boolean,
+): Promise<{ ok: boolean; filename: string; started: boolean }> {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('start', start ? 'true' : 'false');
+  return request(`${BASE}/${id}/upload`, { method: 'POST', body: form });
+}
+
 export function reconnectPrinter(id: string): Promise<void> {
   return request(`${BASE}/${id}/reconnect`, { method: 'POST' });
 }
@@ -194,4 +244,32 @@ export function reconnectPrinter(id: string): Promise<void> {
  *  Same endpoint a QR code / home-automation trigger would hit. */
 export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> {
   return request(`${BASE}/${id}/plate-cleared`, { method: 'POST' });
+}
+
+export interface DiscoveredPrinter {
+  printer_type: string;
+  display_name: string;
+  ip: string;
+  model: string | null;
+  name: string | null;
+  serial: string | null;
+  connection_config: Record<string, string | number>;
+  note: string | null;
+  already_added: boolean;
+}
+
+export interface DiscoveryResult {
+  ranges: string[];
+  scanned: number;
+  truncated: boolean;
+  found: DiscoveredPrinter[];
+}
+
+/** Sweep the given IP ranges (empty = the server's own /24) for printers answering a vendor's discovery signature. */
+export function discoverPrinters(ranges: string[]): Promise<DiscoveryResult> {
+  return request(`${BASE}/discover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ranges }),
+  });
 }

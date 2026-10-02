@@ -38,6 +38,17 @@ export interface ProjectLink {
   created_at: string;
 }
 
+/** Filament + machine time + labour + bought-in parts, at the *current* rates (see Settings → Costs). */
+export interface ProjectCosts {
+  filament: number;
+  machine: number;
+  labour: number;
+  parts: number;
+  machine_hours: number;
+  labour_hours: number;
+  total: number;
+}
+
 export interface ProjectPart {
   id: number;
   project_id: number;
@@ -46,6 +57,7 @@ export interface ProjectPart {
   allocated: boolean;
   sort_order: number;
   created_at: string;
+  unit_cost: number | null;   // cost of one unit; the parts expense is quantity × unit_cost
 }
 
 export type PaymentStatus = 'unpaid' | 'partial' | 'paid';
@@ -65,6 +77,9 @@ export interface Project {
   amount_paid: number | null;
   price: number | null;     // quoted total; outstanding = price - amount_paid
   payment_status: PaymentStatus;
+  costs: ProjectCosts;               // what it cost to make, at the current shop rates
+  price_visible: boolean;           // staff decide when the customer portal shows the quote
+  quote_accepted_at: string | null; // when the customer accepted the visible quote
   stage: ProjectStage;
   customer_id: number | null;
   customer_name: string | null;  // name of the linked customer account, if any
@@ -117,6 +132,7 @@ export interface ProjectCreate {
   amount_paid?: number | null;
   price?: number | null;
   payment_status?: PaymentStatus;
+  price_visible?: boolean;
   customer_id?: number | null;
 }
 
@@ -207,6 +223,7 @@ export interface ProjectPartCreate {
   quantity: number;
   allocated?: boolean;
   sort_order?: number;
+  unit_cost?: number | null;
 }
 
 export const getProjectParts = (projectId: number) =>

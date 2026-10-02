@@ -60,6 +60,7 @@ trigger math, never reset except by construction (per-item resets live on `print
   For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
   (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped); for
   others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
+`quiet_start` / `quiet_end: str?` (v028) — server-local `HH:MM` window (wraps midnight; both or neither, validated in `PrinterUpdate`) in which a *ready* printer starts no new jobs (neither claims nor resumes pre-sliced gcode); running prints are never interrupted and offline slice-ahead still happens. The end of a window is noticed at the next periodic queue check (no dedicated wake). The UI times are server-local (UTC in a default Docker container). Logic in `services/scheduling.py::in_quiet_hours`.
 
 ### uploaded_files
 `id, original_filename, stored_path, plates: JSON, uploaded_at`.
@@ -113,6 +114,9 @@ deduct consumed filament from Spoolman (e.g. no matched spool) — see `queue_en
 `estimate_token: int=0, estimate_status: str?` (`pending|done|failed|null`), `estimate_seconds: int?,
 estimate_filament_grams: float?, estimate_filament_breakdown: JSON?, estimate_preset_label: JSON?`.
 
+`printed_on_printer_id: int?` (v025, plain integer — no FK; `delete_printer` nulls it) — the printer the job ran on, set when it enters `printing` (and by complete-manually), never cleared; unlike `assigned_printer_id` (nulled on fail/cancel) it lets fleet analytics attribute failures. Analytics falls back to `assigned_printer_id` for pre-v025 rows.
+`not_before: str?` (v028) — UTC ISO instant before which the queue engine won't start the job (null = ASAP). The claim and resume-sliced queries skip a not-yet-due job (it does **not** block the head of the line — jobs behind it run), offline printers don't pre-slice it, and the engine's idle wait is capped at the earliest future `not_before` (`_seconds_until_next_schedule`) so it starts on time. Set on `POST /jobs {not_before}` or `PATCH /jobs/{id}/schedule` (queued/blocked only, else 409; null clears + wakes the engine).
+
 `filament_cost: float?` — manually-entered cost of the filament used for this job (never computed from
 Spoolman pricing), for future profit/loss reporting. Set via `PATCH /api/v1/jobs/{id}/cost`; not touched
 by any other route. Summed (non-null values only) into `filament_cost_total` on the linked order
@@ -151,6 +155,9 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
 
+### printer_alarms (v030)
+`id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
+
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-slice estimate pipeline
@@ -158,7 +165,9 @@ estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-sl
 Managed via `GET/PUT /api/v1/settings/queue`.
 
 `spoolman_config{enabled, url?, api_key?, sync_interval_minutes:int=15, last_sync_at?, last_attempt_at?,
-last_sync_error?, last_sync_error_code?}`. Managed via `GET/PUT /api/v1/settings/spoolman`,
+last_sync_error?, last_sync_error_code?, low_stock_default_g?: float, low_stock_overrides?: {filament_id: grams},
+low_stock_alerted?: [spool_id] (v026)}`. The low-stock trio drives `spool.low` alerts (`services/spool_alerts.py`; managed via
+`GET/PUT /api/v1/spoolman/low-stock`; `low_stock_alerted` is service-written state). Managed via `GET/PUT /api/v1/settings/spoolman`,
 `POST /api/v1/settings/spoolman/test`. The last four sync-status fields are written only by
 `spoolman_sync.record_sync()` (called by the manual `POST /api/v1/spoolman/sync-now` and by
 `spoolman_sync.SpoolmanSyncLoop`'s periodic background sync, paced by `sync_interval_minutes`); a
@@ -184,6 +193,28 @@ the firing event in their own list; fired via `asyncio.create_task` (never await
 `webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
 `POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
 
+### Job costing (v028): cost_config, project_labor, printers.machine_rate_per_hour, project_parts.unit_cost
+A project's real cost = **filament** (manually entered `jobs.filament_cost`) + **machine** (each *completed* job's
+`actual_seconds` × the rate of the printer it ran on: `printers.machine_rate_per_hour` if set, else the shop rate) +
+**labour** (`project_labor.minutes` × shop labour rate; rows: `project_id` CASCADE, `minutes`, `logged_on`, `note?`)
++ **parts** (`project_parts.quantity × unit_cost`, parts with no cost add nothing). `cost_config` is a singleton
+(`machine_rate_per_hour`, `labour_rate_per_hour`, default 0) managed at `GET/PUT /api/v1/settings/costs`. Rates are
+applied **live**, never snapshotted: changing one re-prices past jobs. `services/job_costs.py` computes it
+(`compute`, `costs_by_project`); `GET /projects/{id}` carries `costs {filament, machine, labour, parts, machine_hours,
+labour_hours, total}`; customer financial `expenses`/`profit` use the total and each window adds `expense_breakdown`.
+Labour log: `/api/v1/projects/{id}/labor` (`routes/labor.py`, `projects:read`/`write`). Machine time uses the slicer's
+`actual_seconds` (not measured) and the printer in `assigned_printer_id`.
+
+### project_payments (v024)
+`id, project_id FK → projects (CASCADE), amount: float (>0), received_on: "YYYY-MM-DD" (day the money
+arrived; not in the future), method: cash|card|bank_transfer|check|other, note?, created_at`. CRUD at
+`/api/v1/projects/{id}/payments` (`routes/payments.py`, scopes `projects:read`/`projects:write`); cross-project
+history at `GET /api/v1/customers/{id}/payments` (newest first, adds `project_name`). v024 back-fills one
+"opening balance" payment per project with `amount_paid > 0`, dated the project's creation day. Customer
+financial **revenue is cash-basis** — payments count in the windows containing `received_on`; projects with no
+payment rows fall back to their creation date; expenses/billed/outstanding/`project_count` stay bucketed by
+project creation date.
+
 ### projects
 `id, name, customer:str="", order_type:str="internal"` (`"customer"`|`"internal"` — same vocabulary as
 `orders.order_type`, but this is the project's own field, not a copy of the linked order's), `on_hold:
@@ -199,10 +230,16 @@ price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `st
   (`source_app="ordinus"`, `source_layout_id=<ordinus BOM id>`).
 - `customer`/`order_type`/`on_hold`/`due_date` are the project's own customer-facing fields (set/edited
   directly via the Project Builder), independent of whether it's linked to an `orders` row.
-- `amount_paid`/`payment_status`: manually-entered customer payment tracking, independent of the linked
-  order's own copy (a project isn't required to have one) — for future profit/loss reporting.
+- `amount_paid`/`payment_status`: **derived from `project_payments`** once a project has any payment row
+  (`services/payments.py`: unpaid = nothing received; paid = received ≥ `price`; else partial; no price →
+  partial). `PATCH` that *changes* either field → 409 while payments exist (echoing current values is fine); with no payment rows they stay manually
+  settable (legacy API clients such as Ordinus, and "marked paid, no amount"). Adding the first payment
+  adopts a hand-entered `amount_paid` as an opening payment; creating a project with `amount_paid>0` records
+  it as one too; a `price` change re-derives the status; deleting the last payment resets to unpaid/null.
+  Independent of the linked order's own copy.
   `filament_cost_total` (derived, not stored — `projects.py::_project_progress`) sums `jobs.filament_cost`
   across the project's jobs, alongside the existing `actual_filament_grams`/`actual_seconds` aggregates.
+- `price_visible: bool` / `quote_accepted_at?` (v027): staff-controlled flag for showing the quote in the customer portal (`PATCH /projects/{id} {price_visible}`; the project page has a "Show price to customer" checkbox) and when the customer accepted it (`POST /api/v1/customer/projects/{id}/quote/accept`: idempotent, moves a `draft` to `planning`, 409 with nothing visible; cleared when `price` later changes). The portal's `quote` ({price, paid, balance, accepted_at, payments[{id, received_on, amount, method}]}) is `null` unless `price_visible` and a price exist, and never carries costs, profit, filament spend or payment notes.
 - `price` (v023): quoted total. Outstanding balance = `max(price - amount_paid, 0)` unless
   `payment_status == "paid"`; no price → no known balance. Responses also carry derived
   `customer_name` (the linked `customers.name`, or null).

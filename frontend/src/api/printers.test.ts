@@ -7,6 +7,11 @@ import {
   jogZ,
   setFanSpeed,
   setBedTemp,
+  jogAxis,
+  homePrinter,
+  setNozzleTemp,
+  setChamberTemp,
+  uploadToPrinter,
 } from './printers';
 
 function mockOkFetch() {
@@ -136,5 +141,44 @@ describe('setBedTemp', () => {
     await setBedTemp('6', 0);
     const [, init] = stubFetch().mock.calls[0];
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ celsius: 0 });
+  });
+});
+
+describe('console commands', () => {
+  const call = () => stubFetch().mock.calls[0] as [string, RequestInit];
+
+  it('jogAxis POSTs axis and signed distance', async () => {
+    await jogAxis(4, 'X', -10);
+    const [url, init] = call();
+    expect(url).toBe('/api/v1/printers/4/jog');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual({ axis: 'X', distance_mm: -10 });
+  });
+
+  it('homePrinter defaults to all axes, or names one', async () => {
+    await homePrinter(4);
+    expect(JSON.parse(call()[1].body as string)).toEqual({ axes: 'all' });
+    stubFetch().mockClear();
+    await homePrinter('4', 'Z');
+    expect(call()[0]).toBe('/api/v1/printers/4/home');
+    expect(JSON.parse(call()[1].body as string)).toEqual({ axes: 'Z' });
+  });
+
+  it.each([[setNozzleTemp, 'nozzle-temp'], [setChamberTemp, 'chamber-temp']])('setpoint %# POSTs celsius', async (fn, path) => {
+    await fn(4, 55);
+    expect(call()[0]).toBe(`/api/v1/printers/4/${path}`);
+    expect(JSON.parse(call()[1].body as string)).toEqual({ celsius: 55 });
+  });
+
+  it('uploadToPrinter sends multipart with the file and the start flag (and no JSON content type)', async () => {
+    const file = new File(['G28'], 'a.gcode');
+    await uploadToPrinter(4, file, true);
+    const [url, init] = call();
+    expect(url).toBe('/api/v1/printers/4/upload');
+    const form = init.body as FormData;
+    expect(form.get('file')).toBeInstanceOf(File);
+    expect((form.get('file') as File).name).toBe('a.gcode');
+    expect(form.get('start')).toBe('true');
+    expect(new Headers(init.headers).has('Content-Type')).toBe(false);   // the browser must set the multipart boundary itself
   });
 });

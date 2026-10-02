@@ -22,11 +22,15 @@ from fastapi.staticfiles import StaticFiles
 from .api.routes.admin_account import router as admin_account_router
 from .api.routes.api_keys import router as api_keys_router
 from .api.routes.customer_portal import router as customer_portal_router
+from .api.routes.cameras import router as cameras_router
 from .api.routes.customers import router as customers_router
 from .api.routes.files import router as files_router
 from .api.routes.orders import router as orders_router
+from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.alarms import router as alarms_router
+from .api.routes.labor import router as labor_router
 from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
@@ -43,6 +47,7 @@ from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
 from .services.slicer_service import SlicerService
 from .services.spoolman_sync import spoolman_sync_loop
+from .version import get_git_sha, get_version
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
 STATIC_DIR = Path(os.environ.get("THEMIS_STATIC_DIR", str(_default_static)))
@@ -83,6 +88,13 @@ async def lifespan(app: FastAPI):
         await migrate_legacy_uploads(
             _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
         await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
+
+    try:                                   # bound the alarm history (resolved alarms older than 90 days)
+        from .services import alarms as _alarms
+        async with SessionLocal() as _s:
+            await _alarms.purge_old(_s)
+    except Exception:
+        logging.getLogger("app").exception("Could not purge old alarms")
 
     loop = asyncio.get_running_loop()
 
@@ -158,6 +170,7 @@ app = FastAPI(
 app.add_api_websocket_route("/ws", websocket_endpoint)
 app.include_router(admin_account_router)
 app.include_router(api_keys_router)
+app.include_router(cameras_router)
 app.include_router(customers_router)
 app.include_router(customer_portal_router)
 app.include_router(session_router)
@@ -166,9 +179,12 @@ app.include_router(printers_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(alarms_router)
+app.include_router(labor_router)
 app.include_router(laminus_router)
 app.include_router(maintenance_router)
 app.include_router(projects_router)
+app.include_router(payments_router)
 app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
@@ -178,7 +194,7 @@ app.include_router(tags_router)
 
 @app.get("/api/v1/health", dependencies=[Depends(_api_key_header)])
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": get_version(), "git_sha": get_git_sha()}
 
 
 def _resolve_within(root_dir: Path, full_path: str) -> Path | None:

@@ -72,6 +72,7 @@ class MockPrinterClient(AbstractPrinterClient):
             file_upload=True,
             pause_resume=True,
             gcode=True,
+            axis_jog=True, home_axes=True, nozzle_temp=True, chamber_temp=True, direct_upload=True,
         )
 
     @property
@@ -79,4 +80,7 @@ class MockPrinterClient(AbstractPrinterClient):
         return True
 
     def upload_file(self, data: bytes, filename: str) -> bool:
+        return True
+
+    def set_chamber_temp(self, celsius: int) -> bool:
         return True

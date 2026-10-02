@@ -128,6 +128,8 @@ Every concrete subclass declares this as a class variable. The factory and statu
 | `send_gcode(gcode)` | **yes** | — |
 | `request_status_update()` | **yes** | — |
 | `home()` | no | `send_gcode("G28")` |
+| `jog(axis, distance_mm)` / `home_axes(axes)` | no | G-code defaults (G91/G1/G90, `G28 X Y`); gated by `axis_jog` / `home_axes` capabilities |
+| `set_nozzle_temp(c)` / `set_chamber_temp(c)` | no | nozzle default `M104` when `gcode_supported`; chamber default False; gated by `nozzle_temp` / `chamber_temp` |
 | `jog_z(distance_mm, force=False)` | no | G91/G1/G90 sequence; `force` wraps with `M211 S0`/`M211 S1` |
 | `set_chamber_light(on)` | no | Returns `False` (unsupported) |
 | `gcode_supported` | no (property) | Returns `True` |

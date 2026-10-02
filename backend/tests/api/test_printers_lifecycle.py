@@ -8,7 +8,7 @@ from app.services.printer_manager import printer_manager
 
 _PRINTER_KEYS = {"id", "name", "printer_type", "connection_config", "awaiting_plate_clear", "orca_printer_profiles",
                  "current_orca_printer_profile", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
-                 "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "connected"}  # ApiPrinter in src/api/printers.ts
+                 "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "machine_rate_per_hour", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
 
 
 @pytest.fixture
@@ -42,6 +42,7 @@ async def _get(client, printer_id: int) -> dict:
     ("no_snapshots_while_idle", True),
     ("bed_x_mm", 350.0),
     ("bed_y_mm", 300.0),
+    ("machine_rate_per_hour", 1.25),
 ])
 async def test_patch_changes_only_the_field_it_was_given(client, printer, field, value):
     before = await _get(client, printer["id"])

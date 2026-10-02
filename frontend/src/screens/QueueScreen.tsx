@@ -10,6 +10,22 @@ import { useQueue, useFilePlates, cancelJob, unblockJob, reorderJob, getSliceFai
 import { useFleetData } from '../api/fleet';
 import type { StatusKey } from '../data/types';
 import { apiFetch } from '../api/client';
+import { startsIn } from '../lib/schedule';
+
+/** Live "in 2h 15m" label for a scheduled job; ticks every 30s and disappears once the job is due. */
+function StartsIn({ iso }: { iso: string }) {
+  const [, setTick] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 30_000);
+    return () => clearInterval(t);
+  }, []);
+  const label = startsIn(iso);
+  return (
+    <span className="num" style={{ color: 'var(--accent-hi)' }} title={`Scheduled for ${new Date(iso).toLocaleString()}`}>
+      {label ?? 'due'}
+    </span>
+  );
+}
 
 // ---- DisplayJob: flattened shape for rendering ----
 interface DisplayJob {
@@ -19,6 +35,7 @@ interface DisplayJob {
   plateName: string;
   status: string;
   blockReason: string | null;
+  notBefore: string | null;
   materials: string[];
   eligiblePrinters: Array<{ id: number; name: string }>;
   estTime: number;
@@ -202,7 +219,7 @@ function JobCardRich({
             )}
           </div>
 
-          <div className="row gap-5" style={{ marginTop: 4 }}>
+          <div className="row gap-5 wrap" style={{ marginTop: 4, rowGap: 8 }}>
             {job.materials.length > 0 && (
               <Kv k="Material" v={
                 <div className="row gap-1">
@@ -232,6 +249,9 @@ function JobCardRich({
                 }
               />
             ) : null}
+            {!isActive && !isFailed && (job.status === 'queued' || isBlocked) && startsIn(job.notBefore) && (
+              <Kv k="Starts" v={<StartsIn iso={job.notBefore!} />} />
+            )}
             {!isActive && !isFailed && (
               <Kv k="Slicing" v={
                 isBlocked && job.blockReason?.toLowerCase().includes('slice')
@@ -782,6 +802,7 @@ export function QueueScreen() {
         plateName: `Plate ${j.plate_number}`,
         status: j.status,
         blockReason: j.block_reason ?? null,
+        notBefore: j.not_before ?? null,
         materials: j.materials ?? [],
         eligiblePrinters: j.eligible_printers ?? [],
         estTime,
@@ -860,8 +881,8 @@ export function QueueScreen() {
 
   return (
     <div
-      className="screen-grid"
-      style={{ gridTemplateColumns: selectedJob ? '1fr 360px' : '1fr', gap: 18 }}
+      className="screen-grid queue-grid"
+      data-selected={selectedJob ? 'true' : 'false'}
     >
       <div>
         {/* Summary strip — only shown for "all" filter */}
@@ -917,8 +938,8 @@ export function QueueScreen() {
         )}
 
         {/* Filter + actions */}
-        <div className="row between" style={{ marginBottom: 14 }}>
-          <div className="row gap-2">
+        <div className="row between wrap" style={{ marginBottom: 14 }}>
+          <div className="row gap-2 wrap">
             <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
               All{' '}
               <span className="num muted" style={{ marginLeft: 4 }}>

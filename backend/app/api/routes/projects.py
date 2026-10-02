@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,8 @@ from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
+from ...services import job_costs
+from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
@@ -90,6 +92,7 @@ class ProjectPatch(BaseModel):
     notes: Optional[str] = None
     amount_paid: Optional[float] = None
     price: Optional[float] = None  # send null to clear
+    price_visible: Optional[bool] = None  # show the quote (price, paid, balance) in the customer portal
     payment_status: Optional[str] = None
     customer_id: Optional[int] = None  # send null to unassign
 
@@ -158,6 +161,7 @@ class ProjectPartCreate(BaseModel):
     quantity: int = 1
     allocated: bool = False
     sort_order: int = 0
+    unit_cost: Optional[float] = Field(default=None, ge=0, le=1_000_000)
 
     @field_validator("quantity")
     @classmethod
@@ -172,6 +176,7 @@ class ProjectPartUpdate(BaseModel):
     quantity: Optional[int] = None
     allocated: Optional[bool] = None
     sort_order: Optional[int] = None
+    unit_cost: Optional[float] = Field(default=None, ge=0, le=1_000_000)  # send null to clear
 
     @field_validator("quantity")
     @classmethod
@@ -241,6 +246,7 @@ def _part_dict(part: ProjectPart) -> dict:
         "allocated": part.allocated,
         "sort_order": part.sort_order,
         "created_at": part.created_at,
+        "unit_cost": part.unit_cost,
     }
 
 
@@ -318,7 +324,7 @@ def _project_progress(job_rows: list[Job]) -> dict:
     }
 
 
-async def _project_dict(project: Project, session: AsyncSession) -> dict:
+async def _project_dict(project: Project, session: AsyncSession, costs: dict | None = None) -> dict:
     items = await _load_items(session, project.id)
     links = await _load_links(session, project.id)
     parts = await _load_parts(session, project.id)
@@ -344,6 +350,8 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "amount_paid": project.amount_paid,
         "price": project.price,
         "payment_status": project.payment_status,
+        "price_visible": project.price_visible,
+        "quote_accepted_at": project.quote_accepted_at,
         "stage": project.stage,
         "customer_id": project.customer_id,
         "customer_name": customer.name if customer else None,
@@ -352,6 +360,9 @@ async def _project_dict(project: Project, session: AsyncSession) -> dict:
         "items": items,
         "links": links,
         "parts": parts,
+        # Filament + machine + labour + parts (see services/job_costs.py); rates are the current settings.
+        "costs": costs if costs is not None else
+                 (await job_costs.costs_by_project(session, [project.id], {project.id: list(job_rows)}))[project.id],
         **progress,
     }
 
@@ -382,7 +393,14 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[di
             select(Project).order_by(Project.created_at.desc())
         )
     ).scalars().all()
-    return [await _project_dict(p, session) for p in rows]
+    # Costs for every listed project in a constant number of queries (not 4 per project).
+    ids = [p.id for p in rows]
+    jobs_by_project: dict[int, list[Job]] = {i: [] for i in ids}
+    if ids:
+        for j in (await session.execute(select(Job).where(Job.project_id.in_(ids)))).scalars().all():
+            jobs_by_project[j.project_id].append(j)
+    costs = await job_costs.costs_by_project(session, ids, jobs_by_project)
+    return [await _project_dict(p, session, costs[p.id]) for p in rows]
 
 
 @router.post("", status_code=201, summary="Create project",
@@ -412,6 +430,11 @@ async def create_project(
         updated_at=now,
     )
     session.add(proj)
+    await session.flush()
+    if proj.amount_paid and proj.amount_paid > 0:
+        # Record what was entered as a real payment so amount paid stays derived from payment rows.
+        await adopt_manual_amount(session, proj)
+        await sync_project_totals(session, proj)
     await session.commit()
     await session.refresh(proj)
     return await _project_dict(proj, session)
@@ -447,6 +470,15 @@ async def patch_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     proj = await _get_project_or_404(project_id, session)
+    changes_derived = (
+        (body.amount_paid is not None and round(body.amount_paid, 2) != round(proj.amount_paid or 0.0, 2))
+        or (body.payment_status is not None and body.payment_status != proj.payment_status)
+    )
+    # Echoing the current values back (a client PATCHing the whole object) is fine; changing them is not.
+    if changes_derived and await has_payments(session, project_id):
+        raise HTTPException(
+            409, "This project's amount paid and payment status come from its recorded payments — "
+                 "add, edit or delete a payment instead")
     if body.name is not None:
         proj.name = body.name
     if body.customer is not None:
@@ -459,14 +491,20 @@ async def patch_project(
         proj.due_date = body.due_date
     if body.notes is not None:
         proj.notes = body.notes
-    if body.amount_paid is not None:
+    if body.amount_paid is not None and not await has_payments(session, project_id):
         proj.amount_paid = body.amount_paid
     if "price" in body.model_fields_set:
+        if body.price != proj.price:
+            proj.quote_accepted_at = None   # what the customer accepted no longer matches
         proj.price = body.price
-    if body.payment_status is not None:
+    if body.price_visible is not None:
+        proj.price_visible = body.price_visible
+    if body.payment_status is not None and not await has_payments(session, project_id):
         proj.payment_status = body.payment_status
     if "customer_id" in body.model_fields_set:
         proj.customer_id = await _valid_customer_id(body.customer_id, session)
+    if "price" in body.model_fields_set:
+        await sync_project_totals(session, proj)  # paid/partial depends on the quoted price
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)
@@ -925,6 +963,7 @@ async def add_part(
         quantity=body.quantity,
         allocated=body.allocated,
         sort_order=body.sort_order,
+        unit_cost=body.unit_cost,
         created_at=_now_iso(),
     )
     session.add(part)
@@ -959,6 +998,8 @@ async def update_part(
         part.allocated = body.allocated
     if body.sort_order is not None:
         part.sort_order = body.sort_order
+    if "unit_cost" in body.model_fields_set:
+        part.unit_cost = body.unit_cost
     await session.commit()
     await session.refresh(part)
     return _part_dict(part)

@@ -1,5 +1,5 @@
 from typing import Optional
-from sqlalchemy import Boolean, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
 
@@ -21,8 +21,13 @@ class Printer(Base):
     no_snapshots_while_idle: Mapped[bool] = mapped_column(Boolean, default=False)
     bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
     bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    # Server-local 'HH:MM' window in which this printer won't start new jobs (wraps midnight); both or neither.
+    quiet_start: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
+    quiet_end: Mapped[Optional[str]] = mapped_column(String(5), nullable=True)
     lifetime_job_count: Mapped[int] = mapped_column(Integer, default=0)
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
+    # Per-printer override of the shop-wide machine rate ($ per hour of print time); null = use the shop rate.
+    machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class UploadedFile(Base):
@@ -119,6 +124,12 @@ class Job(Base):
     estimate_preset_label: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     # Manually-entered cost of the filament used for this job, for profit/loss reporting.
     filament_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The printer this job actually ran on. Unlike assigned_printer_id it survives failure/cancel, so fleet
+    # analytics can attribute outcomes to a printer.
+    # Plain integer (no FK — see v025); delete_printer nulls it.
+    printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # UTC ISO instant before which the queue engine won't start this job (None = as soon as possible).
+    not_before: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -158,6 +169,18 @@ class QueueConfig(Base):
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Lowest alarm severity that raises a `printer.alarm` webhook/notification (info < warning < error < fatal).
+    alarm_min_severity: Mapped[str] = mapped_column(String(10), default="warning", server_default="warning")
+
+
+class CostConfig(Base):
+    """Shop-wide cost model (singleton id=1): hourly machine and labour rates, applied live to every project's
+    expenses (changing a rate re-prices past jobs — nothing is snapshotted at print time)."""
+    __tablename__ = "cost_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    machine_rate_per_hour: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    labour_rate_per_hour: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
 
 class SpoolmanConfig(Base):
@@ -174,6 +197,12 @@ class SpoolmanConfig(Base):
     last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     last_sync_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_sync_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Low-inventory alerts (event `spool.low`): grams below which a spool alerts. A per-filament override
+    # ({spoolman filament id (str): grams}) wins over the default; neither set = no alerts.
+    low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Spool ids already alerted while below their threshold, so each drop alerts once (cleared on refill).
+    low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
 class Customer(Base):
@@ -222,6 +251,10 @@ class Project(Base):
     # Quoted total for the project; outstanding balance = price - amount_paid.
     price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payment_status: Mapped[str] = mapped_column(String(20), default="unpaid", server_default="unpaid")
+    # Whether the customer portal shows this project's quote (price, paid, balance). Staff decide; default hidden.
+    price_visible: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # When the customer accepted the shown quote; cleared if the price changes afterwards.
+    quote_accepted_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     stage: Mapped[str] = mapped_column(String(20), default="queued", server_default="queued")
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
@@ -297,6 +330,35 @@ class ProjectLink(Base):
     created_at: Mapped[str] = mapped_column(String(32), default="")
 
 
+PAYMENT_METHODS = ("cash", "card", "bank_transfer", "check", "other")
+
+
+class ProjectPayment(Base):
+    """One payment received against a project. Once a project has any, its `amount_paid` and
+    `payment_status` are derived from these rows (see services/payments.py)."""
+    __tablename__ = "project_payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[float] = mapped_column(Float)
+    received_on: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD — the day the money arrived
+    method: Mapped[str] = mapped_column(String(20), default="other", server_default="other")
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
+class ProjectLabor(Base):
+    """Time spent on a project that isn't machine time (setup, post-processing, assembly, packing)."""
+    __tablename__ = "project_labor"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    minutes: Mapped[int] = mapped_column(Integer)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    logged_on: Mapped[str] = mapped_column(String(10))  # YYYY-MM-DD
+    created_at: Mapped[str] = mapped_column(String(32), default="")
+
+
 class ProjectPart(Base):
     """A non-3D-printed part (bought/off-the-shelf hardware) needed to complete a project's
     assembly, e.g. "3mm magnet" x5. `allocated` is a manual yes/no flag set by the user."""
@@ -309,6 +371,8 @@ class ProjectPart(Base):
     allocated: Mapped[bool] = mapped_column(Boolean, default=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[str] = mapped_column(String(32), default="")
+    # Cost of one unit (bought-in hardware); the project's parts expense is quantity × unit_cost.
+    unit_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
 
 class JobItemFailure(Base):
@@ -394,3 +458,26 @@ class AdminAccount(Base):
     recovery_code_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     recovery_code_expires_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     recovery_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+
+class PrinterAlarm(Base):
+    """One problem a printer reported (Bambu HMS, Klipper shutdown, SDCP error number…). A row is *active* while
+    the printer keeps reporting its `code`; it is resolved (not deleted) when the printer stops, so the table is
+    the alarm history. `acknowledged_at` only silences it in the UI — it does not affect resolution."""
+    __tablename__ = "printer_alarms"
+    __table_args__ = (
+        # One ACTIVE row per (printer, code): makes a racing double-insert fail loudly instead of duplicating.
+        Index("ux_printer_alarms_active", "printer_id", "code", unique=True, sqlite_where=text("resolved_at IS NULL")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), index=True)
+    code: Mapped[str] = mapped_column(String(80))
+    severity: Mapped[str] = mapped_column(String(10))            # info | warning | error | fatal
+    message: Mapped[str] = mapped_column(Text)
+    source: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)   # e.g. "hms", "klipper", "sdcp"
+    help_url: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    first_seen: Mapped[str] = mapped_column(String(32))
+    last_seen: Mapped[str] = mapped_column(String(32))
+    resolved_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    acknowledged_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
