@@ -61,6 +61,8 @@ class SlicedVersion(Base):
     sliced to with these settings. `cache_key` hashes every input that changes the output (see services/slice_cache);
     the preset-content hash and slicer version are kept apart from it and only decide whether the version is stale."""
     __tablename__ = "sliced_versions"
+    # Never reuse an id: jobs.sliced_version_id must not silently start pointing at a newer, unrelated version.
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id", ondelete="CASCADE"), unique=True)
@@ -170,7 +172,9 @@ class Job(Base):
     save_slice_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     # When a printer claims the job, print a matching cached version instead of slicing.
     allow_cached_slice: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
-    # The cached version this job printed (plain int: a version can be deleted with its file).
+    # The cached version this job prints / printed. Plain int (an FK column can't be dropped by SQLite's ALTER, so
+    # v033 couldn't be rolled back); safe because sliced_versions never reuses an id (AUTOINCREMENT) — a deleted
+    # version leaves a pointer that resolves to nothing, never to a newer, unrelated version.
     sliced_version_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # Latest cache decision + save outcome, for debugging (shape: services/slice_cache.py).
     slice_cache_info: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)

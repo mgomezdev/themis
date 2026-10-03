@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -69,12 +70,18 @@ class CacheKeyInputs:
 
 
 def key_inputs(
-    req: SliceRequest, source_content_hash: str, tool_index: int | None, filament_map: list | None,
-) -> CacheKeyInputs:
+    req: SliceRequest, source_content_hash: str | None, tool_index: int | None, filament_map: list | None,
+) -> CacheKeyInputs | None:
     """`tool_index`/`filament_map` aren't on the request (they reach the slicer as a 3MF remap via `prepare_hook`) but
-    they change the output, so they're part of the key."""
+    they change the output, so they're part of the key. `filament_map` must be the RESOLVED map (slot indices, after
+    `queue_engine._resolve_filament_map`) — exactly what the remap used — or save and lookup drift apart.
+
+    Returns None (uncacheable) when the source has no content hash: without it two different models with the same
+    settings would share a key and one would print the other's gcode."""
+    if not source_content_hash:
+        return None
     return CacheKeyInputs(
-        source_content_hash=source_content_hash or "",
+        source_content_hash=source_content_hash,
         plate_number=int(req.plate_number),
         machine_preset=req.machine_preset or "",
         process_preset=req.process_preset or "",
@@ -138,7 +145,16 @@ def current_fingerprint(
         version = health.get("orca_version") or health.get("orcaslicer_version") or None
     except Exception as exc:
         logger.debug("slice_cache could not read the slicer version: %s", exc)
-    return SlicerFingerprint(preset_hash, str(version) if version else None)
+    return SlicerFingerprint(preset_hash, normalize_version(version))
+
+
+def normalize_version(raw: Any) -> str | None:
+    """`orca_version` ("2.3.1") and `orcaslicer_version` ("OrcaSlicer 2.3.1-beta") spell the same release
+    differently; compare only the dotted number so a fallback between them is never a false "slicer changed"."""
+    if not raw:
+        return None
+    m = re.search(r"\d+(?:\.\d+)+", str(raw))
+    return m.group(0) if m else str(raw).strip() or None
 
 
 def staleness(
@@ -171,12 +187,13 @@ def _fmt(value: Any) -> str:
     if isinstance(value, (list, tuple, dict)):
         return canonical_json(value)
     text = str(value)
-    return json.dumps(text) if (not text or any(c in text for c in ' ="\'')) else text
+    return json.dumps(text) if (not text or re.search(r"""[\s="']""", text)) else text
 
 
-def log_event(event: str, *, level: int | None = None, **fields: Any) -> None:
+def log_event(event: str, /, *, _level: int | None = None, **fields: Any) -> None:
     """One line: `slice_cache event=<event> k=v …` (fields in the order given; values quoted when they contain spaces,
     lists/dicts as compact JSON, None as `-`). Hashes are logged in full."""
+    level = _level
     if level is None:
         level = _LEVELS.get(event, logging.INFO)
         if event == "miss" and fields.get("reason") == "cache_disabled":

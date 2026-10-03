@@ -256,6 +256,12 @@ def _to_dict(j: Job) -> dict:
         "estimate_preset_label": j.estimate_preset_label,
         "filament_cost": j.filament_cost,
         "not_before": j.not_before,
+        # Slicing cache (BIZ-191..193)
+        "save_slice": bool(j.save_slice),
+        "save_slice_name": j.save_slice_name,
+        "allow_cached_slice": bool(j.allow_cached_slice),
+        "sliced_version_id": j.sliced_version_id,
+        "slice_cache_info": j.slice_cache_info,
     }
 
 

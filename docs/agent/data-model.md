@@ -25,7 +25,7 @@ job_model_targets   (job_id CASCADE; v031)
 gcode_files
 sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
-                       estimates_enabled)
+                       estimates_enabled, slice_cache_use_latest_settings)
 spoolman_config     (enabled, url, api_key)
 webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
 notification_config (singleton id=1: ntfy/discord/email — see its own section below)

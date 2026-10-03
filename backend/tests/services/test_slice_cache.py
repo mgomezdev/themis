@@ -82,6 +82,7 @@ FP = sc.SlicerFingerprint
     ("h1", None, FP("h1", "2.4.0"), (False, [])),                      # version never recorded: that axis unknown
     (None, "2.3.0", FP("h9", "2.4.0"), (True, ["slicer_version_changed"])),
     (None, None, FP("h1", "2.3.0"), (None, [])),
+    (None, "2.3.0", FP("h9", "2.3.0"), (False, [])),                    # only the version compared: same ⇒ fresh
 ])
 def test_staleness(stored_hash, stored_ver, current, expected):
     assert sc.staleness(stored_hash, stored_ver, current) == expected
@@ -167,3 +168,34 @@ def test_decision_info_keeps_an_earlier_save_outcome():
         "slicer_version_stored": "2.3.0", "slicer_version_current": "2.4.0", "stale": True,
         "stale_reasons": ["presets_changed"], "policy": "pin_cached"}
     assert info["save"]["outcome"] == "saved" and info["save"]["sliced_version_id"] == 3
+
+
+def test_a_source_without_a_content_hash_is_uncacheable():
+    """Two different models with no hash and the same settings must never share a key."""
+    assert sc.key_inputs(_req(), "", None, None) is None
+    assert sc.key_inputs(_req(), None, None, None) is None
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("2.3.1", "2.3.1"), ("OrcaSlicer 2.3.1", "2.3.1"), ("OrcaSlicer 2.3.1-beta+abc", "2.3.1"),
+    (None, None), ("", None), ("nightly", "nightly"),
+])
+def test_normalize_version(raw, expected):
+    assert sc.normalize_version(raw) == expected
+
+
+def test_a_fallback_between_the_two_version_fields_is_not_a_slicer_change():
+    client = _client(merged={}, health={"orca_version": None, "orcaslicer_version": "OrcaSlicer 2.3.1"})
+    with patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=client), \
+         patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
+        fp = sc.current_fingerprint("M", "P", ["F"], "http://sidecar")
+    assert sc.staleness(None, "2.3.1", fp) == (False, [])
+
+
+def test_log_event_keeps_multi_line_values_on_one_line_and_accepts_any_field_name(caplog):
+    caplog.set_level(logging.DEBUG, logger="app.services.slice_cache")
+    sc.log_event("save_failed", error="boom\nTraceback\tline", level="x", event="y")
+    (rec,) = caplog.records
+    assert "\n" not in rec.getMessage()
+    assert rec.getMessage() == 'slice_cache event=save_failed error="boom\\nTraceback\\tline" level=x event=y'
+    assert rec.levelno == logging.WARNING
