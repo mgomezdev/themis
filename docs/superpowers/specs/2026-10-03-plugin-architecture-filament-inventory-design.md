@@ -24,10 +24,9 @@ Success criteria:
 
 ## Open at ideation stage (not decided)
 
-- **How plugins get installed.** Choices: in-tree only, pip/entry points, or uploaded bundles. That choice
-  decides the trust/sandbox posture (§5.1) and whether plugin UI can ship custom React (§3.7). This doc keeps
-  the manifest shape neutral so any of those can be chosen later. It assumes in-tree only where a concrete
-  assumption is needed to reason about consequences.
+- Hot-loading plugins without a restart (§3.11 starts with restart-required).
+- Custom frontend code from installed plugins (§3.11 starts with Themis-rendered `default`/`schema` tabs).
+- Sandboxing untrusted plugins (approach B, §2).
 - Several inventory providers active at once (§3.4 proposes one).
 - A general event bus versus explicit interface calls (§3.2 proposes explicit calls).
 - Which plugin kind comes second (printer vendors, notifications, Laminus/catalog source, cameras).
@@ -129,7 +128,8 @@ class PluginManifest:
     docs_url: str | None = None
 ```
 
-The registry is a plain dict, so adding a plugin means one package and one registry line.
+The registry is a plain dict. It is filled at startup from bundled plugins and then from installed ones
+(§3.11), both through the same `themis-plugin.toml` + `MANIFEST` format.
 
 **Storage** (core tables):
 
@@ -261,9 +261,25 @@ print starts:
    inserts an outbox row `{provider, spool_ref, target_g, job_id}` **in the completion transaction**.
    - **Manual completion has no print start.** It takes the snapshot at completion time instead, from the
      same three sources, in the same order.
-   - **A missing snapshot** (the provider was unreachable at start and nothing was cached) means **no write
-     is made**. Core logs it and shows "usage not recorded — no starting weight" on the job, so the
-     operator can fix the spool in the provider. Guessing would be worse.
+   - **A missing snapshot** (the provider was unreachable at start and nothing was cached) means: **skip,
+     flag, notify, and suspend tracking for that spool until it is corrected** (D11). Guessing would be
+     worse.
+     - **Skip:** no outbox row.
+     - **Flag:** the job shows "Filament usage not recorded — no starting weight for spool X".
+     - **Suspend:** an `inventory_spool_status` row `{provider, spool_ref, tracking: "suspended", reason,
+       since, job_id}`. While a spool is suspended, every later print on it is also skipped and flagged,
+       because its recorded weight is known to be wrong and any base would be wrong too.
+     - **Notify:** emit `inventory.tracking_unavailable` once per suspension (webhook + notification
+       channels) with the message "Filament usage tracking is unavailable for spool X until its weight is
+       corrected." The spool shows a persistent warning chip on its slot, in the pickers, and on the
+       provider page.
+     - **Correct:**
+       - With `WRITE_WEIGHT`, the user enters the real weight in Themis, which calls `set_remaining`.
+       - Otherwise the user fixes it in the provider and clicks **Weight corrected**.
+       - Either way, Themis clears the suspension, re-fetches the spool, and emits
+         `inventory.tracking_restored`.
+     - Clearing is always an explicit user action. Themis can't tell on its own whether a changed weight is
+       correct.
 
 3. **Flush:** the host sends `set_remaining(spool_ref, target_g)` for each outbox row, in `created_at`
    order. It flushes right after commit (the normal online case, effectively immediate) and again on every
@@ -280,14 +296,9 @@ Outbox table `inventory_pending_writes`: `id`, `provider`, `spool_ref`, `target_
 
 **What absolute sets trade away: lost updates.** If someone changes the spool *in the provider* while a print
 runs (re-weighs it, swaps it, or another tool deducts from it), the completion write overwrites that change
-with `pre_weight − spent`. Proposed guard (open question Q10):
-- At flush time, if the provider is live, read the spool's current weight.
-- If it equals `pre_weight_g` (no outside change) or already equals `target_g` (an earlier send landed),
-  write as normal.
-- If it differs from both, an outside change happened. **Hold the row as `conflict`** and surface it to the
-  user ("Spool #12 changed in Spoolman during the print: 640 g now, Themis expected 700 g → would set
-  662 g. [Use Themis value] [Keep Spoolman value] [Subtract 38 g from 640 g]").
-- Re-sends stay idempotent because "already equals target" counts as success.
+with `pre_weight − spent`. **MVP (D10): always overwrite**, because it is the simplest to implement.
+Better behavior (hold and ask, auto-rebase, or warn only) is undecided and tracked in **BIZ-198**
+(enhancement).
 
 **Usage accounting today vs. this model:** today only `complete` deducts, which stays the same.
 Failed and cancelled prints deduct nothing, so partial usage stays unrecorded as now. That could change
@@ -372,7 +383,7 @@ class UiTab:
 - Connection: a form generated from `settings_model`. Secret fields are write-only and show "set ✓ /
   replace". There is a **Test connection** button.
 - For `REMOTE` providers: `max_disconnect_minutes`, last sync, last error, cache age, and the pending-writes
-  list with apply/discard. Conflicts (Q10) show here too.
+  list with apply/discard. Spools with suspended tracking (D11) are listed with a correct-weight action.
 - Danger zone: disable, and "remove plugin data" (asks for confirmation; only for plugin-owned tables).
 
 **Core inventory page** (Settings → Filament inventory, core-owned): active provider picker (None, Spoolman,
@@ -389,9 +400,9 @@ Proposed layouts:
   For now it declares one `default` tab, which is enough to configure it.
 - A trivial plugin → `section`.
 
-The `component` renderer requires in-tree frontend code. That is fine while plugins are in-tree. If the
-install model goes third-party, `schema` tabs are the path that needs no frontend code, and `component`
-would need remote loading (open question).
+The `component` renderer requires frontend code compiled into Themis, so it is available to **bundled**
+plugins only. Installed plugins (§3.11) use `default` and `schema` tabs, which Themis renders itself. Remote
+component loading comes later.
 
 ### 3.8 Plugin-owned tables and migrations
 
@@ -473,6 +484,121 @@ quietly in the backend, never an error to the user. Routes that need it return 4
 The guard test (§6) asserts that no core code path calls a provider method without a capability check, and
 that every row above has a "without it" test.
 
+### 3.11 Plugin installation (decided: upload an archive, or install from a GitHub repo — D12)
+
+Users install plugins from **Settings → Plugins** in two ways:
+- **Upload** a `.zip`, `.tar.gz`, or `.tgz`.
+- **Point at a GitHub repo**: URL, plus an optional ref (tag, branch, or commit) and an optional
+  subdirectory for monorepos.
+
+Both paths feed **one** install pipeline. The GitHub path just fetches the archive first.
+
+**Package format.** The archive root (or the chosen subdirectory) contains:
+```
+themis-plugin.toml        # manifest metadata (below)
+<python_package>/         # the plugin code; exports MANIFEST (PluginManifest, §3.1)
+vendor/                   # optional: pure-Python deps the plugin needs beyond Themis's own
+migrations/               # optional: plugin migrations (§3.8)
+ui/                       # optional: prebuilt frontend bundle (see "Frontend" below)
+README.md
+```
+```toml
+id = "bambuddy_inventory"      # ^[a-z][a-z0-9_]{2,40}$, stable forever
+name = "Bambuddy inventory"
+version = "1.2.0"              # semver
+kind = "filament_inventory"
+host_api = 1                   # host refuses mismatches
+entry = "bambuddy_inventory.plugin:MANIFEST"
+min_themis = "2026.10"         # optional
+publisher = "someone"          # display only, not verified
+```
+Bundled plugins (Spoolman, Local inventory) use **the same format**. They ship inside the image as source
+`bundled`. They can be disabled but not uninstalled, and their ids are reserved: an upload claiming a bundled
+id is rejected.
+
+**Pipeline** (`plugins/installer.py`):
+1. **Get the archive.**
+   - Upload: a multipart stream to a temp file, with a size cap.
+   - GitHub: resolve the ref to a commit SHA through the GitHub API, then download that commit's tarball
+     (`codeload.github.com/<owner>/<repo>/tar.gz/<sha>`). **No `git` binary is needed in the image.**
+   - Private repos: use a token stored as a secret on the install record.
+2. **Extract safely** into `/data/plugins/.staging/<uuid>/`. Reject:
+   - absolute paths and `..` segments (zip-slip)
+   - symlinks, hard links, and device files
+   - more than N files or more than M MB uncompressed (zip bombs)
+3. **Validate** `themis-plugin.toml` against its schema: id format, reserved ids, `host_api` compatibility,
+   `kind` known to this Themis, and the `entry` module present.
+4. **Dry-run import in a subprocess** (`python -c "import …; check MANIFEST"`) with the plugin's `vendor/` on
+   the path. Import errors, missing deps, and a manifest that doesn't match the toml all fail the install
+   here, without ever touching the live process.
+5. **Commit:** move to `/data/plugins/<id>/<version>/` and write an `installed_plugins` row. Keep the previous
+   version directory for one-step rollback.
+6. **Activate on restart** (MVP; see below). The UI shows "Restart Themis to finish installing".
+
+`installed_plugins`: `plugin_id` PK, `version`, `source` (`bundled`/`upload`/`github`), `source_url`,
+`ref`, `commit_sha`, `archive_sha256`, `installed_at`, `status` (`installed`/`active`/`error`/`pending_restart`/
+`pending_removal`), `error`, `previous_version`.
+
+**Startup loading.**
+- **Bundled plugins first**, then each installed plugin. For each one: add its directory (and `vendor/`, placed
+  **after** Themis's own site-packages so a plugin can't shadow Themis's libraries) to `sys.path`, import the
+  `entry`, check that the toml and `MANIFEST` agree, run its migrations, register it, and mount its routers.
+- **Any failure is contained.** An import error, a `host_api` mismatch, or a failed migration marks the
+  plugin `error` with the message, and Themis boots anyway. Features that need it are then gated off (§3.10).
+  A broken plugin must never stop Themis from starting.
+
+**Restart, not hot-load (MVP, simplest first).**
+- Python can't reliably unload modules, and FastAPI route tables and OpenAPI are built at startup. So install,
+  upgrade, and uninstall all take effect on the next start.
+- `POST /api/v1/system/restart` exits the process cleanly, and Docker's restart policy brings it back. The
+  compose file must set `restart: unless-stopped`. On bare-metal dev, the user restarts it themselves.
+- Hot-loading a *new* plugin is a later enhancement.
+
+**Updates.**
+- GitHub-sourced: "Check for updates" re-resolves the recorded ref, compares it to `commit_sha`, and shows
+  the new version and commit before the user confirms.
+- Uploaded: upload a newer version of the same id.
+- Upgrades are never automatic.
+- Downgrade = roll back to `previous_version`. Plugin migrations need `down()` for this to be safe, and the
+  installer refuses a rollback across a migration that has no `down()`.
+
+**Uninstall.** Disable, mark `pending_removal`, and the code directory is deleted on restart. **Plugin data is
+kept by default**: its prefixed tables, its `plugin_configs` row, and pending writes. "Remove data" is a
+separate, explicit choice. Core refs to that provider become "inactive" (§4).
+
+**Frontend for installed plugins.** An installed plugin can't be compiled into Themis's bundle.
+- **MVP:** uploaded and GitHub plugins get `default` and `schema` tabs only (§3.7). Both are rendered by
+  Themis and need no plugin JS, so an inventory provider is fully usable without any frontend code. Only
+  bundled plugins may use `component` tabs.
+- **Later:** a plugin ships a prebuilt ES module in `ui/`. Themis serves it from
+  `/plugin-assets/<id>/<version>/` and loads it with dynamic `import()`. A versioned plugin SDK
+  (`window.__THEMIS_PLUGIN_SDK__`: React, the API client, design-system components) becomes a public contract
+  under `host_api`. That is a real compatibility commitment, which is why it is deferred.
+
+**Security posture: installing a plugin = trusting it fully.**
+- A plugin runs as the Themis process (root in the container). It can read the DB, every secret and API key,
+  the OrcaSlicer config, and the network, and it can command printers. There is **no sandbox**.
+- Mitigations:
+  - Install, upgrade, uninstall, and restart need an **interactive admin session**. API keys can't do it,
+    even with `settings:write`, so a leaked automation key can't install code.
+  - The install dialog shows the source (file name or repo + commit), the publisher string, the archive
+    sha256, and a plain warning that the plugin gets full access.
+  - The commit SHA is pinned, and there are no automatic updates.
+  - Every install, upgrade, uninstall, and restart goes into the audit log.
+  - Optional setting: "Allow plugin installation" (off disables the install UI and routes entirely).
+  - Optional setting: an allowlist of GitHub owners.
+- Running untrusted plugins safely would mean out-of-process plugins (approach B, §2). Out of scope.
+
+**API** (admin session only):
+```
+POST   /api/v1/plugins/install                    # multipart archive
+POST   /api/v1/plugins/install-from-github        # {repo_url, ref?, subdir?, token?}
+GET    /api/v1/plugins/{id}/updates               # github-sourced only
+POST   /api/v1/plugins/{id}/upgrade | /rollback
+DELETE /api/v1/plugins/{id}?remove_data=false
+POST   /api/v1/system/restart
+```
+
 ---
 
 ## 4. Data migration
@@ -484,7 +610,8 @@ downgrade window.
 
 **v033_plugin_host**
 1. Create `plugin_configs`, `extension_slots`, `plugin_schema_versions`, `inventory_config`,
-   `inventory_cache`, `inventory_pending_writes`, and `job_spool_snapshots`. Jobs already `printing` at
+   `inventory_cache`, `inventory_pending_writes`, `job_spool_snapshots`, `inventory_spool_status`, and
+   `installed_plugins`. Jobs already `printing` at
    upgrade time get no snapshot. Their completion takes one at completion time, which is the same as the
    manual-completion path.
 2. Copy `spoolman_config` → `plugin_configs('spoolman')`: url and interval go to `settings`, `api_key` to
@@ -553,7 +680,7 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 - **Hot-table migrations + dual-write.** The normalizer must cover every writer, and missing one silently
   drops links. Tests per writer (§6).
 - **Lost-update risk from absolute sets.** Any change made to a spool *in the provider* during a print gets
-  overwritten at completion, unless the conflict guard (§3.5, Q10) is adopted. Today's delta model doesn't
+  overwritten at completion. The MVP accepts this; better handling is tracked in BIZ-198. Today's delta model doesn't
   have this problem, but it has double-count and lost-deduction problems instead.
 - **The deduction depends on a starting weight.** If the provider is unreachable at print start and nothing
   is cached, the print is not deducted. The job flags it, but it is a hole that didn't exist before.
@@ -569,8 +696,24 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 - **Interface shaped by n=2,** and both providers are ours. Still better than n=1.
 - **Plugin-owned migrations** add a second migration track: ordering, downgrade, and "plugin removed from
   registry but its tables remain" all need handling.
-- **No sandbox.** In-process plugins have full trust. This is fine for in-tree code, and it is the deciding
-  factor in the install-model question.
+- **Uploaded and GitHub plugins run arbitrary code with full trust (§3.11).**
+  - This is the largest new risk in the design: a malicious or careless plugin can read every secret and
+    command printers.
+  - Mitigations are procedural (admin session only, pinned commit, warning, audit, kill switch), not
+    technical.
+- **Installed plugins are a new class of thing that can break Themis.**
+  - Startup isolation (an error marks the plugin, never blocks boot) is a hard requirement, and it needs
+    tests.
+  - A Themis upgrade that bumps `host_api` disables every incompatible plugin until its author updates it.
+- **Restart-to-apply.** Install, upgrade, and uninstall each need a Themis restart. That is fine under
+  Docker's restart policy and briefly drops live printer connections. Schedule it for when nothing is
+  printing, or warn when something is.
+- **Dependency limits.** In the MVP, installed plugins can only use Themis's own libraries plus pure-Python
+  code they vendor. Compiled deps (anything with C extensions) won't work until a pip-install-at-install
+  step exists, which brings network and architecture problems.
+- **`/data/plugins` becomes part of what users must back up.** It is already inside the `/data` volume.
+- **The manifest + `host_api` become a public contract.** Every change to the ABC, DTOs, or manifest now
+  needs a compatibility decision.
 - **Contract drift.** New nested DTO keys aren't covered by `contracts/response-keys.json`, so they need
   byte-for-byte review on both sides.
 - **Shims and dual-write are dead weight** for one release, and need a dated cleanup item.
@@ -588,6 +731,8 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 | Scan spool parses Spoolman QR in-browser | Server `resolve-label`. Button shown only with `LABEL_SCAN` | None |
 | Upgrade: nothing to do | Nothing to do | Must hold |
 | Switching provider | Old links kept as "inactive"; pending deductions kept with apply/discard | New. Needs clear copy |
+| Inventory systems: Spoolman or nothing | Settings → Plugins: upload a plugin archive or paste a GitHub repo. A restart applies it. A full-trust warning comes before install | New, and the most powerful change for users. The new risk sits here too |
+| A Spoolman outage at print start goes unnoticed | That spool's tracking is suspended. The user is notified with a "correct weight" action | New warning state. Can be noisy if Spoolman is often down at print starts |
 | External callers of `/api/v1/spoolman/*` | Work for one release (deprecated), then break | Medium. Release-note twice |
 
 Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament` stays manual).
@@ -622,6 +767,20 @@ Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament`
   - Manual completion takes its snapshot at completion time.
   - Jobs printing at upgrade time are handled.
   - Conflict guard, if adopted: an outside change → `conflict`; current == target → `applied`.
+- **Suspended tracking:** a missing snapshot creates exactly one suspension and one
+  `inventory.tracking_unavailable`. Later prints on that spool are skipped and flagged. The correct-weight
+  action clears the suspension, calls `set_remaining` when the provider supports it, and emits
+  `inventory.tracking_restored`.
+- **Installer:**
+  - Rejects zip-slip, symlinks, oversize and too-many-files archives, bad tomls, reserved ids, `host_api`
+    mismatches, and a failing dry-run import. A failure leaves nothing behind in `/data/plugins`.
+  - Uploads accept zip, tar.gz, and tgz.
+  - GitHub install resolves the ref to a SHA and downloads that exact SHA (stubbed HTTP).
+  - Upgrade keeps the previous version; rollback refuses a migration without `down()`.
+  - Uninstall keeps data unless asked.
+  - Install routes reject API-key auth.
+- **Startup isolation:** a plugin that raises on import, fails a migration, or mismatches `host_api` is
+  marked `error` and Themis still boots. A fixture plugin is built as a real archive in the test.
 - **Feature gating:** one test per §3.10 row with the capability absent (UI hidden, backend skips, route
   returns 409).
   - restart while down still serves the cache
@@ -670,7 +829,11 @@ Each phase is its own PR into `develop`, green at every step.
 - **Phase 2b — Local inventory wiring:** plugin migrations, tables, provider implementation, CRUD routes,
   and a `default` settings tab only. Adjust the ABC if it doesn't fit. The UI/feature set gets a separate
   design.
-- **Phase 2c — cleanup (one release later):** guard the old migrations, then drop the old core tables,
+- **Phase 2c — installation:** `installed_plugins`, installer pipeline (upload + GitHub), startup loader with
+  isolation, restart endpoint, Settings → Plugins install UI, and admin-only gating. The bundled plugins
+  are converted to the package format first, which proves the format on our own code before anyone
+  else's.
+- **Phase 2d — cleanup (one release later):** guard the old migrations, then drop the old core tables,
   columns, keys, and scopes, and shrink the guard allowlist. Removing the Spoolman plugin's deprecated alias
   routes is the plugin's own decision.
 - **Later (separate design):** decide the install model, a second plugin kind, and an event bus.
@@ -681,26 +844,31 @@ Each phase is its own PR into `develop`, green at every step.
 
 1. One inventory system per farm (§3.4).
 2. The queue keeps matching on type/color. A "specific material" ask stays informational, as today.
-3. Profile links live in the provider. Both planned providers support them.
+3. Profile links live in the provider. Both bundled providers support them.
 4. Upgrades need zero manual steps, with a one-release downgrade window.
 5. External consumers of `/api/v1/spoolman/*` may exist (API keys, QR/home-automation), so the Spoolman
    plugin keeps those paths as relaying aliases (§3.9).
-10. Spoolman's `PATCH /api/v1/spool/{id}` accepts an absolute `remaining_weight` and keeps it. Unverified.
-11. Only completed jobs deduct, as today. A spool-linked slot is used by one printer at a time.
-6. The frontend stays one bundle for now. `component` tabs are in-tree.
+6. Installed plugins get Themis-rendered UI only (`default`/`schema`) for now. `component` tabs are for
+   bundled plugins.
 7. Spoolman stays the recommended provider for people already running it. Local inventory is for everyone
    else, not a replacement push.
 8. `job_costs.filament` stays manual. No pricing from providers.
-9. While plugins are in-tree, in-process trust is acceptable.
+9. The person installing a plugin is an admin who accepts that it runs with full trust. There is no
+   sandbox.
+10. Spoolman's `PATCH /api/v1/spool/{id}` accepts an absolute `remaining_weight` and keeps it. Unverified.
+11. Only completed jobs deduct, as today. A spool-linked slot is used by one printer at a time.
+12. Themis runs under a supervisor that restarts it after a clean exit (Docker `restart: unless-stopped`).
+13. Outbound access to `api.github.com` / `codeload.github.com` is available for GitHub installs. Offline
+    farms use upload.
+14. Suspended tracking is per spool, not farm-wide.
 
 ## 9. Remaining open questions
 
-- **Q1.** Install model (in-tree / pip / upload) and the sandbox posture that follows. Deferred while this is
-  ideation.
-- **Q10.** Conflict guard (§3.5): adopt it (hold and ask when the spool changed in the provider during the
-  print), or always overwrite with `pre − spent`?
-- **Q11.** Missing snapshot (provider unreachable at print start, nothing cached): skip the deduction and
-  flag the job (proposed), or retry the read for a while after start?
+- **Q12.** Should restart be automatic after install/upgrade/uninstall when nothing is printing, or always
+  wait for the admin to click it?
+- **Q13.** Should GitHub installs support private repos (a stored token) in the first cut, or public only?
+- **Q14.** Is the optional "Allow plugin installation" kill switch on or off by default?
+- Conflict handling for spools changed during a print → **BIZ-198**.
 
 ## 10. Docs to update when implemented
 
@@ -714,7 +882,7 @@ loop never awaits a provider"), `frontend-review.md` §2, and a new `docs/plugin
 
 | # | Decision | Date |
 |---|---|---|
-| D1 | Ideation stage; install model not decided | 2026-10-03 |
+| D1 | Ideation stage (install model later settled by D12) | 2026-10-03 |
 | D2 | Delete "Push usage on job events" and "Mirror vendor & material catalog" toggles; make deduct-on-completion real | 2026-10-03 |
 | D3 | Second provider is a built-in Local inventory with the minimum feature set for current Themis operation (§3.6) | 2026-10-03 |
 | D4 | Provider down: serve the last-known spool list; accrue pending writes until reconnection; alert after a user-set outage length in provider settings (§3.5) | 2026-10-03 |
@@ -723,3 +891,6 @@ loop never awaits a provider"), `frontend-review.md` §2, and a new `docs/plugin
 | D7 | Local inventory is an ordinary plugin requesting its own page. Its UI/feature set is out of scope; only data and behavior wiring is in scope (§3.6) | 2026-10-03 |
 | D8 | No import into Local inventory for now | 2026-10-03 |
 | D9 | Core never calls Spoolman. Spoolman routes and calls live in the Spoolman plugin, which relays to its configured instance. Core logic is provider-agnostic, and features that need a missing plugin kind or capability are hidden or disabled (§3.9, §3.10) | 2026-10-03 |
+| D10 | Spool changed in the provider during a print: MVP always overwrites with `pre − spent` (simplest). Better behavior undecided; tracked in BIZ-198 (enhancement) | 2026-10-03 |
+| D11 | Missing pre-print snapshot: skip the deduction, flag the job, notify the user, and suspend usage tracking for that spool until the user corrects its weight (§3.5) | 2026-10-03 |
+| D12 | Plugins are installed from Settings → Plugins by uploading a zip/gzip archive or by pointing at a GitHub repo. Themis stores them under `/data/plugins` and registers their parts (§3.11) | 2026-10-03 |
