@@ -595,6 +595,11 @@ separate, explicit choice. Core refs to that provider become "inactive" (§4).
   - Plugin installation is **always allowed** (D15). There is no kill switch and no owner allowlist. The
     admin-session rule and the warning are the gate.
 - Running untrusted plugins safely would mean out-of-process plugins (approach B, §2). Out of scope.
+- **Future: declared permissions.** Plugins would list the permissions they want, the admin would approve
+  them at install, and Themis would grant only those. Tracked in **BIZ-200** (enhancement). The MVP
+  reserves a `permissions` key in `themis-plugin.toml` (parsed and ignored) so later manifests stay
+  compatible. In-process code can't be truly confined, so BIZ-200 also has to decide between advisory grants
+  and out-of-process enforcement.
 
 **API** (admin session only):
 ```
@@ -878,6 +883,7 @@ Each phase is its own PR into `develop`, green at every step.
 None blocking at ideation stage. Deferred to enhancement issues:
 - Private GitHub repos → **BIZ-199**.
 - Conflict handling for spools changed during a print → **BIZ-198**.
+- Declared plugin permissions approved at install → **BIZ-200**.
 
 Still unverified: Spoolman `PATCH remaining_weight` behavior (assumption 10).
 
@@ -908,3 +914,4 @@ loop never awaits a provider"), `frontend-review.md` §2, and a new `docs/plugin
 | D13 | GitHub installs: public repos only for now. Private-repo support tracked in BIZ-199 (enhancement) | 2026-10-03 |
 | D14 | Restart is always admin-triggered, never automatic. Pending installs, upgrades, and uninstalls stack and are applied together in one restart | 2026-10-03 |
 | D15 | Plugin installation is always allowed: no kill switch, no allowlist | 2026-10-03 |
+| D16 | Declared, admin-approved plugin permissions are a future enhancement (BIZ-200). MVP reserves the manifest key only | 2026-10-03 |
