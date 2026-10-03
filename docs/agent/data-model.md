@@ -171,7 +171,9 @@ their canonical JSON (`services/slice_cache.cache_key`; filament colour is delib
 unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
 `created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
 
-Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version),
+Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version —
+`services/slice_saver.py` copies the artifact next to the model as a normal library file + a `sliced_versions` row; a
+same-key version for that model is never duplicated; failures are logged/recorded, never fail the job),
 `allow_cached_slice: bool` (print a matching version instead of slicing when claimed), `sliced_version_id?` (plain int —
 the version it printed), `slice_cache_info: JSON?` (latest decision `{decision: hit|miss, reason?, at, cache_key,
 source_content_hash, sliced_version_id?, cached_file_id?, cached_file_hash?, preset_content_hash_stored/current?,
@@ -189,6 +191,8 @@ hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack
   Exposed on `GET /api/v1/jobs/{id}/details` as `filament_grams` / `estimated_seconds`.
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
+- `slice_inputs: JSON?` (v033) — the slicing-cache key inputs this artifact was sliced from (null for pre-sliced files /
+  uncacheable sources), so a job flagged "save" after slicing can still be saved.
 
 ### job_model_targets  (v031 — "any printer of this make/model")
 `id, job_id FK (CASCADE), machine_profile` (a printer's make/model = its `current_orca_printer_profile`),
