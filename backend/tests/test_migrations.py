@@ -527,3 +527,19 @@ def test_migrate_cli_rejects_missing_or_unknown_command(tmp_path, args):
         assert con.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table'").fetchone()[0] == 0
     finally:
         con.close()
+
+
+@pytest.mark.asyncio
+async def test_v031_adds_model_targets_table_and_config_column_idempotently():
+    from app.migrations import v031_job_model_targets
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await run_migrations(conn)
+        await v031_job_model_targets.up(conn)  # re-running must not raise
+        tables = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).fetchall()}
+        cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
+        indexes = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))).fetchall()}
+    assert "job_model_targets" in tables
+    assert "model_target_id" in cols
+    assert "ux_job_printer_configs_target_printer" in indexes
+    await engine.dispose()

@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, SpoolmanConfig, UploadedFile
+from ...services.model_targets import target_dicts
 from ...services.queue_engine import _slot_for_config
+from ...services.model_targets import target_dicts
 from ...services.spool_check import check_spool_sufficiency
 from ...services.spoolman_service import fetch_spools
 
@@ -84,6 +86,7 @@ async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, dict]) 
                 if spool is not None:
                     low_stock_warning = check_spool_sufficiency(needed_g, spool)
     d["eligible_printers"] = eligible
+    d["model_targets"] = await target_dicts(session, j.id)
     d["low_stock_warning"] = low_stock_warning
     return d
 

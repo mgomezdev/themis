@@ -20,7 +20,8 @@ tags                ← file_tags.tag_id
 file_tags           (junction: file_id + tag_id, both CASCADE DELETE)
 orders              ← jobs.order_id (nullable), projects.order_id (nullable)
 jobs                ← job_printer_configs.job_id, gcode_files.job_id, job_item_failures.job_id
-job_printer_configs
+job_printer_configs  ← (model_target_id, plain int → job_model_targets.id, no FK)
+job_model_targets   (job_id CASCADE; v031)
 gcode_files
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
                        estimates_enabled)
@@ -135,7 +136,8 @@ manual-type fallback; the *authoritative* orca filament preset for slicing now l
 loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
 **ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
 tool/slot; `None` = default/legacy — queue uses type+color ask instead),
-`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`.
+`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`,
+`model_target_id?` (v031; set on rows materialized from a `job_model_targets` row, null = explicit pick).
 - `filament_type`+`filament_color` = the eligibility "ask". Non-nullable, `server_default="any"` — the
   literal string `"any"` (never null/blank) means no constraint on that axis; matching logic checks for
   this keyword rather than a null/empty check. Same convention on `project_items.filament_type/color`
@@ -154,6 +156,19 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Exposed on `GET /api/v1/jobs/{id}/details` as `filament_grams` / `estimated_seconds`.
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
+
+### job_model_targets  (v031 — "any printer of this make/model")
+`id, job_id FK (CASCADE), machine_profile` (a printer's make/model = its `current_orca_printer_profile`),
+`print_profile, filament_profile?, filament_id?, filament_type, filament_color` (`"any"` default),
+`filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
+Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
+rows (at create/PATCH via `materialize_job`, and every queue cycle in `_try_claim_for_printer` via
+`sync_targets_for_printer`), so the claim query / slicer / estimates keep reading configs by (job, printer).
+Sync adds rows for printers added or re-profiled later and removes rows for printers that no longer match —
+only for `queued`/`blocked` jobs. An explicit per-printer config wins over a target for the same printer.
+`slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null. API: `model_targets`
+on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
+`POST /projects/{id}/generate` (`eligible_machine_profiles`).
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).

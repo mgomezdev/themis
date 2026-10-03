@@ -110,10 +110,30 @@ describe('NewJobScreen - creating the job', () => {
         printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_id: null,
         filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
       }],
+      model_targets: [],
     }]);
     expect(screen.getAllByText(/Drop a \.3mf or \.stl file/i).length).toBeGreaterThan(0);   // ready for the next file
     await userEvent.click(screen.getByRole('button', { name: 'view queue' }));
     expect(where()).toBe('/queue');
+  });
+
+  it('can target any printer of a model instead of a specific printer', async () => {
+    const api = open();
+    await upload();
+
+    await userEvent.click(await screen.findByTestId('model-target-Elegoo Centauri Carbon'));
+    await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
+    await userEvent.click(addButton());
+
+    expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
+    expect(jobPosts(api).map(c => c.body)).toEqual([{
+      uploaded_file_id: 42, plate_number: 1, order_id: null, overrides: null,
+      printer_configs: [],
+      model_targets: [{
+        machine_profile: 'Elegoo Centauri Carbon', print_profile: PROFILE, filament_profile: null,
+        filament_id: null, filament_type: 'any', filament_color: 'any',
+      }],
+    }]);
   });
 
   it('shows why the server refused the job and keeps everything editable for a retry', async () => {

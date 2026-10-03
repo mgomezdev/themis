@@ -278,6 +278,7 @@ All models live in `backend/app/models.py`. Timestamps are stored as `VARCHAR(32
 | `UploadedFile` | `uploaded_files` | plates JSON, content_hash for dedup |
 | `Job` | `jobs` | queue_position FLOAT for fractional reordering, overrides JSON |
 | `JobPrinterConfig` | `job_printer_configs` | per-printer profile/filament assignments |
+| `JobModelTarget` | `job_model_targets` | job eligible on any printer of a make/model; materialized into `job_printer_configs` |
 | `GcodeFile` | `gcode_files` | path to downloaded gcode on disk |
 | `QueueConfig` | `queue_config` | singleton (id=1) |
 | `SpoolmanConfig` | `spoolman_config` | singleton (id=1) |

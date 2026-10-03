@@ -30,6 +30,7 @@ from ..models import (
 from .library_scanner import library_abs_path
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
+from . import model_targets
 from . import notification_service
 from . import scheduling
 from . import webhook_service
@@ -741,6 +742,10 @@ class QueueEngine:
         printer = await session.get(Printer, printer_id)
         if printer is None or not printer.queue_on:
             return
+
+        # "Any printer of this model" jobs: keep this printer's materialized configs current before looking.
+        await model_targets.sync_targets_for_printer(session, printer)
+        await session.commit()
 
         # The FIRST queue item that lists this printer as compatible — head of line.
         # Blocked jobs are re-evaluated (loading the right filament unblocks them).

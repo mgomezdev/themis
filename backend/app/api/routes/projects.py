@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
-from ...services import job_costs
+from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
+from ...services import job_costs, model_targets
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
@@ -193,6 +193,8 @@ class GenerateRequest(BaseModel):
     # unset print_profile fails cleanly at slice time with an actionable error
     # (see slicer_service._resolve_uuids) rather than silently misresolving.
     process_preset: Optional[str] = None
+    # Make/models ("any printer whose machine preset is X") eligible alongside the specific printers above.
+    eligible_machine_profiles: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -1098,10 +1100,17 @@ async def generate_project(
             select(Printer).where(Printer.id.in_(body.eligible_printer_ids))
         )).scalars().all()
         eligible_printers = list(rows)
+    model_printers: list[Printer] = []
+    if body.eligible_machine_profiles:
+        model_printers = list((await session.execute(
+            select(Printer).where(Printer.current_orca_printer_profile.in_(body.eligible_machine_profiles))
+        )).scalars().all())
 
-    if eligible_printers:
-        pack_bed_x = min(p.bed_x_mm for p in eligible_printers)
-        pack_bed_y = min(p.bed_y_mm for p in eligible_printers)
+    # Pack for the smallest bed among everything that could take the job (explicit picks + matching models).
+    bed_printers = eligible_printers + [p for p in model_printers if p.id not in {e.id for e in eligible_printers}]
+    if bed_printers:
+        pack_bed_x = min(p.bed_x_mm for p in bed_printers)
+        pack_bed_y = min(p.bed_y_mm for p in bed_printers)
     else:
         pack_bed_x, pack_bed_y = 256.0, 256.0
 
@@ -1289,6 +1298,18 @@ async def generate_project(
                     filament_color=fil_color,
                     filament_id=fil_id,
                 ))
+            for machine_profile in dict.fromkeys(body.eligible_machine_profiles):
+                session.add(JobModelTarget(
+                    job_id=j.id,
+                    machine_profile=machine_profile,
+                    print_profile=body.process_preset or "",
+                    filament_profile=fil_type or "",
+                    filament_type=fil_type,
+                    filament_color=fil_color,
+                    filament_id=fil_id,
+                ))
+            await session.flush()
+            await model_targets.materialize_job(session, j.id)
         await session.commit()
 
         # Trigger estimates for each new job if enabled.

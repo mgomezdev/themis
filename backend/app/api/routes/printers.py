@@ -17,7 +17,7 @@ import shutil
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Printer
+from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
 from ...services import camera_hub
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
@@ -600,7 +600,11 @@ async def delete_printer(
         remaining = set((await session.execute(
             select(JobPrinterConfig.job_id).where(JobPrinterConfig.job_id.in_(affected_job_ids)).distinct()
         )).scalars().all())
-        orphaned_ids = [jid for jid in affected_job_ids if jid not in remaining]
+        # A job with a make/model target isn't orphaned: another (or a future) printer of that model can take it.
+        targeted = set((await session.execute(
+            select(JobModelTarget.job_id).where(JobModelTarget.job_id.in_(affected_job_ids)).distinct()
+        )).scalars().all())
+        orphaned_ids = [jid for jid in affected_job_ids if jid not in remaining and jid not in targeted]
         if orphaned_ids:
             await session.execute(
                 update(Job)

@@ -17,11 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
 from ...services.library_scanner import library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
-from ...services import scheduling
+from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
@@ -86,6 +86,64 @@ class PrinterConfigInput(BaseModel):
         return v
 
 
+class ModelTargetInput(BaseModel):
+    """Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).
+    No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
+    machine_profile: str
+    print_profile: str
+    filament_profile: str | None = None
+    filament_id: int | None = None
+    filament_type: str = "any"
+    filament_color: str = "any"
+    filament_map: list[dict] | None = None
+
+    @field_validator("machine_profile")
+    @classmethod
+    def _machine_profile_set(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("machine_profile must not be blank")
+        return v
+
+    @field_validator("filament_map")
+    @classmethod
+    def _no_slot_pinning(cls, v: list[dict] | None) -> list[dict] | None:
+        if v is None:
+            return None
+        entries = [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+        if any(e.get("tool_index") is not None for e in entries):
+            raise ValueError("tool_index is printer-specific and can't be used with a make/model target")
+        return entries
+
+    @field_validator("filament_type", "filament_color")
+    @classmethod
+    def _validate_filament_ask(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('must be "any" or a specific value, not null/blank')
+        return v
+
+
+def _validate_targets(targets: list[ModelTargetInput]) -> None:
+    seen: set[str] = set()
+    for t in targets:
+        if t.machine_profile in seen:
+            raise HTTPException(422, f"Duplicate make/model target {t.machine_profile!r}")
+        seen.add(t.machine_profile)
+
+
+def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput]) -> None:
+    for t in targets:
+        session.add(JobModelTarget(
+            job_id=job_id,
+            machine_profile=t.machine_profile,
+            print_profile=t.print_profile,
+            filament_profile=t.filament_profile or t.filament_type or "",
+            filament_id=t.filament_id,
+            filament_type=t.filament_type,
+            filament_color=t.filament_color,
+            filament_map=t.filament_map,
+        ))
+
+
 class OverrideCheckRequest(BaseModel):
     uploaded_file_id: int
     printer_id: int
@@ -107,7 +165,9 @@ class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
-    printer_configs: list[PrinterConfigInput]
+    printer_configs: list[PrinterConfigInput] = []
+    # Make/model eligibility ("any Bambu P1S"); at least one printer config or target is required.
+    model_targets: list[ModelTargetInput] = []
     overrides: dict | None = None
     not_before: str | None = None
 
@@ -183,7 +243,7 @@ async def _front_queue_position(session: AsyncSession) -> float:
     summary="Create job",
     responses={
         404: {"description": "File, printer, or order not found"},
-        422: {"description": "printer_configs is empty"},
+        422: {"description": "Neither printer_configs nor model_targets given, or a bad make/model target"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -191,15 +251,16 @@ async def create_job(
     body: JobCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Queue a new print job for a specific file plate. At least one printer config is required.
-    The job is added at the end of the queue and the engine is woken immediately."""
+    """Queue a new print job for a specific file plate. At least one printer config or make/model target
+    (`model_targets`) is required. The job is added at the end of the queue and the engine is woken immediately."""
     # Validate file exists
     uploaded_file = await session.get(UploadedFile, body.uploaded_file_id)
     if uploaded_file is None:
         raise HTTPException(404, f"File {body.uploaded_file_id} not found")
 
-    if not body.printer_configs:
-        raise HTTPException(422, "printer_configs must not be empty")
+    if not body.printer_configs and not body.model_targets:
+        raise HTTPException(422, "printer_configs or model_targets must not be empty")
+    _validate_targets(body.model_targets)
 
     for cfg in body.printer_configs:
         printer = await session.get(Printer, cfg.printer_id)
@@ -241,6 +302,10 @@ async def create_job(
             filament_map=cfg.filament_map,
         )
         session.add(config)
+
+    _add_targets(session, job.id, body.model_targets)
+    await session.flush()
+    await model_targets.materialize_job(session, job.id)
 
     await session.commit()
     await session.refresh(job)
@@ -357,6 +422,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
                 eligible_printers.append({"id": p.id, "name": p.name})
         d["materials"] = materials
         d["eligible_printers"] = eligible_printers
+        d["model_targets"] = await model_targets.target_dicts(session, j.id)
         out.append(d)
     return out
 
@@ -494,6 +560,7 @@ async def get_job_details(
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
+            "from_model_target": cfg.model_target_id is not None,
             "low_stock_warning": spool_warning,
         })
 
@@ -515,6 +582,7 @@ async def get_job_details(
         "file": file_info,
         "plate": plate_info,
         "printer_configs": printer_configs,
+        "model_targets": await model_targets.target_dicts(session, job_id),
         "assigned_printer": assigned_printer,
         "filament_grams_live": gcode_rec.filament_grams if gcode_rec else None,
         "estimated_seconds_live": gcode_rec.estimated_seconds if gcode_rec else None,
@@ -582,7 +650,8 @@ async def cancel_job(
 
 
 class JobConfigsUpdate(BaseModel):
-    printer_configs: list[PrinterConfigInput]
+    printer_configs: list[PrinterConfigInput] = []
+    model_targets: list[ModelTargetInput] = []
     overrides: dict | None = None
 
 
@@ -591,7 +660,7 @@ class JobConfigsUpdate(BaseModel):
     summary="Update job configs",
     responses={
         404: {"description": "Job or printer not found"},
-        422: {"description": "Job is not in an editable status or printer_configs is empty"},
+        422: {"description": "Job is not in an editable status, or no printer_configs/model_targets given"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -605,17 +674,16 @@ async def update_job_configs(
     job = await _get_or_404(job_id, session)
     if job.status not in _EDITABLE:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
-    if not body.printer_configs:
-        raise HTTPException(422, "printer_configs must not be empty")
+    if not body.printer_configs and not body.model_targets:
+        raise HTTPException(422, "printer_configs or model_targets must not be empty")
+    _validate_targets(body.model_targets)
     for cfg in body.printer_configs:
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
 
-    existing = await session.execute(
-        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
-    )
-    for row in existing.scalars().all():
-        await session.delete(row)
+    # Configs first (they reference the targets), then the targets themselves.
+    await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
+    await session.execute(delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
 
     # Clear stale estimate fields
     job.estimate_status = None
@@ -640,6 +708,9 @@ async def update_job_configs(
             slice_failed=False,
             slice_error=None,
         ))
+    _add_targets(session, job_id, body.model_targets)
+    await session.flush()
+    await model_targets.materialize_job(session, job_id)
 
     job.status = "queued"
     job.block_reason = None

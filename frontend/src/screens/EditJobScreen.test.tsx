@@ -83,6 +83,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   estimate_preset_label: null,
   materials: [],
   eligible_printers: [],
+  model_targets: [],
   low_stock_warning: null,
   filament_cost: null,
   not_before: null,
@@ -97,6 +98,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
       filament_type: 'TPU',
       filament_color: '#00ff00',
       tool_index: 2,
+      from_model_target: false,
       slice_failed: true,
       slice_error: 'profile mismatch',
       low_stock_warning: null,
@@ -221,5 +223,35 @@ describe('EditJobScreen — isComplete relaxed (defer)', () => {
     renderEditJob();
     const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
     await waitFor(() => expect(saveBtn).not.toBeDisabled());
+  });
+});
+
+describe('EditJobScreen — make/model targets', () => {
+  const targetJob: queueApi.ApiJobDetails = {
+    ...JOB_WITH_TOOL2,
+    model_targets: [{
+      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+    }],
+    // The materialized row for the target must not come back as an explicit printer pick.
+    printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], tool_index: null, from_model_target: true, slice_failed: false }],
+  };
+
+  it('keeps the target as a target on save instead of freezing it into explicit printers', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(targetJob);
+    const user = userEvent.setup();
+    renderEditJob();
+
+    const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+
+    await waitFor(() => expect(vi.mocked(queueApi.updateJobConfigs)).toHaveBeenCalled());
+    const [, configs, , targets] = vi.mocked(queueApi.updateJobConfigs).mock.calls[0];
+    expect(configs).toEqual([]);
+    expect(targets).toEqual([{
+      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      filament_id: null, filament_type: 'PLA', filament_color: 'any',
+    }]);
   });
 });

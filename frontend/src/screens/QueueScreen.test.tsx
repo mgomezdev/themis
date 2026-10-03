@@ -29,7 +29,7 @@ const nullEstimate = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
-  materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
+  materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>, model_targets: [] as ApiJob['model_targets'],
   low_stock_warning: null, filament_cost: null, not_before: null,
 };
 

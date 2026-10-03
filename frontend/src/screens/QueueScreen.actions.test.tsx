@@ -8,7 +8,7 @@ import { Reply, stubFetch } from '../test/fetchStub';
 const est = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null, deduction_skipped: null,
   estimate_status: null, estimate_seconds: null, estimate_filament_grams: null, estimate_filament_breakdown: null,
-  estimate_preset_label: null, materials: [], eligible_printers: [], low_stock_warning: null, filament_cost: null,
+  estimate_preset_label: null, materials: [], eligible_printers: [], model_targets: [], low_stock_warning: null, filament_cost: null,
 };
 const job = (id: number, plate: number, status: string, over: object = {}) => ({
   id, uploaded_file_id: 10, plate_number: plate, order_id: null, assigned_printer_id: null, queue_position: id,

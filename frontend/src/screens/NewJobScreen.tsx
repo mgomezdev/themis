@@ -9,6 +9,7 @@ import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
 import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
+import { ModelPicker, buildEligibility, isModelKey, modelConfigSource } from '../components/ModelTargets';
 import { OverridePanel } from '../components/OverridePanel';
 
 // ============================================================
@@ -501,18 +502,24 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilament
               selectedPrinters={config.selectedPrinters}
               onToggle={onTogglePrinter}
             />
+            <ModelPicker printers={printers} selected={config.selectedPrinters} onToggle={onTogglePrinter} />
             {config.selectedPrinters.length > 0 && (
               <div className="col gap-3" style={{ marginTop: 14 }}>
-                {config.selectedPrinters.map(pid => (
-                  <PerPrinterConfig
-                    key={pid}
-                    printerId={pid}
-                    printers={printers}
-                    config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
-                    onChange={patch => onSetPerPrinter(pid, patch)}
-                    modelFilaments={modelFilaments}
-                  />
-                ))}
+                {config.selectedPrinters.map(pid => {
+                  // A make/model target is configured through a representative printer of that model.
+                  const src = isModelKey(pid) ? modelConfigSource(pid, printers) : { printerId: pid, printers };
+                  if (!src) return null;
+                  return (
+                    <PerPrinterConfig
+                      key={pid}
+                      printerId={src.printerId}
+                      printers={src.printers}
+                      config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
+                      onChange={patch => onSetPerPrinter(pid, patch)}
+                      modelFilaments={isModelKey(pid) ? undefined : modelFilaments}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -926,17 +933,7 @@ export function NewJobScreen() {
           uploaded_file_id: uploadedFileId,
           plate_number: plate.index,
           order_id: cfg.orderId,
-          printer_configs: cfg.selectedPrinters.map(pid => ({
-            printer_id: Number(pid),
-            print_profile: cfg.perPrinter[pid].printProfile!,
-            filament_profile: cfg.perPrinter[pid].filamentProfile ?? null,
-            filament_id: cfg.perPrinter[pid].filamentId ?? null,
-            // "any" is the wire form of "no preference" — the backend rejects null/blank here.
-            filament_type: cfg.perPrinter[pid].filamentType ?? 'any',
-            filament_color: cfg.perPrinter[pid].filamentColor ?? 'any',
-            tool_index: cfg.perPrinter[pid].toolIndex ?? null,
-            filament_map: cfg.perPrinter[pid].filamentMap ?? null,
-          })),
+          ...buildEligibility(cfg.selectedPrinters, cfg.perPrinter),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
         });
         created.push(id);

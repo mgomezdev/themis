@@ -56,6 +56,7 @@
     "block_reason",
     "materials",
     "eligible_printers",
+    "model_targets",
     "low_stock_warning"
   ],
   "job_details_core": [
@@ -86,6 +87,7 @@
     "file",
     "plate",
     "printer_configs",
+    "model_targets",
     "assigned_printer",
     "filament_grams_live",
     "estimated_seconds_live"

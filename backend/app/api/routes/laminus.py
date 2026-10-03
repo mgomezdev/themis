@@ -365,7 +365,7 @@ async def confirm_remap(
         raise HTTPException(422, {"detail": "Unresolved required remaps", "unresolved": unresolved})
 
     # Apply Printer updates
-    from ...models import Printer as PrinterModel, JobPrinterConfig as JPC
+    from ...models import JobModelTarget, Printer as PrinterModel, JobPrinterConfig as JPC
     applied_printers = 0
     for entry in pending.get("printers", []):
         key = (entry["field"], entry["stale_value"])
@@ -397,6 +397,13 @@ async def confirm_remap(
                 cfg.print_profile = new_val or ""
             else:
                 cfg.filament_profile = new_val
+            # Keep the make/model target in step so printers materialized later don't get the stale preset.
+            target = await session.get(JobModelTarget, cfg.model_target_id) if cfg.model_target_id else None
+            if target is not None:
+                if entry["field"] == "print_profile":
+                    target.print_profile = new_val or ""
+                else:
+                    target.filament_profile = new_val
             applied_jobs += 1
 
     await session.commit()
