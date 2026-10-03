@@ -27,6 +27,14 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <MemoryRouter>{
 beforeEach(() => vi.clearAllMocks());
 
 describe('OrdersScreen', () => {
+  it('says customer sales now live on projects, linking there', async () => {
+    mockOk([]);
+    render(<OrdersScreen />, { wrapper });
+    const banner = await screen.findByTestId('orders-banner');
+    expect(banner.textContent).toMatch(/converted to projects/);
+    expect(banner.querySelector('a')?.getAttribute('href')).toBe('/projects');
+  });
+
   it('renders orders from the api', async () => {
     mockOk([ORDER]);
     render(<OrdersScreen />, { wrapper });

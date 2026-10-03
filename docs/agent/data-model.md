@@ -84,8 +84,15 @@ Library index fields (filesystem is source of truth; these cache it):
   per-part fulfillment tracking. **Derived (not stored)**: `status` (hold if on_hold; else queued/
   in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`,
   `filament_cost_total` (sum of `jobs.filament_cost` across the order's non-cancelled jobs, or `null`).
-- `amount_paid`/`payment_status`: manually-entered customer payment tracking, for future profit/loss
-  reporting. Set/edited via `POST`/`PATCH /api/v1/orders`.
+- **Orders are internal-only (BIZ-186).** Customer sales and payments are recorded as *projects* (customer
+  pages + the financial summary read those). `POST /orders` with `order_type="customer"` and `PATCH`ing an order
+  *into* a customer order are 422; so is `POST /jobs` with an `order_id` of a customer order. Migration v032
+  converted every existing customer order that had no linked project into a project (name=title, same
+  customer/amount/status/due/hold, `amount_paid` → one opening payment, customer account linked when exactly one
+  matches the name, `parts` kept as text in `notes`, `projects.converted_from_order_id` = provenance) and
+  re-pointed its jobs; the order row stays as the project's internal job grouping — nothing is deleted. Legacy
+  customer orders already linked to a project were left alone. `amount_paid`/`payment_status` on orders are
+  historical and no longer feed reporting.
 - Internal orders (`order_type="internal"`) are auto-created by `generate_project` and linked to a
   Project via `projects.order_id`. All jobs generated for that project also set `job.order_id`.
 

@@ -260,7 +260,7 @@ async def _front_queue_position(session: AsyncSession) -> float:
     summary="Create job",
     responses={
         404: {"description": "File, printer, or order not found"},
-        422: {"description": "Neither printer_configs nor model_targets given, or a bad make/model target"},
+        422: {"description": "Neither printer_configs nor model_targets given, a bad make/model target, or a customer order"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -288,6 +288,8 @@ async def create_job(
         order = await session.get(Order, body.order_id)
         if order is None:
             raise HTTPException(404, f"Order {body.order_id} not found")
+        if order.order_type == "customer":
+            raise HTTPException(422, "Customer work is recorded as a project — link jobs to internal orders only")
 
     now = datetime.now(timezone.utc).isoformat()
     pos = await _next_queue_position(session)

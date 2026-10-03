@@ -297,7 +297,8 @@ function OrdersPicker({ selectedOrderId, onChange }: {
 }) {
   const navigate = useNavigate();
   const { orders } = useOrders();
-  const open = orders.filter(o => o.status !== 'complete');
+  // Customer work is recorded as a project; orders only group internal jobs.
+  const open = orders.filter(o => o.status !== 'complete' && o.order_type === 'internal');
 
   return (
     <div className="col gap-2">

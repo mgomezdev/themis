@@ -15,11 +15,20 @@ router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
 PAYMENT_STATUSES = {"unpaid", "partial", "paid"}
 
+# Customer sales and payments are recorded as projects (they feed customer pages and the financial summary);
+# orders are an internal grouping of jobs. Existing customer orders were converted by migration v032.
+CUSTOMER_WORK_MESSAGE = "Customer work is recorded as a project, not an order — create a project for this customer"
+
 
 def _validate_payment_status(v: str | None) -> str | None:
     if v is not None and v not in PAYMENT_STATUSES:
         raise ValueError(f"payment_status must be one of {sorted(PAYMENT_STATUSES)}")
     return v
+
+
+def _no_new_customer_orders(order_type: str | None) -> None:
+    if order_type == "customer":
+        raise HTTPException(422, CUSTOMER_WORK_MESSAGE)
 
 
 class OrderPartIn(BaseModel):
@@ -157,8 +166,10 @@ async def list_orders(session: AsyncSession = Depends(get_session)) -> list[dict
 
 
 @router.post("", status_code=201, summary="Create order",
+            responses={422: {"description": "Customer work is recorded as a project, not an order"}},
             dependencies=[Depends(require_scope("orders:write"))])
 async def create_order(body: OrderCreate, session: AsyncSession = Depends(get_session)) -> dict:
+    _no_new_customer_orders(body.order_type)
     now = datetime.now(timezone.utc).isoformat()
     order = Order(
         order_type=body.order_type,
@@ -197,12 +208,15 @@ async def get_order(order_id: int, session: AsyncSession = Depends(get_session))
     summary="Update order",
     responses={
         404: {"description": "Order not found"},
+        422: {"description": "Customer work is recorded as a project, not an order"},
     },
     dependencies=[Depends(require_scope("orders:write"))],
 )
 async def patch_order(order_id: int, body: OrderPatch,
                       session: AsyncSession = Depends(get_session)) -> dict:
     order = await _get_or_404(order_id, session)
+    if body.order_type != order.order_type:   # editing a legacy customer order is fine; turning one into it is not
+        _no_new_customer_orders(body.order_type)
     fields = body.model_dump(exclude_unset=True)
     if "parts" in fields and fields["parts"] is not None:
         order.parts = _normalize_parts([OrderPartIn(**p) for p in fields.pop("parts")])

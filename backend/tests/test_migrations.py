@@ -543,3 +543,76 @@ async def test_v031_adds_model_targets_table_and_config_column_idempotently():
     assert "model_target_id" in cols
     assert "ux_job_printer_configs_target_printer" in indexes
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v032_turns_customer_orders_into_projects_without_losing_money_or_jobs():
+    from app.migrations import v032_orders_to_projects
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        # Re-open the conversion: delete what the (empty-DB) run recorded, then seed legacy data and run it again.
+        await conn.execute(text("DELETE FROM schema_migrations WHERE version = 32"))
+        await conn.execute(text("INSERT INTO customers (id, name, email, password_hash, enabled, created_at) "
+                                "VALUES (1, 'Vela Robotics', 'v@x.io', 'h', 1, '2026-01-01')"))
+        await conn.execute(text("INSERT INTO uploaded_files (id, original_filename, stored_path, plates, uploaded_at, relative_path, folder, size_bytes, content_hash, mtime, missing) VALUES (1, 'a.3mf', '', '[]', 'x', 'a.3mf', '/', 0, '', 0, 0)"))
+        await conn.execute(text(
+            "INSERT INTO orders (id, order_type, customer, title, due_date, notes, on_hold, parts, created_at, updated_at, amount_paid, payment_status) VALUES "
+            "(1, 'customer', 'vela robotics', 'Brackets', '2026-06-01', 'match black', 0, "
+            " '[{\"name\": \"Arm L\", \"qty\": 8, \"material\": \"PA-CF\"}]', '2026-02-03T10:00:00+00:00', '2026-02-04T10:00:00+00:00', 40.0, 'partial'),"
+            "(2, 'customer', 'Nobody Known', 'Mugs', NULL, NULL, 1, '[]', '2026-03-01T10:00:00+00:00', '2026-03-01T10:00:00+00:00', NULL, 'unpaid'),"
+            "(3, 'internal', 'Me', 'R&D', NULL, NULL, 0, '[]', '2026-03-01T10:00:00+00:00', '2026-03-01T10:00:00+00:00', NULL, 'unpaid')"))
+        for jid, oid in ((10, 1), (11, 1), (12, 2), (13, 3)):
+            await conn.execute(text(
+                "INSERT INTO jobs (id, uploaded_file_id, plate_number, order_id, status, created_at, updated_at) "
+                f"VALUES ({jid}, 1, 1, {oid}, 'queued', 'x', 'x')"))
+
+        await v032_orders_to_projects.up(conn)
+        await v032_orders_to_projects.up(conn)   # a second run converts nothing more
+
+        projects = (await conn.execute(text(
+            "SELECT name, customer, order_type, due_date, notes, amount_paid, payment_status, on_hold, customer_id, "
+            "stage, order_id, converted_from_order_id, created_at FROM projects ORDER BY converted_from_order_id"))).mappings().all()
+        assert [p["name"] for p in projects] == ["Brackets", "Mugs"]          # the internal order stays an order
+        first, second = projects
+        assert (first["customer"], first["order_type"], first["due_date"]) == ("vela robotics", "customer", "2026-06-01")
+        assert (first["amount_paid"], first["payment_status"], first["customer_id"]) == (40.0, "partial", 1)  # matched by name
+        assert "match black" in first["notes"] and "Arm L" in first["notes"] and "PA-CF" in first["notes"]
+        assert (first["stage"], first["order_id"], first["converted_from_order_id"]) == ("queued", 1, 1)
+        assert first["created_at"] == "2026-02-03T10:00:00+00:00"
+        assert (second["customer_id"], second["on_hold"], second["amount_paid"]) == (None, 1, None)  # no account matched
+
+        payments = (await conn.execute(text("SELECT p.name, pp.amount, pp.received_on FROM project_payments pp "
+                                            "JOIN projects p ON p.id = pp.project_id"))).fetchall()
+        assert [tuple(r) for r in payments] == [("Brackets", 40.0, "2026-02-03")]
+        job_projects = dict((await conn.execute(text("SELECT id, project_id FROM jobs"))).fetchall())
+        by_name = {p: i for i, p in (await conn.execute(text("SELECT id, name FROM projects"))).fetchall()}
+        assert job_projects == {10: by_name["Brackets"], 11: by_name["Brackets"], 12: by_name["Mugs"], 13: None}
+        assert (await conn.execute(text("SELECT COUNT(*) FROM orders"))).scalar() == 3   # nothing deleted
+
+        await v032_orders_to_projects.down(conn)
+        assert (await conn.execute(text("SELECT COUNT(*) FROM projects"))).scalar() == 0
+        assert (await conn.execute(text("SELECT COUNT(*) FROM project_payments"))).scalar() == 0
+        assert (await conn.execute(text("SELECT COUNT(*) FROM jobs WHERE project_id IS NOT NULL"))).scalar() == 0
+        assert (await conn.execute(text("SELECT COUNT(*) FROM orders"))).scalar() == 3
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v032_leaves_an_order_alone_when_a_project_already_covers_it():
+    from app.migrations import v032_orders_to_projects
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await run_migrations(conn)
+        await conn.execute(text(
+            "INSERT INTO orders (id, order_type, customer, title, on_hold, parts, created_at, updated_at, payment_status) "
+            "VALUES (1, 'customer', 'Vela', 'Brackets', 0, '[]', 'x', 'x', 'unpaid')"))
+        await conn.execute(text(
+            "INSERT INTO projects (id, name, customer, order_type, on_hold, price_visible, order_id, created_at, updated_at) VALUES (5, 'Already a project', '', 'internal', 0, 0, 1, 'x', 'x')"))
+
+        await v032_orders_to_projects.up(conn)
+
+        assert (await conn.execute(text("SELECT COUNT(*) FROM projects"))).scalar() == 1
+    await engine.dispose()

@@ -95,6 +95,21 @@ describe('NewJobScreen - upload failures', () => {
   });
 });
 
+describe('NewJobScreen - linking an order', () => {
+  it('offers internal orders only: customer work is recorded as a project', async () => {
+    const order = (id: number, order_type: string, customer: string) => ({
+      id, order_type, customer, title: 't', status: 'queued', progress: 0, job_count: 0, parts: [],
+      due_date: null, notes: null, on_hold: false, amount_paid: null, payment_status: 'unpaid',
+      filament_cost_total: null, created_at: 'x', updated_at: 'x',
+    });
+    open([plate(1)], { 'GET /api/v1/orders': [order(1, 'customer', 'Vela Robotics'), order(2, 'internal', 'R&D oven')] });
+    await upload();
+
+    expect(await screen.findByText('R&D oven')).toBeTruthy();
+    expect(screen.queryByText('Vela Robotics')).toBeNull();
+  });
+});
+
 describe('NewJobScreen - creating the job', () => {
   it('sends the plate, printer and profile, reports success, and offers the queue', async () => {
     const api = open();

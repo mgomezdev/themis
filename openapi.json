@@ -1073,14 +1073,7 @@
             }
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       }
@@ -1176,14 +1169,7 @@
             "description": "Order not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       },
@@ -3830,7 +3816,7 @@
             "description": "File, printer, or order not found"
           },
           "422": {
-            "description": "Neither printer_configs nor model_targets given, or a bad make/model target"
+            "description": "Neither printer_configs nor model_targets given, a bad make/model target, or a customer order"
           }
         }
       }

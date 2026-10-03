@@ -124,7 +124,7 @@ export function NewOrderScreen() {
   const { id } = useParams();
   const editingId = id ? Number(id) : null;
 
-  const [orderType, setOrderType] = useState<OrderType>('customer');
+  const [orderType, setOrderType] = useState<OrderType>('internal');
   const [customer, setCustomer] = useState('');
   const [due, setDue] = useState('');
   const [title, setTitle] = useState('');
@@ -218,19 +218,14 @@ export function NewOrderScreen() {
         <div className="col gap-4">
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader title="Order info" />
-            <div className="row gap-3" style={{ marginBottom: 14, flexWrap: 'wrap' }}>
-              {([
-                { id: 'customer' as OrderType, label: 'Customer order', sub: 'Goes to a paying customer' },
-                { id: 'internal' as OrderType, label: 'Internal project', sub: 'R&D, marketing, spares' },
-              ]).map(opt => (
-                <button key={opt.id} onClick={() => setOrderType(opt.id)} className="card"
-                        style={{ flex: 1, textAlign: 'left', padding: 14, cursor: 'pointer',
-                                 background: orderType === opt.id ? 'var(--bg-3)' : 'var(--bg-1)',
-                                 borderColor: orderType === opt.id ? 'var(--accent)' : 'var(--border-1)' }}>
-                  <div style={{ fontWeight: 500 }}>{opt.label}</div>
-                  <div className="tiny muted" style={{ marginTop: 2 }}>{opt.sub}</div>
-                </button>
-              ))}
+            {/* Customer sales and payments live on projects (customer pages + financial summary read those). */}
+            <div data-testid="orders-are-internal" className="tiny" style={{
+              marginBottom: 14, padding: '10px 12px', borderRadius: 8, lineHeight: 1.5,
+              background: 'var(--bg-1)', border: '1px solid var(--border-1)', color: 'var(--text-2)',
+            }}>
+              Orders group jobs for internal work — R&D, marketing, spares. For a paying customer, record a{' '}
+              <button className="btn ghost sm" style={{ padding: '0 4px' }} onClick={() => navigate('/projects')}>project</button>{' '}
+              instead so their sales and payments show on their page.
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>

@@ -280,6 +280,8 @@ class Project(Base):
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
+    # Set by migration v032 when this project was created from a legacy customer order (provenance; plain int).
+    converted_from_order_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 
