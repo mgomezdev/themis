@@ -16,7 +16,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
 from ...services.library_scanner import (
-    LibraryScanner, folder_of, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
+    LibraryScanner, file_kind, folder_of, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services.thumbnail_regen import regen_file_thumbnails
 
@@ -60,6 +60,7 @@ def _to_dict(f: UploadedFile, tags: list[dict]) -> dict:
         "plate_count": len(f.plates or []),
         "uploaded_at": f.uploaded_at,
         "missing": f.missing,
+        "kind": file_kind(f.original_filename),
         "tags": tags,
         "thumbnail_url": _thumb_url(f),
         "plate_thumbnails": _plate_thumbnail_urls(f),
@@ -179,9 +180,9 @@ async def upload_file(
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Upload a .3mf, .stl or .gcode file to the library. If identical content already exists
+    """Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists
     in the target folder the existing record is returned (deduplication by SHA-256).
-    Thumbnail generation is triggered in the background for .3mf files."""
+    Thumbnail generation is triggered in the background for (unsliced) .3mf files."""
     fname = (file.filename or "")
     ext = Path(fname).suffix.lower()
     if ext not in MODEL_EXTS:
@@ -245,7 +246,7 @@ async def upload_file(
     record.plates = scanner._parse_plates(dest, record.id)
     await session.commit()
     await session.refresh(record)
-    if dest.suffix.lower() == ".3mf":
+    if file_kind(dest.name) == "3mf":   # a sliced .gcode.3mf already carries its own thumbnails (BIZ-190)
         background_tasks.add_task(regen_file_thumbnails, record.id)
     return _to_dict(record, [])
 

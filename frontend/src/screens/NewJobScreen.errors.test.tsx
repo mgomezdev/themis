@@ -67,7 +67,7 @@ describe('NewJobScreen - upload failures', () => {
     await upload('big.3mf');
     expect(await screen.findByText('Upload failed: 413 file too large')).toBeTruthy();
     expect(screen.queryByText('Barnabus')).toBeNull();
-    expect(screen.getAllByText(/Drop a \.3mf, \.stl or \.gcode file/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Drop a \.3mf, \.stl, \.gcode or \.gcode\.3mf file/i).length).toBeGreaterThan(0);
 
     await upload('model.3mf');
 
@@ -81,7 +81,7 @@ describe('NewJobScreen - upload failures', () => {
 
     await upload('notes.txt', userEvent.setup({ applyAccept: false }));
 
-    expect(await screen.findByText('Only .3mf, .stl and .gcode files are supported.')).toBeTruthy();
+    expect(await screen.findByText('Only .3mf, .stl, .gcode and .gcode.3mf files are supported.')).toBeTruthy();
     expect(api.to('POST', '/api/v1/files/upload')).toEqual([]);
   });
 
@@ -127,7 +127,7 @@ describe('NewJobScreen - creating the job', () => {
       }],
       model_targets: [],
     }]);
-    expect(screen.getAllByText(/Drop a \.3mf, \.stl or \.gcode file/i).length).toBeGreaterThan(0);   // ready for the next file
+    expect(screen.getAllByText(/Drop a \.3mf, \.stl, \.gcode or \.gcode\.3mf file/i).length).toBeGreaterThan(0);   // ready for the next file
     await userEvent.click(screen.getByRole('button', { name: 'view queue' }));
     expect(where()).toBe('/queue');
   });
@@ -170,6 +170,22 @@ describe('NewJobScreen - creating the job', () => {
       }],
       model_targets: [],
     }]);
+    expect(api.to('GET', '/api/v1/files/42/embedded-settings')).toEqual([]);
+    expect(api.to('GET', '/api/v1/files/42/model-filaments')).toEqual([]);
+  });
+
+  it('treats a .gcode.3mf sliced archive as pre-sliced, not as a model to slice (BIZ-190)', async () => {
+    localStorage.clear();
+    const api = open([plate(1)], { 'POST /api/v1/files/upload': { id: 42, original_filename: 'part.gcode.3mf' } });
+    await upload('part.gcode.3mf');
+
+    expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
+    await userEvent.click(await screen.findByText('Barnabus'));
+    expect(screen.queryByTestId('print-profile-select')).toBeNull();
+    await userEvent.click(addButton());
+
+    expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
+    expect(jobPosts(api).map(c => (c.body as { printer_configs: { print_profile: string }[] }).printer_configs[0].print_profile)).toEqual(['']);
     expect(api.to('GET', '/api/v1/files/42/embedded-settings')).toEqual([]);
     expect(api.to('GET', '/api/v1/files/42/model-filaments')).toEqual([]);
   });

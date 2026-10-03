@@ -18,7 +18,7 @@ from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
-from ...services.library_scanner import is_gcode_file, library_abs_path
+from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services import model_targets, scheduling
@@ -59,7 +59,7 @@ class FilamentMapEntry(BaseModel):
 
 class PrinterConfigInput(BaseModel):
     printer_id: int
-    print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced .gcode jobs
+    print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced (.gcode / .gcode.3mf) jobs
     filament_profile: str | None = None
     filament_id: int | None = None
     filament_type: str
@@ -125,7 +125,7 @@ class ModelTargetInput(BaseModel):
 def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
     """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
     path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
-    grams, secs, per_extruder = _parse_gcode_estimates(str(path))
+    grams, secs, per_extruder = _parse_gcode_estimates(str(path), plate=job.plate_number)
     if grams is None and secs is None:
         job.estimate_status = None
         return
@@ -143,25 +143,29 @@ async def _check_gcode_printers(
     session: AsyncSession, uploaded_file: UploadedFile | None,
     configs: list[PrinterConfigInput], targets: list[ModelTargetInput],
 ) -> None:
-    """A pre-sliced .gcode can't go to a vendor that only ingests a sliced archive (e.g. Bambu), nor can a printer
-    config be duplicated (one config per job+printer)."""
+    """A pre-sliced file can only go to a vendor that prints that format as-is: a raw .gcode not to one that only
+    ingests a sliced archive (e.g. Bambu), a .gcode.3mf archive only to one that does (BIZ-190). Also refuses a
+    duplicated printer config (one config per job+printer)."""
     seen: set[int] = set()
     for cfg in configs:
         if cfg.printer_id in seen:
             raise HTTPException(422, f"Printer {cfg.printer_id} is listed more than once")
         seen.add(cfg.printer_id)
-    if not is_gcode_file(uploaded_file):
+    if not is_presliced_file(uploaded_file):
         return
+    filename = uploaded_file.original_filename
+    what = "a sliced .gcode.3mf archive" if file_kind(filename) == "gcode_3mf" else "a raw .gcode file"
+    need = "raw gcode" if file_kind(filename) == "gcode_3mf" else "a sliced 3MF"
     for cfg in configs:
         printer = await session.get(Printer, cfg.printer_id)
-        if printer is not None and not model_targets.accepts_raw_gcode(printer.printer_type):
-            raise HTTPException(422, f"{printer.name} can't print a raw .gcode file — it needs a sliced 3MF")
+        if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
+            raise HTTPException(422, f"{printer.name} can't print {what} — it needs {need}")
     for t in targets:
         matching = (await session.execute(
             select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile)
         )).scalars().all()
-        if matching and not any(model_targets.accepts_raw_gcode(p.printer_type) for p in matching):
-            raise HTTPException(422, f"No {t.machine_profile} printer can print a raw .gcode file — it needs a sliced 3MF")
+        if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
+            raise HTTPException(422, f"No {t.machine_profile} printer can print {what} — it needs {need}")
 
 
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
@@ -327,7 +331,7 @@ async def create_job(
         plate_number=body.plate_number,
         order_id=body.order_id,
         # Slicing overrides mean nothing to pre-sliced gcode; they are dropped, not stored.
-        overrides=None if is_gcode_file(uploaded_file) else _clean_overrides(body.overrides),
+        overrides=None if is_presliced_file(uploaded_file) else _clean_overrides(body.overrides),
         queue_position=pos,
         status="queued",
         not_before=body.not_before,
@@ -360,7 +364,7 @@ async def create_job(
 
     queue_engine.wake()
 
-    if is_gcode_file(uploaded_file):
+    if is_presliced_file(uploaded_file):
         _apply_gcode_estimate(job, uploaded_file)
         await session.commit()
         return _to_dict(job)
@@ -771,7 +775,7 @@ async def update_job_configs(
     job.block_reason = None
     job.assigned_printer_id = None
     uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
-    gcode_job = is_gcode_file(uploaded_file)
+    gcode_job = is_presliced_file(uploaded_file)
     job.overrides = None if gcode_job else _clean_overrides(body.overrides)
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
@@ -993,8 +997,8 @@ async def verify_slice(
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
 
-    if is_gcode_file(uploaded_file):
-        raise HTTPException(422, "This job prints a pre-sliced .gcode file; there is nothing to slice")
+    if is_presliced_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
     if not printer.current_orca_printer_profile:
         return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
@@ -1070,8 +1074,8 @@ async def complete_job_manually(
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
 
-    if is_gcode_file(uploaded_file):
-        raise HTTPException(422, "This job prints a pre-sliced .gcode file; there is nothing to slice")
+    if is_presliced_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
     if not printer.current_orca_printer_profile:
         raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")

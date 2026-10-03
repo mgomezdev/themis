@@ -94,3 +94,47 @@ async def test_gcode_job_missing_from_library_blocks_instead_of_failing(session_
         job = await s.get(Job, job_id)
         assert job.status == "blocked"
         assert "gcode" in (job.block_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_sliced_archive_job_prints_without_slicing_and_keeps_its_extension(session_factory, tmp_path, monkeypatch):
+    """BIZ-190: a .gcode.3mf is pre-sliced too — staged with its full extension (the printer tells the formats apart by
+    it) and the plate's own estimate recorded."""
+    from tests.api.test_sliced_archive_jobs import make_sliced_archive
+    library = tmp_path / "library"
+    monkeypatch.setenv("THEMIS_LIBRARY_DIR", str(library))
+    mgr = _make_mock_printer_manager([1])
+    slicer = MagicMock()
+    slicer._data_dir = tmp_path / "data"
+    qe = QueueEngine(session_factory, mgr, slicer)
+    _install_fake_put(qe)
+    library.mkdir(parents=True)
+    archive = make_sliced_archive()
+    (library / "My Part.gcode.3mf").write_bytes(archive)
+    async with session_factory() as s:
+        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}))
+        f = UploadedFile(original_filename="My Part.gcode.3mf", relative_path="My Part.gcode.3mf", folder="/",
+                         plates=[], uploaded_at=_now())
+        s.add(f)
+        await s.flush()
+        j = Job(uploaded_file_id=f.id, plate_number=2, queue_position=1.0, status="queued",
+                created_at=_now(), updated_at=_now())
+        s.add(j)
+        await s.flush()
+        s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="", filament_type="any", filament_color="any"))
+        await s.commit()
+        job_id = j.id
+
+    await qe._process_queue()
+
+    async def _printing():
+        async with session_factory() as s:
+            return (await s.get(Job, job_id)).status == "printing"
+    await wait_until(_printing, what="archive job to start printing")
+    slicer.slice.assert_not_called()
+    started = mgr.get_client.return_value.start_print.call_args.args[0]
+    assert started == f"My_Part_j{job_id}.gcode.3mf"
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        assert (job.actual_filament_grams, job.actual_seconds) == (7.5, 1200)
+    assert (library / "My Part.gcode.3mf").read_bytes() == archive

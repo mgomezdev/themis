@@ -27,7 +27,7 @@ from ..models import (
     UploadedFile,
     WebhookConfig,
 )
-from .library_scanner import is_gcode_file, library_abs_path
+from .library_scanner import is_presliced_file, library_abs_path, presliced_suffix
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets
@@ -36,20 +36,24 @@ from . import scheduling
 from . import webhook_service
 
 
-def _parse_gcode_estimates(path: str) -> tuple[float | None, int | None, list[float] | None]:
+def _parse_gcode_estimates(
+    path: str, plate: int | None = None,
+) -> tuple[float | None, int | None, list[float] | None]:
     """Extract filament_grams (total), estimated_seconds, per-extruder grams from gcode.
 
     Returns (total_grams, seconds, extruder_grams_list). extruder_grams_list has one
     entry per comma-separated value in the 'filament used [g]' line. Returns None for
-    each field independently if parsing fails.
+    each field independently if parsing fails. For a sliced archive (.gcode.3mf), `plate`
+    picks that plate's `Metadata/plate_N.gcode`; otherwise the first gcode in it is read.
     """
     try:
         if path.endswith(".3mf"):
             with zipfile.ZipFile(path) as z:
-                names = [n for n in z.namelist() if n.endswith(".gcode")]
+                names = sorted(n for n in z.namelist() if n.endswith(".gcode"))
                 if not names:
                     return None, None, None
-                text = z.read(names[0]).decode("utf-8", errors="replace")[:16000]
+                wanted = f"Metadata/plate_{plate}.gcode"
+                text = z.read(wanted if wanted in names else names[0]).decode("utf-8", errors="replace")[:16000]
         else:
             with open(path, "r", errors="replace") as f:
                 text = f.read(16000)
@@ -783,7 +787,7 @@ class QueueEngine:
         # Pre-flight: ensure Laminus is reachable before claiming this job.
         # Block (not fail) so the job auto-retries when Laminus comes back.
         # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
-        if not is_gcode_file(await session.get(UploadedFile, job.uploaded_file_id)):
+        if not is_presliced_file(await session.get(UploadedFile, job.uploaded_file_id)):
             sidecar_url = get_laminus_sidecar_url()
             if not sidecar_url:
                 await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
@@ -871,7 +875,7 @@ class QueueEngine:
             machine_preset = printer.current_orca_printer_profile if printer else None
             build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
-            is_gcode = is_gcode_file(uploaded_file)
+            is_gcode = is_presliced_file(uploaded_file)
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
@@ -978,7 +982,7 @@ class QueueEngine:
                 except OSError:
                     pass
                 return
-            grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+            grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path, plate=plate_number)
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
                 filament_grams=grams, estimated_seconds=secs,
@@ -1012,12 +1016,15 @@ class QueueEngine:
         await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
 
     def _stage_gcode(self, job_id: int, source_path: str, original_filename: str) -> str:
-        """Copy an uploaded .gcode into the job's gcode dir (where slicer output would have gone)."""
+        """Copy a pre-sliced upload (.gcode or .gcode.3mf) into the job's gcode dir (where slicer output would have
+        gone), keeping its full extension — the printer tells the two apart by it."""
         out_dir = self._slicer._data_dir / "gcode" / str(job_id)
         out_dir.mkdir(parents=True, exist_ok=True)
-        stem = os.path.splitext(os.path.basename(original_filename))[0]
+        suffix = presliced_suffix(original_filename)
+        base = os.path.basename(original_filename)
+        stem = base[: -len(suffix)] if base.lower().endswith(suffix) else os.path.splitext(base)[0]
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-        dest = out_dir / f"{safe}_j{job_id}.gcode"
+        dest = out_dir / f"{safe}_j{job_id}{suffix}"
         shutil.copyfile(source_path, dest)
         return str(dest)
 

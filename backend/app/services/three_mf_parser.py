@@ -220,3 +220,31 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
             ))
 
     return plates
+
+
+def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) -> list[PlateInfo]:
+    """Plates of a sliced archive (.gcode.3mf, BIZ-190): one per `Metadata/plate_N.gcode`, with the estimate read
+    from that plate's gcode header and the thumbnail from the archive's own `Metadata/plate_N.png`. Returns [] for a
+    corrupt/unreadable ZIP, like its siblings."""
+    from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports the library scanner
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            names = set(zf.namelist())
+            gcode_re = re.compile(r"Metadata/plate_(\d+)\.gcode$")
+            plate_numbers = sorted(int(m.group(1)) for n in names if (m := gcode_re.match(n)))
+            thumbs: dict[int, str] = {}
+            if thumbnail_dir:
+                Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
+                for num in plate_numbers:
+                    if f"Metadata/plate_{num}.png" in names:
+                        dest = Path(thumbnail_dir) / f"plate_{num}.png"
+                        dest.write_bytes(zf.read(f"Metadata/plate_{num}.png"))
+                        thumbs[num] = str(dest)
+    except (zipfile.BadZipFile, OSError):
+        return []
+    plates = []
+    for num in plate_numbers:
+        grams, secs, _ = _parse_gcode_estimates(file_path, plate=num)
+        plates.append(PlateInfo(plate_number=num, thumbnail_path=thumbs.get(num),
+                                estimated_time=secs or 0, filament_g=grams or 0.0))
+    return plates

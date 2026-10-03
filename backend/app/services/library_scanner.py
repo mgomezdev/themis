@@ -8,14 +8,38 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import UploadedFile, Job
-from .three_mf_parser import parse_three_mf, PlateInfo
+from .three_mf_parser import parse_sliced_archive, parse_three_mf, PlateInfo
 
 MODEL_EXTS = {".3mf", ".stl", ".gcode"}
+SLICED_ARCHIVE_SUFFIX = ".gcode.3mf"   # Bambu's sliced archive: ends in .3mf but is NOT a sliceable model (BIZ-190)
 
 
-def is_gcode_file(uploaded_file) -> bool:
-    """A pre-sliced file: jobs on it skip slicing and are printed as-is (BIZ-188)."""
-    return bool(uploaded_file) and (uploaded_file.original_filename or "").lower().endswith(".gcode")
+def file_kind(name: str | None) -> str:
+    """`gcode_3mf` (sliced archive), `gcode`, `stl` or `3mf`. The sliced-archive check must come before the
+    plain `.3mf` one — it shares the suffix."""
+    lower = (name or "").lower()
+    if lower.endswith(SLICED_ARCHIVE_SUFFIX):
+        return "gcode_3mf"
+    if lower.endswith(".gcode"):
+        return "gcode"
+    if lower.endswith(".stl"):
+        return "stl"
+    return "3mf"
+
+
+def is_presliced_name(name: str | None) -> bool:
+    return file_kind(name) in ("gcode", "gcode_3mf")
+
+
+def presliced_suffix(name: str | None) -> str:
+    """The full extension of a pre-sliced file (`.gcode.3mf` or `.gcode`), for naming copies of it."""
+    return SLICED_ARCHIVE_SUFFIX if file_kind(name) == "gcode_3mf" else ".gcode"
+
+
+def is_presliced_file(uploaded_file) -> bool:
+    """A pre-sliced file (.gcode or a .gcode.3mf sliced archive): jobs on it skip slicing and are printed as-is
+    (BIZ-188, BIZ-190)."""
+    return bool(uploaded_file) and is_presliced_name(uploaded_file.original_filename)
 # Statuses where a job still needs its source file present.
 ACTIVE_JOB_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "blocked"}
 
@@ -66,9 +90,12 @@ class LibraryScanner:
     def _parse_plates(self, abs_path: Path, file_id: int) -> list[dict]:
         thumb_dir = self.filecache_dir / str(file_id) / "thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
-        if abs_path.suffix.lower() == ".3mf":
+        kind = file_kind(abs_path.name)
+        if kind == "gcode_3mf":
+            plates_raw = parse_sliced_archive(str(abs_path), thumbnail_dir=str(thumb_dir))
+        elif kind == "3mf":
             plates_raw = parse_three_mf(str(abs_path), thumbnail_dir=str(thumb_dir))
-        elif abs_path.suffix.lower() == ".gcode":
+        elif kind == "gcode":
             from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports this module
             grams, secs, _ = _parse_gcode_estimates(str(abs_path))
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=secs or 0, filament_g=grams or 0.0)]

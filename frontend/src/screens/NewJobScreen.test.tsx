@@ -138,7 +138,7 @@ describe('NewJobScreen — rendering', () => {
   it('renders dropzone', () => {
     mockSpoolmanDisconnected();
     render(<NewJobScreen />, { wrapper });
-    expect(screen.getAllByText(/Drop a \.3mf, \.stl or \.gcode file/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Drop a \.3mf, \.stl, \.gcode or \.gcode\.3mf file/i).length).toBeGreaterThan(0);
   });
 
   it('"Add jobs" button is disabled before a file is uploaded', () => {

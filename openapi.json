@@ -2735,7 +2735,7 @@
           "printers"
         ],
         "summary": "Copy a file from the printer into the file library",
-        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused.",
+        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). A sliced .gcode.3mf lands as a pre-sliced library file (BIZ-190). Plain\n.gcode is refused.",
         "operationId": "copy_stored_file_to_library_api_v1_printers__printer_id__files_to_library_post",
         "parameters": [
           {
@@ -3134,7 +3134,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf, .stl or .gcode file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
+        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
