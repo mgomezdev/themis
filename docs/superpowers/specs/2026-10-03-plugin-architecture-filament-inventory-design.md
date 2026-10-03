@@ -153,8 +153,9 @@ queue loop or request handlers. Provider methods are `async`; a plugin wrapping 
 
 **Queue-loop rule** (`backend-review.md` §3): the queue loop **never awaits** a provider call. Writes the
 queue triggers (usage deduction) go through the outbox (§3.5): a local DB insert inside the completion
-transaction, flushed later by the host's own task. The queue loop does no external I/O at all, which is
-stricter than today's `create_task`.
+transaction, flushed later by the host's own task. Reads the queue triggers (the pre-print weight snapshot)
+are scheduled on the host's task, and their result is written when it returns. The queue loop does no
+external I/O at all, which is stricter than today's `create_task`.
 
 ### 3.2 Extension point: `filament_inventory`
 
@@ -189,19 +190,24 @@ class FilamentInventoryProvider(ABC):
     async def test_connection(self) -> ConnectionInfo: ...      # required
     async def list_materials(self) -> list[InvMaterial]: ...    # required
     async def list_spools(self) -> list[InvSpool]: ...          # required
+    async def get_spool(self, spool_ref: str) -> InvSpool | None: ...  # required (pre-print snapshot)
     # Optional, gated by capability:
-    async def record_usage(self, spool_ref: str, grams: float, *, idempotency_key: str) -> None: ...  # RECORD_USAGE
-    async def set_profile_links(self, material_ref: str, links: dict) -> InvMaterial: ...           # PROFILE_LINKS_WRITE
+    async def set_remaining(self, spool_ref: str, remaining_g: float) -> None: ...   # WRITE_WEIGHT
+    async def set_profile_links(self, material_ref: str, links: dict) -> InvMaterial: ...  # PROFILE_LINKS_WRITE
     def parse_label(self, text: str) -> str | None: ...         # LABEL_SCAN -> spool_ref
     def spool_url(self, ref: str) -> str | None: ...            # deep link into the provider's own UI
 ```
 
-Capabilities: `RECORD_USAGE`, `TRACKS_WEIGHT`, `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`,
+Capabilities: `TRACKS_WEIGHT`, `WRITE_WEIGHT`, `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`,
 `REMOTE` (the provider lives elsewhere and can be unreachable; enables §3.5 offline behavior and the
 disconnect-alert setting). **Core and UI branch only on capabilities, never on plugin id.**
 
-`idempotency_key` is the outbox row id. Providers that can dedupe (Local inventory can) use it. Spoolman's
-`/use` cannot, which is a real consequence (§5.1).
+**There is deliberately no "record usage / subtract N grams" method** (decision D6). Core never sends a delta.
+It sends the absolute remaining weight it computed (§3.5), so a repeated send changes nothing. This is the
+whole idempotency story, and it holds for every provider without needing provider-side dedupe. For Spoolman,
+`set_remaining` maps to `PATCH /api/v1/spool/{id}` with `remaining_weight`. Before relying on it, verify
+against the real API (e.g. that it isn't silently recomputed from `used_weight`) with a
+`protocol_verification/`-style manual check.
 
 ### 3.3 Core vs. plugin responsibilities
 
@@ -209,7 +215,7 @@ disconnect-alert setting). **Core and UI branch only on capabilities, never on p
 |---|---|
 | Low-stock thresholds, `spool.low`, "alert once until refilled" | **Core** `services/inventory/alerts.py`, on *effective* remaining (§3.5). Needs `TRACKS_WEIGHT` |
 | Preflight "not enough filament" warning | **Core**, on `InvSpool` effective remaining |
-| When and how much to deduct (both completion paths) + `deduct_on_complete` setting | **Core** (writes the outbox). Plugin `record_usage` does the write |
+| Pre-print weight snapshot, post-print target weight, `deduct_on_complete` setting | **Core** (snapshot table + outbox, §3.5). Plugin `get_spool` / `set_remaining` do the I/O |
 | Sync loop, health, last-known cache, outbox flush, disconnect alert | **Core** host, generic over `REMOTE` providers |
 | Slot ↔ spool link, "specific material" job ask | **Core** data, with provider-namespaced refs (§4) |
 | Orca profile links | Plugin (`PROFILE_LINKS_*`). Drift repair logic stays core and writes through `set_profile_links` |
@@ -223,82 +229,116 @@ matches actual behavior today), `low_stock_default_g`, `low_stock_overrides`, an
 `extension_slots.filament_inventory` holds 0 or 1 plugin. Refs are still stored with their provider id, so
 switching is safe and a multi-provider future isn't blocked.
 
-### 3.5 Offline behavior for remote providers (decided: serve last-known, accrue deltas, alert)
+### 3.5 Deduction model and offline behavior (decided: snapshot + absolute set; last-known cache; alert)
 
-When a `REMOTE` provider is unreachable, Themis keeps working from the last good data and catches up later.
+#### Deduction: read at print start, set absolute weight at completion (D6)
 
-**Last-known cache.** After each successful `list_spools`/`list_materials`, the host persists the result in
-`inventory_cache(provider, kind, payload JSON, fetched_at)`. Persisting it means a restart while the provider
-is down still has data. Reads (`/inventory/spools`, pickers, preflight, queue list) serve the live result
-when it's available and the cache when it isn't. Responses carry `stale: bool` and `as_of`.
+Every deduction is an absolute "set this spool to N grams", computed from a weight snapshot taken when the
+print starts:
 
-**Usage outbox.** `inventory_pending_usage`:
+1. **Print start** (the queue marks the job `printing`, the same moment `awaiting_plate_clear` is set): for
+   each spool-linked slot the job uses, core records a row in `job_spool_snapshots`:
 
-| column | notes |
+   | column | notes |
+   |---|---|
+   | `job_id`, `printer_id`, `slot` | |
+   | `provider`, `spool_ref` | |
+   | `pre_weight_g` | the spool's weight before this print |
+   | `source` | `live`, `cached`, or `pending` (see below) |
+   | `taken_at` | |
+
+   - Taking the snapshot is a **read**, so it is scheduled off the queue loop like any provider call. The
+     row is written as soon as it returns. It never delays the print start.
+   - Where `pre_weight_g` comes from, in order:
+     1. the newest *pending* target for that spool in the outbox (a previous job's set that hasn't
+        reached the provider yet);
+     2. otherwise a live `get_spool`;
+     3. otherwise the last-known cache.
+   - Option 1 is what makes back-to-back prints on one spool correct while the provider is offline.
+
+2. **Completion** (`queue_engine` completion path and `complete-manually`): if `deduct_on_complete` is on and
+   the provider has `WRITE_WEIGHT`, core computes `target_g = max(0, pre_weight_g − job_spent_g)`. It then
+   inserts an outbox row `{provider, spool_ref, target_g, job_id}` **in the completion transaction**.
+   - **Manual completion has no print start.** It takes the snapshot at completion time instead, from the
+     same three sources, in the same order.
+   - **A missing snapshot** (the provider was unreachable at start and nothing was cached) means **no write
+     is made**. Core logs it and shows "usage not recorded — no starting weight" on the job, so the
+     operator can fix the spool in the provider. Guessing would be worse.
+
+3. **Flush:** the host sends `set_remaining(spool_ref, target_g)` for each outbox row, in `created_at`
+   order. It flushes right after commit (the normal online case, effectively immediate) and again on every
+   reconnect.
+   - **Re-sending a row is harmless.** The value is absolute, so a timeout or crash mid-flush just means
+     sending it again. The double-deduction risk from earlier drafts is gone, and so is the re-read
+     heuristic.
+   - **When a send succeeds,** the row becomes `applied` and the host re-fetches that spool into the cache.
+
+Outbox table `inventory_pending_writes`: `id`, `provider`, `spool_ref`, `target_g`, `job_id`, `printer_id`,
+`source` (`queue`/`manual_complete`), `created_at`, `attempts`, `last_attempt_at`, `last_error`, and `status`
+(`pending` → `applied`/`superseded`/`discarded`). When a newer row for the same spool is applied, older
+`pending` rows for that spool become `superseded`, because only the latest absolute value matters.
+
+**What absolute sets trade away: lost updates.** If someone changes the spool *in the provider* while a print
+runs (re-weighs it, swaps it, or another tool deducts from it), the completion write overwrites that change
+with `pre_weight − spent`. Proposed guard (open question Q10):
+- At flush time, if the provider is live, read the spool's current weight.
+- If it equals `pre_weight_g` (no outside change) or already equals `target_g` (an earlier send landed),
+  write as normal.
+- If it differs from both, an outside change happened. **Hold the row as `conflict`** and surface it to the
+  user ("Spool #12 changed in Spoolman during the print: 640 g now, Themis expected 700 g → would set
+  662 g. [Use Themis value] [Keep Spoolman value] [Subtract 38 g from 640 g]").
+- Re-sends stay idempotent because "already equals target" counts as success.
+
+**Usage accounting today vs. this model:** today only `complete` deducts, which stays the same.
+Failed and cancelled prints deduct nothing, so partial usage stays unrecorded as now. That could change
+later, and the snapshot model makes it easy.
+
+#### Offline behavior for `REMOTE` providers (D4)
+
+- **Last-known cache.** After each successful `list_spools`/`list_materials`, the host persists the result to
+  `inventory_cache(provider, kind, payload JSON, fetched_at)`, so it survives a restart. Reads (pickers,
+  preflight, queue list, `/inventory/spools`) serve the live result when available and the cache otherwise,
+  with `stale: bool` and `as_of`.
+- **Effective remaining** = the newest pending target for the spool if there is one, else the cached or live
+  weight. Preflight, low-stock alerts, and the pickers use effective remaining. The UI marks unsynced
+  values ("412 g · not yet synced").
+- **Pending writes accumulate** while the provider is down and flush in order on reconnect. Rows for a
+  provider that is no longer active stay `pending`. The provider page lists them with **Apply when
+  reconnected** (default) or **Discard**. They are never re-targeted at another provider.
+- **Disconnect alert.** Each `REMOTE` provider's settings get the host-standard field `max_disconnect_minutes`
+  (user-set, blank = never). The host tracks `state.disconnected_since`. When the limit is exceeded it emits
+  `inventory.disconnected` (webhook + notification channels, same plumbing as `spool.low`) once per outage,
+  with `{provider, since, pending_count}`. On recovery it emits `inventory.reconnected` with the flushed
+  counts. The status chip turns red, and screens showing spool data get a banner.
+
+### 3.6 Local inventory provider (decided: a plugin like any other; data + behavior wiring only)
+
+Local inventory is **a plugin with no special status in core**. It goes through the same registry, manifest,
+interface, capability flags, and settings storage as Spoolman. The only difference is that it stores data in
+its own plugin-owned tables (§3.8) instead of relaying to a remote service. It requests its own page
+(`ui.mode = "page"`), but **the page's screens, layout, and full feature set are out of scope** (D7). This
+section only defines the data and behavior wiring needed to satisfy the interface for current Themis
+operation.
+
+| Interface obligation (from current Themis use) | Local inventory wiring |
 |---|---|
-| `id` PK | also the `idempotency_key` |
-| `provider`, `spool_ref`, `grams` | |
-| `job_id`, `printer_id`, `source` | `queue` or `manual_complete`, for audit and the UI |
-| `created_at`, `attempts`, `last_attempt_at`, `last_error` | |
-| `status` | `pending` → `applied` / `discarded` |
+| `list_materials` / `list_spools` / `get_spool` (pickers, preflight, low-stock, snapshot) | Read from plugin tables and map to DTOs |
+| `TRACKS_WEIGHT` | `remaining_g` column |
+| `WRITE_WEIGHT` → `set_remaining` | `UPDATE … SET remaining_g = :target` in a transaction, plus an append to its own audit table |
+| `PROFILE_LINKS_READ/WRITE` (slot preset auto-pick, Laminus drift repair) | `profile_links` JSON on the material |
+| `LABEL_SCAN` → `parse_label` | Its own code format, `themis:s-<id>` + bare id |
+| Not `REMOTE` | No cache, disconnect alert, or offline outbox wait. Outbox rows flush immediately (same code path) |
 
-- **Every** deduction goes through the outbox, online or not: one code path. The completion transaction
-  inserts the row. The host flushes `pending` rows in `created_at` order right after commit (online case:
-  effectively immediate) and on every successful sync/reconnect. The queue loop never awaits it.
-- **Effective remaining** = cached `remaining_g` − Σ pending grams for that spool. Preflight, low-stock
-  alerts, and the pickers use effective remaining, so the numbers stay honest offline. The UI marks pending
-  ("412 g · 38 g pending sync").
-- Rows for a provider that is no longer active stay `pending`. The provider page lists them with **Apply
-  when reconnected** (default) or **Discard**. They are never re-targeted at a different provider.
-- After a successful flush the host re-fetches spools, so the cache reflects the provider's own numbers.
-
-**Disconnect alert.** Each `REMOTE` provider's settings get a host-standard field, `max_disconnect_minutes`
-(user-set, blank = never alert). The host tracks `state.disconnected_since`. When it is exceeded, the host
-emits a new event `inventory.disconnected` (webhook + notification channels, same plumbing as `spool.low`)
-once per outage, with `{provider, since, pending_count, pending_grams}`. On recovery it emits
-`inventory.reconnected` with the flushed counts. The status chip turns red, and a banner shows on screens
-that display spool data ("Spoolman unreachable since 14:02 — showing last-known spools; 3 usage records
-pending").
-
-**Ambiguous failures.** A timeout means the outcome is unknown: the provider may have applied the write.
-For providers without idempotency (Spoolman), replaying risks a double deduction. Proposed handling: on a
-timeout, re-read that spool's `remaining_weight` before retrying. If it already dropped by ≈ `grams`, mark
-the row `applied`; otherwise retry. This is a heuristic (another client could have used the spool in the
-meantime), so log every decision it makes. Clean failures (connection refused, 5xx before send) retry
-without the check.
-
-### 3.6 Local inventory provider (decided: built-in, minimum feature set)
-
-Purpose: inventory without running anything else, and a second implementation that proves the interface.
-Scope is **only what current Themis operation consumes**, derived from §1:
-
-| Current Themis use | Local inventory needs |
-|---|---|
-| Slot spool picker, `slotPatchForSpool` (type, color, name, auto-pick Orca preset) | Materials: name, material type, color, vendor. Spools: material, label/name, location |
-| Preflight warning, low-stock alerts, Fleet "g left" | Spools: `initial_g`, `remaining_g` (+ `spool_weight_g` for tare when weighing) |
-| Deduction on completion | `record_usage`: atomic decrement, deduped on `idempotency_key` |
-| Filament Mappings page / Laminus drift repair | `profile_links` on materials, read and write |
-| "Specific material" ask on jobs, projects, orders | Material list (that's all the ask reads) |
-| Scan spool (Fleet) | `parse_label` for its own code `themis:s-<id>` (plus bare id). Printing labels is **out** of the minimum |
-| Low-stock override per material | Material id as ref (core already handles it) |
-
-**Tables** (plugin-owned, §3.8): `local_inv_materials(id, name, material, color_hex, vendor, density,
+**Tables** (plugin-owned, prefixed): `local_inv_materials(id, name, material, color_hex, vendor, density,
 diameter, profile_links JSON, archived)`, `local_inv_spools(id, material_id FK, label, location, initial_g,
-remaining_g, spool_weight_g, archived, created_at)`, `local_inv_usage(id, spool_id, grams, idempotency_key
-UNIQUE, job_id, created_at)`. The usage table is the audit log and enforces dedupe.
+remaining_g, archived, created_at)`, and `local_inv_weight_log(id, spool_id, old_g, new_g, job_id NULL,
+source, created_at)` (an audit trail for every set).
 
-**UI** (own nav entry, §3.7): **Spools** (list, add, edit, archive, "set remaining" after weighing, "refill"
-which resets to `initial_g`), **Materials** (CRUD and color), **Mappings** (the shared profile-links
-component, also used by Spoolman), and **Settings** (the default plugin page).
+**Plugin routes** (data CRUD the future UI will need, mounted under `/api/v1/plugins/local_inventory/`): create,
+update, and archive for materials and spools. These are listed so the routing wiring (plugin-owned routers,
+§3.9) is proven by a real plugin. Their exact shape is decided with the UI.
 
-**Explicitly out of minimum:** price and cost per gram (job costs stay manual), label printing, purchase
-history, multiple diameters per material, import from Spoolman. Import is the most likely ask to come next,
-so a one-shot "import materials + spools from the active Spoolman" action is a cheap follow-up because both
-sides are DTOs.
-
-Capabilities: `RECORD_USAGE`, `TRACKS_WEIGHT`, `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`. Not
-`REMOTE`, so there is no cache, outbox delay, or disconnect alert. The outbox still records each deduction
-and flushes it immediately.
+**Out of scope:** UI screens, label printing, pricing, purchase history, import from Spoolman (D8).
 
 ### 3.7 Plugin UI contributions (decided: plugin-defined pages, shared default page)
 
@@ -331,8 +371,8 @@ class UiTab:
 - Header: name, version, description, docs link, enable toggle, and health chip.
 - Connection: a form generated from `settings_model`. Secret fields are write-only and show "set ✓ /
   replace". There is a **Test connection** button.
-- For `REMOTE` providers: `max_disconnect_minutes`, last sync, last error, cache age, and the pending-usage
-  list with apply/discard.
+- For `REMOTE` providers: `max_disconnect_minutes`, last sync, last error, cache age, and the pending-writes
+  list with apply/discard. Conflicts (Q10) show here too.
 - Danger zone: disable, and "remove plugin data" (asks for confirmation; only for plugin-owned tables).
 
 **Core inventory page** (Settings → Filament inventory, core-owned): active provider picker (None, Spoolman,
@@ -345,8 +385,8 @@ and `/settings/spoolman-mappings` redirect to the new ones.
 Proposed layouts:
 - **Spoolman** → `page`, settings placement, tabs: Connection (`default`) and Filament mappings
   (`component`, shared profile-links component).
-- **Local inventory** → `page`, main placement ("Inventory"), tabs: Spools, Materials, Mappings
-  (`component`), Settings (`default`).
+- **Local inventory** → `page` (its own sidebar entry). Placement, tabs, and screens are out of scope (D7).
+  For now it declares one `default` tab, which is enough to configure it.
 - A trivial plugin → `section`.
 
 The `component` renderer requires in-tree frontend code. That is fine while plugins are in-tree. If the
@@ -374,13 +414,13 @@ GET    /api/v1/plugins/{id}                             # settings (secrets as h
 PUT    /api/v1/plugins/{id}                             # settings/enabled; secrets write-only, omit = keep
 POST   /api/v1/plugins/{id}/test
 GET    /api/v1/plugins/{id}/ui/{tab}                    # schema-renderer tabs
-*      /api/v1/plugins/{id}/…                           # plugin's own routers (Local inventory CRUD)
+*      /api/v1/plugins/{id}/…                           # plugin's own routers (Spoolman relay, Local inventory CRUD)
 PUT    /api/v1/extension-slots/filament_inventory       # {plugin_id | null}
 
 GET    /api/v1/inventory/materials | /spools            # + stale, as_of
 POST   /api/v1/inventory/sync-now
 GET    /api/v1/inventory/sync-status                    # provider, health, disconnected_since, pending counts
-GET    /api/v1/inventory/pending-usage ; POST …/{id}/discard ; POST …/flush
+GET    /api/v1/inventory/pending-writes ; POST …/{id}/discard ; POST …/{id}/resolve ; POST …/flush
 PATCH  /api/v1/inventory/materials/{ref}/profile-links  # 409 without PROFILE_LINKS_WRITE
 POST   /api/v1/inventory/resolve-label                  # replaces frontend parseSpoolCode
 GET/PUT /api/v1/inventory/settings                      # deduct_on_complete + low-stock
@@ -391,12 +431,47 @@ scope. Inventory routes use new `inventory:read/write`. The migration grants the
 `spoolman:*` **or** `settings:write` (precedent: v021). That includes the persisted admin session and device
 keys, whose scopes are snapshots. The hand-mirrored `frontend/src/api/apiKeys.ts` SCOPES list is updated too.
 
-**Compat window.** For one release, `/api/v1/spoolman/*` and `/api/v1/settings/spoolman*` stay as aliases
-that return the **old** shapes. They are marked `deprecated` in OpenAPI and work only while Spoolman is the
-active provider; otherwise they return 409 with a pointer to the new routes. Keys holding `spoolman:*` are
-accepted. `spool.low` keeps its `spool_id` and `filament_id` keys (as ints when the ref parses as one) and
-adds `provider`, `spool_ref`, and `material_ref`. `low_stock_warning` keeps its shape, with `spool_ref`
-added.
+**Spoolman calls are owned and relayed by the plugin (D9).** Core has no Spoolman routes and makes no
+Spoolman calls.
+- **Core logic** (preflight, low-stock, snapshot/deduction, pickers, drift repair) talks only to
+  `host.active("filament_inventory")` through the interface. It doesn't know whether the data lives in
+  Spoolman, Local inventory, Bambuddy, or anything else.
+- **The Spoolman plugin owns everything Spoolman-specific:**
+  - its HTTP client and config;
+  - any Spoolman-only endpoints, mounted from its own router under `/api/v1/plugins/spoolman/…`. These
+    relay to the configured Spoolman, e.g. a raw passthrough for spool/filament detail beyond the DTOs.
+- **Old paths.** `/api/v1/spoolman/*` and `/api/v1/settings/spoolman*` move **into the Spoolman plugin's
+  router** as deprecated aliases that relay as before (same response shapes).
+  - They exist only while the Spoolman plugin is registered.
+  - When it isn't the active provider, they return 409 with a pointer to `/inventory`.
+  - When to remove them is the plugin's own versioning decision, not a core compat window.
+  - Keys holding `spoolman:*` are accepted on those plugin routes.
+- **Neutral payloads.** `spool.low` keeps its `spool_id` and `filament_id` keys (ints when the ref parses as
+  one) and adds `provider`, `spool_ref`, and `material_ref`. `low_stock_warning` keeps its shape and adds
+  `spool_ref`.
+
+### 3.10 Feature gating by installed plugin kind and capability
+
+Some behavior can't exist without a plugin of the required kind. The rule: **core asks `host.has(kind,
+capability)`, and the frontend asks the same through `GET /api/v1/plugins` (exposed as a
+`useCapability(kind, cap)` hook).** When a capability is missing, the feature is hidden in the UI and skipped
+quietly in the backend, never an error to the user. Routes that need it return 409 with
+`{"error": "capability_unavailable", "kind", "capability"}`.
+
+| Feature | Requires | Without it |
+|---|---|---|
+| Spool picker on printer slots; "specific material" pick on jobs, projects, orders | `filament_inventory` (any) | Hidden. Manual type/color/name entry only (today's "Spoolman off") |
+| Inventory status chip, sync-now, sync status | `filament_inventory` + `REMOTE` | Hidden. Local providers have nothing to sync |
+| Disconnect alert, stale banners, pending-writes list | `REMOTE` | Hidden / never fires |
+| Preflight "not enough filament" warning, low-stock alerts + thresholds UI, Fleet "g left" | `TRACKS_WEIGHT` | Warning absent (`low_stock_warning: null`). Thresholds page hidden. `spool.low` never fires |
+| Pre-print snapshot, completion deduction, `deduct_on_complete` toggle | `TRACKS_WEIGHT` + `WRITE_WEIGHT` | No snapshot, no outbox row, toggle hidden. With weight read-only, the job still shows "used ~38 g" |
+| Filament mappings tab / auto-pick Orca preset when a spool is loaded | `PROFILE_LINKS_READ` (+`_WRITE` to edit) | Tab hidden. Slot keeps a manually chosen preset |
+| Laminus drift repair of profile links | `PROFILE_LINKS_WRITE` | That section of the drift report is omitted. Printer/job drift unaffected |
+| Scan spool (Fleet) | `LABEL_SCAN` | Button hidden |
+| Stored refs from a provider that is no longer active | n/a | Degraded "inactive" chip; never blocks printing (§4) |
+
+The guard test (§6) asserts that no core code path calls a provider method without a capability check, and
+that every row above has a "without it" test.
 
 ---
 
@@ -409,7 +484,9 @@ downgrade window.
 
 **v033_plugin_host**
 1. Create `plugin_configs`, `extension_slots`, `plugin_schema_versions`, `inventory_config`,
-   `inventory_cache`, and `inventory_pending_usage`.
+   `inventory_cache`, `inventory_pending_writes`, and `job_spool_snapshots`. Jobs already `printing` at
+   upgrade time get no snapshot. Their completion takes one at completion time, which is the same as the
+   manual-completion path.
 2. Copy `spoolman_config` → `plugin_configs('spoolman')`: url and interval go to `settings`, `api_key` to
    `secrets`, health columns to `state`, and `enabled` is copied.
 3. `extension_slots('filament_inventory')` = `'spoolman'` if `spoolman_config.url` is set, else NULL.
@@ -447,7 +524,7 @@ degraded chip ("Spoolman spool #12 — provider not active"). It is never matche
 ids and never blocks printing, and its deductions stay in the outbox as `pending` (§3.5).
 
 **Cleanup release (later):**
-- Drop the shims, `spoolman_config`, the `filament_id` columns and keys, `spoolman_spool_id`, and the
+- Drop `spoolman_config`, the `filament_id` columns and keys, `spoolman_spool_id`, and the
   `spoolman:*` scopes. A migration strips those scopes from stored keys, because `api_keys.py` rejects unknown
   scopes on edit.
 - **Guard old migrations first.** v001's `_ALTERS` (re-adds `job_printer_configs.filament_id`), v020, and
@@ -463,8 +540,11 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 **Gains**
 - One seam replaces ~9 scattered `SpoolmanConfig` lookups with inconsistent `enabled` checks.
 - Failure handling is in one place, and the queue loop never touches external I/O.
-- Deductions survive outages and restarts. Today a deduction that fails while Spoolman is down is **lost**
-  (log line only). The outbox makes them durable.
+- **Deductions survive outages and restarts, and can't double-count.** Today a deduction that fails while
+  Spoolman is down is **lost** (log line only), and a retry of `PUT /use` would double-deduct. With the
+  outbox plus absolute sets, a deduction is never lost and re-sending is a no-op.
+- **Core logic doesn't care where inventory lives.** Spoolman, Local inventory, or a future Bambuddy plugin
+  all look the same to it (D9).
 - A second provider (Local inventory) proves the interface, and the host is reusable for the next plugin
   kind.
 
@@ -472,9 +552,17 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 - **Large diff.** About 83 files, 8 OpenAPI paths, new tables, and new events. It must be phased (§7).
 - **Hot-table migrations + dual-write.** The normalizer must cover every writer, and missing one silently
   drops links. Tests per writer (§6).
-- **Double-deduction risk** when replaying to non-idempotent Spoolman after an ambiguous timeout. This is
-  mitigated by the re-read heuristic (§3.5), not eliminated. Today's behavior is the opposite failure (lost
-  deductions). Lean toward the new failure, because it's visible in the audit log.
+- **Lost-update risk from absolute sets.** Any change made to a spool *in the provider* during a print gets
+  overwritten at completion, unless the conflict guard (§3.5, Q10) is adopted. Today's delta model doesn't
+  have this problem, but it has double-count and lost-deduction problems instead.
+- **The deduction depends on a starting weight.** If the provider is unreachable at print start and nothing
+  is cached, the print is not deducted. The job flags it, but it is a hole that didn't exist before.
+- **One more provider read per print start.** A read for each spool-linked slot. It runs off the queue loop
+  and the snapshot is written when it returns, but it is still more traffic to Spoolman.
+- **Spoolman `PATCH remaining_weight` behavior is an assumption.** It needs a manual verification check
+  against a real instance before relying on it (§3.2).
+- **Feature gating adds a test matrix.** Every row in §3.10 needs a "without it" test, in both backend and
+  frontend.
 - **Stale-data decisions.** Preflight and low-stock run on cached numbers during an outage. The UI must show
   `stale`/`as_of` wherever a number drives a decision.
 - **Indirection tax.** Core → host → provider. The docs/agent set must describe the seam.
@@ -511,17 +599,31 @@ Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament`
 - **Provider contract suite**, parametrized over every `filament_inventory` plugin (Spoolman against
   `tests/spoolman_mock.py`, and Local inventory against the real test DB). It checks string refs, capability
   flags matching the implemented methods, `NotSupported` without a capability, DTO completeness, and
-  `record_usage` idempotency for providers that claim it. A new provider has to pass it.
+  `set_remaining` round-trip (set, then `get_spool` returns the same value; set twice = set once). A new
+  provider has to pass it.
 - **Host containment:** a provider that raises or hangs at each call site. Assert the request succeeds, the
   queue advances, and `state.last_error` is written. These tests must fail if the call wrapper is bypassed.
 - **Queue-loop guard:** completion inserts an outbox row and makes no provider call inside the loop. Mock the
   provider and assert it isn't awaited on the loop's path.
 - **Offline:**
-  - provider down → reads come from the cache with `stale`, and effective remaining = cached − pending
+  - provider down → reads come from the cache with `stale`, and effective remaining = newest pending target,
+    else cached
   - recovery flushes rows in order and re-fetches
   - `max_disconnect_minutes` exceeded → exactly one `inventory.disconnected` (using `wait_until`, not sleep),
     then `inventory.reconnected`
-  - ambiguous-timeout re-read marks the row applied rather than replaying it
+- **Deduction model:**
+  - The snapshot is taken at print start, from live, cached, or pending sources, in that priority order.
+  - Completion writes `target = pre − spent`, clamped at 0.
+  - Flushing the same row twice leaves one value.
+  - Two back-to-back jobs on one spool while offline: job 2's snapshot is job 1's pending target, and the
+    final value equals both deductions.
+  - A newer applied row marks older pending rows `superseded`.
+  - A missing snapshot means no write, and the job carries a flag.
+  - Manual completion takes its snapshot at completion time.
+  - Jobs printing at upgrade time are handled.
+  - Conflict guard, if adopted: an outside change → `conflict`; current == target → `applied`.
+- **Feature gating:** one test per §3.10 row with the capability absent (UI hidden, backend skips, route
+  returns 409).
   - restart while down still serves the cache
 - **Dual-write normalizer:** one test per writer. That covers `PATCH /printers` (old key only, new key only,
   both, and a body that omits a slot) and an **AMS report preserving `inventory`**, which must fail against
@@ -532,8 +634,9 @@ Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament`
   admin session snapshot. Run v033+v034, then re-read every row. Also run them twice to check idempotency,
   plus `down()`, plus a fresh-DB `create_all` path. Plugin migrations go through the same idempotency and
   fresh-DB checks.
-- **Compat shims:** golden responses captured from today's routes in Phase 0, compared byte-for-byte.
-- **"No Spoolman in core" guard:** a grep test with an **explicit allowlist** that holds the shims,
+- **Spoolman plugin alias routes:** golden responses captured from today's routes in Phase 0, compared
+  byte-for-byte against the plugin's relaying aliases.
+- **"No Spoolman in core" guard:** a grep test with an **explicit allowlist** that holds
   migrations, the normalizer, `models.SpoolmanConfig`, the `auth.py` scopes, and `printer_manager`'s
   preserved-keys set. It starts in Phase 1 and the allowlist shrinks in cleanup, so the guard runs the whole
   time instead of turning on at the end.
@@ -541,9 +644,8 @@ Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament`
   - `api/inventory.ts` via `stubFetch`
   - capability gating: no provider means no picker, chip, or scan button
   - stale and pending rendering
-  - `PluginSettingsPage` (generated form, write-only secrets, pending-usage list)
+  - `PluginSettingsPage` (generated form, write-only secrets, pending-writes list)
   - section vs page nav contributions, tab routing, and the schema renderer
-  - Local inventory screens
   - redirects
   - updated e2e `mock-api.ts`
 - Regenerate `openapi.json`; update `contracts/response-keys.json` (including `project_item.filament_id`
@@ -559,15 +661,18 @@ Each phase is its own PR into `develop`, green at every step.
   `low_stock_warning`. Build the v032 fixture DB.
 - **Phase 1 — host + Spoolman behind it, no visible change:** host, core tables, ABC/DTOs,
   `plugins/spoolman/`, core inventory services on DTOs, outbox + cache + disconnect alert, v033/v034, the
-  normalizer on every writer, new routes, old routes as shims, and the guard with an allowlist. The frontend
-  still uses the old routes. The outbox already fixes lost deductions here.
+  normalizer on every writer, new routes, old Spoolman routes moved into the plugin's router, and the guard
+  with an allowlist. The snapshot + absolute-set deduction lands here. The frontend still uses the old
+  routes.
 - **Phase 2a — frontend cutover:** `api/inventory.ts`, UI contributions + `PluginSettingsPage`, the core
   Filament inventory page, Spoolman's page + tabs, stale/pending UI, delete the dead toggles, `resolve-label`,
   and redirects.
-- **Phase 2b — Local inventory:** plugin migrations, tables, CRUD routes, and screens. Adjust the ABC if it
-  doesn't fit.
-- **Phase 2c — cleanup (one release later):** guard the old migrations, then drop the shims, old tables,
-  columns, keys, and scopes, and shrink the guard allowlist.
+- **Phase 2b — Local inventory wiring:** plugin migrations, tables, provider implementation, CRUD routes,
+  and a `default` settings tab only. Adjust the ABC if it doesn't fit. The UI/feature set gets a separate
+  design.
+- **Phase 2c — cleanup (one release later):** guard the old migrations, then drop the old core tables,
+  columns, keys, and scopes, and shrink the guard allowlist. Removing the Spoolman plugin's deprecated alias
+  routes is the plugin's own decision.
 - **Later (separate design):** decide the install model, a second plugin kind, and an event bus.
 
 ---
@@ -578,8 +683,10 @@ Each phase is its own PR into `develop`, green at every step.
 2. The queue keeps matching on type/color. A "specific material" ask stays informational, as today.
 3. Profile links live in the provider. Both planned providers support them.
 4. Upgrades need zero manual steps, with a one-release downgrade window.
-5. External consumers of `/api/v1/spoolman/*` may exist (API keys, QR/home-automation), so the deprecation
-   window is worth its cost.
+5. External consumers of `/api/v1/spoolman/*` may exist (API keys, QR/home-automation), so the Spoolman
+   plugin keeps those paths as relaying aliases (§3.9).
+10. Spoolman's `PATCH /api/v1/spool/{id}` accepts an absolute `remaining_weight` and keeps it. Unverified.
+11. Only completed jobs deduct, as today. A spool-linked slot is used by one printer at a time.
 6. The frontend stays one bundle for now. `component` tabs are in-tree.
 7. Spoolman stays the recommended provider for people already running it. Local inventory is for everyone
    else, not a replacement push.
@@ -590,11 +697,10 @@ Each phase is its own PR into `develop`, green at every step.
 
 - **Q1.** Install model (in-tree / pip / upload) and the sandbox posture that follows. Deferred while this is
   ideation.
-- **Q6.** Compat window: one release or a fixed date?
-- **Q7.** Ambiguous-timeout replay to Spoolman: accept the re-read heuristic, or have the user confirm
-  ambiguous rows before replay?
-- **Q8.** Local inventory nav: main sidebar ("Inventory", operational) as proposed, or under Settings?
-- **Q9.** Is a one-shot "import from Spoolman" into Local inventory part of Phase 2b or a follow-up?
+- **Q10.** Conflict guard (§3.5): adopt it (hold and ask when the spool changed in the provider during the
+  print), or always overwrite with `pre − spent`?
+- **Q11.** Missing snapshot (provider unreachable at print start, nothing cached): skip the deduction and
+  flag the job (proposed), or retry the read for a while after start?
 
 ## 10. Docs to update when implemented
 
@@ -611,5 +717,9 @@ loop never awaits a provider"), `frontend-review.md` §2, and a new `docs/plugin
 | D1 | Ideation stage; install model not decided | 2026-10-03 |
 | D2 | Delete "Push usage on job events" and "Mirror vendor & material catalog" toggles; make deduct-on-completion real | 2026-10-03 |
 | D3 | Second provider is a built-in Local inventory with the minimum feature set for current Themis operation (§3.6) | 2026-10-03 |
-| D4 | Provider down: serve the last-known spool list; accrue usage deltas until reconnection; alert after a user-set outage length in provider settings (§3.5) | 2026-10-03 |
+| D4 | Provider down: serve the last-known spool list; accrue pending writes until reconnection; alert after a user-set outage length in provider settings (§3.5) | 2026-10-03 |
 | D5 | Plugins define their own settings UI: a shared default plugin page any plugin can use; simple plugins render as a section on a common page; complex ones get their own sidebar entry with tabs (§3.7) | 2026-10-03 |
+| D6 | Deduction is read + absolute set, not a delta: read the weight at print start, then at completion send `pre_weight − job_spent`. Re-sends have no effect (§3.5) | 2026-10-03 |
+| D7 | Local inventory is an ordinary plugin requesting its own page. Its UI/feature set is out of scope; only data and behavior wiring is in scope (§3.6) | 2026-10-03 |
+| D8 | No import into Local inventory for now | 2026-10-03 |
+| D9 | Core never calls Spoolman. Spoolman routes and calls live in the Spoolman plugin, which relays to its configured instance. Core logic is provider-agnostic, and features that need a missing plugin kind or capability are hidden or disabled (§3.9, §3.10) | 2026-10-03 |
