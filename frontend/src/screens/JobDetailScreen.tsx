@@ -3,6 +3,8 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { fmtTime } from '../data/helpers';
 import { StatusPill, Progress, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
+import { SaveSliceControl, SliceCacheDebug, SliceCacheMarkers } from '../components/SliceCache';
+import { isPresliced } from '../lib/fileKind';
 import { getJobDetails, cancelJob, unblockJob, completeJobManually, setJobCost, setJobSchedule, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
@@ -285,7 +287,10 @@ export function JobDetailScreen() {
                     )}
                   </div>
                 </div>
-                <StatusPill status={job.status as StatusKey} />
+                <div className="col gap-1" style={{ alignItems: 'flex-end' }}>
+                  <StatusPill status={job.status as StatusKey} />
+                  <SliceCacheMarkers job={job} />
+                </div>
               </div>
 
               {isActive && job.plate && (
@@ -300,6 +305,17 @@ export function JobDetailScreen() {
                   </div>
                 </div>
               )}
+
+              <div style={{ marginBottom: 14 }}>
+                <SaveSliceControl
+                  job={job}
+                  presliced={isPresliced(job.file?.original_filename)}
+                  onChange={u => setJob(prev => prev ? {
+                    ...prev, save_slice: u.save_slice, save_slice_name: u.save_slice_name,
+                    slice_cache_info: u.slice_cache_info,
+                  } : prev)}
+                />
+              </div>
 
               {job.block_reason && (
                 <div style={{
@@ -502,6 +518,8 @@ export function JobDetailScreen() {
               Manually entered cost of the filament used, for profit/loss reporting.
             </div>
           </div>
+
+          <SliceCacheDebug info={job.slice_cache_info} />
         </div>
 
         {/* Sidebar */}

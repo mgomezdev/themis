@@ -86,6 +86,39 @@ export interface ApiJob {
   low_stock_warning: LowStockWarning | null;
   filament_cost: number | null;
   not_before: string | null;   // UTC ISO: the queue won't start this job before then
+  // Slicing cache (BIZ-189)
+  save_slice: boolean;               // keep this job's slice in the library as a cached version
+  save_slice_name: string | null;
+  allow_cached_slice: boolean;       // print a matching cached version instead of slicing when claimed
+  sliced_version_id: number | null;  // the cached version this job prints / printed
+  slice_cache_info: SliceCacheInfo | null;
+}
+
+/** The latest slicing-cache decision for a job (+ the outcome of saving its slice), for the job-details debug view. */
+export interface SliceCacheInfo {
+  decision?: 'hit' | 'miss';
+  reason?: string | null;
+  at?: string;
+  cache_key?: string | null;
+  source_content_hash?: string | null;
+  sliced_version_id?: number | null;
+  cached_file_id?: number | null;
+  cached_file_hash?: string | null;
+  preset_content_hash_stored?: string | null;
+  preset_content_hash_current?: string | null;
+  slicer_version_stored?: string | null;
+  slicer_version_current?: string | null;
+  stale?: boolean | null;
+  stale_reasons?: string[];
+  policy?: 'use_latest' | 'pin_cached' | null;
+  save?: {
+    outcome: 'saved' | 'duplicate' | 'failed';
+    sliced_version_id: number | null;
+    cache_key: string | null;
+    file_id: number | null;
+    error: string | null;
+    at: string;
+  };
 }
 
 export interface LowStockWarning {
@@ -189,11 +222,22 @@ export async function createJob(body: {
   model_targets?: ModelTargetInput[];
   order_id?: number | null;
   overrides?: Record<string, string> | null;
+  save_slice?: boolean;
+  save_slice_name?: string | null;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+/** Flag a job to keep its slice in the library (saved right away if it's already sliced), or stop a pending save. */
+export async function setJobSaveSlice(jobId: number, saveSlice: boolean, name?: string | null): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/save-slice`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ save_slice: saveSlice, name: name || null }),
   });
 }
 
@@ -219,7 +263,12 @@ export async function checkOverrides(body: {
   });
 }
 
-export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number; estimates_enabled: boolean; }
+export interface QueueConfig {
+  check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
+  estimates_enabled: boolean;
+  /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
+  slice_cache_use_latest_settings: boolean;
+}
 
 export async function getQueueConfig(): Promise<QueueConfig> {
   return request('/api/v1/settings/queue');

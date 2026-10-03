@@ -49,6 +49,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
   low_stock_warning: null,
   filament_cost: null,
   not_before: null,
+  save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
   printer_configs: [
     {
       printer_id: 3,
@@ -265,5 +266,40 @@ describe('JobDetailScreen — make/model targets', () => {
     const card = await screen.findByTestId('model-targets');
     expect(card.textContent).toContain('Bambu Lab P1S 0.4 nozzle');
     expect(card.textContent).toMatch(/No printer of this model is set up yet/);
+  });
+});
+
+describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
+  it('offers to save the slice for a model job, with markers and the debug block', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, status: 'queued', save_slice: true,
+      slice_cache_info: { decision: 'miss', reason: 'no_version', cache_key: 'feedbeef', policy: 'use_latest' },
+    });
+    renderJobDetail();
+
+    expect(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' })).toBeTruthy();
+    expect(within(screen.getByTestId('slice-cache-markers')).getByText('Saving gcode')).toBeTruthy();
+    expect(screen.getByTestId('slice-cache-debug').textContent).toContain('feedbeef');
+  });
+
+  it('ticking the box flags the job and the page shows it', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    const patch = vi.spyOn(queueApi, 'setJobSaveSlice').mockResolvedValue({ ...BASE_JOB, status: 'queued', save_slice: true });
+    renderJobDetail();
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' }));
+
+    expect(patch).toHaveBeenCalledWith(BASE_JOB.id, true, null);
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Save sliced gcode to library' }) as HTMLInputElement).checked).toBe(true));
+    expect(within(screen.getByTestId('slice-cache-markers')).getByText('Saving gcode')).toBeTruthy();
+  });
+
+  it('hides the save option for a pre-sliced file', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, status: 'queued', file: { id: 10, original_filename: 'part.gcode.3mf' },
+    });
+    renderJobDetail();
+    await screen.findByText(/part\.gcode\.3mf/);
+    expect(screen.queryByTestId('save-slice-control')).toBeNull();
   });
 });
