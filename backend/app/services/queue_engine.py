@@ -24,10 +24,13 @@ from ..models import (
     Printer,
     Project,
     QueueConfig,
+    SlicedVersion,
     UploadedFile,
     WebhookConfig,
 )
-from .library_scanner import is_presliced_file, library_abs_path, presliced_suffix
+from .library_scanner import (
+    fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
+)
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
@@ -830,6 +833,15 @@ class QueueEngine:
         if source_file is not None and not model_targets.accepts_file(printer.printer_type, source_file.original_filename):
             await self._block_job(session, job, f"{printer.name} can't print this pre-sliced file as-is")
             return
+        if source_file is not None and is_presliced_file(source_file):
+            # A cached version was sliced for one make/model: a printer whose machine preset changed since (another
+            # nozzle, say) must not print it.
+            version = (await session.execute(
+                select(SlicedVersion).where(SlicedVersion.file_id == source_file.id))).scalar_one_or_none()
+            if version is not None and version.machine_preset != printer.current_orca_printer_profile:
+                await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
+                                                    "cached version was sliced for that")
+                return
 
         # Pre-flight: ensure Laminus is reachable before claiming this job.
         # Block (not fail) so the job auto-retries when Laminus comes back.
@@ -923,13 +935,20 @@ class QueueEngine:
             build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
             is_gcode = is_presliced_file(uploaded_file)
+            allow_cached = bool(job.allow_cached_slice) if job else False
+            if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
+                # The slicing cache keys on the model's bytes: never trust an index entry the file has outgrown.
+                if await refresh_content_hash(uploaded_file, get_library_dir()):
+                    await session.commit()
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
+            source_file_id = uploaded_file.id if uploaded_file else None
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
         slice_presets: list = []
         slice_inputs: slice_cache.CacheKeyInputs | None = None   # what this slice was made from (slicing cache)
+        cache_hit = False   # printing a cached version instead of a fresh slice
         if is_gcode:
             # Pre-sliced upload: nothing to slice. Stage a private copy (finished jobs delete their gcode file,
             # which must never be the library's own copy) and carry on to upload + print.
@@ -986,41 +1005,47 @@ class QueueEngine:
                 prepare_hook=prepare_hook,
                 extra_config=plate_config,
             )
-            fut: asyncio.Future = loop.create_future()
+            # Slicing cache (BIZ-193): print a matching cached version instead of slicing, when the job allows it.
+            # cfg_filament_map is the resolved (slot-index) map here — exactly what the 3MF remap would use.
+            slice_inputs = slice_cache.key_inputs(req, source_content_hash, cfg_tool_index, cfg_filament_map)
+            cached = await self._use_cached_slice(job_id, printer_id, source_file_id, slice_inputs, allow_cached)
+            if cached is not None:
+                gcode_path = cached
+                cache_hit = True
+            else:
+                fut: asyncio.Future = loop.create_future()
 
-            async def _do_prod_slice():
+                async def _do_prod_slice():
+                    try:
+                        # Skip the slice if the job was cancelled while waiting in the queue.
+                        async with self._factory() as s:
+                            j = await s.get(Job, job_id)
+                            if j is None or j.status == "cancelled":
+                                if not fut.cancelled():
+                                    fut.cancel()
+                                return
+                        result = await asyncio.to_thread(self._slicer.slice, req)
+                        if not fut.cancelled():
+                            fut.set_result(result)
+                    except Exception as exc:
+                        if not fut.cancelled():
+                            fut.set_exception(exc)
+
+                await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
                 try:
-                    # Skip the slice if the job was cancelled while waiting in the queue.
-                    async with self._factory() as s:
-                        j = await s.get(Job, job_id)
-                        if j is None or j.status == "cancelled":
-                            if not fut.cancelled():
-                                fut.cancel()
-                            return
-                    result = await asyncio.to_thread(self._slicer.slice, req)
-                    if not fut.cancelled():
-                        fut.set_result(result)
+                    gcode_path = await fut
+                except asyncio.CancelledError:
+                    fut.cancel()
+                    raise
+                except SliceError as exc:
+                    await self._handle_slice_failure(job_id, printer_id, str(exc))
+                    return
                 except Exception as exc:
-                    if not fut.cancelled():
-                        fut.set_exception(exc)
-
-            await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
-            try:
-                gcode_path = await fut
-            except asyncio.CancelledError:
-                fut.cancel()
-                raise
-            except SliceError as exc:
-                await self._handle_slice_failure(job_id, printer_id, str(exc))
-                return
-            except Exception as exc:
-                logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
-                await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
-                return
+                    logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
+                    await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
+                    return
 
             slice_presets = req.filament_presets
-            # cfg_filament_map is the resolved (slot-index) map here — exactly what the 3MF remap used.
-            slice_inputs = slice_cache.key_inputs(req, source_content_hash, cfg_tool_index, cfg_filament_map)
 
         # Store gcode record; park as "sliced" if the printer isn't ready to receive.
         async with self._factory() as session:
@@ -1039,7 +1064,7 @@ class QueueEngine:
                 filament_grams=grams, estimated_seconds=secs,
                 slice_inputs=slice_inputs.as_dict() if slice_inputs else None,
             )
-            want_save = bool(job.save_slice) and not is_gcode
+            want_save = bool(job.save_slice) and not is_gcode and not cache_hit
             session.add(gcode_rec)
             # Persist actuals on Job NOW — before GcodeFile is ever deleted.
             job.actual_filament_grams = grams
@@ -1071,6 +1096,113 @@ class QueueEngine:
 
         await self._broadcast_job(job_id)
         await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
+
+    async def _use_cached_slice(
+        self, job_id: int, printer_id: int, source_file_id: int | None,
+        inputs: "slice_cache.CacheKeyInputs | None", allow: bool,
+    ) -> str | None:
+        """When the job allows it, find a cached version matching this exact slice and stage a private copy of it to
+        print instead of slicing. Returns the staged path, or None to slice as usual. Every decision is logged and
+        recorded on the job (slice_cache_info); nothing here can fail or block the job."""
+        if not allow:
+            slice_cache.log_event("miss", job_id=job_id, printer_id=printer_id, reason="cache_disabled")
+            async with self._factory() as session:   # it slices fresh: drop any version an earlier dispatch printed
+                await session.execute(update(Job).where(Job.id == job_id, Job.sliced_version_id.is_not(None))
+                                      .values(sliced_version_id=None))
+                await session.commit()
+            return None
+        key = slice_cache.cache_key(inputs) if inputs else None
+        base = {"job_id": job_id, "printer_id": printer_id, "source_file_id": source_file_id, "cache_key": key,
+                **(slice_cache.key_fields(inputs) if inputs else {})}
+        slice_cache.log_event("lookup", **base)
+        try:
+            return await self._try_cached_slice(job_id, inputs, key, source_file_id, base)
+        except Exception as exc:   # a lookup bug must never cost the job its print: slice as usual
+            logger.exception("slicing-cache lookup failed for job %s", job_id)
+            await self._record_cache_decision(job_id, slice_cache.decision_info(
+                "miss", reason="lookup_error", cache_key=key, inputs=inputs))
+            slice_cache.log_event("miss", **base, reason="lookup_error", error=f"{type(exc).__name__}: {exc}")
+            return None
+
+    async def _try_cached_slice(self, job_id, inputs, key, source_file_id, base) -> str | None:
+        if inputs is None or source_file_id is None:
+            await self._record_cache_decision(job_id, slice_cache.decision_info(
+                "miss", reason="uncacheable", cache_key=None, inputs=None))
+            slice_cache.log_event("miss", **base, reason="uncacheable")
+            return None
+        async with self._factory() as session:
+            rows = (await session.execute(
+                select(SlicedVersion, UploadedFile)
+                .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+                .where(SlicedVersion.source_file_id == source_file_id, SlicedVersion.cache_key == key)
+                .order_by(SlicedVersion.id.desc())
+            )).all()
+            cfg = await session.get(QueueConfig, 1)
+            use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
+        library = get_library_dir()
+        found = None
+        for v, f in rows:   # newest present version whose bytes are still the ones that were saved
+            if f.missing:
+                continue
+            fresh = await asyncio.to_thread(
+                fresh_content_hash, library_abs_path(library, f.relative_path), f.content_hash, f.size_bytes, f.mtime)
+            if fresh is not None and fresh[0] == f.content_hash:
+                found = (v, f)
+                break
+        if found is None:
+            reason = "file_missing" if rows else "no_version"
+            await self._record_cache_decision(job_id, slice_cache.decision_info(
+                "miss", reason=reason, cache_key=key, inputs=inputs, policy=slice_cache.policy_name(use_latest)))
+            slice_cache.log_event("miss", **base, reason=reason)
+            return None
+        version, cached_file = found
+        current = await asyncio.to_thread(
+            slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
+            list(inputs.filament_presets), get_laminus_sidecar_url())
+        stale, reasons = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
+        policy = slice_cache.policy_name(use_latest)
+        detail = {"sliced_version_id": version.id, "cached_file_id": cached_file.id,
+                  "cached_file_hash": cached_file.content_hash,
+                  "preset_content_hash_stored": version.preset_content_hash,
+                  "preset_content_hash_current": current.preset_content_hash,
+                  "slicer_version_stored": version.slicer_version, "slicer_version_current": current.slicer_version,
+                  "stale": "unknown" if stale is None else stale, "stale_reasons": reasons, "policy": policy}
+        info_kw = dict(cache_key=key, inputs=inputs, version=version, cached_file_hash=cached_file.content_hash,
+                       current=current, stale=stale, stale_reasons=reasons, policy=policy)
+        if stale and use_latest:
+            await self._record_cache_decision(job_id, slice_cache.decision_info(
+                "miss", reason="stale_resliced", **info_kw))
+            slice_cache.log_event("miss", **base, reason="stale_resliced", **detail)
+            return None
+        try:
+            staged = await asyncio.to_thread(
+                self._stage_gcode, job_id, str(library_abs_path(library, cached_file.relative_path)),
+                cached_file.original_filename)
+        except OSError as exc:
+            await self._record_cache_decision(job_id, slice_cache.decision_info(
+                "miss", reason="file_missing", **info_kw))
+            slice_cache.log_event("miss", **base, reason="file_missing", error=str(exc), **detail)
+            return None
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is not None:
+                job.sliced_version_id = version.id
+                job.slice_cache_info = slice_cache.decision_info(
+                    "hit", previous=job.slice_cache_info, **info_kw)
+                await session.commit()
+        slice_cache.log_event("hit_slice_skipped", **base, **detail)
+        return staged
+
+    async def _record_cache_decision(self, job_id: int, info: dict) -> None:
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is not None:
+                if info.get("decision") == "miss":
+                    job.sliced_version_id = None   # an earlier hit no longer describes what this job prints
+                if job.slice_cache_info and job.slice_cache_info.get("save"):
+                    info["save"] = job.slice_cache_info["save"]
+                job.slice_cache_info = info
+                await session.commit()
 
     def _stage_gcode(self, job_id: int, source_path: str, original_filename: str) -> str:
         """Copy a pre-sliced upload (.gcode or .gcode.3mf) into the job's gcode dir (where slicer output would have

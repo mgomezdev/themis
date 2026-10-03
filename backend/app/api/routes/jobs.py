@@ -17,8 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
-from ...services import slice_saver
+from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, SpoolmanConfig, UploadedFile
+from ...services import slice_cache, slice_saver
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
@@ -169,6 +169,31 @@ async def _check_gcode_printers(
         )).scalars().all()
         if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
             raise HTTPException(422, f"No {t.machine_profile} printer can take this file: each one {why}")
+
+
+async def _cached_version_of(session: AsyncSession, uploaded_file: UploadedFile | None) -> SlicedVersion | None:
+    if uploaded_file is None:
+        return None
+    return (await session.execute(
+        select(SlicedVersion).where(SlicedVersion.file_id == uploaded_file.id))).scalar_one_or_none()
+
+
+async def _check_version_printers(
+    session: AsyncSession, version: SlicedVersion | None,
+    configs: list[PrinterConfigInput], targets: list[ModelTargetInput],
+) -> None:
+    """A cached version was sliced for one make/model: refuse printers/targets of any other (BIZ-193)."""
+    if version is None:
+        return
+    for cfg in configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is not None and printer.current_orca_printer_profile != version.machine_preset:
+            raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
+                                     "sliced for that printer model")
+    for t in targets:
+        if t.machine_profile != version.machine_preset:
+            raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}, not "
+                                     f"{t.machine_profile}")
 
 
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
@@ -327,6 +352,8 @@ async def create_job(
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
     await _check_gcode_printers(session, uploaded_file, body.printer_configs, body.model_targets)
+    version = await _cached_version_of(session, uploaded_file)
+    await _check_version_printers(session, version, body.printer_configs, body.model_targets)
     # A pre-sliced archive prints exactly the plate asked for (Bambu is told `Metadata/plate_N.gcode`): a plate the
     # file doesn't have would only fail at print time, and failed is terminal.
     plates = [p.get("plate_number") for p in (uploaded_file.plates or [])]
@@ -360,8 +387,18 @@ async def create_job(
         created_at=now,
         updated_at=now,
     )
+    if version is not None:   # printing a cached version picked by hand: always honoured, stale or not (BIZ-193)
+        job.sliced_version_id = version.id
+        job.slice_cache_info = slice_cache.decision_info(
+            "hit", reason="user_selected", cache_key=version.cache_key, version=version,
+            cached_file_hash=uploaded_file.content_hash)
     session.add(job)
     await session.flush()
+    if version is not None:
+        slice_cache.log_event("hit_slice_skipped", job_id=job.id, reason="user_selected",
+                              cache_key=version.cache_key, sliced_version_id=version.id,
+                              cached_file_id=uploaded_file.id, cached_file_hash=uploaded_file.content_hash,
+                              source_file_id=version.source_file_id)
 
     for cfg in body.printer_configs:
         config = JobPrinterConfig(
@@ -759,8 +796,10 @@ async def update_job_configs(
     for cfg in body.printer_configs:
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
-    await _check_gcode_printers(
-        session, await session.get(UploadedFile, job.uploaded_file_id), body.printer_configs, body.model_targets)
+    edited_file = await session.get(UploadedFile, job.uploaded_file_id)
+    await _check_gcode_printers(session, edited_file, body.printer_configs, body.model_targets)
+    await _check_version_printers(
+        session, await _cached_version_of(session, edited_file), body.printer_configs, body.model_targets)
 
     # Configs first (they reference the targets), then the targets themselves.
     await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
@@ -1273,7 +1312,7 @@ _TERMINAL_STATUSES = ("complete", "failed", "cancelled")
     responses={
         404: {"description": "Job not found"},
         409: {"description": "Job already finished (its slice is gone)"},
-        422: {"description": "Job prints a pre-sliced file — there is no new slice to save"},
+        422: {"description": "Job prints a pre-sliced file or a cached version — there is no new slice to save"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -1291,6 +1330,8 @@ async def set_job_save_slice(
         raise HTTPException(409, f"Job is {job.status}; its slice is no longer available to save")
     if is_presliced_file(await session.get(UploadedFile, job.uploaded_file_id)):
         raise HTTPException(422, "This job prints a pre-sliced file; there is no new slice to save")
+    if body.save_slice and job.sliced_version_id is not None:
+        raise HTTPException(422, "This job prints a cached version; there is no new slice to save")
     last_save = (job.slice_cache_info or {}).get("save") or {}
     # Save now if this turns the flag on, or retries a save that failed; a flag that was already on is the engine's job.
     save_now = body.save_slice and (not job.save_slice or last_save.get("outcome") == "failed")

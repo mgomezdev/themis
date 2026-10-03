@@ -46,8 +46,10 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
             await s.flush()
         f = (await s.execute(select(UploadedFile).where(UploadedFile.relative_path == "Prints/Benchy.3mf"))).scalar()
         if f is None:
+            st = (Path(os.environ["THEMIS_LIBRARY_DIR"]) / "Prints" / "Benchy.3mf").stat()
             f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
-                             content_hash=content_hash, plates=[{"plate_number": 1}], uploaded_at=_now())
+                             content_hash=content_hash, plates=[{"plate_number": 1}], uploaded_at=_now(),
+                             size_bytes=st.st_size, mtime=st.st_mtime)   # indexed as it is on disk
             s.add(f)
             await s.flush()
         j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", created_at=_now(),
@@ -235,6 +237,7 @@ async def test_a_bambu_slice_is_saved_as_a_sliced_archive(session_factory, tmp_p
 async def test_a_source_without_a_content_hash_is_not_saved(session_factory, tmp_path, env):
     qe, mgr = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory, content_hash="")
+    (env / "Prints" / "Benchy.3mf").unlink()   # nothing on disk to hash either
 
     await _run_to_printing(qe, session_factory, job_id)
 

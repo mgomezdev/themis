@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 from datetime import datetime, timezone
 import hashlib
 import shutil
@@ -8,16 +9,17 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import UploadedFile, Tag, FileTag, Job, ProjectItem
+from ...models import UploadedFile, Tag, FileTag, Job, Printer, ProjectItem, SlicedVersion
 from ...services.library_scanner import (
     LibraryScanner, file_kind, folder_of, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
+from ...services import model_targets, slice_cache
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
@@ -50,7 +52,33 @@ async def _tags_for(session: AsyncSession, file_ids: list[int]) -> dict[int, lis
     return out
 
 
-def _to_dict(f: UploadedFile, tags: list[dict]) -> dict:
+async def _cache_for(session: AsyncSession, file_ids: list[int]) -> dict:
+    """Slicing-cache facts for these files, batched: `counts` = how many cached versions each model has (versions
+    whose file is present), `versions` = the version a cached file *is* (BIZ-193/196)."""
+    if not file_ids:
+        return {"counts": {}, "versions": {}}
+    counts = dict((await session.execute(
+        select(SlicedVersion.source_file_id, func.count(SlicedVersion.id))
+        .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+        .where(SlicedVersion.source_file_id.in_(file_ids), UploadedFile.missing.is_(False))
+        .group_by(SlicedVersion.source_file_id)
+    )).all())
+    versions = {v.file_id: v for v in (await session.execute(
+        select(SlicedVersion).where(SlicedVersion.file_id.in_(file_ids))
+    )).scalars().all()}
+    return {"counts": counts, "versions": versions}
+
+
+def _version_summary(v: SlicedVersion) -> dict:
+    return {
+        "id": v.id, "source_file_id": v.source_file_id, "plate_number": v.plate_number,
+        "machine_preset": v.machine_preset, "process_preset": v.process_preset,
+        "filament_presets": v.filament_presets, "filament_type": v.filament_type, "filament_color": v.filament_color,
+    }
+
+
+def _to_dict(f: UploadedFile, tags: list[dict], cache: dict | None = None) -> dict:
+    version = (cache or {}).get("versions", {}).get(f.id)
     return {
         "id": f.id,
         "original_filename": f.original_filename,
@@ -61,6 +89,9 @@ def _to_dict(f: UploadedFile, tags: list[dict]) -> dict:
         "uploaded_at": f.uploaded_at,
         "missing": f.missing,
         "kind": file_kind(f.original_filename),
+        # Slicing cache: how many cached versions this model has / the version this cached file is.
+        "sliced_version_count": (cache or {}).get("counts", {}).get(f.id, 0),
+        "sliced_version": _version_summary(version) if version else None,
         "tags": tags,
         "thumbnail_url": _thumb_url(f),
         "plate_thumbnails": _plate_thumbnail_urls(f),
@@ -117,7 +148,8 @@ async def list_files(
         rows.sort(key=lambda r: r.size_bytes, reverse=True)
     else:
         rows.sort(key=lambda r: r.uploaded_at, reverse=True)
-    return [_to_dict(r, tag_map.get(r.id, [])) for r in rows]
+    cache = await _cache_for(session, [r.id for r in rows])
+    return [_to_dict(r, tag_map.get(r.id, []), cache) for r in rows]
 
 
 @router.get("/tree", summary="Folder tree (index-derived)", dependencies=[Depends(require_scope("files:read"))])
@@ -225,7 +257,7 @@ async def upload_file(
                 # stays valid.
                 existing_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(tmp_path), str(existing_path))
-            return _to_dict(existing, [])
+            return _to_dict(existing, [], await _cache_for(session, [existing.id]))
 
         dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
         shutil.move(str(tmp_path), str(dest))
@@ -342,7 +374,7 @@ async def update_file(file_id: int, body: FilePatch,
     # don't collide with the file itself and rename it to "name (2).ext".
     if src.exists() and folder_abs.resolve() == src.parent.resolve() and new_name == src.name:
         tag_map = await _tags_for(session, [f.id])
-        return _to_dict(f, tag_map.get(f.id, []))
+        return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
     dest = LibraryScanner.unique_path(folder_abs, new_name)
     # Defense-in-depth: verify dest is inside the library before touching the FS.
     library_resolved = library.resolve()
@@ -357,7 +389,7 @@ async def update_file(file_id: int, body: FilePatch,
     f.folder = folder_of(rel)
     await session.commit()
     tag_map = await _tags_for(session, [f.id])
-    return _to_dict(f, tag_map.get(f.id, []))
+    return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
 
 
 # ---------- delete ----------
@@ -457,6 +489,57 @@ async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     marks orphaned records as missing, and re-parses plate metadata."""
     scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir())
     return await scanner.scan()
+
+
+# ---------- slicing cache ----------
+
+@router.get(
+    "/{file_id}/sliced-versions",
+    summary="List a model's cached sliced versions",
+    responses={404: {"description": "File not found"}},
+    dependencies=[Depends(require_scope("files:read"))],
+)
+async def list_sliced_versions(
+    file_id: int, plate: int | None = None, session: AsyncSession = Depends(get_session),
+) -> list[dict]:
+    """The cached slices of this model (BIZ-193), newest first, optionally for one `plate`; versions whose file is
+    missing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model
+    changed since), `stale` (`true`/`false`/`null` = unknown — presets or OrcaSlicer changed since, with
+    `stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file)."""
+    model = await session.get(UploadedFile, file_id)
+    if model is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    q = (select(SlicedVersion, UploadedFile).join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+         .where(SlicedVersion.source_file_id == file_id, UploadedFile.missing.is_(False))
+         .order_by(SlicedVersion.id.desc()))
+    if plate is not None:
+        q = q.where(SlicedVersion.plate_number == plate)
+    rows = (await session.execute(q)).all()
+    printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
+    sidecar = config.get_laminus_sidecar_url()
+    fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
+    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), sidecar)
+                                     for m, pr, fl in fkeys))
+    fingerprints = dict(zip(fkeys, results))
+    out = []
+    for v, f in rows:
+        fkey = (v.machine_preset, v.process_preset, tuple(v.filament_presets or []))
+        stale, reasons = slice_cache.staleness(v.preset_content_hash, v.slicer_version, fingerprints[fkey])
+        overrides = {k: val for k, val in (v.extra_config or {}).items() if k != "curr_bed_type"}
+        out.append({
+            "id": v.id, "file_id": f.id, "name": f.original_filename, "kind": file_kind(f.original_filename),
+            "plate_number": v.plate_number, "machine_preset": v.machine_preset, "process_preset": v.process_preset,
+            "filament_presets": v.filament_presets, "filament_type": v.filament_type,
+            "filament_color": v.filament_color, "bed_type": (v.extra_config or {}).get("curr_bed_type"),
+            "overrides": overrides, "estimated_seconds": v.estimated_seconds, "filament_grams": v.filament_grams,
+            "created_at": v.created_at,
+            "source_changed": bool(model.content_hash) and model.content_hash != v.source_content_hash,
+            "stale": stale, "stale_reasons": reasons,
+            "printable_now": any(p.current_orca_printer_profile == v.machine_preset
+                                 and model_targets.accepts_file(p.printer_type, f.original_filename)
+                                 for p in printers),
+        })
+    return out
 
 
 # ---------- plates / thumbnails ----------

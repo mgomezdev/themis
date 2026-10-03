@@ -247,6 +247,15 @@ def spoolman_upstream():
 
 
 @pytest.fixture(autouse=True)
+def _reset_slice_cache_fingerprints():
+    """slice_cache memoises sidecar fingerprints in a module dict; never let one test's answer leak into another."""
+    from app.services import slice_cache
+    slice_cache._fingerprints.clear()
+    yield
+    slice_cache._fingerprints.clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_laminus_module_state():
     """laminus.py keeps the catalog cache, health memo and pending remap in module globals that outlive a
     test; restore them so a test that warms the cache (or parks a remap) cannot leak into the next one."""

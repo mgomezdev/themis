@@ -174,7 +174,9 @@ unreachable); `filament_type/color` (display + default ask), `estimated_seconds,
 Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version —
 `services/slice_saver.py` copies the artifact next to the model as a normal library file + a `sliced_versions` row; a
 same-key version for that model is never duplicated; failures are logged/recorded, never fail the job),
-`allow_cached_slice: bool` (print a matching version instead of slicing when claimed), `sliced_version_id?` (plain int —
+`allow_cached_slice: bool` (print a matching version instead of slicing when claimed — `queue_engine._use_cached_slice`
+builds the key from the exact `SliceRequest`, takes the newest present same-key version for that model, reslices a stale one
+unless the policy pins it, stages a private copy; any lookup error just slices), `sliced_version_id?` (plain int —
 the version it printed), `slice_cache_info: JSON?` (latest decision `{decision: hit|miss, reason?, at, cache_key,
 source_content_hash, sliced_version_id?, cached_file_id?, cached_file_hash?, preset_content_hash_stored/current?,
 slicer_version_stored/current?, stale?, stale_reasons, policy: use_latest|pin_cached, save?: {outcome:
