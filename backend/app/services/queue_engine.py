@@ -934,6 +934,16 @@ class QueueEngine:
             if found is None:
                 return None
             version, cached_file = found
+            # Same staleness rule as dispatch: a version dispatch would reslice can't carry the claim (it would only be
+            # released again, every cycle). Usually unknown with Laminus down, which counts as usable.
+            cfg = await session.get(QueueConfig, 1)
+            use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
+            current = await asyncio.to_thread(
+                slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
+                list(inputs.filament_presets), get_laminus_sidecar_url())
+            stale, _ = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
+            if stale and use_latest:
+                return None
             slice_cache.log_event("gate_bypass", job_id=job.id, printer_id=printer.id, source_file_id=source_file.id,
                                   cache_key=key, sliced_version_id=version.id, cached_file_id=cached_file.id)
             return version.id
@@ -1057,11 +1067,14 @@ class QueueEngine:
             slice_inputs = slice_cache.key_inputs(req, source_content_hash, cfg_tool_index, cfg_filament_map)
             cached = await self._use_cached_slice(job_id, printer_id, source_file_id, slice_inputs, allow_cached,
                                                   only_version_id=cache_only_version)
+            down = None
+            if cached is None and cache_only_version is not None:
+                down = await self._laminus_down_reason()   # back up since the claim? then just slice as usual
             if cached is not None:
                 gcode_path = cached
                 cache_hit = True
-            elif cache_only_version is not None:
-                await self._release_cache_only_claim(job_id, printer_id)
+            elif down:
+                await self._release_cache_only_claim(job_id, printer_id, down)
                 return
             else:
                 fut: asyncio.Future = loop.create_future()
@@ -1277,7 +1290,7 @@ class QueueEngine:
         slice_cache.log_event("hit_slice_skipped", **base, **detail)
         return staged
 
-    async def _release_cache_only_claim(self, job_id: int, printer_id: int) -> None:
+    async def _release_cache_only_claim(self, job_id: int, printer_id: int, reason: str) -> None:
         """A claim made on a cached version while Laminus was down (BIZ-201) found it gone by dispatch: give the job
         back as if the health gate had failed — blocked, printer released, config NOT marked slice_failed — so it
         retries on its own when Laminus returns or another printer has a version."""
@@ -1285,11 +1298,10 @@ class QueueEngine:
             result = await session.execute(
                 update(Job)
                 .where(Job.id == job_id, Job.status == "slicing", Job.assigned_printer_id == printer_id)
-                .values(status="blocked", block_reason="Laminus is unreachable — slicing paused",
-                        assigned_printer_id=None, updated_at=_now())
+                .values(status="blocked", block_reason=reason, assigned_printer_id=None, updated_at=_now())
             )
             await session.commit()
-        slice_cache.log_event("gate_bypass_released", job_id=job_id, printer_id=printer_id)
+        slice_cache.log_event("gate_bypass_released", job_id=job_id, printer_id=printer_id, reason=reason)
         if result.rowcount:
             await self._broadcast_job(job_id)
 

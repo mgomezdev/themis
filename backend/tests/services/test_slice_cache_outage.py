@@ -90,22 +90,55 @@ async def test_a_job_that_does_not_allow_the_cache_waits_even_with_a_version(ses
 
 
 @pytest.mark.asyncio
-async def test_a_stale_cached_version_waits_when_laminus_is_reachable_but_not_ready(session_factory, tmp_path, env):
-    """Not-ready but reachable: staleness can be checked, and a stale version under "use latest settings" is a miss.
-    That miss must hand the job back (blocked), never fall through to a slice."""
+async def test_a_stale_version_never_carries_the_claim_under_use_latest(session_factory, tmp_path, env, caplog):
+    """Laminus reachable but not ready, so staleness is KNOWN: a version dispatch would reslice must not be claimed —
+    or it would be claimed and released again every cycle."""
+    caplog.set_level(logging.INFO, logger="app.services.slice_cache")
     await _add_version(session_factory, env, preset_hash="old-presets")   # FINGERPRINT says "presethash"
     qe, _ = _engine(session_factory, tmp_path)
     job_id = await _seed_allowing(session_factory)
 
     with _down("not_ready"):
+        for _ in range(3):
+            await qe._process_queue()
+            await settle_background_tasks()
+
+    qe._slicer.slice.assert_not_called()
+    assert _cache_lines(caplog, "gate_bypass") == []
+    job = await _job(session_factory, job_id)
+    assert (job.status, job.block_reason) == ("blocked", "Laminus is not ready — slicing paused")
+
+
+@pytest.mark.asyncio
+async def test_a_cached_file_whose_bytes_changed_does_not_carry_the_claim(session_factory, tmp_path, env):
+    await _add_version(session_factory, env)
+    (env / "Prints" / "Benchy cached.gcode").write_bytes(b"; edited by hand, longer than before\n")
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+
+    with _down():
+        await qe._process_queue()
+        await settle_background_tasks()
+
+    job = await _job(session_factory, job_id)
+    assert (job.status, job.block_reason) == ("blocked", UNREACHABLE)
+
+
+@pytest.mark.asyncio
+async def test_an_offline_printer_parks_the_cached_version_as_sliced(session_factory, tmp_path, env):
+    """Slice-ahead (printer offline) during an outage: the cached version is staged and parked, nothing sliced."""
+    version_id = await _add_version(session_factory, env)
+    qe, mgr = _engine(session_factory, tmp_path)
+    mgr.is_printer_ready.side_effect = lambda pid: False
+    job_id = await _seed_allowing(session_factory)
+
+    with _down():
         await qe._process_queue()
         await settle_background_tasks()
 
     qe._slicer.slice.assert_not_called()
     job = await _job(session_factory, job_id)
-    assert (job.status, job.block_reason, job.assigned_printer_id) == ("blocked", UNREACHABLE, None)
-    assert (job.slice_cache_info["reason"], job.slice_cache_info["gate"]) == ("stale_resliced", "laminus_down")
-    assert (await _config(session_factory, job_id)).slice_failed is False
+    assert (job.status, job.sliced_version_id) == ("sliced", version_id)
 
 
 @pytest.mark.asyncio
@@ -162,6 +195,25 @@ async def test_a_version_gone_by_dispatch_blocks_without_slicing_and_recovers(se
 
     await _run_to_printing(qe, session_factory, job_id)   # Laminus healthy again (autouse fixture)
     qe._slicer.slice.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_laminus_back_by_dispatch_slices_as_usual(session_factory, tmp_path, env):
+    """The version vanished, but Laminus recovered between claim and dispatch: no reason to wait — slice."""
+    version_id = await _add_version(session_factory, env)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.status, job.assigned_printer_id = "slicing", 1
+        await s.commit()
+    (env / "Prints" / "Benchy cached.gcode").unlink()
+
+    await qe._run_slice_and_print(job_id, 1, 1, cache_only_version=version_id)   # healthy (autouse fixture)
+    await settle_background_tasks()
+
+    qe._slicer.slice.assert_called_once()
+    assert (await _job(session_factory, job_id)).status == "printing"
 
 
 @pytest.mark.asyncio
