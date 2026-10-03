@@ -183,7 +183,7 @@ async def test_a_failed_save_never_stops_the_print(session_factory, tmp_path, en
     qe, mgr = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory)
 
-    with patch("app.services.slice_saver.shutil.copyfile", side_effect=OSError("disk full")):
+    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
         await _run_to_printing(qe, session_factory, job_id)
 
     mgr.get_client.return_value.start_print.assert_called_once()
@@ -260,3 +260,164 @@ async def test_a_save_that_fails_midway_leaves_no_half_registered_file(session_f
     assert [f.relative_path for f in files] == ["Prints/Benchy.3mf"]
     assert sorted(p.name for p in (env / "Prints").iterdir()) == ["Benchy.3mf"]
     assert info["save"]["outcome"] == "failed"
+
+
+# ---- review follow-ups -------------------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_slice_parked_for_later_is_saved_too(session_factory, tmp_path, env):
+    """Slice-ahead / printer not ready: the job parks as `sliced`, and its slice is saved all the same."""
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory)
+
+    await qe._run_slice_and_print(job_id, 1, 1, slice_only=True)
+    await settle_background_tasks()
+
+    assert (await _versions(session_factory))[0].created_from_job_id == job_id
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).status == "sliced"
+
+
+@pytest.mark.asyncio
+async def test_a_name_collision_never_overwrites_an_existing_file(session_factory, tmp_path, env):
+    taken = env / "Prints" / "Keep me.gcode"
+    taken.write_bytes(b"someone else's file")
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory, name="Keep me")
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    assert taken.read_bytes() == b"someone else's file"
+    assert (env / "Prints" / "Keep me (2).gcode").read_bytes() == GCODE
+
+
+@pytest.mark.asyncio
+async def test_the_key_uses_the_resolved_filament_map_and_the_merged_config(session_factory, tmp_path, env):
+    """What the engine records is exactly what the slicer got: catalog filament entries resolved to slot indices,
+    the printer's bed type merged with the job's overrides."""
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory)
+    async with session_factory() as s:
+        p = await s.get(Printer, 1)
+        p.build_plate_type = "Textured PEI Plate"
+        p.loaded_filaments = [{"slot": 0, "type": "PLA", "color": "#ffffff", "filament_profile": "Generic PLA"},
+                              {"slot": 1, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]
+        (await s.get(Job, job_id)).overrides = {"sparse_infill_density": "25%"}
+        cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        cfg.filament_map = [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000"}]
+        await s.commit()
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    (version,) = await _versions(session_factory)
+    assert version.filament_map == [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000",
+                                     "tool_index": 1}]
+    assert version.extra_config == {"curr_bed_type": "Textured PEI Plate", "sparse_infill_density": "25%"}
+    req = qe._slicer.slice.call_args.args[0]
+    assert version.cache_key == slice_cache.cache_key(
+        slice_cache.key_inputs(req, "srchash", None, version.filament_map))
+
+
+@pytest.mark.asyncio
+async def test_a_version_whose_file_went_missing_is_not_a_duplicate(session_factory, tmp_path, env):
+    qe, _ = _engine(session_factory, tmp_path)
+    first = await _seed(session_factory)
+    await _run_to_printing(qe, session_factory, first)
+    async with session_factory() as s:
+        (old,) = (await s.execute(select(SlicedVersion))).scalars().all()
+        (await s.get(UploadedFile, old.file_id)).missing = True
+        (await s.get(Job, first)).status = "complete"
+        await s.commit()
+    second = await _seed(session_factory)
+
+    await _run_to_printing(qe, session_factory, second)
+
+    assert len(await _versions(session_factory)) == 2
+
+
+@pytest.mark.asyncio
+async def test_turning_the_flag_off_after_slicing_cancels_the_background_save(session_factory, tmp_path, env):
+    from app.services import slice_saver
+    job_id = await _seed(session_factory)
+    artifact = tmp_path / "a.gcode"
+    artifact.write_bytes(GCODE)
+    async with session_factory() as s:
+        (await s.get(Job, job_id)).save_slice = False
+        await s.commit()
+        result = await slice_saver.save_slice_version(
+            s, job_id=job_id, printer_id=1, artifact_path=str(artifact), require_flag=True,
+            inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1, machine_preset=MACHINE,
+                                              process_preset="p", filament_presets=("f",), extra_config={},
+                                              tool_index=None, filament_map=None, artifact_kind="gcode"))
+    assert result is None and await _versions(session_factory) == []
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).slice_cache_info is None
+
+
+@pytest.mark.asyncio
+async def test_the_copy_is_taken_before_the_slow_steps(session_factory, tmp_path, env):
+    """The job's artifact can be deleted (failed upload, cancel) while the sidecar is asked for its fingerprint:
+    the library copy must already exist by then."""
+    from app.services import slice_saver
+    job_id = await _seed(session_factory)
+    artifact = tmp_path / "a.gcode"
+    artifact.write_bytes(GCODE)
+
+    def fingerprint_while_the_artifact_vanishes(*_a, **_k):
+        artifact.unlink()
+        return FINGERPRINT
+
+    with patch("app.services.slice_cache.current_fingerprint", side_effect=fingerprint_while_the_artifact_vanishes):
+        async with session_factory() as s:
+            version = await slice_saver.save_slice_version(
+                s, job_id=job_id, printer_id=1, artifact_path=str(artifact),
+                inputs=slice_cache.CacheKeyInputs(source_content_hash="srchash", plate_number=1,
+                                                  machine_preset=MACHINE, process_preset="p", filament_presets=("f",),
+                                                  extra_config={}, tool_index=None, filament_map=None,
+                                                  artifact_kind="gcode"))
+    assert version is not None
+
+
+@pytest.mark.asyncio
+async def test_a_presliced_job_never_saves_even_if_flagged(session_factory, tmp_path, env):
+    """Defensive: the API refuses the flag for a pre-sliced file, but a flagged row must still save nothing."""
+    from tests.services.test_queue_gcode_jobs import _seed as seed_gcode
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id, _ = await seed_gcode(session_factory, env)
+    async with session_factory() as s:
+        (await s.get(Job, job_id)).save_slice = True
+        await s.commit()
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    assert await _versions(session_factory) == []
+    async with session_factory() as s:
+        assert (await s.get(Job, job_id)).slice_cache_info is None   # not even attempted
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("CON", "_CON"), ("nul.backup", "_nul.backup"), ("a/../b", "a .. b"), ("  ..hidden. ", "hidden"), ("", "sliced"),
+])
+def test_safe_display_name(raw, expected):
+    from app.services.slice_saver import safe_display_name
+    assert safe_display_name(raw) == expected
+
+
+def test_safe_display_name_limits_bytes_not_characters():
+    from app.services.slice_saver import safe_display_name
+    out = safe_display_name("é" * 200)
+    assert len(out.encode()) <= 180 and set(out) == {"é"}
+
+
+def test_the_copy_never_clobbers_a_file_that_appears_between_choosing_and_writing(tmp_path):
+    """Two saves can pick the same free name at once; the exclusive create makes the loser take the next one."""
+    from app.services import slice_saver
+    src = tmp_path / "src.gcode"
+    src.write_bytes(GCODE)
+    raced = tmp_path / "x.gcode"
+    raced.write_bytes(b"the other save")
+    picks = iter([raced, tmp_path / "x (2).gcode"])
+    with patch("app.services.slice_saver.LibraryScanner.unique_path", side_effect=lambda *_: next(picks)):
+        dest = slice_saver._copy_exclusive(str(src), tmp_path, "x.gcode")
+    assert dest.name == "x (2).gcode" and dest.read_bytes() == GCODE
+    assert raced.read_bytes() == b"the other save"

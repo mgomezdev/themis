@@ -26,14 +26,19 @@ from .library_scanner import LibraryScanner, folder_of, library_abs_path, sha256
 logger = logging.getLogger(__name__)
 
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')   # path separators + characters Windows refuses in a filename
-_MAX_NAME = 180
+_MAX_NAME_BYTES = 180   # leaves room for " (NN).gcode.3mf" under the usual 255-byte filename limit
+_WINDOWS_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
 
 
 def safe_display_name(name: str) -> str:
     """A user/derived display name made safe as a filename stem (the version's display name IS its filename)."""
     cleaned = _UNSAFE.sub(" ", name or "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .")
-    return cleaned[:_MAX_NAME].rstrip(" .") or "sliced"
+    encoded = cleaned.encode("utf-8")[:_MAX_NAME_BYTES]
+    cleaned = encoded.decode("utf-8", errors="ignore").rstrip(" .")
+    if cleaned.split(".")[0].lower() in _WINDOWS_RESERVED:
+        cleaned = f"_{cleaned}"
+    return cleaned or "sliced"
 
 
 def _model_stem(filename: str) -> str:
@@ -66,18 +71,43 @@ async def _find_duplicate(session: AsyncSession, source_id: int, key: str) -> Sl
 
 
 async def _record(session: AsyncSession, job_id: int, outcome: str, **kw) -> None:
-    job = await session.get(Job, job_id)
-    if job is not None:
-        job.slice_cache_info = slice_cache.with_save_outcome(job.slice_cache_info, outcome, **kw)
-        await session.commit()
+    """Store the save outcome on the job. Best-effort: a DB error here is logged, never raised."""
+    try:
+        job = await session.get(Job, job_id)
+        if job is not None:
+            job.slice_cache_info = slice_cache.with_save_outcome(job.slice_cache_info, outcome, **kw)
+            await session.commit()
+    except Exception:
+        logger.exception("could not record the slice save outcome on job %s", job_id)
+
+
+def _copy_exclusive(src: str, folder: Path, filename: str) -> Path:
+    """Copy `src` into `folder` under `filename` (or "name (2)…" on collision), never overwriting: the destination is
+    created exclusively, so two concurrent saves can't pick — and clobber — the same file."""
+    for _ in range(1000):
+        dest = LibraryScanner.unique_path(folder, filename)
+        try:
+            with open(dest, "xb") as out, open(src, "rb") as inp:
+                shutil.copyfileobj(inp, out)
+            return dest
+        except FileExistsError:
+            continue
+    raise FileExistsError(f"no free name for {filename!r} in {folder}")
+
+
+# One save at a time: the duplicate check, the copy and the insert must not interleave between the engine's background
+# save and a save-slice request, or two same-key versions (or a version over another's bytes) could result.
+_save_lock = asyncio.Lock()
 
 
 async def save_slice_version(
     session: AsyncSession, *, job_id: int, printer_id: int, artifact_path: str,
     inputs: slice_cache.CacheKeyInputs | None, uncacheable_reason: str = "the source file has no content hash",
+    require_flag: bool = False,
 ) -> SlicedVersion | None:
     """Copy `artifact_path` next to the job's source model and register it as a cached version. Returns the new (or
-    already existing, same-key) version, or None on failure. Never raises. `inputs` None = uncacheable source."""
+    already existing, same-key) version, or None on failure. Never raises. `inputs` None = uncacheable source.
+    `require_flag`: skip quietly if the job's save flag was turned off meanwhile (the engine's background save)."""
     if inputs is None:
         slice_cache.log_event("save_failed", job_id=job_id, printer_id=printer_id, cache_key=None,
                               error=uncacheable_reason)
@@ -85,15 +115,26 @@ async def save_slice_version(
         return None
     key = slice_cache.cache_key(inputs)
     fields = {"job_id": job_id, "printer_id": printer_id, "cache_key": key, **slice_cache.key_fields(inputs)}
+    async with _save_lock:
+        return await _save_locked(session, job_id, printer_id, artifact_path, inputs, key, fields, require_flag)
+
+
+async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, fields, require_flag):
     dest: Path | None = None
+    thumb_dir: Path | None = None
+    done = False
     try:
         job = await session.get(Job, job_id)
         source = await session.get(UploadedFile, job.uploaded_file_id) if job else None
         if job is None or source is None:
             raise LookupError("the job or its source file no longer exists")
+        if require_flag and not job.save_slice:
+            done = True   # turned off after slicing: the pending save is cancelled, nothing to record
+            return None
 
         existing = await _find_duplicate(session, source.id, key)
         if existing is not None:
+            done = True
             slice_cache.log_event("save_duplicate_skipped", **fields, sliced_version_id=existing.id,
                                   cached_file_id=existing.file_id)
             await _record(session, job_id, "duplicate", cache_key=key, sliced_version_id=existing.id,
@@ -107,15 +148,16 @@ async def save_slice_version(
         display = safe_display_name(job.save_slice_name or default_display_name(source, inputs, filament_type))
         suffix = ".gcode.3mf" if inputs.artifact_kind == "gcode_3mf" else ".gcode"
 
-        fingerprint = await asyncio.to_thread(
-            slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), config.get_laminus_sidecar_url())
-
+        # Copy FIRST: the job's artifact is short-lived (a failed upload or a cancel deletes it), and everything below
+        # (sidecar fingerprint, hashing, parsing) can take seconds.
         library = config.get_library_dir()
         folder_abs = library_abs_path(library, source.relative_path).parent
         folder_abs.mkdir(parents=True, exist_ok=True)
-        dest = LibraryScanner.unique_path(folder_abs, f"{display}{suffix}")
-        await asyncio.to_thread(shutil.copyfile, artifact_path, dest)
+        dest = await asyncio.to_thread(_copy_exclusive, artifact_path, folder_abs, f"{display}{suffix}")
+
+        fingerprint = await asyncio.to_thread(
+            slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
+            list(inputs.filament_presets), config.get_laminus_sidecar_url())
         digest = await asyncio.to_thread(sha256_file, dest)
         stat = dest.stat()
 
@@ -129,6 +171,7 @@ async def save_slice_version(
         session.add(record)
         await session.flush()
         scanner = LibraryScanner(session, library, config.get_filecache_dir())
+        thumb_dir = Path(config.get_filecache_dir()) / str(record.id)
         record.plates = await asyncio.to_thread(scanner._parse_plates, dest, record.id)
         version = SlicedVersion(
             file_id=record.id, source_file_id=source.id, source_content_hash=inputs.source_content_hash,
@@ -146,22 +189,34 @@ async def save_slice_version(
         job.slice_cache_info = slice_cache.with_save_outcome(
             job.slice_cache_info, "saved", cache_key=key, sliced_version_id=version.id, file_id=record.id)
         await session.commit()
+        done = True
         slice_cache.log_event("saved", **fields, sliced_version_id=version.id, cached_file_id=record.id,
                               cached_file_hash=digest, path=rel,
                               preset_content_hash_stored=fingerprint.preset_content_hash,
                               slicer_version_stored=fingerprint.slicer_version)
         return version
     except Exception as exc:
-        await session.rollback()
-        if dest is not None:
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
         slice_cache.log_event("save_failed", **fields, error=f"{type(exc).__name__}: {exc}")
         logger.debug("slice save failed for job %s", job_id, exc_info=True)
+        _cleanup(dest, thumb_dir)
+        dest = None
+        done = True
         try:
-            await _record(session, job_id, "failed", cache_key=key, error=str(exc) or type(exc).__name__)
+            await session.rollback()
         except Exception:
-            logger.exception("could not record the failed slice save on job %s", job_id)
+            logger.exception("rollback after a failed slice save (job %s) failed", job_id)
+        await _record(session, job_id, "failed", cache_key=key, error=str(exc) or type(exc).__name__)
         return None
+    finally:
+        if not done:   # cancelled (shutdown) mid-save: leave no unregistered file behind
+            _cleanup(dest, thumb_dir)
+
+
+def _cleanup(dest: Path | None, thumb_dir: Path | None) -> None:
+    if dest is not None:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+    if thumb_dir is not None:
+        shutil.rmtree(thumb_dir, ignore_errors=True)

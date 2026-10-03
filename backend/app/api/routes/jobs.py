@@ -1273,7 +1273,7 @@ _TERMINAL_STATUSES = ("complete", "failed", "cancelled")
     responses={
         404: {"description": "Job not found"},
         409: {"description": "Job already finished (its slice is gone)"},
-        422: {"description": "Job prints a pre-sliced file or a cached version — there is no new slice to save"},
+        422: {"description": "Job prints a pre-sliced file — there is no new slice to save"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -1284,13 +1284,16 @@ async def set_job_save_slice(
 ) -> dict:
     """Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under
     `name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.
-    Turning the flag off cancels a pending save but never deletes a version already saved."""
+    Re-sending `save_slice: true` after a failed save retries it. Turning the flag off cancels a pending save but never
+    deletes a version already saved."""
     job = await _get_or_404(job_id, session)
     if job.status in _TERMINAL_STATUSES:
         raise HTTPException(409, f"Job is {job.status}; its slice is no longer available to save")
     if is_presliced_file(await session.get(UploadedFile, job.uploaded_file_id)):
         raise HTTPException(422, "This job prints a pre-sliced file; there is no new slice to save")
-    newly_on = body.save_slice and not job.save_slice
+    last_save = (job.slice_cache_info or {}).get("save") or {}
+    # Save now if this turns the flag on, or retries a save that failed; a flag that was already on is the engine's job.
+    save_now = body.save_slice and (not job.save_slice or last_save.get("outcome") == "failed")
     job.save_slice = body.save_slice
     job.save_slice_name = _clean_save_name(body.name) if body.save_slice else None
     job.updated_at = datetime.now(timezone.utc).isoformat()
@@ -1298,8 +1301,8 @@ async def set_job_save_slice(
 
     gcode = (await session.execute(
         select(GcodeFile).where(GcodeFile.job_id == job_id).order_by(GcodeFile.id.desc()).limit(1)
-    )).scalar_one_or_none() if newly_on else None
-    # Already sliced: save now (the engine only saves at slice time). A flag that was already on is the engine's job.
+    )).scalar_one_or_none() if save_now else None
+    # Already sliced: save now (the engine only saves at slice time).
     if gcode is not None and os.path.exists(gcode.path):
         if gcode.slice_inputs:
             await slice_saver.save_slice_version(

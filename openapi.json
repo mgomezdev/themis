@@ -4452,7 +4452,7 @@
           "jobs"
         ],
         "summary": "Save (or stop saving) a job's slice to the library",
-        "description": "Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under\n`name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.\nTurning the flag off cancels a pending save but never deletes a version already saved.",
+        "description": "Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under\n`name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.\nRe-sending `save_slice: true` after a failed save retries it. Turning the flag off cancels a pending save but never\ndeletes a version already saved.",
         "operationId": "set_job_save_slice_api_v1_jobs__job_id__save_slice_patch",
         "parameters": [
           {
@@ -4495,7 +4495,7 @@
             "description": "Job already finished (its slice is gone)"
           },
           "422": {
-            "description": "Job prints a pre-sliced file or a cached version \u2014 there is no new slice to save"
+            "description": "Job prints a pre-sliced file \u2014 there is no new slice to save"
           }
         }
       }

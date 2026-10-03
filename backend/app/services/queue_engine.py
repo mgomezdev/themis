@@ -334,7 +334,8 @@ class QueueEngine:
         async def _run() -> None:
             async with self._factory() as session:
                 await slice_saver.save_slice_version(
-                    session, job_id=job_id, printer_id=printer_id, artifact_path=artifact_path, inputs=inputs)
+                    session, job_id=job_id, printer_id=printer_id, artifact_path=artifact_path, inputs=inputs,
+                    require_flag=True)
         task = asyncio.create_task(_run(), name=f"save-slice-{job_id}")
         self._estimate_tasks.add(task)
         task.add_done_callback(self._estimate_tasks.discard)

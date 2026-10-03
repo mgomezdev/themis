@@ -1,5 +1,6 @@
 """Slicing cache over the API (BIZ-191..193)."""
 import hashlib
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -225,3 +226,29 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
         pack = await s.get(UploadedFile, jobs[0].uploaded_file_id)
     assert len(jobs) == 2 and all(j.save_slice for j in jobs)
     assert pack.content_hash == hashlib.sha256(packed).hexdigest()
+
+
+async def test_resending_the_flag_retries_a_failed_save(client, library, create_job, session_factory, tmp_path):
+    job_id, _ = await _sliced_job(client, create_job, session_factory, tmp_path)
+    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
+        first = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
+    assert first.json()["slice_cache_info"]["save"]["outcome"] == "failed"
+
+    retry = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
+
+    assert retry.json()["slice_cache_info"]["save"]["outcome"] == "saved"
+    async with session_factory() as s:
+        assert len((await s.execute(select(SlicedVersion))).scalars().all()) == 1
+
+
+async def test_flagging_a_job_whose_slice_is_already_gone_just_sets_the_flag(
+        client, library, create_job, session_factory, tmp_path):
+    job_id, _ = await _sliced_job(client, create_job, session_factory, tmp_path)
+    async with session_factory() as s:
+        gcode = (await s.execute(select(GcodeFile).where(GcodeFile.job_id == job_id))).scalar_one()
+    os.remove(gcode.path)
+
+    resp = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
+
+    assert resp.status_code == 200 and resp.json()["save_slice"] is True
+    assert resp.json()["slice_cache_info"] is None
