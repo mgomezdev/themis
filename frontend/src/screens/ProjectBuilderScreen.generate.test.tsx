@@ -98,7 +98,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
       file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({
-      eligible_printer_ids: [1, 2], process_preset: '0.20mm Standard',
+      eligible_printer_ids: [1, 2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
     });
   });
 
@@ -122,7 +122,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
 
     await screen.findByText('1 job added to queue');
-    expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({ eligible_printer_ids: [], process_preset: null });
+    expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({ eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false });
   });
 
   it('keeps the builder on screen so the result is visible, and lets Retry reuse the saved project', async () => {
@@ -229,7 +229,8 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
 
     await screen.findByText('1 job added to queue');
     expect(api.to('POST', '/api/v1/projects/7/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [2], process_preset: null }, { eligible_printer_ids: [2], process_preset: null },
+      { eligible_printer_ids: [2], process_preset: null, allow_cached: true, save_slice: false },
+      { eligible_printer_ids: [2], process_preset: null, allow_cached: true, save_slice: false },
     ]);
   });
 });

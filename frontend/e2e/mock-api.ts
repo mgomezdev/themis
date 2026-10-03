@@ -32,6 +32,8 @@ const ok: Json = (route, body = {}) => route.fulfill({ status: 200, contentType:
 
 export async function mockApi(page: Page, over: Partial<{
   printers: any[]; fleet: any[] | (() => any[]); profiles: any; files: any[]; plates: any[]; modelFilaments: any[]; jobDetails: any;
+  /** GET /files/{id}/sliced-versions body (slicing cache), keyed by model file id. */
+  slicedVersions: Record<number, any[]>;
   /** GET /queue body (a function so a test can make it change as the journey progresses). */
   queue: () => any[];
   /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
@@ -93,11 +95,12 @@ export async function mockApi(page: Page, over: Partial<{
       return ok(route, { filename: file?.original_filename ?? '', plates });
     }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
+    if ((m = path.match(/^\/files\/(\d+)\/sliced-versions$/))) return ok(route, over.slicedVersions?.[+m[1]] ?? []);
     if (path === '/settings/spoolman') return ok(route, { enabled: false });
     if (path === '/spoolman/filaments' || path === '/spoolman/spools') return ok(route, []);
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
-    if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5 });
+    if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5, slice_cache_use_latest_settings: true });
     if (path === '/queue') return ok(route, over.queue ? over.queue() : []);
     if (path === '/jobs') return ok(route, []);
     if (path === '/orders') return ok(route, []);

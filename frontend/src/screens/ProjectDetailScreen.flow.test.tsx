@@ -145,7 +145,7 @@ describe('ProjectDetailScreen - generating jobs', () => {
 
     expect(await screen.findByText('2 jobs queued')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [2], process_preset: '0.20mm Standard' },
+      { eligible_printer_ids: [2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false },
     ]);
     expect(screen.queryByText('Eligible printers')).toBeNull();          // picker closed
     await waitFor(() => expect(api.to('GET', '/api/v1/projects/42/jobs')).toHaveLength(2));   // refreshed after generating
@@ -160,8 +160,28 @@ describe('ProjectDetailScreen - generating jobs', () => {
 
     expect(await screen.findByText('1 job queued')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [], process_preset: null },
+      { eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false },
     ]);
+  });
+
+  it('sends the cache choices and reports a reused pack and cached plates', async () => {
+    const { api } = open({ 'POST /api/v1/projects/42/generate': {
+      ...generated(2),
+      files: [{ id: 9, original_filename: 'project-x-PLA.3mf', folder: '/', plate_count: 2, pack_reused: true, cached_plates: 2 }],
+    } });
+    await ready();
+
+    await userEvent.click(button('Generate…'));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Use cached slices when available' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Save sliced gcode to library' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+
+    expect(await screen.findByText('2 jobs queued')).toBeTruthy();
+    expect(api.to('POST', '/api/v1/projects/42/generate').map(c => c.body)).toEqual([
+      { eligible_printer_ids: [], process_preset: null, allow_cached: false, save_slice: true },
+    ]);
+    expect(screen.getByTestId('generate-cache-info').textContent).toBe(
+      'project-x-PLA.3mf: reused previous pack, 2 plates have cached versions');
   });
 
   it('View Queue jumps to the queue', async () => {

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { SliceCacheMarkers } from '../components/SliceCache';
 import { useNavigate } from 'react-router-dom';
 import { fmtTime, matColor } from '../data/helpers';
 import {
@@ -50,6 +51,7 @@ interface DisplayJob {
   thumbnailPath: string | null;
   printerName: string | null;
   lowStockWarning: ApiJob['low_stock_warning'];
+  sliceCache: Pick<ApiJob, 'save_slice' | 'sliced_version_id' | 'slice_cache_info'>;
 }
 
 // ---- FilterChip ----
@@ -212,11 +214,10 @@ function JobCardRich({
                 </div>
               )}
             </div>
-            {(showStatus || isFailed) && (
-              <div className="row gap-2">
-                <StatusPill status={job.status as StatusKey} />
-              </div>
-            )}
+            <div className="row gap-2" style={{ alignItems: 'center' }}>
+              <SliceCacheMarkers job={job.sliceCache} />
+              {(showStatus || isFailed) && <StatusPill status={job.status as StatusKey} />}
+            </div>
           </div>
 
           <div className="row gap-5 wrap" style={{ marginTop: 4, rowGap: 8 }}>
@@ -799,6 +800,10 @@ export function QueueScreen() {
         id: String(j.id),
         rawId: j.id,
         fileName: fileName ?? null,
+        sliceCache: {
+          save_slice: j.save_slice ?? false, sliced_version_id: j.sliced_version_id ?? null,
+          slice_cache_info: j.slice_cache_info ?? null,
+        },
         plateName: `Plate ${j.plate_number}`,
         status: j.status,
         blockReason: j.block_reason ?? null,

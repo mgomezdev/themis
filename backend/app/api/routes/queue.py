@@ -43,6 +43,12 @@ def _base_dict(j: Job) -> dict:
         "block_reason": j.block_reason,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
+        # Slicing cache (BIZ-194 queue markers)
+        "save_slice": bool(j.save_slice),
+        "save_slice_name": j.save_slice_name,
+        "allow_cached_slice": bool(j.allow_cached_slice),
+        "sliced_version_id": j.sliced_version_id,
+        "slice_cache_info": j.slice_cache_info,
     }
 
 

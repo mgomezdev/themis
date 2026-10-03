@@ -87,6 +87,7 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
   low_stock_warning: null,
   filament_cost: null,
   not_before: null,
+  save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
   printer_configs: [
     {
       printer_id: 3,
