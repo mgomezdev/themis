@@ -11,20 +11,23 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from .library_scanner import file_kind
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
 _SYNCABLE = ("queued", "blocked")
 
 
-def accepts_raw_gcode(printer_type: str) -> bool:
-    """False for vendors that can't be handed a plain .gcode (see AbstractPrinterClient.raw_gcode_supported)."""
+def accepts_file(printer_type: str, filename: str | None) -> bool:
+    """Whether this vendor can print the file as-is. Sliceable models: always (the slicer targets the printer). A raw
+    .gcode needs `raw_gcode_supported`; a .gcode.3mf sliced archive needs `sliced_archive_supported` (BIZ-190)."""
+    kind = file_kind(filename)
+    if kind not in ("gcode", "gcode_3mf"):
+        return True
     from .printer_client_factory import REGISTRY   # lazy: the factory imports models
     cls = REGISTRY.get(printer_type)
-    return True if cls is None else bool(getattr(cls, "raw_gcode_supported", True))
-
-
-def _is_gcode_name(name: str | None) -> bool:
-    return (name or "").lower().endswith(".gcode")
+    if kind == "gcode":
+        return True if cls is None else bool(getattr(cls, "raw_gcode_supported", True))
+    return False if cls is None else bool(getattr(cls, "sliced_archive_supported", False))
 
 
 def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterConfig:
@@ -70,11 +73,10 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
         .where(JobModelTarget.machine_profile == profile, Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
     )).all()
-    raw_ok = accepts_raw_gcode(printer.printer_type)
     for target, filename in rows:
         if target.job_id in have:  # an explicit pick (or an earlier target) already covers this printer
             continue
-        if _is_gcode_name(filename) and not raw_ok:
+        if not accepts_file(printer.printer_type, filename):
             continue
         session.add(_config_from_target(target, printer.id))
         have.add(target.job_id)
@@ -97,7 +99,6 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     filename = (await session.execute(
         select(UploadedFile.original_filename).join(Job, Job.uploaded_file_id == UploadedFile.id).where(Job.id == job_id)
     )).scalar_one_or_none()
-    gcode = _is_gcode_name(filename)
     have = set((await session.execute(
         select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job_id)
     )).scalars().all())
@@ -106,7 +107,7 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
         for printer in printers:
             if printer.id in have or printer.current_orca_printer_profile != target.machine_profile:
                 continue
-            if gcode and not accepts_raw_gcode(printer.printer_type):
+            if not accepts_file(printer.printer_type, filename):
                 continue
             session.add(_config_from_target(target, printer.id))
             have.add(printer.id)

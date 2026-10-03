@@ -1568,3 +1568,12 @@ async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_pa
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
     assert mock_slicer.slice.call_count == 1
+
+
+def test_parse_gcode_estimates_reads_the_summary_at_the_end_of_a_long_file(tmp_path):
+    """OrcaSlicer writes "filament used" / "estimated printing time" after the toolpaths — far past the header."""
+    from app.services.queue_engine import _parse_gcode_estimates
+    gcode = tmp_path / "long.gcode"
+    gcode.write_text("; HEADER_BLOCK_START\n" + "G1 X1 Y1\n" * 20000 +
+                     "; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n")
+    assert _parse_gcode_estimates(str(gcode)) == (4.0, 93784, [1.25, 2.75])

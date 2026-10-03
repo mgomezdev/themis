@@ -120,6 +120,26 @@ async def _isolate_printer_manager():
 # Shared factories for API tests (previously copy-pasted per test file)
 # ---------------------------------------------------------------------------
 
+def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = False) -> bytes:
+    """A Bambu-style sliced archive (.gcode.3mf, BIZ-190): `Metadata/plate_N.gcode` per (plate, grams, minutes), a
+    thumbnail for plate 1 and — with `slice_info` — a `Metadata/slice_info.config` carrying the same estimates. Deflated
+    like real archives; fixed zip timestamps so the content hash is stable."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        def put(name, data):
+            zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED)
+        for num, grams, mins in plates:
+            put(f"Metadata/plate_{num}.gcode",
+                f"; filament used [g] = {grams}\n; estimated printing time (normal mode) = {mins}m 0s\nG28\n")
+        put("Metadata/plate_1.png", b"\x89PNG-archive")
+        if slice_info:
+            body = "".join(
+                f'<plate><metadata key="index" value="{n}"/><metadata key="prediction" value="{m * 60}"/>'
+                f'<metadata key="weight" value="{g}"/></plate>' for n, g, m in plates)
+            put("Metadata/slice_info.config", f'<?xml version="1.0" encoding="UTF-8"?><config>{body}</config>')
+    return buf.getvalue()
+
+
 def make_3mf_bytes() -> bytes:
     """Smallest 3MF the upload route accepts: one plate with a 60s / 5g estimate and a thumbnail."""
     # Entries carry a FIXED timestamp: zipfile stamps "now" (2-second resolution) by default, so two

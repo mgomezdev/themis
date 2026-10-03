@@ -69,6 +69,9 @@ Library index fields (filesystem is source of truth; these cache it):
 `relative_path, folder, size_bytes, content_hash, mtime: float, missing: bool`.
 - `plates`: `[{plate_number, estimated_time(min), filament_g, thumbnail_path}]` (parsed at upload).
 - `folder` defaults to `"/"`. `missing` is set by `library_scanner` when the file can't be found.
+- File kind is derived from the name (`library_scanner.file_kind`: `3mf` | `stl` | `gcode` | `gcode_3mf`), exposed as `kind`
+  in the file dict. A `.gcode.3mf` (Bambu sliced archive) is pre-sliced, not a model: its plates come from
+  `Metadata/plate_N.gcode` headers + `Metadata/plate_N.png` (`three_mf_parser.parse_sliced_archive`), no thumbnail regen.
 
 ### tags
 `id, name (unique), color: str ("#RRGGBB" default "#64748b"), category: str, created_at`.

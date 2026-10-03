@@ -12,6 +12,7 @@ import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../c
 import { ModelPicker, buildEligibility, isModelKey, modelConfigSource } from '../components/ModelTargets';
 import { OverridePanel } from '../components/OverridePanel';
 import { GcodeWarning } from '../components/GcodeWarning';
+import { fileKindOf, isPreslicedKind, type FileKind } from '../lib/fileKind';
 
 // ============================================================
 // Types
@@ -40,7 +41,7 @@ interface PlateConfig {
 interface FileInfo {
   name: string;
   size: number;
-  type: 'stl' | '3mf' | 'gcode';
+  type: FileKind;
 }
 
 // ============================================================
@@ -186,10 +187,10 @@ function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDrop, onCl
         {React.cloneElement(Icons.upload as React.ReactElement<{ size?: number }>, { size: 22 })}
       </div>
       <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-1)' }}>
-        Drop a .3mf, .stl or .gcode file
+        Drop a .3mf, .stl, .gcode or .gcode.3mf file
       </div>
       <div className="small muted" style={{ marginTop: 4 }}>
-        Or click to browse · multi-plate 3MFs supported · .gcode skips slicing
+        Or click to browse · multi-plate 3MFs supported · .gcode / .gcode.3mf skip slicing
       </div>
     </div>
   );
@@ -766,7 +767,7 @@ export function NewJobScreen() {
   async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
     setUploadedFileId(fileId);
     setFile(fileInfo);
-    const isGcode = fileInfo.type === 'gcode';   // nothing to slice: no filament slots or embedded settings to read
+    const isGcode = isPreslicedKind(fileInfo.type);   // nothing to slice: no filament slots or embedded settings to read
     const [apiPlates, filaments, settings] = await Promise.all([
       getFilePlates(fileId),
       isGcode ? Promise.resolve([] as ModelFilament[]) : getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
@@ -782,16 +783,11 @@ export function NewJobScreen() {
     setActivePlateId(detected[0]?.id ?? null);
   }
 
-  function fileTypeOf(name: string): 'stl' | '3mf' | 'gcode' {
-    const lower = name.toLowerCase();
-    return lower.endsWith('.stl') ? 'stl' : lower.endsWith('.gcode') ? 'gcode' : '3mf';
-  }
-
   async function handleFile(rawFile: File | null | undefined) {
     if (!rawFile) return;
     const nameLower = rawFile.name.toLowerCase();
     if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl') && !nameLower.endsWith('.gcode')) {
-      setError('Only .3mf, .stl and .gcode files are supported.');
+      setError('Only .3mf, .stl, .gcode and .gcode.3mf files are supported.');
       return;
     }
     setUploading(true);
@@ -801,7 +797,7 @@ export function NewJobScreen() {
       await loadFileIntoState(uploaded.id, {
         name: uploaded.original_filename,
         size: rawFile.size,
-        type: fileTypeOf(uploaded.original_filename),
+        type: fileKindOf(uploaded.original_filename),
       });
     } catch (err) {
       setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -828,7 +824,7 @@ export function NewJobScreen() {
       await loadFileIntoState(lib.id, {
         name: lib.original_filename,
         size: lib.size_bytes,
-        type: fileTypeOf(lib.original_filename),
+        type: fileKindOf(lib.original_filename),
       });
     } catch (err) {
       setError(`Failed to load file: ${err instanceof Error ? err.message : String(err)}`);
@@ -923,7 +919,7 @@ export function NewJobScreen() {
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
       // A pre-sliced gcode job has no print profile — naming the printer(s) or model(s) is enough.
-      return !!pp && (file?.type === 'gcode' || !!pp.printProfile);
+      return !!pp && (isPreslicedKind(file?.type) || !!pp.printProfile);
     });
   };
 
@@ -1001,7 +997,7 @@ export function NewJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader
               title={<span><StepNum n={1} done={!!file} /> Source file</span>}
-              sub="Upload a new .3mf/.stl/.gcode or pick one from your library."
+              sub="Upload a new .3mf/.stl/.gcode/.gcode.3mf or pick one from your library."
             />
 
             {!file && !uploading && (
@@ -1138,7 +1134,7 @@ export function NewJobScreen() {
                   plate={plates.find(p => p.id === activePlateId)!}
                   config={plateConfigs[activePlateId]}
                   isMultiPlate={plates.length > 1}
-                  gcode={file?.type === 'gcode'}
+                  gcode={isPreslicedKind(file?.type)}
                   printers={printers}
                   modelFilaments={modelFilaments}
                   embeddedSettings={embeddedSettings}

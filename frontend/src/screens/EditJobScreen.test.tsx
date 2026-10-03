@@ -255,3 +255,18 @@ describe('EditJobScreen — make/model targets', () => {
     }]);
   });
 });
+
+describe('EditJobScreen — pre-sliced .gcode.3mf archive (BIZ-190)', () => {
+  it('treats the archive as pre-sliced: gcode warning shown, no print-profile choice', async () => {
+    localStorage.clear();
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...JOB_WITH_TOOL2,
+      file: { id: 10, original_filename: 'part.gcode.3mf' },
+      printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], print_profile: '', slice_failed: false }],
+    });
+    renderEditJob();
+
+    expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
+    expect(screen.queryByTestId('print-profile-select')).toBeNull();
+  });
+});

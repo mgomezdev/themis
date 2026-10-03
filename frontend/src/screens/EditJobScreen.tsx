@@ -7,6 +7,7 @@ import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
 import { GcodeWarning } from '../components/GcodeWarning';
+import { isPresliced } from '../lib/fileKind';
 import { ModelPicker, buildEligibility, isModelKey, machineProfileOf, modelConfigSource, modelKey } from '../components/ModelTargets';
 import { apiFetch } from '../api/client';
 
@@ -171,8 +172,8 @@ export function EditJobScreen() {
     setPerPrinter(prev => ({ ...prev, [sid]: { ...prev[sid], ...patch } }));
   }
 
-  // A pre-sliced .gcode job is never sliced: no print profile, no 3MF overrides, no test slice.
-  const gcode = !!job?.file?.original_filename.toLowerCase().endsWith('.gcode');
+  // A pre-sliced (.gcode / .gcode.3mf) job is never sliced: no print profile, no 3MF overrides, no test slice.
+  const gcode = isPresliced(job?.file?.original_filename);
 
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];

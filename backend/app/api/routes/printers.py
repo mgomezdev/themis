@@ -1131,7 +1131,8 @@ async def copy_stored_file_to_library(
     printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
-    deduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused."""
+    deduplicated by content like any upload). A sliced .gcode.3mf lands as a pre-sliced library file (BIZ-190). Plain
+    .gcode is refused."""
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     _require_capability(client, "file_download", "downloading files")
