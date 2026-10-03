@@ -20,8 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...config import get_library_dir, get_laminus_sidecar_url
 from ...database import get_session
-from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, UploadedFile
-from ...services import job_costs, model_targets
+from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
+from ...services import job_costs, model_targets, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
@@ -198,6 +198,9 @@ class GenerateRequest(BaseModel):
     eligible_machine_profiles: list[str] = []
     # Slicing cache (BIZ-192): keep each generated job's production slice in the library as a cached version.
     save_slice: bool = False
+    # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
+    # instead of slicing when a printer claims it.
+    allow_cached: bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -1056,6 +1059,18 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
+async def _reusable_pack(session: AsyncSession, library_dir: Path, recipe_hash: str) -> UploadedFile | None:
+    """The newest earlier pack made from the same recipe whose file is still on disk, or None."""
+    rows = (await session.execute(
+        select(UploadedFile).where(UploadedFile.pack_recipe_hash == recipe_hash, UploadedFile.missing.is_(False))
+        .order_by(UploadedFile.id.desc())
+    )).scalars().all()
+    for f in rows:
+        if f.content_hash and library_abs_path(library_dir, f.relative_path).exists():
+            return f
+    return None
+
+
 def _filament_label(fil_type: str, fil_color: str, fil_id: int | None) -> str:
     """Short string for use in generated 3MF filenames."""
     if fil_id is not None:
@@ -1136,10 +1151,12 @@ async def generate_project(
 
     library_dir = get_library_dir()
 
-    # Resolve STL paths per group
+    # Resolve STL paths per group (+ what each group packs from, for pack reuse)
     group_paths: dict[tuple[str, str, int | None], list[Path]] = {}
+    group_recipe: dict[tuple[str, str, int | None], list[tuple[str, int]]] = {}
     for key, group_items in groups.items():
         paths: list[Path] = []
+        group_recipe[key] = []
         for item in group_items:
             f = await session.get(UploadedFile, item.file_id)
             if f is None:
@@ -1150,7 +1167,10 @@ async def generate_project(
             if not stl_path.exists():
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
             paths.extend([stl_path] * item.quantity)
+            group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
         group_paths[key] = paths
+    pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
+                 if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
 
     # Clean up legacy single-result file unless an active job holds it
     if proj.result_file_id is not None:
@@ -1166,6 +1186,10 @@ async def generate_project(
         ).first()
         if active is None:
             old_file = await session.get(UploadedFile, proj.result_file_id)
+            # Never delete a file the slicing cache still relies on (a reusable pack, or one with cached slices).
+            if old_file and (old_file.pack_recipe_hash or (await session.execute(
+                    select(SlicedVersion.id).where(SlicedVersion.source_file_id == old_file.id).limit(1))).first()):
+                old_file = None
             if old_file:
                 old_abs = library_abs_path(library_dir, old_file.relative_path)
                 if old_abs.exists():
@@ -1183,59 +1207,72 @@ async def generate_project(
 
     for (fil_type, fil_color, fil_id), stl_paths in group_paths.items():
         group_items = groups[(fil_type, fil_color, fil_id)]
-
-        try:
-            if proj.machine_uuid and proj.process_uuid:
-                # Legacy path: project has OrcaSlicer profiles embedded
-                packed_bytes = await asyncio.to_thread(
-                    client.pack_stls_by_uuid,
-                    stl_paths,
-                    proj.machine_uuid,
-                    proj.process_uuid,
-                    [],
-                )
-            else:
-                # Geometry-only pack; slicing profiles applied at dispatch time
-                packed_bytes = await asyncio.to_thread(
-                    client.pack_stls,
-                    stl_paths,
-                    pack_bed_x,
-                    pack_bed_y,
-                )
-        except SidecarError as exc:
-            if "timed out" in str(exc).lower():
-                raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
-            raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
-
-        label = _filament_label(fil_type, fil_color, fil_id)
-        out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
-        # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-        tmp_subdir = job_pack_dir / f"_tmp_{_uuid.uuid4().hex[:10]}"
-        tmp_subdir.mkdir(parents=True, exist_ok=True)
-        out_path = tmp_subdir / out_filename
-        out_path.write_bytes(packed_bytes)
-        # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the library's
-        # dedup/move detection relies on it too.
-        pack_hash = hashlib.sha256(packed_bytes).hexdigest()
-
-        plate_nums = _parse_plate_nums(out_path)
-
+        # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
+        # slices keyed on that file still apply (BIZ-193).
+        recipe_hash = slice_cache.sha256_of({"items": group_recipe[(fil_type, fil_color, fil_id)], "pack": pack_mode})
+        reused = await _reusable_pack(session, library_dir, recipe_hash) if body.allow_cached else None
         now = _now_iso()
-        rel = out_path.relative_to(library_dir).as_posix()
-        new_file = UploadedFile(
-            original_filename=out_path.name,
-            plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
-            uploaded_at=now,
-            relative_path=rel,
-            folder="/Job Pack 3MFs",
-            size_bytes=out_path.stat().st_size,
-            content_hash=pack_hash,
-            mtime=out_path.stat().st_mtime,
-            missing=False,
-        )
-        session.add(new_file)
-        await session.commit()
-        await session.refresh(new_file)
+
+        if reused is not None:
+            new_file = reused
+            plate_nums = [p.get("plate_number") for p in (reused.plates or []) if p.get("plate_number") is not None]
+            slice_cache.log_event("pack_reused", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=reused.id,
+                                  pack_content_hash=reused.content_hash)
+        else:
+            try:
+                if proj.machine_uuid and proj.process_uuid:
+                    # Legacy path: project has OrcaSlicer profiles embedded
+                    packed_bytes = await asyncio.to_thread(
+                        client.pack_stls_by_uuid,
+                        stl_paths,
+                        proj.machine_uuid,
+                        proj.process_uuid,
+                        [],
+                    )
+                else:
+                    # Geometry-only pack; slicing profiles applied at dispatch time
+                    packed_bytes = await asyncio.to_thread(
+                        client.pack_stls,
+                        stl_paths,
+                        pack_bed_x,
+                        pack_bed_y,
+                    )
+            except SidecarError as exc:
+                if "timed out" in str(exc).lower():
+                    raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
+                raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
+
+            label = _filament_label(fil_type, fil_color, fil_id)
+            out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
+            # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
+            tmp_subdir = job_pack_dir / f"_tmp_{_uuid.uuid4().hex[:10]}"
+            tmp_subdir.mkdir(parents=True, exist_ok=True)
+            out_path = tmp_subdir / out_filename
+            out_path.write_bytes(packed_bytes)
+            # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
+            # library's dedup/move detection relies on it too.
+            pack_hash = hashlib.sha256(packed_bytes).hexdigest()
+
+            plate_nums = _parse_plate_nums(out_path)
+
+            rel = out_path.relative_to(library_dir).as_posix()
+            new_file = UploadedFile(
+                original_filename=out_path.name,
+                plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
+                uploaded_at=now,
+                relative_path=rel,
+                folder="/Job Pack 3MFs",
+                size_bytes=out_path.stat().st_size,
+                content_hash=pack_hash,
+                mtime=out_path.stat().st_mtime,
+                missing=False,
+                pack_recipe_hash=recipe_hash,
+            )
+            session.add(new_file)
+            await session.commit()
+            await session.refresh(new_file)
+            slice_cache.log_event("pack_new", project_id=proj.id, recipe_hash=recipe_hash, pack_file_id=new_file.id,
+                                  pack_content_hash=pack_hash)
 
         effective_plates = plate_nums or [1]
         num_plates = len(effective_plates)
@@ -1262,6 +1299,7 @@ async def generate_project(
                 updated_at=now,
                 project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
                 save_slice=body.save_slice,
+                allow_cached_slice=body.allow_cached,
             )
             session.add(job)
             new_jobs.append(job)
@@ -1272,22 +1310,30 @@ async def generate_project(
         for j in new_jobs:
             await session.refresh(j)
 
-        # Rename temp dir to the job-ID subfolder now that IDs are known.
-        job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
-        final_subdir = job_pack_dir / job_id_label
-        tmp_subdir.rename(final_subdir)
-        final_path = final_subdir / out_filename
-        new_file.relative_path = final_path.relative_to(library_dir).as_posix()
-        new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
-        await session.commit()
+        if reused is None:
+            # Rename temp dir to the job-ID subfolder now that IDs are known.
+            job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
+            final_subdir = job_pack_dir / job_id_label
+            tmp_subdir.rename(final_subdir)
+            final_path = final_subdir / out_filename
+            new_file.relative_path = final_path.relative_to(library_dir).as_posix()
+            new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
+            await session.commit()
 
-        background_tasks.add_task(regen_file_thumbnails, new_file.id)
+            background_tasks.add_task(regen_file_thumbnails, new_file.id)
 
+        cached_plates = (await session.execute(
+            select(func.count(func.distinct(SlicedVersion.plate_number)))
+            .where(SlicedVersion.source_file_id == new_file.id)
+        )).scalar() or 0
         files_out.append({
             "id": new_file.id,
             "original_filename": new_file.original_filename,
             "folder": new_file.folder,
             "plate_count": len(plate_nums),
+            # Slicing cache (informational — whether a version is used is decided when a printer claims each job).
+            "pack_reused": reused is not None,
+            "cached_plates": cached_plates,
         })
 
         # Create printer configs for each eligible printer × job. The machine preset

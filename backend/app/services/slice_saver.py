@@ -60,14 +60,20 @@ def inputs_from_dict(d: dict) -> slice_cache.CacheKeyInputs:
     return slice_cache.CacheKeyInputs(**{**d, "filament_presets": tuple(d.get("filament_presets") or ())})
 
 
-async def _find_duplicate(session: AsyncSession, source_id: int, key: str) -> SlicedVersion | None:
-    return (await session.execute(
+async def _find_duplicate(
+    session: AsyncSession, source_id: int, key: str, current: slice_cache.SlicerFingerprint,
+) -> SlicedVersion | None:
+    """A present version of this model with the same key that is NOT stale against what the slicer produces now. A
+    stale one isn't a duplicate: the fresh slice is saved alongside it, and the newest same-key version wins lookups."""
+    rows = (await session.execute(
         select(SlicedVersion)
         .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
         .where(SlicedVersion.source_file_id == source_id, SlicedVersion.cache_key == key,
                UploadedFile.missing.is_(False))
-        .order_by(SlicedVersion.id.desc()).limit(1)
-    )).scalar_one_or_none()
+        .order_by(SlicedVersion.id.desc())
+    )).scalars().all()
+    return next((v for v in rows
+                 if slice_cache.staleness(v.preset_content_hash, v.slicer_version, current)[0] is not True), None)
 
 
 async def _record(session: AsyncSession, job_id: int, outcome: str, **kw) -> None:
@@ -132,15 +138,6 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
             done = True   # turned off after slicing: the pending save is cancelled, nothing to record
             return None
 
-        existing = await _find_duplicate(session, source.id, key)
-        if existing is not None:
-            done = True
-            slice_cache.log_event("save_duplicate_skipped", **fields, sliced_version_id=existing.id,
-                                  cached_file_id=existing.file_id)
-            await _record(session, job_id, "duplicate", cache_key=key, sliced_version_id=existing.id,
-                          file_id=existing.file_id)
-            return existing
-
         cfg = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
         filament_type = cfg.filament_type if cfg else "any"
@@ -156,8 +153,18 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         dest = await asyncio.to_thread(_copy_exclusive, artifact_path, folder_abs, f"{display}{suffix}")
 
         fingerprint = await asyncio.to_thread(
-            slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
+            slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
             list(inputs.filament_presets), config.get_laminus_sidecar_url())
+        existing = await _find_duplicate(session, source.id, key, fingerprint)
+        if existing is not None:   # an up-to-date same-key version is already there: drop the copy
+            _cleanup(dest, None)
+            dest = None
+            done = True
+            slice_cache.log_event("save_duplicate_skipped", **fields, sliced_version_id=existing.id,
+                                  cached_file_id=existing.file_id)
+            await _record(session, job_id, "duplicate", cache_key=key, sliced_version_id=existing.id,
+                          file_id=existing.file_id)
+            return existing
         digest = await asyncio.to_thread(sha256_file, dest)
         stat = dest.stat()
 
