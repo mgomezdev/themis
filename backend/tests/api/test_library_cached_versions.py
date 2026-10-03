@@ -38,10 +38,12 @@ async def test_deleting_a_model_with_versions_asks_first(client, library, upload
     assert await _file(session_factory, model) is not None and (library / UP / "m.3mf").exists()
 
 
-async def test_delete_together_removes_the_model_and_its_versions(client, library, upload_3mf, session_factory):
+async def test_delete_together_removes_the_model_and_its_versions(client, library, upload_3mf, session_factory, tmp_path):
     model = await upload_3mf()
     v1, f1 = await _version_for(session_factory, library, model, name="a.gcode.3mf")
     v2, f2 = await _version_for(session_factory, library, model, name="b.gcode.3mf")
+    for fid in (f1, f2):
+        (tmp_path / "data" / "filecache" / str(fid) / "thumbnails").mkdir(parents=True)
 
     resp = await client.delete(f"/api/v1/files/{model}?versions=delete")
 
@@ -50,6 +52,7 @@ async def test_delete_together_removes_the_model_and_its_versions(client, librar
         assert await _file(session_factory, fid) is None
     assert await _version(session_factory, v1) is None and await _version(session_factory, v2) is None
     assert sorted(p.name for p in (library / UP).iterdir()) == []
+    assert not (tmp_path / "data" / "filecache" / str(f1)).exists() and not (tmp_path / "data" / "filecache" / str(f2)).exists()
 
 
 async def test_keep_leaves_the_versions_as_standalone_gcode(client, library, upload_3mf, session_factory):
@@ -269,3 +272,85 @@ async def test_a_pre_sliced_file_cannot_be_a_project_item(client, library, uploa
     async with session_factory() as s:
         assert (await s.get(Project, project)) is not None
         assert (await client.get(f"/api/v1/projects/{project}/items")).json() == []
+
+
+
+async def test_deleting_files_finished_jobs_printed_keeps_their_rows_as_missing(
+        client, library, upload_3mf, session_factory):
+    """A version (or model) a finished job printed can't lose its row — job history points at it. Its bytes go and the
+    row stays `missing`, exactly as if it had vanished from disk."""
+    model = await upload_3mf()
+    v1, f1 = await _version_for(session_factory, library, model, name="printed.gcode.3mf")
+    _, f2 = await _version_for(session_factory, library, model, name="unused.gcode.3mf")
+    async with session_factory() as s:
+        for fid in (model, f1):
+            s.add(Job(uploaded_file_id=fid, plate_number=1, status="complete", created_at="t", updated_at="t"))
+        await s.commit()
+
+    resp = await client.delete(f"/api/v1/files/{model}?versions=delete")
+
+    assert resp.status_code == 200, resp.text
+    assert (await _file(session_factory, model)).missing and (await _file(session_factory, f1)).missing
+    assert await _file(session_factory, f2) is None
+    assert sorted(p.name for p in (library / UP).iterdir()) == []
+    assert await _version(session_factory, v1) is not None   # still the record of what that job printed
+    assert (await client.get(f"/api/v1/files/{model}/sliced-versions")).json() == []
+
+
+async def test_keep_unlinks_versions_even_when_the_model_row_must_stay(client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    v1, _ = await _version_for(session_factory, library, model, name="a.gcode.3mf")
+    async with session_factory() as s:
+        s.add(Job(uploaded_file_id=model, plate_number=1, status="complete", created_at="t", updated_at="t"))
+        await s.commit()
+
+    assert (await client.delete(f"/api/v1/files/{model}?versions=keep")).status_code == 200
+
+    assert (await _file(session_factory, model)).missing
+    assert (await _version(session_factory, v1)).source_file_id is None
+
+
+async def test_moving_a_model_into_its_versions_folder_doesnt_rename_them(client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    async with session_factory() as s:   # the model sits elsewhere; its version is already in Job Uploads
+        f = await s.get(UploadedFile, model)
+        (library / "Elsewhere").mkdir()
+        (library / UP / "m.3mf").rename(library / "Elsewhere" / "m.3mf")
+        f.relative_path, f.folder = "Elsewhere/m.3mf", "/Elsewhere"
+        await s.commit()
+    _, f1 = await _version_for(session_factory, library, model, name="a.gcode.3mf")
+    async with session_factory() as s:
+        vf = await s.get(UploadedFile, f1)
+        (library / "Elsewhere" / "a.gcode.3mf").rename(library / UP / "a.gcode.3mf")
+        vf.relative_path, vf.folder = f"{UP}/a.gcode.3mf", f"/{UP}"
+        await s.commit()
+
+    with patch("app.config.get_library_dir", return_value=library):
+        assert (await client.patch(f"/api/v1/files/{model}", json={"folder": f"/{UP}"})).status_code == 200
+
+    assert (await _file(session_factory, f1)).relative_path == f"{UP}/a.gcode.3mf"
+    assert (library / UP / "a.gcode.3mf").exists()
+
+
+async def test_a_failed_version_move_puts_everything_back(client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    _, f1 = await _version_for(session_factory, library, model, name="a.gcode.3mf")
+    _, f2 = await _version_for(session_factory, library, model, name="b.gcode.3mf")
+    real_replace = type(library).replace
+    calls = {"n": 0}
+
+    def flaky_replace(self, target):
+        calls["n"] += 1
+        if calls["n"] == 3:   # model, first version, then the second version fails
+            raise OSError("disk full")
+        return real_replace(self, target)
+
+    with patch("app.config.get_library_dir", return_value=library), \
+         patch.object(type(library), "replace", flaky_replace):
+        resp = await client.patch(f"/api/v1/files/{model}", json={"folder": "/Archive"})
+
+    assert resp.status_code == 500
+    assert sorted(p.name for p in (library / UP).iterdir()) == ["a.gcode.3mf", "b.gcode.3mf", "m.3mf"]
+    assert not any((library / "Archive").iterdir())
+    for fid, rel in ((model, f"{UP}/m.3mf"), (f1, f"{UP}/a.gcode.3mf"), (f2, f"{UP}/b.gcode.3mf")):
+        assert (await _file(session_factory, fid)).relative_path == rel

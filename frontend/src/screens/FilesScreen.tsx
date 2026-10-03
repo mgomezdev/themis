@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { shade, fmtBytes } from '../data/helpers';
 import { Icons } from '../components/icons';
@@ -594,8 +594,15 @@ function DeleteVersionsDialog({ file, versions, onChoose, onCancel }: {
   file: LibraryFile; versions: CachedVersionRef[];
   onChoose: (choice: 'delete' | 'keep') => void; onCancel: () => void;
 }) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    cancelRef.current?.focus();   // the safe choice has focus; Escape backs out
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
   return (
-    <div role="dialog" aria-label="Delete model with sliced versions" style={{
+    <div role="dialog" aria-modal="true" aria-label="Delete model with sliced versions" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 60,
       display: 'grid', placeItems: 'center', padding: 16,
     }}>
@@ -612,7 +619,7 @@ function DeleteVersionsDialog({ file, versions, onChoose, onCancel }: {
             Delete model and versions
           </button>
           <button className="btn ghost" onClick={() => onChoose('keep')}>Delete model, keep versions as gcode</button>
-          <button className="btn ghost" onClick={onCancel}>Cancel</button>
+          <button className="btn ghost" ref={cancelRef} onClick={onCancel}>Cancel</button>
         </div>
       </div>
     </div>
@@ -822,7 +829,8 @@ export function FilesScreen() {
   }
 
   async function handleDelete(f: LibraryFile) {
-    if (!window.confirm(`Delete ${f.original_filename}?`)) return;
+    // A model with cached versions gets its own dialog (from the server's 409) instead of a second confirm.
+    if (!(f.sliced_version_count > 0) && !window.confirm(`Delete ${f.original_filename}?`)) return;
     try {
       const res = await deleteFile(f.id);
       if ('needsChoice' in res) { setDeleteChoice({ file: f, versions: res.versions }); return; }

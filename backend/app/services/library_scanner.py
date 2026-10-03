@@ -80,9 +80,6 @@ async def refresh_content_hash(row, library_dir: Path) -> bool:
         return False
     row.content_hash, row.size_bytes, row.mtime = fresh
     return True
-_THUMB_START = re.compile(rb"^; (?:thumbnail|THUMBNAIL_BLOCK_START|thumbnail_PNG) begin (\d+)x(\d+)", re.M)
-
-
 def extract_gcode_thumbnail(path: Path, dest: Path, head_bytes: int = 2_000_000) -> Path | None:
     """The largest PNG preview OrcaSlicer/PrusaSlicer embed in a gcode header (`; thumbnail begin WxH LEN` … base64 …
     `; thumbnail end`), written to `dest`; None if the file has none."""

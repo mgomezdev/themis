@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { FilesScreen } from './FilesScreen';
@@ -48,6 +48,7 @@ const calls = (m: ReturnType<typeof stub>, method: string) =>
 beforeEach(() => {
   vi.restoreAllMocks();
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('FilesScreen — cached sliced versions', () => {
   it('badges a model with its version count and chips a cached file with its source model', async () => {
@@ -88,8 +89,9 @@ describe('FilesScreen — cached sliced versions', () => {
   it.each([
     ['Delete model and versions', 'delete'],
     ['Delete model, keep versions as gcode', 'keep'],
-  ])('asks what to do with the versions, then %s', async (button, choice) => {
-    vi.stubGlobal('confirm', vi.fn(() => true));
+  ])('asks what to do with the versions (once — no extra confirm), then %s', async (button, choice) => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
     const api = stub((url, init) => {
       if (init?.method !== 'DELETE') return undefined;
       if (url === '/api/v1/files/1') return new Response(JSON.stringify({ detail: {
@@ -106,10 +108,11 @@ describe('FilesScreen — cached sliced versions', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: button }));
 
     await waitFor(() => expect(calls(api, 'DELETE')).toEqual(['/api/v1/files/1', `/api/v1/files/1?versions=${choice}`]));
+    expect(confirm).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete model with sliced versions' })).toBeNull());
   });
 
-  it('cancelling the choice deletes nothing more', async () => {
+  it('Escape backs out of the choice and deletes nothing more', async () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     const api = stub((_url, init) => init?.method === 'DELETE'
       ? new Response(JSON.stringify({ detail: { versions: [{ id: 7, file_id: 2, name: 'v', folder: '/' }] } }), { status: 409 })
@@ -118,7 +121,9 @@ describe('FilesScreen — cached sliced versions', () => {
     fireEvent.click(await screen.findByText('benchy.3mf'));
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }));
 
-    fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Cancel' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(screen.queryByRole('dialog')).toBeNull();
     expect(calls(api, 'DELETE')).toEqual(['/api/v1/files/1']);
@@ -128,7 +133,7 @@ describe('FilesScreen — cached sliced versions', () => {
     vi.stubGlobal('confirm', vi.fn(() => true));
     const alert = vi.fn();
     vi.stubGlobal('alert', alert);
-    stub((url, init) => {
+    const api = stub((url, init) => {
       if (init?.method !== 'DELETE') return undefined;
       return url === '/api/v1/files/1'
         ? new Response(JSON.stringify({ detail: { versions: [{ id: 7, file_id: 2, name: 'v', folder: '/' }] } }), { status: 409 })
@@ -144,5 +149,6 @@ describe('FilesScreen — cached sliced versions', () => {
     await waitFor(() => expect(alert).toHaveBeenCalled());
     expect(String(alert.mock.calls[0][0])).toContain('have cached sliced versions');
     expect(String(alert.mock.calls[0][0])).toContain('benchy.3mf');
+    expect(calls(api, 'DELETE').sort()).toEqual(['/api/v1/files/1', '/api/v1/files/2']);   // the other one went
   });
 });

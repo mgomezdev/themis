@@ -404,7 +404,12 @@ async def update_file(file_id: int, body: FilePatch,
     f.relative_path = rel
     f.folder = folder_of(rel)
     if moved_folder:   # its cached versions live "next to the model": they follow a move (not a rename)
-        await _move_versions_with(session, library, f.id, folder_abs)
+        try:
+            await _move_versions_with(session, library, f.id, folder_abs)
+        except HTTPException:
+            if dest.exists() and not src.exists():
+                dest.replace(src)   # the model goes back too: nothing moved, nothing committed
+            raise
     await session.commit()
     tag_map = await _tags_for(session, [f.id])
     return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
@@ -415,14 +420,24 @@ async def _move_versions_with(session: AsyncSession, library: Path, model_id: in
         select(UploadedFile).join(SlicedVersion, SlicedVersion.file_id == UploadedFile.id)
         .where(SlicedVersion.source_file_id == model_id)
     )).scalars().all()
-    for vf in rows:
-        vsrc = library_abs_path(library, vf.relative_path)
-        if not vsrc.exists():
-            continue
-        vdest = LibraryScanner.unique_path(folder_abs, vf.original_filename)
-        vsrc.replace(vdest)
-        vrel = vdest.relative_to(library).as_posix()
-        vf.original_filename, vf.relative_path, vf.folder = vdest.name, vrel, folder_of(vrel)
+    done: list[tuple[Path, Path]] = []
+    try:
+        for vf in rows:
+            vsrc = library_abs_path(library, vf.relative_path)
+            if not vsrc.exists() or vsrc.parent.resolve() == folder_abs.resolve():
+                continue   # gone, or already next to the model (don't rename it against itself)
+            vdest = LibraryScanner.unique_path(folder_abs, vf.original_filename)
+            vsrc.replace(vdest)
+            done.append((vdest, vsrc))
+            vrel = vdest.relative_to(library).as_posix()
+            vf.original_filename, vf.relative_path, vf.folder = vdest.name, vrel, folder_of(vrel)
+    except OSError as exc:
+        for moved_to, came_from in reversed(done):   # put the files back where the (uncommitted) rows say they are
+            try:
+                moved_to.replace(came_from)
+            except OSError:
+                pass
+        raise HTTPException(500, f"Couldn't move the model's sliced versions: {exc}") from exc
 
 
 # ---------- delete ----------
@@ -463,24 +478,33 @@ async def delete_file(
         for _, vf in linked:   # all or nothing: refuse before deleting anything
             await _refuse_if_in_use(session, vf)
         doomed += [vf for _, vf in linked]
-    # keep: the versions stay as plain gcode — the FK (source_file_id ON DELETE SET NULL) unlinks them with the model.
+    elif linked:   # keep: they stay as plain gcode, no longer linked to the model
+        for v, _ in linked:
+            v.source_file_id = None
 
+    # A file that finished jobs printed can't lose its row (job history points at it): like a file that vanished from
+    # disk (see LibraryScanner.scan), its bytes go and the row stays, marked missing.
+    printed = set((await session.execute(
+        select(Job.uploaded_file_id).where(Job.uploaded_file_id.in_([d.id for d in doomed])))).scalars().all())
     library = config.get_library_dir()
-    paths = [(d.id, library_abs_path(library, d.relative_path)) for d in doomed]
+    paths = [(d.id, library_abs_path(library, d.relative_path), d.id not in printed) for d in doomed]
     for d in doomed:
+        if d.id in printed:
+            d.missing = True
+            continue
         for link in (await session.execute(select(FileTag).where(FileTag.file_id == d.id))).scalars().all():
             await session.delete(link)
         await session.delete(d)
     await session.commit()
 
-    # Only touch the filesystem after the DB rows are actually gone — otherwise a
-    # commit failure (e.g. an unanticipated FK reference) leaves the file deleted
-    # but the row still pointing at it.
+    # Only touch the filesystem after the DB is committed — otherwise a commit failure (e.g. an unanticipated FK
+    # reference) leaves the file deleted but the row still pointing at it.
     import shutil
-    for did, abs_path in paths:
+    for did, abs_path, row_gone in paths:
         if abs_path.exists():
             abs_path.unlink()
-        shutil.rmtree(config.get_filecache_dir() / str(did), ignore_errors=True)
+        if row_gone:   # a kept (missing) row keeps its thumbnails for the job history
+            shutil.rmtree(config.get_filecache_dir() / str(did), ignore_errors=True)
     return {"deleted": file_id, "deleted_versions": [d.id for d in doomed[1:]]}
 
 
