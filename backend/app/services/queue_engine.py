@@ -30,7 +30,7 @@ from ..models import (
 from .library_scanner import is_presliced_file, library_abs_path, presliced_suffix
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
-from . import model_targets
+from . import model_targets, slice_cache, slice_saver
 from . import notification_service
 from . import scheduling
 from . import webhook_service
@@ -325,6 +325,20 @@ class QueueEngine:
                 logger.exception("Slice worker: unhandled exception in queued coro")
             finally:
                 self._slice_queue.task_done()
+
+    def spawn_save_slice(
+        self, job_id: int, printer_id: int, artifact_path: str, inputs: "slice_cache.CacheKeyInputs | None",
+    ) -> None:
+        """Save a finished production slice to the library as a cached version (BIZ-192), in the background: the job
+        carries on to upload/print meanwhile, and a failed save is logged and recorded, never raised into the job."""
+        async def _run() -> None:
+            async with self._factory() as session:
+                await slice_saver.save_slice_version(
+                    session, job_id=job_id, printer_id=printer_id, artifact_path=artifact_path, inputs=inputs,
+                    require_flag=True)
+        task = asyncio.create_task(_run(), name=f"save-slice-{job_id}")
+        self._estimate_tasks.add(task)
+        task.add_done_callback(self._estimate_tasks.discard)
 
     def spawn_estimate(self, job_id: int) -> None:
         """Create and track a background estimate task for job_id."""
@@ -909,11 +923,13 @@ class QueueEngine:
             build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
             is_gcode = is_presliced_file(uploaded_file)
+            source_content_hash = uploaded_file.content_hash if uploaded_file else ""
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
         slice_presets: list = []
+        slice_inputs: slice_cache.CacheKeyInputs | None = None   # what this slice was made from (slicing cache)
         if is_gcode:
             # Pre-sliced upload: nothing to slice. Stage a private copy (finished jobs delete their gcode file,
             # which must never be the library's own copy) and carry on to upload + print.
@@ -1003,6 +1019,8 @@ class QueueEngine:
                 return
 
             slice_presets = req.filament_presets
+            # cfg_filament_map is the resolved (slot-index) map here — exactly what the 3MF remap used.
+            slice_inputs = slice_cache.key_inputs(req, source_content_hash, cfg_tool_index, cfg_filament_map)
 
         # Store gcode record; park as "sliced" if the printer isn't ready to receive.
         async with self._factory() as session:
@@ -1019,7 +1037,9 @@ class QueueEngine:
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
                 filament_grams=grams, estimated_seconds=secs,
+                slice_inputs=slice_inputs.as_dict() if slice_inputs else None,
             )
+            want_save = bool(job.save_slice) and not is_gcode
             session.add(gcode_rec)
             # Persist actuals on Job NOW — before GcodeFile is ever deleted.
             job.actual_filament_grams = grams
@@ -1038,12 +1058,16 @@ class QueueEngine:
                 job.assigned_printer_id = None
                 job.updated_at = _now()
                 await session.commit()
+                if want_save:
+                    self.spawn_save_slice(job_id, printer_id, gcode_path, slice_inputs)
                 await self._broadcast_job(job_id)
                 self.wake()
                 return
             job.status = "uploading"
             job.updated_at = _now()
             await session.commit()
+        if want_save:
+            self.spawn_save_slice(job_id, printer_id, gcode_path, slice_inputs)
 
         await self._broadcast_job(job_id)
         await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)

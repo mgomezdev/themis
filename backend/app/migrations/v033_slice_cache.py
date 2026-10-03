@@ -1,4 +1,4 @@
-"""Slicing cache (BIZ-191): sliced_versions + job/queue/file columns it needs."""
+"""Slicing cache (BIZ-191/192): sliced_versions + the job/queue/file/gcode columns it needs."""
 from __future__ import annotations
 from sqlalchemy import text
 
@@ -58,9 +58,12 @@ async def up(conn) -> None:
             "ALTER TABLE queue_config ADD COLUMN slice_cache_use_latest_settings BOOLEAN NOT NULL DEFAULT 1"))
     if "pack_recipe_hash" not in await _columns(conn, "uploaded_files"):
         await conn.execute(text("ALTER TABLE uploaded_files ADD COLUMN pack_recipe_hash VARCHAR(64)"))
+    if "slice_inputs" not in await _columns(conn, "gcode_files"):
+        await conn.execute(text("ALTER TABLE gcode_files ADD COLUMN slice_inputs JSON"))
 
 
 async def down(conn) -> None:
+    await conn.execute(text("ALTER TABLE gcode_files DROP COLUMN slice_inputs"))
     await conn.execute(text("ALTER TABLE uploaded_files DROP COLUMN pack_recipe_hash"))
     await conn.execute(text("ALTER TABLE queue_config DROP COLUMN slice_cache_use_latest_settings"))
     for col in reversed(list(_JOB_COLUMNS)):

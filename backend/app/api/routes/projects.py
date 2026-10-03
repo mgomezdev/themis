@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -195,6 +196,8 @@ class GenerateRequest(BaseModel):
     process_preset: Optional[str] = None
     # Make/models ("any printer whose machine preset is X") eligible alongside the specific printers above.
     eligible_machine_profiles: list[str] = []
+    # Slicing cache (BIZ-192): keep each generated job's production slice in the library as a cached version.
+    save_slice: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -1211,6 +1214,9 @@ async def generate_project(
         tmp_subdir.mkdir(parents=True, exist_ok=True)
         out_path = tmp_subdir / out_filename
         out_path.write_bytes(packed_bytes)
+        # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the library's
+        # dedup/move detection relies on it too.
+        pack_hash = hashlib.sha256(packed_bytes).hexdigest()
 
         plate_nums = _parse_plate_nums(out_path)
 
@@ -1223,7 +1229,7 @@ async def generate_project(
             relative_path=rel,
             folder="/Job Pack 3MFs",
             size_bytes=out_path.stat().st_size,
-            content_hash="",
+            content_hash=pack_hash,
             mtime=out_path.stat().st_mtime,
             missing=False,
         )
@@ -1255,6 +1261,7 @@ async def generate_project(
                 created_at=now,
                 updated_at=now,
                 project_item_quantities=json.dumps(plate_item_qtys[plate_idx]),
+                save_slice=body.save_slice,
             )
             session.add(job)
             new_jobs.append(job)

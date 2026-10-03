@@ -4446,6 +4446,60 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/save-slice": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Save (or stop saving) a job's slice to the library",
+        "description": "Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under\n`name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.\nRe-sending `save_slice: true` after a failed save retries it. Turning the flag off cancels a pending save but never\ndeletes a version already saved.",
+        "operationId": "set_job_save_slice_api_v1_jobs__job_id__save_slice_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSaveSlicePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Save Slice Api V1 Jobs  Job Id  Save Slice Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job already finished (its slice is gone)"
+          },
+          "422": {
+            "description": "Job prints a pre-sliced file \u2014 there is no new slice to save"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/cost": {
       "patch": {
         "tags": [
@@ -8631,6 +8685,11 @@
             "type": "array",
             "title": "Eligible Machine Profiles",
             "default": []
+          },
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice",
+            "default": false
           }
         },
         "type": "object",
@@ -8777,6 +8836,23 @@
               }
             ],
             "title": "Not Before"
+          },
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice",
+            "default": false
+          },
+          "save_slice_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Save Slice Name"
           }
         },
         "type": "object",
@@ -8784,6 +8860,31 @@
           "uploaded_file_id"
         ],
         "title": "JobCreate"
+      },
+      "JobSaveSlicePatch": {
+        "properties": {
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "save_slice"
+        ],
+        "title": "JobSaveSlicePatch"
       },
       "JobSchedulePatch": {
         "properties": {
