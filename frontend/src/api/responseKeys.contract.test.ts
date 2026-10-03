@@ -72,7 +72,7 @@ const PROJECT_JOB = {
 
 const LIBRARY_FILE = {
   id: 1, original_filename: 1, relative_path: 1, folder: 1, size_bytes: 1, plate_count: 1, uploaded_at: 1, missing: 1,
-  tags: 1, thumbnail_url: 1, plate_thumbnails: 1,
+  tags: 1, thumbnail_url: 1, plate_thumbnails: 1, kind: 1, sliced_version_count: 1, sliced_version: 1,
 } satisfies Record<keyof LibraryFile, 1>;
 
 const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;

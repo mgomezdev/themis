@@ -24,7 +24,7 @@ from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterC
 from ...services import job_costs, model_targets, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import (
-    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, library_abs_path, refresh_content_hash,
+    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
 )
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
@@ -712,6 +712,7 @@ async def list_items(
     summary="Add item to project",
     responses={
         404: {"description": "Project or file not found"},
+        422: {"description": "The file is pre-sliced (.gcode / .gcode.3mf) — only models can be packed"},
     },
     dependencies=[Depends(require_scope("projects:write"))],
 )
@@ -724,6 +725,8 @@ async def add_item(
     f = await session.get(UploadedFile, body.file_id)
     if f is None:
         raise HTTPException(404, f"File {body.file_id} not found")
+    if is_presliced_name(f.original_filename):   # project items get packed and sliced: gcode can't be
+        raise HTTPException(422, f"{f.original_filename} is already sliced — add the model it was sliced from")
     item = ProjectItem(
         project_id=project_id,
         file_id=body.file_id,

@@ -20,7 +20,7 @@ const MONO = {
   progress: 0, remaining_time: 0, temperatures: { nozzle: 25, bed: 25 }, loaded_filaments: [],
 };
 const PROFILES = { print_profiles: ['0.20mm Standard', '0.08 Extra Fine'], filament_profiles: ['Generic PLA @System', 'Generic PETG @System', 'Generic TPU @System'] };
-const FILE = { id: 1, original_filename: 'multi.3mf', folder: '/', plate_count: 2 };
+const FILE = { id: 1, original_filename: 'multi.3mf', folder: '/', plate_count: 2, kind: '3mf', sliced_version_count: 0, sliced_version: null };
 const PLATES = [
   { plate_number: 1, estimated_time: 3600, filament_g: 12, thumbnail_path: null },
   { plate_number: 2, estimated_time: 1800, filament_g: 6, thumbnail_path: null },

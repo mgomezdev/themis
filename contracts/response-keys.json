@@ -184,7 +184,10 @@
     "missing",
     "tags",
     "thumbnail_url",
-    "plate_thumbnails"
+    "plate_thumbnails",
+    "kind",
+    "sliced_version_count",
+    "sliced_version"
   ],
   "project_payment": [
     "id",

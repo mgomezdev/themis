@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_customer
 from ...database import get_session
 from ...models import Job, Project, ProjectItem, ProjectPayment, UploadedFile
+from ...services.library_scanner import is_presliced_name
 from ...services.payments import outstanding, paid_amount
 from .files import upload_file
 
@@ -159,6 +160,8 @@ async def upload_to_draft(project_id: int, file: UploadFile, background_tasks: B
                           session: AsyncSession = Depends(get_session)) -> dict:
     p = await _own_project(project_id, customer_id, session)
     _require_draft(p)
+    if is_presliced_name(file.filename):   # project items get packed and sliced: send the model, not gcode
+        raise HTTPException(422, "Upload the model (.3mf or .stl), not sliced gcode")
     uploaded = await upload_file(file, background_tasks, f"/Customer Uploads/{customer_id}", session)
     session.add(ProjectItem(project_id=p.id, file_id=uploaded["id"], quantity=1))
     p.updated_at = _now()

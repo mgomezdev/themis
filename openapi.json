@@ -2735,7 +2735,7 @@
           "printers"
         ],
         "summary": "Copy a file from the printer into the file library",
-        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). A sliced .gcode.3mf lands as a pre-sliced library file (BIZ-190). Plain\n.gcode is refused.",
+        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models.",
         "operationId": "copy_stored_file_to_library_api_v1_printers__printer_id__files_to_library_post",
         "parameters": [
           {
@@ -2986,7 +2986,7 @@
           "files"
         ],
         "summary": "List files",
-        "description": "All files in the library. Optional filters: `folder` (prefix match),\n`tags` (all supplied tags must be present), `search` (filename substring).\n`sort` accepts `updated` (default), `name`, or `size`.",
+        "description": "All files in the library. Optional filters: `folder` (prefix match),\n`tags` (all supplied tags must be present), `search` (filename substring),\n`kind` (`models` = sliceable .3mf/.stl, `sliced` = pre-sliced .gcode/.gcode.3mf, `all` default).\n`sort` accepts `updated` (default), `name`, or `size`.",
         "operationId": "list_files_api_v1_files_get",
         "parameters": [
           {
@@ -3048,6 +3048,21 @@
               "type": "string",
               "default": "updated",
               "title": "Sort"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "models",
+                "sliced"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Kind"
             }
           }
         ],
@@ -3329,6 +3344,7 @@
           "files"
         ],
         "summary": "Delete file",
+        "description": "Delete a library file. A model with cached sliced versions needs `versions`: `delete` removes them too,\n`keep` leaves them as standalone gcode (no longer linked to a model). Without it the answer is 409 listing them.",
         "operationId": "delete_file_api_v1_files__file_id__delete",
         "parameters": [
           {
@@ -3338,6 +3354,26 @@
             "schema": {
               "type": "integer",
               "title": "File Id"
+            }
+          },
+          {
+            "name": "versions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "delete",
+                    "keep"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Versions"
             }
           }
         ],
@@ -3358,7 +3394,7 @@
             "description": "File not found"
           },
           "409": {
-            "description": "File is referenced by an active job or a project item"
+            "description": "File (or a cached version being deleted with it) is referenced by an active job or a project item, or the model has cached versions and `versions` wasn't given"
           },
           "422": {
             "description": "Validation Error",
@@ -6145,14 +6181,7 @@
             "description": "Project or file not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "The file is pre-sliced (.gcode / .gcode.3mf) \u2014 only models can be packed"
           }
         }
       }

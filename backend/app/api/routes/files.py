@@ -5,6 +5,7 @@ import hashlib
 import shutil
 import tempfile
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, Query
 from fastapi.responses import FileResponse
@@ -17,7 +18,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import UploadedFile, Tag, FileTag, Job, Printer, ProjectItem, SlicedVersion
 from ...services.library_scanner import (
-    LibraryScanner, file_kind, folder_of, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
+    LibraryScanner, file_kind, folder_of, is_presliced_name, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services import model_targets, slice_cache
 from ...services.thumbnail_regen import regen_file_thumbnails
@@ -66,12 +67,16 @@ async def _cache_for(session: AsyncSession, file_ids: list[int]) -> dict:
     versions = {v.file_id: v for v in (await session.execute(
         select(SlicedVersion).where(SlicedVersion.file_id.in_(file_ids))
     )).scalars().all()}
-    return {"counts": counts, "versions": versions}
+    source_ids = {v.source_file_id for v in versions.values() if v.source_file_id}
+    sources = {f.id: f for f in (await session.execute(
+        select(UploadedFile).where(UploadedFile.id.in_(source_ids)))).scalars().all()} if source_ids else {}
+    return {"counts": counts, "versions": versions, "sources": sources}
 
 
-def _version_summary(v: SlicedVersion) -> dict:
+def _version_summary(v: SlicedVersion, source: UploadedFile | None) -> dict:
     return {
-        "id": v.id, "source_file_id": v.source_file_id, "plate_number": v.plate_number,
+        "id": v.id, "source_file_id": v.source_file_id,
+        "source_filename": source.original_filename if source else None, "plate_number": v.plate_number,
         "machine_preset": v.machine_preset, "process_preset": v.process_preset,
         "filament_presets": v.filament_presets, "filament_type": v.filament_type, "filament_color": v.filament_color,
     }
@@ -79,6 +84,11 @@ def _version_summary(v: SlicedVersion) -> dict:
 
 def _to_dict(f: UploadedFile, tags: list[dict], cache: dict | None = None) -> dict:
     version = (cache or {}).get("versions", {}).get(f.id)
+    source = (cache or {}).get("sources", {}).get(version.source_file_id) if version else None
+    thumb = _thumb_url(f)
+    if thumb is None and source is not None:   # a cached gcode with no embedded preview shows its model's plate
+        thumb = next((t["thumbnail_url"] for t in _plate_thumbnail_urls(source)
+                      if t["plate_number"] == version.plate_number), None) or _thumb_url(source)
     return {
         "id": f.id,
         "original_filename": f.original_filename,
@@ -91,9 +101,9 @@ def _to_dict(f: UploadedFile, tags: list[dict], cache: dict | None = None) -> di
         "kind": file_kind(f.original_filename),
         # Slicing cache: how many cached versions this model has / the version this cached file is.
         "sliced_version_count": (cache or {}).get("counts", {}).get(f.id, 0),
-        "sliced_version": _version_summary(version) if version else None,
+        "sliced_version": _version_summary(version, source) if version else None,
         "tags": tags,
-        "thumbnail_url": _thumb_url(f),
+        "thumbnail_url": thumb,
         "plate_thumbnails": _plate_thumbnail_urls(f),
     }
 
@@ -127,12 +137,17 @@ async def list_files(
     tags: list[str] | None = Query(None),  # must be Query(): a bare list[str] is read as a JSON *body* on GET and silently ignored
     search: str | None = None,
     sort: str = "updated",
+    kind: Literal["all", "models", "sliced"] = Query("all"),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """All files in the library. Optional filters: `folder` (prefix match),
-    `tags` (all supplied tags must be present), `search` (filename substring).
+    `tags` (all supplied tags must be present), `search` (filename substring),
+    `kind` (`models` = sliceable .3mf/.stl, `sliced` = pre-sliced .gcode/.gcode.3mf, `all` default).
     `sort` accepts `updated` (default), `name`, or `size`."""
     rows = (await session.execute(select(UploadedFile))).scalars().all()
+    if kind != "all":
+        want_sliced = kind == "sliced"
+        rows = [r for r in rows if is_presliced_name(r.original_filename) == want_sliced]
     if folder:
         rows = [r for r in rows if r.folder == folder or r.folder.startswith(folder.rstrip("/") + "/")]
     if search:
@@ -384,12 +399,45 @@ async def update_file(file_id: int, body: FilePatch,
     if src.exists():
         src.replace(dest)
     rel = dest.relative_to(library).as_posix()
+    moved_folder = folder_of(rel) != f.folder
     f.original_filename = dest.name
     f.relative_path = rel
     f.folder = folder_of(rel)
+    if moved_folder:   # its cached versions live "next to the model": they follow a move (not a rename)
+        try:
+            await _move_versions_with(session, library, f.id, folder_abs)
+        except HTTPException:
+            if dest.exists() and not src.exists():
+                dest.replace(src)   # the model goes back too: nothing moved, nothing committed
+            raise
     await session.commit()
     tag_map = await _tags_for(session, [f.id])
     return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
+
+
+async def _move_versions_with(session: AsyncSession, library: Path, model_id: int, folder_abs: Path) -> None:
+    rows = (await session.execute(
+        select(UploadedFile).join(SlicedVersion, SlicedVersion.file_id == UploadedFile.id)
+        .where(SlicedVersion.source_file_id == model_id)
+    )).scalars().all()
+    done: list[tuple[Path, Path]] = []
+    try:
+        for vf in rows:
+            vsrc = library_abs_path(library, vf.relative_path)
+            if not vsrc.exists() or vsrc.parent.resolve() == folder_abs.resolve():
+                continue   # gone, or already next to the model (don't rename it against itself)
+            vdest = LibraryScanner.unique_path(folder_abs, vf.original_filename)
+            vsrc.replace(vdest)
+            done.append((vdest, vsrc))
+            vrel = vdest.relative_to(library).as_posix()
+            vf.original_filename, vf.relative_path, vf.folder = vdest.name, vrel, folder_of(vrel)
+    except OSError as exc:
+        for moved_to, came_from in reversed(done):   # put the files back where the (uncommitted) rows say they are
+            try:
+                moved_to.replace(came_from)
+            except OSError:
+                pass
+        raise HTTPException(500, f"Couldn't move the model's sliced versions: {exc}") from exc
 
 
 # ---------- delete ----------
@@ -399,42 +447,79 @@ async def update_file(file_id: int, body: FilePatch,
     summary="Delete file",
     responses={
         404: {"description": "File not found"},
-        409: {"description": "File is referenced by an active job or a project item"},
+        409: {"description": "File (or a cached version being deleted with it) is referenced by an active job or a "
+                            "project item, or the model has cached versions and `versions` wasn't given"},
     },
     dependencies=[Depends(require_scope("files:write"))],
 )
-async def delete_file(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+async def delete_file(
+    file_id: int,
+    versions: Literal["delete", "keep"] | None = Query(None),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Delete a library file. A model with cached sliced versions needs `versions`: `delete` removes them too,
+    `keep` leaves them as standalone gcode (no longer linked to a model). Without it the answer is 409 listing them."""
     f = await session.get(UploadedFile, file_id)
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
+    await _refuse_if_in_use(session, f)
+    linked = (await session.execute(
+        select(SlicedVersion, UploadedFile).join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+        .where(SlicedVersion.source_file_id == file_id).order_by(SlicedVersion.id)
+    )).all()
+    if linked and versions is None:
+        raise HTTPException(409, {
+            "message": "This model has cached sliced versions — delete them too, or keep them as standalone gcode",
+            "versions": [{"id": v.id, "file_id": vf.id, "name": vf.original_filename, "folder": vf.folder}
+                         for v, vf in linked],
+        })
+    doomed = [f]
+    if linked and versions == "delete":
+        for _, vf in linked:   # all or nothing: refuse before deleting anything
+            await _refuse_if_in_use(session, vf)
+        doomed += [vf for _, vf in linked]
+    elif linked:   # keep: they stay as plain gcode, no longer linked to the model
+        for v, _ in linked:
+            v.source_file_id = None
+
+    # A file that finished jobs printed can't lose its row (job history points at it): like a file that vanished from
+    # disk (see LibraryScanner.scan), its bytes go and the row stays, marked missing.
+    printed = set((await session.execute(
+        select(Job.uploaded_file_id).where(Job.uploaded_file_id.in_([d.id for d in doomed])))).scalars().all())
+    library = config.get_library_dir()
+    paths = [(d.id, library_abs_path(library, d.relative_path), d.id not in printed) for d in doomed]
+    for d in doomed:
+        if d.id in printed:
+            d.missing = True
+            continue
+        for link in (await session.execute(select(FileTag).where(FileTag.file_id == d.id))).scalars().all():
+            await session.delete(link)
+        await session.delete(d)
+    await session.commit()
+
+    # Only touch the filesystem after the DB is committed — otherwise a commit failure (e.g. an unanticipated FK
+    # reference) leaves the file deleted but the row still pointing at it.
+    import shutil
+    for did, abs_path, row_gone in paths:
+        if abs_path.exists():
+            abs_path.unlink()
+        if row_gone:   # a kept (missing) row keeps its thumbnails for the job history
+            shutil.rmtree(config.get_filecache_dir() / str(did), ignore_errors=True)
+    return {"deleted": file_id, "deleted_versions": [d.id for d in doomed[1:]]}
+
+
+async def _refuse_if_in_use(session: AsyncSession, f: UploadedFile) -> None:
     active = (await session.execute(
-        select(Job.id).where(Job.uploaded_file_id == file_id,
+        select(Job.id).where(Job.uploaded_file_id == f.id,
                              Job.status.in_(ACTIVE_JOB_STATUSES)).limit(1)
     )).first()
     if active:
-        raise HTTPException(409, "File is referenced by an active job")
+        raise HTTPException(409, f"{f.original_filename} is referenced by an active job")
     referenced = (await session.execute(
-        select(ProjectItem.id).where(ProjectItem.file_id == file_id).limit(1)
+        select(ProjectItem.id).where(ProjectItem.file_id == f.id).limit(1)
     )).first()
     if referenced:
-        raise HTTPException(409, "File is referenced by a project item")
-
-    abs_path = library_abs_path(config.get_library_dir(), f.relative_path)
-    for link in (await session.execute(select(FileTag).where(FileTag.file_id == file_id))).scalars().all():
-        await session.delete(link)
-    await session.delete(f)
-    await session.commit()
-
-    # Only touch the filesystem after the DB row is actually gone — otherwise a
-    # commit failure (e.g. an unanticipated FK reference) leaves the file deleted
-    # but the row still pointing at it.
-    if abs_path.exists():
-        abs_path.unlink()
-    cache = config.get_filecache_dir() / str(file_id)
-    if cache.exists():
-        import shutil
-        shutil.rmtree(cache, ignore_errors=True)
-    return {"deleted": file_id}
+        raise HTTPException(409, f"{f.original_filename} is referenced by a project item")
 
 
 # ---------- tag assign / unassign ----------

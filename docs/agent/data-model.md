@@ -170,6 +170,14 @@ their canonical JSON (`services/slice_cache.cache_key`; filament colour is delib
 `/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
 unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
 `created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
+The link lives only in the DB (the filesystem stays the source of truth for the files themselves): a cached file moved
+by hand keeps its row/version (hash-matched move), deleted by hand goes `missing` (excluded from lookups) and comes
+back if it reappears, **edited** by hand (hash changes on rescan) is detached (`source_file_id` NULL, logged
+`event=version_detached`), and a gcode dropped in by hand or a rebuilt DB has no version link. Recovering a version
+from OrcaSlicer's `; CONFIG_BLOCK_START` header was considered and not done: the header names presets but not the
+model bytes it was sliced from, so the key (which hashes the source model) can't be rebuilt reliably.
+Raw `.gcode` thumbnails come from the embedded `; thumbnail begin WxH` PNG (largest), else the source model's plate
+thumbnail (file dict only).
 
 Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version —
 `services/slice_saver.py` copies the artifact next to the model as a normal library file + a `sliced_versions` row; a
