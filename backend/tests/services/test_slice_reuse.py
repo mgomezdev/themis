@@ -30,12 +30,17 @@ async def _add_version(factory, library: Path, *, inputs=INPUTS, preset_hash="pr
     async with factory() as s:
         source = (await s.execute(select(UploadedFile).where(UploadedFile.relative_path == "Prints/Benchy.3mf"))).scalar()
         if source is None:   # the same row _seed reuses
+            st = (library / "Prints" / "Benchy.3mf").stat()
             source = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
-                                  content_hash="srchash", plates=[{"plate_number": 1}], uploaded_at=_now())
+                                  content_hash="srchash", plates=[{"plate_number": 1}], uploaded_at=_now(),
+                                  size_bytes=st.st_size, mtime=st.st_mtime)
             s.add(source)
             await s.flush()
+        disk = library / "Prints" / name
+        st = disk.stat() if on_disk else None
         f = UploadedFile(original_filename=name, relative_path=f"Prints/{name}", folder="/Prints",
-                         content_hash="cachedhash", plates=[{"plate_number": 1}], uploaded_at=_now())
+                         content_hash="cachedhash", plates=[{"plate_number": 1}], uploaded_at=_now(),
+                         size_bytes=st.st_size if st else 0, mtime=st.st_mtime if st else 0.0)
         s.add(f)
         await s.flush()
         v = SlicedVersion(file_id=f.id, source_file_id=source.id, source_content_hash=inputs.source_content_hash,
@@ -227,6 +232,7 @@ async def test_reslicing_a_stale_version_saves_a_fresh_one_that_wins_next_time(s
 async def test_an_uncacheable_source_slices(session_factory, tmp_path, env):
     qe, _ = _engine(session_factory, tmp_path)
     job_id = await _seed_allowing(session_factory, content_hash="")
+    (env / "Prints" / "Benchy.3mf").unlink()   # nothing on disk to hash either
 
     await _run_to_printing(qe, session_factory, job_id)
 
@@ -246,3 +252,100 @@ async def test_a_lookup_error_never_costs_the_print(session_factory, tmp_path, e
     qe._slicer.slice.assert_called_once()
     mgr.get_client.return_value.start_print.assert_called_once()
     assert (await _job(session_factory, job_id)).slice_cache_info["reason"] == "lookup_error"
+
+
+# ---- review follow-ups -------------------------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_a_model_edited_in_place_since_the_last_rescan_misses(session_factory, tmp_path, env):
+    """The index still has the old hash; the engine re-hashes the changed file, so the old version no longer matches."""
+    await _add_version(session_factory, env)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+    (env / "Prints" / "Benchy.3mf").write_bytes(b"re-exported from CAD with different geometry")
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    qe._slicer.slice.assert_called_once()
+    async with session_factory() as s:
+        source = (await s.execute(select(UploadedFile).where(UploadedFile.relative_path == "Prints/Benchy.3mf"))).scalar_one()
+    assert source.content_hash not in ("srchash", "")
+    assert (await _job(session_factory, job_id)).slice_cache_info["reason"] == "no_version"
+
+
+@pytest.mark.asyncio
+async def test_a_cached_file_edited_in_place_is_not_printed(session_factory, tmp_path, env):
+    await _add_version(session_factory, env)
+    (env / "Prints" / "Benchy cached.gcode").write_bytes(b"; hand-edited\nG28\n")
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    qe._slicer.slice.assert_called_once()
+    assert (await _job(session_factory, job_id)).slice_cache_info["reason"] == "file_missing"
+
+
+@pytest.mark.asyncio
+async def test_the_newest_unusable_version_falls_back_to_an_older_good_one(session_factory, tmp_path, env):
+    older = await _add_version(session_factory, env, name="older.gcode")
+    await _add_version(session_factory, env, name="newer.gcode", on_disk=False)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    qe._slicer.slice.assert_not_called()
+    assert (await _job(session_factory, job_id)).sliced_version_id == older
+
+
+@pytest.mark.asyncio
+async def test_a_version_of_the_other_artifact_kind_is_a_miss(session_factory, tmp_path, env):
+    """A Bambu printer wants a .gcode.3mf: the raw-gcode version of the same slice isn't its cache entry."""
+    await _add_version(session_factory, env)   # artifact_kind gcode
+    qe, _ = _engine(session_factory, tmp_path, archive=True)
+    job_id = await _seed_allowing(session_factory, printer_type="bambu")
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    qe._slicer.slice.assert_called_once()
+    assert (await _job(session_factory, job_id)).slice_cache_info["reason"] == "no_version"
+
+
+@pytest.mark.parametrize("allow", [True, False])
+@pytest.mark.asyncio
+async def test_a_later_miss_clears_an_earlier_hit(session_factory, tmp_path, env, allow):
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory, save=False)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.allow_cached_slice, job.sliced_version_id = allow, 99   # an earlier dispatch printed version 99
+        await s.commit()
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    assert (await _job(session_factory, job_id)).sliced_version_id is None
+
+
+@pytest.mark.asyncio
+async def test_a_hand_picked_version_blocks_on_a_printer_whose_profile_changed(session_factory, tmp_path, env):
+    from app.models import JobPrinterConfig, Printer
+    await _add_version(session_factory, env)
+    qe, mgr = _engine(session_factory, tmp_path)
+    async with session_factory() as s:
+        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+                      current_orca_printer_profile="Some Other 0.6 nozzle"))
+        cached = (await s.execute(select(UploadedFile).where(UploadedFile.original_filename == "Benchy cached.gcode"))).scalar_one()
+        j = Job(uploaded_file_id=cached.id, plate_number=1, queue_position=1.0, status="queued",
+                created_at=_now(), updated_at=_now())
+        s.add(j)
+        await s.flush()
+        s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="", filament_type="any", filament_color="any"))
+        await s.commit()
+        job_id = j.id
+
+    await qe._process_queue()
+
+    job = await _job(session_factory, job_id)
+    assert job.status == "blocked" and "no longer a" in job.block_reason
+    mgr.get_client.return_value.start_print.assert_not_called()

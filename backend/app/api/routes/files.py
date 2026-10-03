@@ -517,13 +517,13 @@ async def list_sliced_versions(
     rows = (await session.execute(q)).all()
     printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
     sidecar = config.get_laminus_sidecar_url()
-    fingerprints: dict[tuple, slice_cache.SlicerFingerprint] = {}
+    fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
+    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), sidecar)
+                                     for m, pr, fl in fkeys))
+    fingerprints = dict(zip(fkeys, results))
     out = []
     for v, f in rows:
         fkey = (v.machine_preset, v.process_preset, tuple(v.filament_presets or []))
-        if fkey not in fingerprints:
-            fingerprints[fkey] = await asyncio.to_thread(
-                slice_cache.cached_fingerprint, v.machine_preset, v.process_preset, list(fkey[2]), sidecar)
         stale, reasons = slice_cache.staleness(v.preset_content_hash, v.slicer_version, fingerprints[fkey])
         overrides = {k: val for k, val in (v.extra_config or {}).items() if k != "curr_bed_type"}
         out.append({

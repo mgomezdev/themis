@@ -158,6 +158,7 @@ def normalize_version(raw: Any) -> str | None:
 
 
 _FINGERPRINT_TTL = 60.0
+_UNKNOWN_TTL = 10.0
 _fingerprints: dict[tuple, tuple[float, SlicerFingerprint]] = {}
 
 
@@ -170,11 +171,11 @@ def cached_fingerprint(
     key = (machine_preset, process_preset, tuple(filament_presets), sidecar_url)
     hit = _fingerprints.get(key)
     now = time.monotonic()
-    if hit and now - hit[0] < _FINGERPRINT_TTL:
+    if hit and now - hit[0] < (_FINGERPRINT_TTL if (hit[1].preset_content_hash or hit[1].slicer_version)
+                               else _UNKNOWN_TTL):
         return hit[1]
     fp = current_fingerprint(machine_preset, process_preset, filament_presets, sidecar_url)
-    if fp.preset_content_hash or fp.slicer_version:   # don't memoise "sidecar unreachable"
-        _fingerprints[key] = (now, fp)
+    _fingerprints[key] = (now, fp)   # "unknown" too, briefly: a hung sidecar shouldn't stall every request
     return fp
 
 

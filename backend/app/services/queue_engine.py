@@ -28,7 +28,9 @@ from ..models import (
     UploadedFile,
     WebhookConfig,
 )
-from .library_scanner import is_presliced_file, library_abs_path, presliced_suffix
+from .library_scanner import (
+    fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
+)
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
@@ -831,6 +833,15 @@ class QueueEngine:
         if source_file is not None and not model_targets.accepts_file(printer.printer_type, source_file.original_filename):
             await self._block_job(session, job, f"{printer.name} can't print this pre-sliced file as-is")
             return
+        if source_file is not None and is_presliced_file(source_file):
+            # A cached version was sliced for one make/model: a printer whose machine preset changed since (another
+            # nozzle, say) must not print it.
+            version = (await session.execute(
+                select(SlicedVersion).where(SlicedVersion.file_id == source_file.id))).scalar_one_or_none()
+            if version is not None and version.machine_preset != printer.current_orca_printer_profile:
+                await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
+                                                    "cached version was sliced for that")
+                return
 
         # Pre-flight: ensure Laminus is reachable before claiming this job.
         # Block (not fail) so the job auto-retries when Laminus comes back.
@@ -924,9 +935,13 @@ class QueueEngine:
             build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
             is_gcode = is_presliced_file(uploaded_file)
+            allow_cached = bool(job.allow_cached_slice) if job else False
+            if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
+                # The slicing cache keys on the model's bytes: never trust an index entry the file has outgrown.
+                if await refresh_content_hash(uploaded_file, get_library_dir()):
+                    await session.commit()
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
             source_file_id = uploaded_file.id if uploaded_file else None
-            allow_cached = bool(job.allow_cached_slice) if job else False
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
@@ -1091,6 +1106,10 @@ class QueueEngine:
         recorded on the job (slice_cache_info); nothing here can fail or block the job."""
         if not allow:
             slice_cache.log_event("miss", job_id=job_id, printer_id=printer_id, reason="cache_disabled")
+            async with self._factory() as session:   # it slices fresh: drop any version an earlier dispatch printed
+                await session.execute(update(Job).where(Job.id == job_id, Job.sliced_version_id.is_not(None))
+                                      .values(sliced_version_id=None))
+                await session.commit()
             return None
         key = slice_cache.cache_key(inputs) if inputs else None
         base = {"job_id": job_id, "printer_id": printer_id, "source_file_id": source_file_id, "cache_key": key,
@@ -1121,8 +1140,15 @@ class QueueEngine:
             cfg = await session.get(QueueConfig, 1)
             use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
         library = get_library_dir()
-        found = next(((v, f) for v, f in rows
-                      if not f.missing and library_abs_path(library, f.relative_path).exists()), None)
+        found = None
+        for v, f in rows:   # newest present version whose bytes are still the ones that were saved
+            if f.missing:
+                continue
+            fresh = await asyncio.to_thread(
+                fresh_content_hash, library_abs_path(library, f.relative_path), f.content_hash, f.size_bytes, f.mtime)
+            if fresh is not None and fresh[0] == f.content_hash:
+                found = (v, f)
+                break
         if found is None:
             reason = "file_missing" if rows else "no_version"
             await self._record_cache_decision(job_id, slice_cache.decision_info(
@@ -1171,6 +1197,8 @@ class QueueEngine:
         async with self._factory() as session:
             job = await session.get(Job, job_id)
             if job is not None:
+                if info.get("decision") == "miss":
+                    job.sliced_version_id = None   # an earlier hit no longer describes what this job prints
                 if job.slice_cache_info and job.slice_cache_info.get("save"):
                     info["save"] = job.slice_cache_info["save"]
                 job.slice_cache_info = info

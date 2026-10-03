@@ -54,6 +54,31 @@ def folder_of(relative_path: str) -> str:
     return "/" if parent == "." else "/" + parent
 
 
+def fresh_content_hash(abs_path: Path, row_hash: str, row_size: int, row_mtime: float):
+    """`(hash, size, mtime)` of the file as it is on disk NOW — re-hashed only when its size/mtime differ from the
+    indexed row (the index is refreshed by rescans, not a watcher, so a file overwritten in place keeps a stale hash
+    until then). None if the file is gone. Blocking: call via asyncio.to_thread."""
+    try:
+        st = abs_path.stat()
+    except OSError:
+        return None
+    if row_hash and st.st_size == row_size and st.st_mtime == row_mtime:
+        return row_hash, row_size, row_mtime
+    return sha256_file(abs_path), st.st_size, st.st_mtime
+
+
+async def refresh_content_hash(row, library_dir: Path) -> bool:
+    """Bring `row`'s content_hash/size/mtime up to date with the file on disk (caller commits). True if it changed."""
+    import asyncio
+    fresh = await asyncio.to_thread(
+        fresh_content_hash, library_abs_path(library_dir, row.relative_path), row.content_hash, row.size_bytes,
+        row.mtime)
+    if fresh is None or fresh == (row.content_hash, row.size_bytes, row.mtime):
+        return False
+    row.content_hash, row.size_bytes, row.mtime = fresh
+    return True
+
+
 def library_abs_path(library_dir: Path, relative_path: str) -> Path:
     """Resolve a library-relative path to an absolute one under the *current* library
     root. Absolute paths are never persisted for library files — `library_dir` differs

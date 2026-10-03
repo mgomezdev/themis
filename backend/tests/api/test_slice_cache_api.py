@@ -490,3 +490,77 @@ async def test_a_job_printing_a_cached_version_cannot_be_flagged_to_save(client,
     resp = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
     assert resp.status_code == 422
     assert (await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": False})).status_code == 200
+
+
+# ---- review follow-ups (BIZ-193) ---------------------------------------------------------------------------------
+
+async def test_editing_a_cached_version_job_onto_another_model_is_refused(
+        client, library, upload_3mf, create_printer, session_factory):
+    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    other = await create_printer(name="X1C", current_orca_printer_profile="Bambu Lab X1 Carbon 0.4",
+                                 orca_printer_profiles=["Bambu Lab X1 Carbon 0.4"])
+    _, cached = await _version_for(session_factory, library, await upload_3mf())
+    job_id = (await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
+        {"printer_id": pid, "filament_type": "any", "filament_color": "any"}]})).json()["id"]
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [
+            {"printer_id": other, "filament_type": "any", "filament_color": "any"}]})
+
+    assert resp.status_code == 422
+
+
+async def test_the_version_count_ignores_versions_whose_file_is_missing(client, library, upload_3mf, session_factory):
+    model = await upload_3mf()
+    _, gone = await _version_for(session_factory, library, model, name="gone.gcode.3mf")
+    await _version_for(session_factory, library, model, name="here.gcode.3mf")
+    async with session_factory() as s:
+        (await s.get(UploadedFile, gone)).missing = True
+        await s.commit()
+
+    files = {f["id"]: f for f in (await client.get("/api/v1/files")).json()}
+
+    assert files[model]["sliced_version_count"] == 1
+
+
+async def test_rewriting_an_stl_without_a_rescan_makes_a_new_pack(client, tmp_path, session_factory):
+    from tests.api.test_projects_api import _setup_project_with_stl
+    project_id, stl_id = await _setup_project_with_stl(client, tmp_path)
+    first, _ = await _generate(client, tmp_path, project_id, {})
+    stl = await _stl_path(session_factory, tmp_path, stl_id)
+    stl.write_bytes(stl.read_bytes() + b"\n")   # re-exported in place; the index still has the old hash
+
+    second, pack2 = await _generate(client, tmp_path, project_id, {})
+
+    pack2.assert_called_once()
+    assert second["files"][0]["pack_reused"] is False
+
+
+async def _stl_path(session_factory, tmp_path, stl_id):
+    async with session_factory() as s:
+        return tmp_path / "library" / (await s.get(UploadedFile, stl_id)).relative_path
+
+
+async def test_a_pack_edited_on_disk_is_not_reused(client, tmp_path, session_factory):
+    from tests.api.test_projects_api import _setup_project_with_stl
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    first, _ = await _generate(client, tmp_path, project_id, {})
+    pack = await _stl_path(session_factory, tmp_path, first["files"][0]["id"])
+    pack.write_bytes(pack.read_bytes() + b"tampered")
+
+    second, pack2 = await _generate(client, tmp_path, project_id, {})
+
+    pack2.assert_called_once()
+    assert second["files"][0]["pack_reused"] is False
+
+
+async def test_a_smaller_bed_makes_a_new_pack(client, tmp_path, session_factory, create_printer):
+    from tests.api.test_projects_api import _setup_project_with_stl
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    small = await create_printer(name="mini", bed_x_mm=180, bed_y_mm=180)
+    await _generate(client, tmp_path, project_id, {})
+
+    second, pack2 = await _generate(client, tmp_path, project_id, {"eligible_printer_ids": [small]})
+
+    pack2.assert_called_once()
+    assert second["files"][0]["pack_reused"] is False

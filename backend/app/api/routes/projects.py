@@ -23,7 +23,9 @@ from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import job_costs, model_targets, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
-from ...services.library_scanner import ACTIVE_JOB_STATUSES, LibraryScanner, library_abs_path
+from ...services.library_scanner import (
+    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, library_abs_path, refresh_content_hash,
+)
 from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
 from ...services.queue_engine import queue_engine
 from ...services.thumbnail_regen import regen_file_thumbnails
@@ -1066,7 +1068,11 @@ async def _reusable_pack(session: AsyncSession, library_dir: Path, recipe_hash: 
         .order_by(UploadedFile.id.desc())
     )).scalars().all()
     for f in rows:
-        if f.content_hash and library_abs_path(library_dir, f.relative_path).exists():
+        if not f.content_hash:
+            continue
+        fresh = await asyncio.to_thread(
+            fresh_content_hash, library_abs_path(library_dir, f.relative_path), f.content_hash, f.size_bytes, f.mtime)
+        if fresh is not None and fresh[0] == f.content_hash:   # present and not edited since it was packed
             return f
     return None
 
@@ -1167,6 +1173,8 @@ async def generate_project(
             if not stl_path.exists():
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
             paths.extend([stl_path] * item.quantity)
+            # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
+            await refresh_content_hash(f, library_dir)
             group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
         group_paths[key] = paths
     pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
@@ -1324,7 +1332,8 @@ async def generate_project(
 
         cached_plates = (await session.execute(
             select(func.count(func.distinct(SlicedVersion.plate_number)))
-            .where(SlicedVersion.source_file_id == new_file.id)
+            .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
+            .where(SlicedVersion.source_file_id == new_file.id, UploadedFile.missing.is_(False))
         )).scalar() or 0
         files_out.append({
             "id": new_file.id,

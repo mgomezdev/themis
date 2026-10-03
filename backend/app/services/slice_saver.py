@@ -152,8 +152,8 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         folder_abs.mkdir(parents=True, exist_ok=True)
         dest = await asyncio.to_thread(_copy_exclusive, artifact_path, folder_abs, f"{display}{suffix}")
 
-        fingerprint = await asyncio.to_thread(
-            slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
+        fingerprint = await asyncio.to_thread(   # uncached: this is what the version will record as "sliced with"
+            slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
             list(inputs.filament_presets), config.get_laminus_sidecar_url())
         existing = await _find_duplicate(session, source.id, key, fingerprint)
         if existing is not None:   # an up-to-date same-key version is already there: drop the copy
