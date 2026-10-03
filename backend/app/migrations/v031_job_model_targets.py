@@ -27,6 +27,12 @@ async def up(conn) -> None:
     if "model_target_id" not in cols:
         await conn.execute(text(
             "ALTER TABLE job_printer_configs ADD COLUMN model_target_id INTEGER"))
+    # One config per (job, printer): collapse any historical duplicates (keep the oldest), then enforce it so a
+    # racing re-materialization can never leave the engine two rows to choose between.
+    await conn.execute(text(
+        "DELETE FROM job_printer_configs WHERE id NOT IN (SELECT MIN(id) FROM job_printer_configs GROUP BY job_id, printer_id)"))
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ux_job_printer_configs_job_printer ON job_printer_configs (job_id, printer_id)"))
     await conn.execute(text(
         "CREATE UNIQUE INDEX IF NOT EXISTS ux_job_printer_configs_target_printer "
         "ON job_printer_configs (model_target_id, printer_id) WHERE model_target_id IS NOT NULL"))
@@ -34,6 +40,7 @@ async def up(conn) -> None:
 
 async def down(conn) -> None:
     await conn.execute(text("DROP INDEX IF EXISTS ux_job_printer_configs_target_printer"))
+    await conn.execute(text("DROP INDEX IF EXISTS ux_job_printer_configs_job_printer"))
     await conn.execute(text("DELETE FROM job_printer_configs WHERE model_target_id IS NOT NULL"))
     await conn.execute(text("ALTER TABLE job_printer_configs DROP COLUMN model_target_id"))
     await conn.execute(text("DROP TABLE IF EXISTS job_model_targets"))

@@ -192,6 +192,10 @@ class BambuMQTTClient(AbstractPrinterClient):
     def parse_announcement(cls, ip: str, datagram: bytes):
         return bambu_from_ssdp(ip, datagram)
 
+    # `start_print` always sends `project_file` (a 3MF); starting plain gcode is not verified — see
+    # protocol_verification/ — so pre-sliced .gcode jobs are not offered to Bambu printers.
+    raw_gcode_supported = False
+
     def orca_export_args(self, file_base: str) -> list[str]:
         # Bambu printers ingest the sliced .gcode.3mf (not raw gcode); name it
         # after the job so the printer's file list is meaningful.

@@ -44,7 +44,7 @@ async def test_gcode_job_needs_no_print_profile_and_drops_overrides(
         client, library, upload_3mf, create_printer, session_factory):
     from app.models import Job
     file_id = await upload_3mf("part.gcode", GCODE)
-    pid = await create_printer()
+    pid = await create_printer(printer_type="elegoo_centauri")
 
     resp = await _post(client, {
         "uploaded_file_id": file_id,
@@ -68,7 +68,7 @@ async def test_gcode_job_must_name_printers_or_a_model(client, library, upload_3
 async def test_gcode_job_can_target_a_model(client, library, upload_3mf, create_printer, session_factory):
     from sqlalchemy import select
     from app.models import JobPrinterConfig
-    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    pid = await create_printer(printer_type="elegoo_centauri", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
 
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
@@ -82,7 +82,7 @@ async def test_gcode_job_can_target_a_model(client, library, upload_3mf, create_
 
 
 async def test_editing_a_gcode_job_keeps_dropping_overrides(client, library, upload_3mf, create_printer):
-    pid = await create_printer()
+    pid = await create_printer(printer_type="elegoo_centauri")
     job_id = (await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
         "printer_configs": [{"printer_id": pid, "filament_type": "any", "filament_color": "any"}],
@@ -98,7 +98,7 @@ async def test_editing_a_gcode_job_keeps_dropping_overrides(client, library, upl
 
 
 async def test_verify_slice_refused_for_gcode_job(client, library, upload_3mf, create_printer):
-    pid = await create_printer()
+    pid = await create_printer(printer_type="elegoo_centauri")
     job_id = (await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
         "printer_configs": [{"printer_id": pid, "filament_type": "any", "filament_color": "any"}],
@@ -110,7 +110,7 @@ async def test_verify_slice_refused_for_gcode_job(client, library, upload_3mf, c
 
 
 async def test_3mf_job_still_keeps_overrides(client, library, upload_3mf, create_printer):
-    pid = await create_printer()
+    pid = await create_printer(printer_type="elegoo_centauri")
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf(),
         "printer_configs": [{"printer_id": pid, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}],
@@ -118,3 +118,51 @@ async def test_3mf_job_still_keeps_overrides(client, library, upload_3mf, create
     })
     assert resp.status_code == 201
     assert resp.json()["overrides"] == {KEY: "0.1"}
+
+
+async def test_gcode_job_refused_for_a_printer_that_cannot_take_raw_gcode(client, library, upload_3mf, create_printer):
+    bambu = await create_printer()   # Bambu only ingests a sliced 3MF
+    resp = await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
+        "printer_configs": [{"printer_id": bambu, "filament_type": "any", "filament_color": "any"}],
+    })
+    assert resp.status_code == 422
+    assert "raw .gcode" in resp.json()["detail"]
+
+
+async def test_gcode_job_refused_for_a_model_only_bambu_printers_have(client, library, upload_3mf, create_printer):
+    await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    resp = await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
+        "model_targets": [{"machine_profile": P1S}],
+    })
+    assert resp.status_code == 422
+
+
+async def test_gcode_target_skips_printers_that_cannot_take_raw_gcode(
+        client, library, upload_3mf, create_printer, session_factory):
+    from sqlalchemy import select
+    from app.models import JobPrinterConfig
+    await create_printer(name="bambu", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    ok = await create_printer(name="centauri", printer_type="elegoo_centauri",
+                              current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+
+    resp = await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
+        "model_targets": [{"machine_profile": P1S}],
+    })
+
+    assert resp.status_code == 201, resp.text
+    async with session_factory() as s:
+        rows = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == resp.json()["id"]))).scalars().all()
+    assert [r.printer_id for r in rows] == [ok]
+
+
+async def test_complete_manually_refused_for_gcode_job(client, library, upload_3mf, create_printer):
+    pid = await create_printer(printer_type="elegoo_centauri")
+    job_id = (await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode", GCODE),
+        "printer_configs": [{"printer_id": pid, "filament_type": "any", "filament_color": "any"}],
+    })).json()["id"]
+    resp = await client.post(f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": pid})
+    assert resp.status_code == 422

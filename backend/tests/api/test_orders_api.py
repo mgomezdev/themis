@@ -178,3 +178,22 @@ async def test_new_jobs_cannot_be_linked_to_a_customer_order(client, session_fac
         })
 
     assert resp.status_code == 422
+
+
+async def test_deleting_an_order_a_project_points_at_detaches_the_project(client, session_factory):
+    """Regression: v032 links converted projects to their order; deleting it must not hit the foreign key."""
+    from app.models import Order, Project
+    async with session_factory() as s:
+        o = Order(order_type="internal", customer="x", title="t", created_at="2026-01-01", updated_at="2026-01-01")
+        s.add(o)
+        await s.flush()
+        p = Project(name="P", order_id=o.id, created_at="2026-01-01", updated_at="2026-01-01")
+        s.add(p)
+        await s.commit()
+        order_id, project_id = o.id, p.id
+
+    resp = await client.delete(f"/api/v1/orders/{order_id}")
+
+    assert resp.status_code == 204
+    async with session_factory() as s:
+        assert (await s.get(Project, project_id)).order_id is None

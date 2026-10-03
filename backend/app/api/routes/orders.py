@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import Job, Order
+from ...models import Job, Order, Project
 
 router = APIRouter(prefix="/api/v1/orders", tags=["orders"])
 
@@ -242,5 +242,7 @@ async def patch_order(order_id: int, body: OrderPatch,
 async def delete_order(order_id: int, session: AsyncSession = Depends(get_session)) -> None:
     order = await _get_or_404(order_id, session)
     await session.execute(update(Job).where(Job.order_id == order_id).values(order_id=None))
+    # A project (e.g. one converted from this order by v032) may point at it; projects.order_id has no ON DELETE.
+    await session.execute(update(Project).where(Project.order_id == order_id).values(order_id=None))
     await session.delete(order)
     await session.commit()

@@ -153,6 +153,13 @@ class JobPrinterConfig(Base):
     # rows are always deleted with their target explicitly.
     model_target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
+    # One config per (job, printer); created by v031 for existing DBs, declared here for fresh ones.
+    __table_args__ = (
+        Index("ux_job_printer_configs_job_printer", "job_id", "printer_id", unique=True),
+        Index("ux_job_printer_configs_target_printer", "model_target_id", "printer_id", unique=True,
+              sqlite_where=text("model_target_id IS NOT NULL")),
+    )
+
 
 class JobModelTarget(Base):
     """A job eligible on *any* printer whose `current_orca_printer_profile` equals `machine_profile`. The queue

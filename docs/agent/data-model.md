@@ -173,7 +173,8 @@ rows (at create/PATCH via `materialize_job`, and every queue cycle in `_try_clai
 `sync_targets_for_printer`), so the claim query / slicer / estimates keep reading configs by (job, printer).
 Sync adds rows for printers added or re-profiled later and removes rows for printers that no longer match —
 only for `queued`/`blocked` jobs. An explicit per-printer config wins over a target for the same printer.
-`slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null. API: `model_targets`
+`slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
+(v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
 on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
 `POST /projects/{id}/generate` (`eligible_machine_profiles`).
 

@@ -6,13 +6,25 @@ know about targets. A printer's make/model is its `current_orca_printer_profile`
 """
 from __future__ import annotations
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Job, JobModelTarget, JobPrinterConfig, Printer
+from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
 _SYNCABLE = ("queued", "blocked")
+
+
+def accepts_raw_gcode(printer_type: str) -> bool:
+    """False for vendors that can't be handed a plain .gcode (see AbstractPrinterClient.raw_gcode_supported)."""
+    from .printer_client_factory import REGISTRY   # lazy: the factory imports models
+    cls = REGISTRY.get(printer_type)
+    return True if cls is None else bool(getattr(cls, "raw_gcode_supported", True))
+
+
+def _is_gcode_name(name: str | None) -> bool:
+    return (name or "").lower().endswith(".gcode")
 
 
 def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterConfig:
@@ -20,7 +32,7 @@ def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterCo
         job_id=target.job_id,
         printer_id=printer_id,
         print_profile=target.print_profile,
-        filament_profile=target.filament_profile or target.filament_type or "",
+        filament_profile=target.filament_profile or None,
         filament_id=target.filament_id,
         filament_type=target.filament_type,
         filament_color=target.filament_color,
@@ -33,16 +45,16 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
     """Make this printer's materialized configs match the waiting jobs' model targets (caller commits)."""
     profile = printer.current_orca_printer_profile or None
 
-    # Drop rows left over from a profile change (and rows whose target no longer matches this printer).
-    stale_q = (
+    # Drop rows left over from a profile change, and rows whose target was deleted (e.g. the job was re-edited).
+    mismatch = JobModelTarget.id.is_(None) if profile is None else or_(
+        JobModelTarget.id.is_(None), JobModelTarget.machine_profile != profile)
+    stale_ids = (await session.execute(
         select(JobPrinterConfig.id)
-        .join(JobModelTarget, JobModelTarget.id == JobPrinterConfig.model_target_id)
         .join(Job, Job.id == JobPrinterConfig.job_id)
-        .where(JobPrinterConfig.printer_id == printer.id, Job.status.in_(_SYNCABLE))
-    )
-    if profile is not None:
-        stale_q = stale_q.where(JobModelTarget.machine_profile != profile)
-    stale_ids = (await session.execute(stale_q)).scalars().all()
+        .outerjoin(JobModelTarget, JobModelTarget.id == JobPrinterConfig.model_target_id)
+        .where(JobPrinterConfig.printer_id == printer.id, JobPrinterConfig.model_target_id.is_not(None),
+               Job.status.in_(_SYNCABLE), mismatch)
+    )).scalars().all()
     if stale_ids:
         await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.id.in_(stale_ids)))
 
@@ -51,18 +63,28 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
     have = set((await session.execute(
         select(JobPrinterConfig.job_id).where(JobPrinterConfig.printer_id == printer.id)
     )).scalars().all())
-    targets = (await session.execute(
-        select(JobModelTarget)
+    rows = (await session.execute(
+        select(JobModelTarget, UploadedFile.original_filename)
         .join(Job, Job.id == JobModelTarget.job_id)
+        .join(UploadedFile, UploadedFile.id == Job.uploaded_file_id)
         .where(JobModelTarget.machine_profile == profile, Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
-    )).scalars().all()
-    for target in targets:
+    )).all()
+    raw_ok = accepts_raw_gcode(printer.printer_type)
+    for target, filename in rows:
         if target.job_id in have:  # an explicit pick (or an earlier target) already covers this printer
+            continue
+        if _is_gcode_name(filename) and not raw_ok:
             continue
         session.add(_config_from_target(target, printer.id))
         have.add(target.job_id)
-    await session.flush()
+    try:
+        # A concurrent edit of the job can delete a target between our reads and this insert; the unique
+        # (job, printer) index turns the resulting duplicate into an error we simply retry next cycle.
+        async with session.begin_nested():
+            await session.flush()
+    except IntegrityError:
+        pass   # the savepoint rolled the insert back; the next cycle re-evaluates
 
 
 async def materialize_job(session: AsyncSession, job_id: int) -> None:
@@ -72,6 +94,10 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     )).scalars().all()
     if not targets:
         return
+    filename = (await session.execute(
+        select(UploadedFile.original_filename).join(Job, Job.uploaded_file_id == UploadedFile.id).where(Job.id == job_id)
+    )).scalar_one_or_none()
+    gcode = _is_gcode_name(filename)
     have = set((await session.execute(
         select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job_id)
     )).scalars().all())
@@ -79,6 +105,8 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     for target in targets:
         for printer in printers:
             if printer.id in have or printer.current_orca_printer_profile != target.machine_profile:
+                continue
+            if gcode and not accepts_raw_gcode(printer.printer_type):
                 continue
             session.add(_config_from_target(target, printer.id))
             have.add(printer.id)

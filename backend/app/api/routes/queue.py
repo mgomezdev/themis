@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, SpoolmanConfig, UploadedFile
-from ...services.model_targets import target_dicts
 from ...services.queue_engine import _slot_for_config
 from ...services.model_targets import target_dicts
 from ...services.spool_check import check_spool_sufficiency

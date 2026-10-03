@@ -25,7 +25,9 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   create/PATCH, the estimate is parsed from the header at create (no background test-slice) and `verify-slice` 422s.
   A missing library file blocks (not fails) the job. Themis can't verify gcode against a printer: the UI warns
   (`GcodeWarning`, dismissal remembered in localStorage) and the user owns the match — a job still needs explicit
-  printers or a make/model target (BIZ-187).
+  printers or a make/model target (BIZ-187). Vendors that only ingest a sliced archive set
+  `raw_gcode_supported = False` (Bambu — raw-gcode start unverified): gcode jobs are 422'd for such explicit
+  printers/models and never materialized onto them.
 - **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
   for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
   `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy

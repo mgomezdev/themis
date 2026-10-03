@@ -41,7 +41,7 @@ async def test_create_with_model_target_only_materializes_matching_printers(
     assert all(c.model_target_id is not None and c.filament_type == "PLA" for c in cfgs)
     details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
     assert details["model_targets"] == [{
-        "machine_profile": P1S, "print_profile": "0.20mm", "filament_profile": "PLA", "filament_id": None,
+        "machine_profile": P1S, "print_profile": "0.20mm", "filament_profile": None, "filament_id": None,
         "filament_type": "PLA", "filament_color": "any", "filament_map": None}]
     assert {c["printer_id"] for c in details["printer_configs"]} == {p1, p3}
     assert all(c["from_model_target"] for c in details["printer_configs"])
@@ -131,3 +131,22 @@ async def test_deleting_a_matching_printer_does_not_block_a_targeted_job(
     assert resp.status_code == 204
     async with session_factory() as s:
         assert (await s.get(Job, job_id)).status == "queued"
+
+
+async def test_target_without_a_filament_preset_stores_none_not_the_type(
+        client, session_factory, upload_3mf, create_printer):
+    """Regression: "any"/a bare type must never become a preset name — the slicer would be asked for it."""
+    await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    job_id = (await _post(client, {"uploaded_file_id": await upload_3mf(),
+                                   "model_targets": [_target(filament_type="any")]})).json()["id"]
+    async with session_factory() as s:
+        target = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalar_one()
+        assert target.filament_profile is None
+    assert all(c.filament_profile is None for c in await _configs(session_factory, job_id))
+
+
+async def test_duplicate_printer_in_one_job_is_refused(client, upload_3mf, create_printer):
+    pid = await create_printer()
+    cfg = {"printer_id": pid, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}
+    resp = await _post(client, {"uploaded_file_id": await upload_3mf(), "printer_configs": [cfg, cfg]})
+    assert resp.status_code == 422

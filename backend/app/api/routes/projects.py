@@ -1303,7 +1303,7 @@ async def generate_project(
                     job_id=j.id,
                     machine_profile=machine_profile,
                     print_profile=body.process_preset or "",
-                    filament_profile=fil_type or "",
+                    filament_profile=None,   # the loaded slot supplies the preset on each matching printer
                     filament_type=fil_type,
                     filament_color=fil_color,
                     filament_id=fil_id,

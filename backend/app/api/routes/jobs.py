@@ -139,6 +139,31 @@ def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
     job.estimate_preset_label = None
 
 
+async def _check_gcode_printers(
+    session: AsyncSession, uploaded_file: UploadedFile | None,
+    configs: list[PrinterConfigInput], targets: list[ModelTargetInput],
+) -> None:
+    """A pre-sliced .gcode can't go to a vendor that only ingests a sliced archive (e.g. Bambu), nor can a printer
+    config be duplicated (one config per job+printer)."""
+    seen: set[int] = set()
+    for cfg in configs:
+        if cfg.printer_id in seen:
+            raise HTTPException(422, f"Printer {cfg.printer_id} is listed more than once")
+        seen.add(cfg.printer_id)
+    if not is_gcode_file(uploaded_file):
+        return
+    for cfg in configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is not None and not model_targets.accepts_raw_gcode(printer.printer_type):
+            raise HTTPException(422, f"{printer.name} can't print a raw .gcode file — it needs a sliced 3MF")
+    for t in targets:
+        matching = (await session.execute(
+            select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile)
+        )).scalars().all()
+        if matching and not any(model_targets.accepts_raw_gcode(p.printer_type) for p in matching):
+            raise HTTPException(422, f"No {t.machine_profile} printer can print a raw .gcode file — it needs a sliced 3MF")
+
+
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
     seen: set[str] = set()
     for t in targets:
@@ -153,7 +178,9 @@ def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetIn
             job_id=job_id,
             machine_profile=t.machine_profile,
             print_profile=t.print_profile,
-            filament_profile=t.filament_profile or t.filament_type or "",
+            # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
+            # each printer's loaded slot supplies the preset.
+            filament_profile=t.filament_profile or None,
             filament_id=t.filament_id,
             filament_type=t.filament_type,
             filament_color=t.filament_color,
@@ -260,7 +287,7 @@ async def _front_queue_position(session: AsyncSession) -> float:
     summary="Create job",
     responses={
         404: {"description": "File, printer, or order not found"},
-        422: {"description": "Neither printer_configs nor model_targets given, a bad make/model target, or a customer order"},
+        422: {"description": "Neither printer_configs nor model_targets given, a bad or duplicate target/printer, a gcode file on a printer that can't take raw gcode, or a customer order"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -283,6 +310,7 @@ async def create_job(
         printer = await session.get(Printer, cfg.printer_id)
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+    await _check_gcode_printers(session, uploaded_file, body.printer_configs, body.model_targets)
 
     if body.order_id is not None:
         order = await session.get(Order, body.order_id)
@@ -705,6 +733,8 @@ async def update_job_configs(
     for cfg in body.printer_configs:
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+    await _check_gcode_printers(
+        session, await session.get(UploadedFile, job.uploaded_file_id), body.printer_configs, body.model_targets)
 
     # Configs first (they reference the targets), then the targets themselves.
     await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
@@ -1039,6 +1069,9 @@ async def complete_job_manually(
     uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
+
+    if is_gcode_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced .gcode file; there is nothing to slice")
 
     if not printer.current_orca_printer_profile:
         raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")

@@ -188,3 +188,35 @@ async def test_engine_blocks_targeted_job_on_filament_mismatch(session_factory):
     async with session_factory() as s:
         job = await s.get(Job, job_id)
         assert job.status == "blocked" and "filament" in (job.block_reason or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_sync_removes_a_config_whose_target_was_deleted(session_factory):
+    """A re-edit that replaced the job's targets must not leave the old materialized row behind."""
+    from sqlalchemy import delete
+    await _printer(session_factory, 1, P1S)
+    job_id, target_id = await _targeted_job(session_factory)
+    async with session_factory() as s:
+        await model_targets.materialize_job(s, job_id)
+        await s.commit()
+    async with session_factory() as s:
+        await s.execute(delete(JobModelTarget).where(JobModelTarget.id == target_id))
+        await s.commit()
+    async with session_factory() as s:
+        await model_targets.sync_targets_for_printer(s, await s.get(Printer, 1))
+        await s.commit()
+    assert await _configs(session_factory, job_id) == []
+
+
+@pytest.mark.asyncio
+async def test_a_duplicate_job_printer_config_is_rejected_by_the_database(session_factory):
+    from sqlalchemy.exc import IntegrityError
+    await _printer(session_factory, 1, P1S)
+    job_id, _ = await _targeted_job(session_factory)
+    async with session_factory() as s:
+        s.add(JobPrinterConfig(job_id=job_id, printer_id=1, print_profile="a"))
+        await s.commit()
+    with pytest.raises(IntegrityError):
+        async with session_factory() as s:
+            s.add(JobPrinterConfig(job_id=job_id, printer_id=1, print_profile="b"))
+            await s.commit()

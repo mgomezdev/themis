@@ -3816,7 +3816,7 @@
             "description": "File, printer, or order not found"
           },
           "422": {
-            "description": "Neither printer_configs nor model_targets given, a bad make/model target, or a customer order"
+            "description": "Neither printer_configs nor model_targets given, a bad or duplicate target/printer, a gcode file on a printer that can't take raw gcode, or a customer order"
           }
         }
       }

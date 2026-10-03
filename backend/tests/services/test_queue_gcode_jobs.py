@@ -24,7 +24,7 @@ async def _seed(factory, library, name="part.gcode") -> tuple[int, int]:
     library.mkdir(parents=True, exist_ok=True)
     (library / name).write_bytes(GCODE)
     async with factory() as s:
-        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}))   # no OrcaSlicer machine preset
+        s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}))   # no OrcaSlicer machine preset
         f = UploadedFile(original_filename=name, relative_path=name, folder="/", plates=[], uploaded_at=_now())
         s.add(f)
         await s.flush()
