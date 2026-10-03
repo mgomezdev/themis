@@ -201,3 +201,15 @@ async def test_migration_grants_customer_scopes_to_admin_keys(tmp_path):
     await engine.dispose()
     assert json.loads(rows[1]) == ["apikeys:write", "customers:read", "customers:write"]
     assert json.loads(rows[2]) == ["jobs:read"]
+
+
+async def test_customer_upload_refuses_sliced_gcode(client: AsyncClient, tmp_path, monkeypatch):
+    """BIZ-196: project items get packed and sliced, so a customer must send the model, not gcode."""
+    monkeypatch.setenv("THEMIS_DATA_DIR", str(tmp_path))
+    await _customer(client)
+    h = await _login(client)
+    d = (await client.post("/api/v1/customer/projects", headers=h, json={"name": "Widget"})).json()
+    r = await client.post(f"/api/v1/customer/projects/{d['id']}/files", headers=h,
+                          files={"file": ("part.gcode.3mf", b"PK", "application/octet-stream")})
+    assert r.status_code == 422
+    assert (await client.get(f"/api/v1/customer/projects/{d['id']}", headers=h)).json()["items"] == []

@@ -1,4 +1,7 @@
 from __future__ import annotations
+import base64
+import binascii
+import re
 
 import hashlib
 from datetime import datetime, timezone
@@ -77,6 +80,29 @@ async def refresh_content_hash(row, library_dir: Path) -> bool:
         return False
     row.content_hash, row.size_bytes, row.mtime = fresh
     return True
+def extract_gcode_thumbnail(path: Path, dest: Path, head_bytes: int = 2_000_000) -> Path | None:
+    """The largest PNG preview OrcaSlicer/PrusaSlicer embed in a gcode header (`; thumbnail begin WxH LEN` … base64 …
+    `; thumbnail end`), written to `dest`; None if the file has none."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(head_bytes)
+    except OSError:
+        return None
+    best: tuple[int, bytes] | None = None
+    for m in re.finditer(rb"^; thumbnail begin (\d+)x(\d+) \d+\s*$(.*?)^; thumbnail end", head, re.M | re.S):
+        data = b"".join(line.lstrip(b"; ").strip() for line in m.group(3).splitlines())
+        try:
+            png = base64.b64decode(data, validate=False)
+        except (ValueError, binascii.Error):
+            continue
+        area = int(m.group(1)) * int(m.group(2))
+        if png.startswith(b"\x89PNG") and (best is None or area > best[0]):
+            best = (area, png)
+    if best is None:
+        return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(best[1])
+    return dest
 
 
 def library_abs_path(library_dir: Path, relative_path: str) -> Path:
@@ -129,7 +155,9 @@ class LibraryScanner:
         elif kind == "gcode":
             from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports this module
             grams, secs, _ = _parse_gcode_estimates(str(abs_path))
-            plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=secs or 0, filament_g=grams or 0.0)]
+            thumb = extract_gcode_thumbnail(abs_path, thumb_dir / "plate_1.png")
+            plates_raw = [PlateInfo(plate_number=1, thumbnail_path=str(thumb) if thumb else None,
+                                    estimated_time=secs or 0, filament_g=grams or 0.0)]
         else:
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=0, filament_g=0.0)]
         return [
@@ -137,6 +165,19 @@ class LibraryScanner:
              "estimated_time": p.estimated_time, "filament_g": p.filament_g}
             for p in plates_raw
         ]
+
+    async def _detach_edited_version(self, row, new_hash: str) -> None:
+        """A cached gcode edited on disk is no longer what was sliced: drop its link to the model (it stays a plain
+        library file) so it is never offered or reused as that model's version (BIZ-195)."""
+        from ..models import SlicedVersion   # local: keep the module's import surface small
+        from . import slice_cache
+        version = (await self.session.execute(
+            select(SlicedVersion).where(SlicedVersion.file_id == row.id))).scalar_one_or_none()
+        if version is not None and version.source_file_id is not None:
+            slice_cache.log_event("version_detached", sliced_version_id=version.id, cached_file_id=row.id,
+                                  source_file_id=version.source_file_id, cached_file_hash=row.content_hash,
+                                  new_file_hash=new_hash, reason="file_edited")
+            version.source_file_id = None
 
     # ---- the scan ----
     async def scan(self) -> dict:
@@ -157,7 +198,10 @@ class LibraryScanner:
             if row is not None:
                 # Known path. Re-hash + re-parse only if it changed on disk.
                 if row.mtime != stat.st_mtime or row.size_bytes != stat.st_size:
-                    row.content_hash = sha256_file(abs_path)
+                    new_hash = sha256_file(abs_path)
+                    if row.content_hash and new_hash != row.content_hash:
+                        await self._detach_edited_version(row, new_hash)
+                    row.content_hash = new_hash
                     row.size_bytes = stat.st_size
                     row.mtime = stat.st_mtime
                     row.plates = self._parse_plates(abs_path, row.id)

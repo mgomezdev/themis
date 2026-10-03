@@ -14,6 +14,7 @@ const ATLAS = {
     file({ id: 'sub', name: 'sub', is_dir: true, printable: false, size: 0 }),
     file({ id: 'part.gcode', name: 'part.gcode', size: 2048, metadata: { estimated_seconds: 3720, filament_grams: 3.54 } }),
     file({ id: 'model.3mf', name: 'model.3mf', size: 3 * 1024 * 1024 }),
+    file({ id: 'plate.gcode.3mf', name: 'plate.gcode.3mf' }),
     file({ id: 'readme.txt', name: 'readme.txt', printable: false }),
   ],
 };
@@ -142,6 +143,14 @@ describe('PrinterFilesScreen', () => {
 
     await waitFor(() => expect(calls.find(c => c.url.endsWith('/to-library'))?.body).toEqual({ file_id: 'model.3mf' }));
     expect((await screen.findByRole('status')).textContent).toBe('Added model.3mf to the library — Atlas');
+  });
+
+  it('offers "to library" for models only, not for a sliced .gcode.3mf', async () => {
+    stubFetch({ 'GET /api/v1/printers/files/all': { printers: [ATLAS] } });
+    render(<PrinterFilesScreen />);
+    await screen.findByTestId('printer-files-1');
+    expect(section(1).getByRole('button', { name: 'Add model.3mf to library' })).toBeTruthy();
+    expect(section(1).queryByRole('button', { name: 'Add plate.gcode.3mf to library' })).toBeNull();
   });
 
   it('navigates into a directory and back up', async () => {

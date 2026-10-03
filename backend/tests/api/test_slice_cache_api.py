@@ -353,7 +353,7 @@ async def test_the_file_list_counts_versions_and_marks_cached_files(client, libr
     assert (files[model]["sliced_version_count"], files[model]["sliced_version"]) == (2, None)
     assert files[cached]["sliced_version_count"] == 0
     assert files[cached]["sliced_version"] == {
-        "id": version_id, "source_file_id": model, "plate_number": 1, "machine_preset": P1S,
+        "id": version_id, "source_file_id": model, "source_filename": "m.3mf", "plate_number": 1, "machine_preset": P1S,
         "process_preset": "0.20mm", "filament_presets": ["Generic PETG"], "filament_type": "PETG",
         "filament_color": "#112233"}
 

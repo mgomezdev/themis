@@ -256,6 +256,7 @@ async def test_to_library_downloads_into_the_library_and_dedupes(client, pid, li
 async def test_to_library_refuses_gcode_and_reports_download_failures(client, pid, library):
     printer_manager._clients[pid] = mock = _client(**FULL)
     assert (await _to_library(client, pid, "b.gcode")).status_code == 422
+    assert (await _to_library(client, pid, "b.gcode.3mf")).status_code == 422   # sliced archive: not a model (BIZ-196)
     mock.download_file.assert_not_called()
     mock.download_file.return_value = None
     assert (await _to_library(client, pid)).status_code == 502
