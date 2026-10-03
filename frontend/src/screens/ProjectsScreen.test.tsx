@@ -159,7 +159,7 @@ describe('ProjectsScreen - generate', () => {
 
     expect(await card('Not started').findByText('0 / 1 jobs')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/1/generate').map(c => c.body)).toEqual([
-      { eligible_printer_ids: [], process_preset: null },
+      { eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false },
     ]);
     expect(where()).toBe('/projects');                                          // the click did not open the project
   });

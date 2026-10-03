@@ -421,7 +421,7 @@ function TagsPage() {
 function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, snapshot: 2, name: '', estimates: false });
+  const saved = useRef({ check: 5, snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -488,6 +488,21 @@ function PrintDefaultsPage() {
     setEstimatesEnabled(enabled);
     await persist('estimate generation', { estimates_enabled: enabled },
       () => setEstimatesEnabled(saved.current.estimates), () => { saved.current.estimates = enabled; });
+  }
+
+  // Slicing cache: reslice cached gcode whose presets/OrcaSlicer changed, or keep printing it (pinned)
+  const [useLatestSettings, setUseLatestSettings] = useState<boolean>(true);
+  useEffect(() => {
+    getQueueConfig().then(c => {
+      const v = c.slice_cache_use_latest_settings ?? true;
+      saved.current.useLatest = v;
+      setUseLatestSettings(v);
+    }).catch(console.error);
+  }, []);
+  async function commitUseLatestSettings(enabled: boolean) {
+    setUseLatestSettings(enabled);
+    await persist('the slicer-settings policy', { slice_cache_use_latest_settings: enabled },
+      () => setUseLatestSettings(saved.current.useLatest), () => { saved.current.useLatest = enabled; });
   }
 
   // Printer preset rescan (old legacy rescan endpoint)
@@ -614,6 +629,15 @@ function PrintDefaultsPage() {
       <FieldRow label="Enable estimate generation"
                 hint="When enabled, a test slice runs immediately after job creation to estimate print time and filament use. The gcode is discarded — only time and grams are stored.">
         <Toggle checked={estimatesEnabled} onChange={commitEstimatesEnabled} />
+      </FieldRow>
+
+      <FieldRow label="Always use latest slicer settings"
+                hint="When unchecked, cached gcode sliced with older presets or an older OrcaSlicer version is still printed and marked stale. Use this to keep a proven print unchanged after a profile/slicer update.">
+        <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+          <input type="checkbox" aria-label="Always use latest slicer settings" checked={useLatestSettings}
+                 onChange={e => commitUseLatestSettings(e.target.checked)} />
+          {useLatestSettings ? 'Reslice stale cached gcode' : 'Keep printing stale cached gcode (marked stale)'}
+        </label>
       </FieldRow>
 
       <FieldRow label="OrcaSlicer profiles"

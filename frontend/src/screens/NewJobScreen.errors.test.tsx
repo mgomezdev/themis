@@ -29,6 +29,8 @@ function open(plates = [plate(1)], over: Record<string, unknown> = {}) {
     'GET /api/v1/printers/1/profiles': { print_profiles: [PROFILE], filament_profiles: [] },
     'POST /api/v1/jobs/check-overrides': { has_embedded_settings: false, has_findings: false, setting_changes: [], slot_warning: null },
     'POST /api/v1/jobs': { id: 1, status: 'queued' },
+    'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: true },
+    ...Object.fromEntries([1, 2, 3, 4].map(n => [`GET /api/v1/files/42/sliced-versions?plate=${n}`, []])),
     ...over,
   });
   render(

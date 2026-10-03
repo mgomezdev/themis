@@ -269,3 +269,33 @@ describe('Print defaults - profile maintenance', () => {
     expect(screen.queryByText(success)).toBeNull();
   });
 });
+
+describe('Print defaults - slicing cache policy (BIZ-194)', () => {
+  const box = () => screen.getByRole('checkbox', { name: 'Always use latest slicer settings' }) as HTMLInputElement;
+
+  it('is checked by default (an older server that omits the field counts as on)', async () => {
+    open();
+    await screen.findByText('Reslice stale cached gcode');
+    expect(box().checked).toBe(true);
+  });
+
+  it('shows a stored "pinned" choice and saves a change', async () => {
+    const api = open({ 'GET /api/v1/settings/queue': { ...CONFIG, slice_cache_use_latest_settings: false } });
+    await waitFor(() => expect(box().checked).toBe(false));
+
+    await userEvent.click(box());
+
+    await waitFor(() => expect(puts(api)).toEqual([{ slice_cache_use_latest_settings: true }]));
+    expect(box().checked).toBe(true);
+  });
+
+  it('puts the box back when the save is refused', async () => {
+    open({ [QUEUE]: new Reply(500, 'db locked') });
+    await screen.findByText('Reslice stale cached gcode');
+
+    await userEvent.click(box());
+
+    await waitFor(() => expect(alertText()).toBe("Couldn't save the slicer-settings policy: 500 db locked"));
+    expect(box().checked).toBe(true);
+  });
+});

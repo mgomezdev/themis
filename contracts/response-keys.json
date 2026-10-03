@@ -57,7 +57,12 @@
     "materials",
     "eligible_printers",
     "model_targets",
-    "low_stock_warning"
+    "low_stock_warning",
+    "save_slice",
+    "save_slice_name",
+    "allow_cached_slice",
+    "sliced_version_id",
+    "slice_cache_info"
   ],
   "job_details_core": [
     "id",
@@ -336,5 +341,26 @@
     "count",
     "worst",
     "printers"
+  ],
+  "sliced_version_item": [
+    "id",
+    "file_id",
+    "name",
+    "kind",
+    "plate_number",
+    "machine_preset",
+    "process_preset",
+    "filament_presets",
+    "filament_type",
+    "filament_color",
+    "bed_type",
+    "overrides",
+    "estimated_seconds",
+    "filament_grams",
+    "created_at",
+    "source_changed",
+    "stale",
+    "stale_reasons",
+    "printable_now"
   ]
 }
