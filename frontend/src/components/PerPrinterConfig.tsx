@@ -71,12 +71,14 @@ function usePrinterProfiles(printerId: number | null): { printProfiles: string[]
   return data;
 }
 
-export function PerPrinterConfig({ printerId, printers, config: rawConfig, onChange, modelFilaments }: {
+export function PerPrinterConfig({ printerId, printers, config: rawConfig, onChange, modelFilaments, gcode }: {
   printerId: string;
   printers: ApiPrinter[];
   config: PerPrinterCfg;
   onChange: (patch: Partial<PerPrinterCfg>) => void;
   modelFilaments?: ModelFilament[];
+  /** Pre-sliced .gcode job: there is no slicing, so no print profile to choose. */
+  gcode?: boolean;
 }) {
   // The API's wire form of "no preference" is "any"; this component's own defer/match
   // logic still treats that as null. onChange still emits null — NewJobScreen/EditJobScreen
@@ -178,8 +180,8 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <div>
+      <div style={{ display: 'grid', gridTemplateColumns: gcode ? '1fr' : '1fr 1fr', gap: 12 }}>
+        {!gcode && <div>
           <label className="label">Print profile</label>
           <select data-testid="print-profile-select" className="select"
                   value={config.printProfile ?? ''}
@@ -190,7 +192,7 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
           {printProfiles.length === 0 && (
             <div className="tiny muted" style={{ marginTop: 4 }}>No profiles found for this printer</div>
           )}
-        </div>
+        </div>}
 
         {(modelFilaments && modelFilaments.length > 1 && slots.length >= 1) ? (
           <div>

@@ -1073,14 +1073,7 @@
             }
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       }
@@ -1176,14 +1169,7 @@
             "description": "Order not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       },
@@ -3148,7 +3134,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf or .stl file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
+        "description": "Upload a .3mf, .stl or .gcode file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
@@ -3174,7 +3160,7 @@
             }
           },
           "422": {
-            "description": "Unsupported file type (only .3mf and .stl accepted)"
+            "description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"
           }
         }
       }
@@ -3801,7 +3787,7 @@
           "jobs"
         ],
         "summary": "Create job",
-        "description": "Queue a new print job for a specific file plate. At least one printer config is required.\nThe job is added at the end of the queue and the engine is woken immediately.",
+        "description": "Queue a new print job for a specific file plate. At least one printer config or make/model target\n(`model_targets`) is required. The job is added at the end of the queue and the engine is woken immediately.",
         "operationId": "create_job_api_v1_jobs_post",
         "requestBody": {
           "content": {
@@ -3830,7 +3816,7 @@
             "description": "File, printer, or order not found"
           },
           "422": {
-            "description": "printer_configs is empty"
+            "description": "Neither printer_configs nor model_targets given, a bad or duplicate target/printer, a gcode file on a printer that can't take raw gcode, or a customer order"
           }
         }
       }
@@ -4139,7 +4125,7 @@
             "description": "Job or printer not found"
           },
           "422": {
-            "description": "Job is not in an editable status or printer_configs is empty"
+            "description": "Job is not in an editable status, or no printer_configs/model_targets given"
           }
         }
       }
@@ -4343,7 +4329,7 @@
             "description": "Job is terminal, or already being manually completed"
           },
           "422": {
-            "description": "No OrcaSlicer machine preset on the printer, or the slice failed"
+            "description": "No OrcaSlicer machine preset on the printer, the job prints pre-sliced gcode, or the slice failed"
           }
         }
       }
@@ -8637,6 +8623,14 @@
               }
             ],
             "title": "Process Preset"
+          },
+          "eligible_machine_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eligible Machine Profiles",
+            "default": []
           }
         },
         "type": "object",
@@ -8679,7 +8673,16 @@
               "$ref": "#/components/schemas/PrinterConfigInput"
             },
             "type": "array",
-            "title": "Printer Configs"
+            "title": "Printer Configs",
+            "default": []
+          },
+          "model_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ModelTargetInput"
+            },
+            "type": "array",
+            "title": "Model Targets",
+            "default": []
           },
           "overrides": {
             "anyOf": [
@@ -8695,9 +8698,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "printer_configs"
-        ],
         "title": "JobConfigsUpdate"
       },
       "JobCostPatch": {
@@ -8744,7 +8744,16 @@
               "$ref": "#/components/schemas/PrinterConfigInput"
             },
             "type": "array",
-            "title": "Printer Configs"
+            "title": "Printer Configs",
+            "default": []
+          },
+          "model_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ModelTargetInput"
+            },
+            "type": "array",
+            "title": "Model Targets",
+            "default": []
           },
           "overrides": {
             "anyOf": [
@@ -8772,8 +8781,7 @@
         },
         "type": "object",
         "required": [
-          "uploaded_file_id",
-          "printer_configs"
+          "uploaded_file_id"
         ],
         "title": "JobCreate"
       },
@@ -9075,6 +9083,72 @@
         },
         "type": "object",
         "title": "MaintenanceItemPatch"
+      },
+      "ModelTargetInput": {
+        "properties": {
+          "machine_profile": {
+            "type": "string",
+            "title": "Machine Profile"
+          },
+          "print_profile": {
+            "type": "string",
+            "title": "Print Profile",
+            "default": ""
+          },
+          "filament_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Profile"
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "filament_type": {
+            "type": "string",
+            "title": "Filament Type",
+            "default": "any"
+          },
+          "filament_color": {
+            "type": "string",
+            "title": "Filament Color",
+            "default": "any"
+          },
+          "filament_map": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Map"
+          }
+        },
+        "type": "object",
+        "required": [
+          "machine_profile"
+        ],
+        "title": "ModelTargetInput",
+        "description": "Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
       },
       "NotificationConfigIn": {
         "properties": {
@@ -9689,7 +9763,8 @@
           },
           "print_profile": {
             "type": "string",
-            "title": "Print Profile"
+            "title": "Print Profile",
+            "default": ""
           },
           "filament_profile": {
             "anyOf": [
@@ -9751,7 +9826,6 @@
         "type": "object",
         "required": [
           "printer_id",
-          "print_profile",
           "filament_type",
           "filament_color"
         ],

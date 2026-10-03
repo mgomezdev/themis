@@ -148,6 +148,34 @@ class JobPrinterConfig(Base):
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.
+    # Plain integer, no FK (see v025/v031): SQLite can't DROP a column inside a table-level FOREIGN KEY, and the
+    # rows are always deleted with their target explicitly.
+    model_target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # One config per (job, printer); created by v031 for existing DBs, declared here for fresh ones.
+    __table_args__ = (
+        Index("ux_job_printer_configs_job_printer", "job_id", "printer_id", unique=True),
+        Index("ux_job_printer_configs_target_printer", "model_target_id", "printer_id", unique=True,
+              sqlite_where=text("model_target_id IS NOT NULL")),
+    )
+
+
+class JobModelTarget(Base):
+    """A job eligible on *any* printer whose `current_orca_printer_profile` equals `machine_profile`. The queue
+    engine materializes it into per-printer `JobPrinterConfig` rows (services/model_targets.py), so everything
+    downstream keeps looking configs up by (job, printer). Slot-specific asks (tool_index) don't apply here."""
+    __tablename__ = "job_model_targets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    machine_profile: Mapped[str] = mapped_column(String(255), index=True)
+    print_profile: Mapped[str] = mapped_column(String(512))
+    filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    filament_type: Mapped[str] = mapped_column(String(100), default="any", server_default="any")
+    filament_color: Mapped[str] = mapped_column(String(20), default="any", server_default="any")
+    filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
 class GcodeFile(Base):
@@ -259,6 +287,8 @@ class Project(Base):
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
+    # Set by migration v032 when this project was created from a legacy customer order (provenance; plain int).
+    converted_from_order_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 

@@ -529,3 +529,36 @@ async def test_delete_part(client):
 
     detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
     assert detail["parts"] == []
+
+
+async def test_generate_with_machine_profile_creates_model_targets_and_configs(
+        client, tmp_path, create_printer, session_factory):
+    """eligible_machine_profiles -> a model target per job, materialized onto matching printers only."""
+    from sqlalchemy import select
+    from app.models import JobModelTarget, JobPrinterConfig
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    p1s = await create_printer(name="A")  # default preset: Bambu Lab P1S 0.4
+    await create_printer(name="B", current_orca_printer_profile="Other 0.4", orca_printer_profiles=["Other 0.4"])
+    lib = tmp_path / "library"
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
+        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+    ):
+        mock_cls.return_value.pack_stls.return_value = _make_3mf_bytes(plate_count=1)
+        resp = await client.post(
+            f"/api/v1/projects/{project_id}/generate",
+            json={"eligible_machine_profiles": ["Bambu Lab P1S 0.4"], "process_preset": "0.20mm"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobs"][0]["id"]
+    async with session_factory() as s:
+        targets = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
+        assert [(t.machine_profile, t.print_profile) for t in targets] == [("Bambu Lab P1S 0.4", "0.20mm")]
+        cfgs = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
+        assert [c.printer_id for c in cfgs] == [p1s]

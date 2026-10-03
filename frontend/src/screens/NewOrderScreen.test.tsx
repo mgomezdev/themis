@@ -10,10 +10,10 @@ const wrapper = ({ children }: { children: React.ReactNode }) => <MemoryRouter>{
 beforeEach(() => vi.clearAllMocks());
 
 describe('NewOrderScreen', () => {
-  it('renders order type selector', () => {
+  it('offers no customer order type and points customer work at projects', () => {
     render(<NewOrderScreen />, { wrapper });
-    expect(screen.getByText('Customer order')).toBeTruthy();
-    expect(screen.getByText('Internal project')).toBeTruthy();
+    expect(screen.queryByText('Customer order')).toBeNull();
+    expect(screen.getByTestId('orders-are-internal').textContent).toMatch(/record a project/);
   });
 
   it('starts with an empty part row and can add rows', async () => {

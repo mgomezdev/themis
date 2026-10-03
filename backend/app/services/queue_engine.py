@@ -27,9 +27,10 @@ from ..models import (
     UploadedFile,
     WebhookConfig,
 )
-from .library_scanner import library_abs_path
+from .library_scanner import is_gcode_file, library_abs_path
 from .printer_manager import PrinterManager
 from .slicer_service import SliceError, SliceRequest, SlicerService
+from . import model_targets
 from . import notification_service
 from . import scheduling
 from . import webhook_service
@@ -742,6 +743,10 @@ class QueueEngine:
         if printer is None or not printer.queue_on:
             return
 
+        # "Any printer of this model" jobs: keep this printer's materialized configs current before looking.
+        await model_targets.sync_targets_for_printer(session, printer)
+        await session.commit()
+
         # The FIRST queue item that lists this printer as compatible — head of line.
         # Blocked jobs are re-evaluated (loading the right filament unblocks them).
         stmt = (
@@ -777,20 +782,22 @@ class QueueEngine:
 
         # Pre-flight: ensure Laminus is reachable before claiming this job.
         # Block (not fail) so the job auto-retries when Laminus comes back.
-        sidecar_url = get_laminus_sidecar_url()
-        if not sidecar_url:
-            await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
-            return
-        try:
-            r = await asyncio.to_thread(
-                lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
-            )
-            if not r.is_success:
-                await self._block_job(session, job, "Laminus is not ready — slicing paused")
+        # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
+        if not is_gcode_file(await session.get(UploadedFile, job.uploaded_file_id)):
+            sidecar_url = get_laminus_sidecar_url()
+            if not sidecar_url:
+                await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
                 return
-        except Exception:
-            await self._block_job(session, job, "Laminus is unreachable — slicing paused")
-            return
+            try:
+                r = await asyncio.to_thread(
+                    lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
+                )
+                if not r.is_success:
+                    await self._block_job(session, job, "Laminus is not ready — slicing paused")
+                    return
+            except Exception:
+                await self._block_job(session, job, "Laminus is unreachable — slicing paused")
+                return
 
         # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
         # user cancel) that committed while we awaited the Laminus health probe above.
@@ -864,86 +871,101 @@ class QueueEngine:
             machine_preset = printer.current_orca_printer_profile if printer else None
             build_plate_type = printer.build_plate_type if printer else None
             job_overrides = job.overrides or {} if job else {}  # capture before session closes
+            is_gcode = is_gcode_file(uploaded_file)
 
         if config is None or uploaded_file is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
-        if not machine_preset:
-            await self._handle_slice_failure(
-                job_id, printer_id, "printer has no OrcaSlicer machine preset selected"
-            )
-            return
-
-        # Meaningful, unique artifact name; the printer decides its output format.
-        stem = os.path.splitext(os.path.basename(original_filename or "model"))[0]
-        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
-        file_base = f"{safe}_p{plate_number}_j{job_id}"
-        client = self._mgr.get_client(printer_id)
-        export_args = client.orca_export_args(file_base) if client else []
-
-        # Resolve any catalog filament entries to slot indices before slicing.
-        if cfg_filament_map:
+        slice_presets: list = []
+        if is_gcode:
+            # Pre-sliced upload: nothing to slice. Stage a private copy (finished jobs delete their gcode file,
+            # which must never be the library's own copy) and carry on to upload + print.
             try:
-                cfg_filament_map = _resolve_filament_map(cfg_filament_map, loaded)
-            except ValueError as exc:
-                await self._handle_slice_failure(job_id, printer_id, f"printer {printer_id}: {exc}")
+                gcode_path = await asyncio.to_thread(
+                    self._stage_gcode, job_id, stored_path, original_filename or "model.gcode"
+                )
+            except OSError as exc:
+                await self._handle_slice_failure(job_id, printer_id, f"could not read the uploaded gcode: {exc}")
+                return
+        else:
+            if not machine_preset:
+                await self._handle_slice_failure(
+                    job_id, printer_id, "printer has no OrcaSlicer machine preset selected"
+                )
                 return
 
-        prepare_hook = None
-        if client is not None and (cfg_tool_index is not None or cfg_filament_map):
-            prepare_hook = (lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
-                            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm))
+            # Meaningful, unique artifact name; the printer decides its output format.
+            stem = os.path.splitext(os.path.basename(original_filename or "model"))[0]
+            safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+            file_base = f"{safe}_p{plate_number}_j{job_id}"
+            client = self._mgr.get_client(printer_id)
+            export_args = client.orca_export_args(file_base) if client else []
 
-        loop = asyncio.get_running_loop()
-        multi_presets: list = []
-        if cfg_filament_map:
-            ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
-            multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
-        plate_config = {"curr_bed_type": build_plate_type} if build_plate_type else {}
-        plate_config.update(job_overrides)  # job-level overrides win over printer default
-        req = SliceRequest(
-            job_id=job_id,
-            source_3mf=stored_path,
-            plate_number=plate_number,
-            machine_preset=machine_preset,
-            process_preset=print_profile,
-            filament_presets=multi_presets if cfg_filament_map else ([filament_profile] if filament_profile else []),
-            filament_colours=[filament_color] if filament_color else [],
-            export_args=export_args,
-            prepare_hook=prepare_hook,
-            extra_config=plate_config,
-        )
-        fut: asyncio.Future = loop.create_future()
+            # Resolve any catalog filament entries to slot indices before slicing.
+            if cfg_filament_map:
+                try:
+                    cfg_filament_map = _resolve_filament_map(cfg_filament_map, loaded)
+                except ValueError as exc:
+                    await self._handle_slice_failure(job_id, printer_id, f"printer {printer_id}: {exc}")
+                    return
 
-        async def _do_prod_slice():
+            prepare_hook = None
+            if client is not None and (cfg_tool_index is not None or cfg_filament_map):
+                prepare_hook = (lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
+                                c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm))
+
+            loop = asyncio.get_running_loop()
+            multi_presets: list = []
+            if cfg_filament_map:
+                ordered = sorted(loaded or [], key=lambda s: s.get("slot", 0))
+                multi_presets = [s.get("filament_profile") for s in ordered if s.get("filament_profile")]
+            plate_config = {"curr_bed_type": build_plate_type} if build_plate_type else {}
+            plate_config.update(job_overrides)  # job-level overrides win over printer default
+            req = SliceRequest(
+                job_id=job_id,
+                source_3mf=stored_path,
+                plate_number=plate_number,
+                machine_preset=machine_preset,
+                process_preset=print_profile,
+                filament_presets=multi_presets if cfg_filament_map else ([filament_profile] if filament_profile else []),
+                filament_colours=[filament_color] if filament_color else [],
+                export_args=export_args,
+                prepare_hook=prepare_hook,
+                extra_config=plate_config,
+            )
+            fut: asyncio.Future = loop.create_future()
+
+            async def _do_prod_slice():
+                try:
+                    # Skip the slice if the job was cancelled while waiting in the queue.
+                    async with self._factory() as s:
+                        j = await s.get(Job, job_id)
+                        if j is None or j.status == "cancelled":
+                            if not fut.cancelled():
+                                fut.cancel()
+                            return
+                    result = await asyncio.to_thread(self._slicer.slice, req)
+                    if not fut.cancelled():
+                        fut.set_result(result)
+                except Exception as exc:
+                    if not fut.cancelled():
+                        fut.set_exception(exc)
+
+            await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
             try:
-                # Skip the slice if the job was cancelled while waiting in the queue.
-                async with self._factory() as s:
-                    j = await s.get(Job, job_id)
-                    if j is None or j.status == "cancelled":
-                        if not fut.cancelled():
-                            fut.cancel()
-                        return
-                result = await asyncio.to_thread(self._slicer.slice, req)
-                if not fut.cancelled():
-                    fut.set_result(result)
+                gcode_path = await fut
+            except asyncio.CancelledError:
+                fut.cancel()
+                raise
+            except SliceError as exc:
+                await self._handle_slice_failure(job_id, printer_id, str(exc))
+                return
             except Exception as exc:
-                if not fut.cancelled():
-                    fut.set_exception(exc)
+                logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
+                await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
+                return
 
-        await self._slice_queue.put((0, next(self._slice_seq), _do_prod_slice()))
-        try:
-            gcode_path = await fut
-        except asyncio.CancelledError:
-            fut.cancel()
-            raise
-        except SliceError as exc:
-            await self._handle_slice_failure(job_id, printer_id, str(exc))
-            return
-        except Exception as exc:
-            logger.exception("Unexpected slice error for job %s on printer %s", job_id, printer_id)
-            await self._handle_slice_failure(job_id, printer_id, f"Unexpected error: {exc}")
-            return
+            slice_presets = req.filament_presets
 
         # Store gcode record; park as "sliced" if the printer isn't ready to receive.
         async with self._factory() as session:
@@ -969,7 +991,7 @@ class QueueEngine:
                 job.actual_filament_breakdown = [
                     {
                         "extruder_index": i,
-                        "filament_profile": req.filament_presets[i] if i < len(req.filament_presets) else None,
+                        "filament_profile": slice_presets[i] if i < len(slice_presets) else None,
                         "grams": g,
                     }
                     for i, g in enumerate(extruder_grams)
@@ -988,6 +1010,16 @@ class QueueEngine:
 
         await self._broadcast_job(job_id)
         await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
+
+    def _stage_gcode(self, job_id: int, source_path: str, original_filename: str) -> str:
+        """Copy an uploaded .gcode into the job's gcode dir (where slicer output would have gone)."""
+        out_dir = self._slicer._data_dir / "gcode" / str(job_id)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = os.path.splitext(os.path.basename(original_filename))[0]
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
+        dest = out_dir / f"{safe}_j{job_id}.gcode"
+        shutil.copyfile(source_path, dest)
+        return str(dest)
 
     async def _handle_slice_failure(self, job_id: int, printer_id: int, error: str) -> None:
         # A slicing issue blocks the job (per queue policy). This printer's config

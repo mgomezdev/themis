@@ -9,7 +9,9 @@ import { useFiles, getFiles } from '../api/files';
 import { useOrders } from '../api/orders';
 import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
+import { ModelPicker, buildEligibility, isModelKey, modelConfigSource } from '../components/ModelTargets';
 import { OverridePanel } from '../components/OverridePanel';
+import { GcodeWarning } from '../components/GcodeWarning';
 
 // ============================================================
 // Types
@@ -38,7 +40,7 @@ interface PlateConfig {
 interface FileInfo {
   name: string;
   size: number;
-  type: 'stl' | '3mf';
+  type: 'stl' | '3mf' | 'gcode';
 }
 
 // ============================================================
@@ -184,10 +186,10 @@ function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDrop, onCl
         {React.cloneElement(Icons.upload as React.ReactElement<{ size?: number }>, { size: 22 })}
       </div>
       <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-1)' }}>
-        Drop a .3mf or .stl file
+        Drop a .3mf, .stl or .gcode file
       </div>
       <div className="small muted" style={{ marginTop: 4 }}>
-        Or click to browse · multi-plate 3MFs supported
+        Or click to browse · multi-plate 3MFs supported · .gcode skips slicing
       </div>
     </div>
   );
@@ -295,7 +297,8 @@ function OrdersPicker({ selectedOrderId, onChange }: {
 }) {
   const navigate = useNavigate();
   const { orders } = useOrders();
-  const open = orders.filter(o => o.status !== 'complete');
+  // Customer work is recorded as a project; orders only group internal jobs.
+  const open = orders.filter(o => o.status !== 'complete' && o.order_type === 'internal');
 
   return (
     <div className="col gap-2">
@@ -437,10 +440,11 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
+  gcode: boolean;
   printers: ApiPrinter[];
   modelFilaments: ModelFilament[];
   embeddedSettings: EmbeddedSetting[];
@@ -492,27 +496,37 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilament
                   Eligible printers
                 </div>
                 <div className="tiny muted" style={{ marginTop: 2, marginLeft: 30 }}>
-                  Choose which printers may claim this plate. Configure preset + filament for each.
+                  {gcode
+                    ? 'Choose the printers (or printer models) this gcode was sliced for. Set the filament ask for each.'
+                    : 'Choose which printers may claim this plate. Configure preset + filament for each.'}
                 </div>
               </div>
             </div>
+            {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
             <PrinterPicker
               printers={printers}
               selectedPrinters={config.selectedPrinters}
               onToggle={onTogglePrinter}
             />
+            <ModelPicker printers={printers} selected={config.selectedPrinters} onToggle={onTogglePrinter} />
             {config.selectedPrinters.length > 0 && (
               <div className="col gap-3" style={{ marginTop: 14 }}>
-                {config.selectedPrinters.map(pid => (
-                  <PerPrinterConfig
-                    key={pid}
-                    printerId={pid}
-                    printers={printers}
-                    config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
-                    onChange={patch => onSetPerPrinter(pid, patch)}
-                    modelFilaments={modelFilaments}
-                  />
-                ))}
+                {config.selectedPrinters.map(pid => {
+                  // A make/model target is configured through a representative printer of that model.
+                  const src = isModelKey(pid) ? modelConfigSource(pid, printers) : { printerId: pid, printers };
+                  if (!src) return null;
+                  return (
+                    <PerPrinterConfig
+                      key={pid}
+                      printerId={src.printerId}
+                      printers={src.printers}
+                      config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
+                      onChange={patch => onSetPerPrinter(pid, patch)}
+                      modelFilaments={isModelKey(pid) ? undefined : modelFilaments}
+                      gcode={gcode}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -752,10 +766,11 @@ export function NewJobScreen() {
   async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
     setUploadedFileId(fileId);
     setFile(fileInfo);
+    const isGcode = fileInfo.type === 'gcode';   // nothing to slice: no filament slots or embedded settings to read
     const [apiPlates, filaments, settings] = await Promise.all([
       getFilePlates(fileId),
-      getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
-      getEmbeddedSettings(fileId).catch(() => [] as EmbeddedSetting[]),
+      isGcode ? Promise.resolve([] as ModelFilament[]) : getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
+      isGcode ? Promise.resolve([] as EmbeddedSetting[]) : getEmbeddedSettings(fileId).catch(() => [] as EmbeddedSetting[]),
     ]);
     setModelFilaments(filaments);
     setEmbeddedSettings(settings);
@@ -767,15 +782,16 @@ export function NewJobScreen() {
     setActivePlateId(detected[0]?.id ?? null);
   }
 
-  function fileTypeOf(name: string): 'stl' | '3mf' {
-    return name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf';
+  function fileTypeOf(name: string): 'stl' | '3mf' | 'gcode' {
+    const lower = name.toLowerCase();
+    return lower.endsWith('.stl') ? 'stl' : lower.endsWith('.gcode') ? 'gcode' : '3mf';
   }
 
   async function handleFile(rawFile: File | null | undefined) {
     if (!rawFile) return;
     const nameLower = rawFile.name.toLowerCase();
-    if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl')) {
-      setError('Only .3mf and .stl files are supported.');
+    if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl') && !nameLower.endsWith('.gcode')) {
+      setError('Only .3mf, .stl and .gcode files are supported.');
       return;
     }
     setUploading(true);
@@ -906,7 +922,8 @@ export function NewJobScreen() {
     if (cfg.selectedPrinters.length === 0) return false;
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
-      return !!(pp && pp.printProfile);
+      // A pre-sliced gcode job has no print profile — naming the printer(s) or model(s) is enough.
+      return !!pp && (file?.type === 'gcode' || !!pp.printProfile);
     });
   };
 
@@ -926,17 +943,7 @@ export function NewJobScreen() {
           uploaded_file_id: uploadedFileId,
           plate_number: plate.index,
           order_id: cfg.orderId,
-          printer_configs: cfg.selectedPrinters.map(pid => ({
-            printer_id: Number(pid),
-            print_profile: cfg.perPrinter[pid].printProfile!,
-            filament_profile: cfg.perPrinter[pid].filamentProfile ?? null,
-            filament_id: cfg.perPrinter[pid].filamentId ?? null,
-            // "any" is the wire form of "no preference" — the backend rejects null/blank here.
-            filament_type: cfg.perPrinter[pid].filamentType ?? 'any',
-            filament_color: cfg.perPrinter[pid].filamentColor ?? 'any',
-            tool_index: cfg.perPrinter[pid].toolIndex ?? null,
-            filament_map: cfg.perPrinter[pid].filamentMap ?? null,
-          })),
+          ...buildEligibility(cfg.selectedPrinters, cfg.perPrinter),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
         });
         created.push(id);
@@ -994,7 +1001,7 @@ export function NewJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader
               title={<span><StepNum n={1} done={!!file} /> Source file</span>}
-              sub="Upload a new .3mf/.stl or pick one from your library."
+              sub="Upload a new .3mf/.stl/.gcode or pick one from your library."
             />
 
             {!file && !uploading && (
@@ -1068,7 +1075,7 @@ export function NewJobScreen() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".3mf,.stl"
+              accept=".3mf,.stl,.gcode"
               style={{ display: 'none' }}
               onChange={e => handleFile(e.target.files?.[0])}
             />
@@ -1131,6 +1138,7 @@ export function NewJobScreen() {
                   plate={plates.find(p => p.id === activePlateId)!}
                   config={plateConfigs[activePlateId]}
                   isMultiPlate={plates.length > 1}
+                  gcode={file?.type === 'gcode'}
                   printers={printers}
                   modelFilaments={modelFilaments}
                   embeddedSettings={embeddedSettings}

@@ -38,7 +38,7 @@ const JOB = {
   overrides: 1, block_reason: 1, actual_filament_grams: 1, actual_seconds: 1, actual_filament_breakdown: 1,
   deduction_skipped: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,
-  eligible_printers: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
+  eligible_printers: 1, model_targets: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
 } satisfies Record<keyof ApiJob, 1>;
 
 const JOB_DETAILS = {

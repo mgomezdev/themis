@@ -37,6 +37,26 @@ export interface PrinterConfigInput {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
 }
 
+/** Eligible on any printer whose active machine preset equals `machine_profile` (a make/model). */
+export interface ModelTargetInput {
+  machine_profile: string;
+  print_profile: string;
+  filament_profile?: string | null;
+  filament_id?: number | null;
+  filament_type?: string | null;
+  filament_color?: string | null;
+}
+
+export interface ApiModelTarget {
+  machine_profile: string;
+  print_profile: string;
+  filament_profile: string | null;
+  filament_id: number | null;
+  filament_type: string;
+  filament_color: string;
+  filament_map: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+}
+
 export interface ApiJob {
   id: number;
   uploaded_file_id: number;
@@ -62,6 +82,7 @@ export interface ApiJob {
   updated_at: string;
   materials: string[];
   eligible_printers: Array<{ id: number; name: string }>;
+  model_targets: ApiModelTarget[];
   low_stock_warning: LowStockWarning | null;
   filament_cost: number | null;
   not_before: string | null;   // UTC ISO: the queue won't start this job before then
@@ -95,6 +116,7 @@ export interface ApiJobPrinterConfig {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
   slice_failed: boolean;
   slice_error: string | null;
+  from_model_target: boolean;   // materialized from a make/model target rather than picked explicitly
   low_stock_warning: LowStockWarning | null;
 }
 
@@ -164,6 +186,7 @@ export async function createJob(body: {
   uploaded_file_id: number;
   plate_number: number;
   printer_configs: PrinterConfigInput[];
+  model_targets?: ModelTargetInput[];
   order_id?: number | null;
   overrides?: Record<string, string> | null;
 }): Promise<ApiJob> {
@@ -254,11 +277,12 @@ export async function updateJobConfigs(
   jobId: number,
   configs: PrinterConfigInput[],
   overrides?: Record<string, string> | null,
+  modelTargets: ModelTargetInput[] = [],
 ): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/configs`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ printer_configs: configs, overrides: overrides ?? null }),
+    body: JSON.stringify({ printer_configs: configs, model_targets: modelTargets, overrides: overrides ?? null }),
   });
 }
 

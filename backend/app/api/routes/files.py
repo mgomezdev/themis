@@ -169,7 +169,7 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
     status_code=201,
     summary="Upload a file",
     responses={
-        422: {"description": "Unsupported file type (only .3mf and .stl accepted)"},
+        422: {"description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"},
     },
     dependencies=[Depends(require_scope("files:write"))],
 )
@@ -179,13 +179,13 @@ async def upload_file(
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Upload a .3mf or .stl file to the library. If identical content already exists
+    """Upload a .3mf, .stl or .gcode file to the library. If identical content already exists
     in the target folder the existing record is returned (deduplication by SHA-256).
     Thumbnail generation is triggered in the background for .3mf files."""
     fname = (file.filename or "")
     ext = Path(fname).suffix.lower()
     if ext not in MODEL_EXTS:
-        raise HTTPException(422, "Only .3mf and .stl files are accepted")
+        raise HTTPException(422, "Only .3mf, .stl and .gcode files are accepted")
 
     library = config.get_library_dir()
     folder_abs = _safe_subpath(library, folder)

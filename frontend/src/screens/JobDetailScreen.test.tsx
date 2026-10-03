@@ -45,6 +45,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
   estimate_preset_label: null,
   materials: [],
   eligible_printers: [],
+  model_targets: [],
   low_stock_warning: null,
   filament_cost: null,
   not_before: null,
@@ -59,6 +60,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
       filament_type: 'PLA',
       filament_color: '#000000',
       tool_index: 0,
+      from_model_target: false,
       slice_failed: false,
       slice_error: null,
       low_stock_warning: null,
@@ -244,5 +246,24 @@ describe('JobDetailScreen — scheduled start', () => {
     renderJobDetail();
     await screen.findByText(/part\.3mf/);
     expect(screen.queryByTestId('start-time-card')).toBeNull();
+  });
+});
+
+describe('JobDetailScreen — make/model targets', () => {
+  it('lists the models any printer of which may take the job, and says when none exists yet', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB,
+      printer_configs: [],
+      model_targets: [{
+        machine_profile: 'Bambu Lab P1S 0.4 nozzle', print_profile: '0.20mm', filament_profile: null,
+        filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+      }],
+    });
+
+    renderJobDetail();
+
+    const card = await screen.findByTestId('model-targets');
+    expect(card.textContent).toContain('Bambu Lab P1S 0.4 nozzle');
+    expect(card.textContent).toMatch(/No printer of this model is set up yet/);
   });
 });

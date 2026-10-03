@@ -22,7 +22,7 @@ const job = (id: number, status: string, o: Record<string, unknown> = {}) => ({
   deduction_skipped: null, estimate_status: 'done', estimate_seconds: 5400, estimate_filament_grams: 21,
   estimate_filament_breakdown: null, estimate_preset_label: null, created_at: '2026-09-01T00:00:00',
   updated_at: '2026-09-01T00:00:00', materials: ['PLA'], low_stock_warning: null, filament_cost: null,
-  eligible_printers: [{ id: 1, name: 'Forge Alpha Long Printer Name' }, { id: 2, name: 'Centauri' }],
+  eligible_printers: [{ id: 1, name: 'Forge Alpha Long Printer Name' }, { id: 2, name: 'Centauri' }], model_targets: [],
   file_name: 'a-really-long-model-file-name-for-testing-overflow.3mf', printer_name: null, ...o,
 });
 const QUEUE = [job(7, 'printing', { assigned_printer_id: 1 }), job(9, 'queued'),
@@ -30,9 +30,10 @@ const QUEUE = [job(7, 'printing', { assigned_printer_id: 1 }), job(9, 'queued'),
 const DETAILS = {
   ...QUEUE[0], file: { id: 1, original_filename: 'a-really-long-model-file-name-for-testing-overflow.3mf' },
   plate: { estimated_time: 5400, filament_g: 21, thumbnail_path: null },
+  model_targets: [],
   printer_configs: [{ printer_id: 1, printer_name: 'Forge Alpha Long Printer Name', printer_type: 'bambu',
     print_profile: '0.20mm Standard @BBL X1C', filament_profile: 'Generic PLA @System', filament_id: null,
-    filament_type: 'PLA', filament_color: 'any', tool_index: null, slice_failed: false, slice_error: null, low_stock_warning: null }],
+    filament_type: 'PLA', filament_color: 'any', tool_index: null, from_model_target: false, slice_failed: false, slice_error: null, low_stock_warning: null }],
   assigned_printer: { id: 1, name: 'Forge Alpha Long Printer Name', printer_type: 'bambu' },
   filament_grams_live: 21, estimated_seconds_live: 5400,
 };

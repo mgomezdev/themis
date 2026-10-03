@@ -20,7 +20,8 @@ tags                ← file_tags.tag_id
 file_tags           (junction: file_id + tag_id, both CASCADE DELETE)
 orders              ← jobs.order_id (nullable), projects.order_id (nullable)
 jobs                ← job_printer_configs.job_id, gcode_files.job_id, job_item_failures.job_id
-job_printer_configs
+job_printer_configs  ← (model_target_id, plain int → job_model_targets.id, no FK)
+job_model_targets   (job_id CASCADE; v031)
 gcode_files
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
                        estimates_enabled)
@@ -83,8 +84,15 @@ Library index fields (filesystem is source of truth; these cache it):
   per-part fulfillment tracking. **Derived (not stored)**: `status` (hold if on_hold; else queued/
   in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`,
   `filament_cost_total` (sum of `jobs.filament_cost` across the order's non-cancelled jobs, or `null`).
-- `amount_paid`/`payment_status`: manually-entered customer payment tracking, for future profit/loss
-  reporting. Set/edited via `POST`/`PATCH /api/v1/orders`.
+- **Orders are internal-only (BIZ-186).** Customer sales and payments are recorded as *projects* (customer
+  pages + the financial summary read those). `POST /orders` with `order_type="customer"` and `PATCH`ing an order
+  *into* a customer order are 422; so is `POST /jobs` with an `order_id` of a customer order. Migration v032
+  converted every existing customer order that had no linked project into a project (name=title, same
+  customer/amount/status/due/hold, `amount_paid` → one opening payment, customer account linked when exactly one
+  matches the name, `parts` kept as text in `notes`, `projects.converted_from_order_id` = provenance) and
+  re-pointed its jobs; the order row stays as the project's internal job grouping — nothing is deleted. Legacy
+  customer orders already linked to a project were left alone. `amount_paid`/`payment_status` on orders are
+  historical and no longer feed reporting.
 - Internal orders (`order_type="internal"`) are auto-created by `generate_project` and linked to a
   Project via `projects.order_id`. All jobs generated for that project also set `job.order_id`.
 
@@ -135,7 +143,8 @@ manual-type fallback; the *authoritative* orca filament preset for slicing now l
 loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
 **ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
 tool/slot; `None` = default/legacy — queue uses type+color ask instead),
-`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`.
+`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`,
+`model_target_id?` (v031; set on rows materialized from a `job_model_targets` row, null = explicit pick).
 - `filament_type`+`filament_color` = the eligibility "ask". Non-nullable, `server_default="any"` — the
   literal string `"any"` (never null/blank) means no constraint on that axis; matching logic checks for
   this keyword rather than a null/empty check. Same convention on `project_items.filament_type/color`
@@ -154,6 +163,20 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Exposed on `GET /api/v1/jobs/{id}/details` as `filament_grams` / `estimated_seconds`.
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
+
+### job_model_targets  (v031 — "any printer of this make/model")
+`id, job_id FK (CASCADE), machine_profile` (a printer's make/model = its `current_orca_printer_profile`),
+`print_profile, filament_profile?, filament_id?, filament_type, filament_color` (`"any"` default),
+`filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
+Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
+rows (at create/PATCH via `materialize_job`, and every queue cycle in `_try_claim_for_printer` via
+`sync_targets_for_printer`), so the claim query / slicer / estimates keep reading configs by (job, printer).
+Sync adds rows for printers added or re-profiled later and removes rows for printers that no longer match —
+only for `queued`/`blocked` jobs. An explicit per-printer config wins over a target for the same printer.
+`slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
+(v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
+on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
+`POST /projects/{id}/generate` (`eligible_machine_profiles`).
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).

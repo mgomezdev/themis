@@ -10,7 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..models import UploadedFile, Job
 from .three_mf_parser import parse_three_mf, PlateInfo
 
-MODEL_EXTS = {".3mf", ".stl"}
+MODEL_EXTS = {".3mf", ".stl", ".gcode"}
+
+
+def is_gcode_file(uploaded_file) -> bool:
+    """A pre-sliced file: jobs on it skip slicing and are printed as-is (BIZ-188)."""
+    return bool(uploaded_file) and (uploaded_file.original_filename or "").lower().endswith(".gcode")
 # Statuses where a job still needs its source file present.
 ACTIVE_JOB_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "blocked"}
 
@@ -63,6 +68,10 @@ class LibraryScanner:
         thumb_dir.mkdir(parents=True, exist_ok=True)
         if abs_path.suffix.lower() == ".3mf":
             plates_raw = parse_three_mf(str(abs_path), thumbnail_dir=str(thumb_dir))
+        elif abs_path.suffix.lower() == ".gcode":
+            from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports this module
+            grams, secs, _ = _parse_gcode_estimates(str(abs_path))
+            plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=secs or 0, filament_g=grams or 0.0)]
         else:
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=0, filament_g=0.0)]
         return [

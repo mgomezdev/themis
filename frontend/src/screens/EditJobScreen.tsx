@@ -6,6 +6,8 @@ import type { ApiPrinter } from '../api/printers';
 import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
+import { GcodeWarning } from '../components/GcodeWarning';
+import { ModelPicker, buildEligibility, isModelKey, machineProfileOf, modelConfigSource, modelKey } from '../components/ModelTargets';
 import { apiFetch } from '../api/client';
 
 // ---- hooks ----
@@ -106,10 +108,23 @@ export function EditJobScreen() {
     getJobDetails(jobId).then(j => {
       if (!alive) return;
       setJob(j);
-      const ids = j.printer_configs.map(c => String(c.printer_id));
+      // Rows materialized from a make/model target are shown through that target, not as explicit picks.
+      const explicit = j.printer_configs.filter(c => !c.from_model_target);
+      const ids = [...explicit.map(c => String(c.printer_id)), ...j.model_targets.map(t => modelKey(t.machine_profile))];
       setSelectedPrinters(ids);
       const pp: Record<string, PerPrinterCfg> = {};
-      for (const c of j.printer_configs) {
+      for (const t of j.model_targets) {
+        pp[modelKey(t.machine_profile)] = {
+          printProfile: t.print_profile,
+          filamentProfile: t.filament_profile,
+          filamentId: t.filament_id,
+          filamentType: t.filament_type,
+          filamentColor: t.filament_color,
+          toolIndex: null,
+          filamentMap: null,
+        };
+      }
+      for (const c of explicit) {
         pp[String(c.printer_id)] = {
           printProfile: c.print_profile,
           filamentProfile: c.filament_profile,
@@ -156,9 +171,12 @@ export function EditJobScreen() {
     setPerPrinter(prev => ({ ...prev, [sid]: { ...prev[sid], ...patch } }));
   }
 
+  // A pre-sliced .gcode job is never sliced: no print profile, no 3MF overrides, no test slice.
+  const gcode = !!job?.file?.original_filename.toLowerCase().endsWith('.gcode');
+
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return !!(pp?.printProfile);
+    return gcode ? !!pp : !!(pp?.printProfile);
   });
 
   async function handleSave() {
@@ -166,20 +184,12 @@ export function EditJobScreen() {
     setSaving(true);
     setSaveError(null);
     try {
+      const { printer_configs, model_targets } = buildEligibility(selectedPrinters, perPrinter);
       await updateJobConfigs(
         jobId,
-        selectedPrinters.map(sid => ({
-          printer_id: Number(sid),
-          print_profile: perPrinter[sid].printProfile!,
-          filament_profile: perPrinter[sid].filamentProfile ?? null,
-          filament_id: perPrinter[sid].filamentId ?? null,
-          // "any" is the wire form of "no preference" — the backend rejects null/blank here.
-          filament_type: perPrinter[sid].filamentType ?? 'any',
-          filament_color: perPrinter[sid].filamentColor ?? 'any',
-          tool_index: perPrinter[sid].toolIndex ?? null,
-          filament_map: perPrinter[sid].filamentMap ?? null,
-        })),
+        printer_configs,
         Object.keys(confirmedOverrides).length > 0 ? confirmedOverrides : null,
+        model_targets,
       );
       navigate(`/jobs/${jobId}`);
     } catch (e) {
@@ -257,7 +267,9 @@ export function EditJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader title="Eligible printers"
                            sub="Which printers may claim this job. Configure slicing settings for each." />
+            {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
             <PrinterPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
+            <ModelPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
           </div>
 
           {/* Per-printer config */}
@@ -266,22 +278,27 @@ export function EditJobScreen() {
               <SectionHeader title="Slicing settings"
                              sub="Print profile and filament for each eligible printer." />
               <div className="col gap-3">
-                {selectedPrinters.map(sid => (
-                  <PerPrinterConfig
-                    key={sid}
-                    printerId={sid}
-                    printers={printers}
-                    config={perPrinter[sid] ?? defaultPerPrinterCfg()}
-                    onChange={patch => patchPerPrinter(sid, patch)}
-                    modelFilaments={modelFilaments}
-                  />
-                ))}
+                {selectedPrinters.map(sid => {
+                  const src = isModelKey(sid) ? modelConfigSource(sid, printers) : { printerId: sid, printers };
+                  if (!src) return null;
+                  return (
+                    <PerPrinterConfig
+                      key={sid}
+                      printerId={src.printerId}
+                      printers={src.printers}
+                      config={perPrinter[sid] ?? defaultPerPrinterCfg()}
+                      onChange={patch => patchPerPrinter(sid, patch)}
+                      modelFilaments={isModelKey(sid) ? undefined : modelFilaments}
+                      gcode={gcode}
+                    />
+                  );
+                })}
               </div>
             </div>
           )}
 
           {/* Embedded settings overrides */}
-          {embeddedSettings.length > 0 && (
+          {!gcode && embeddedSettings.length > 0 && (
             <div className="card" style={{ padding: 20 }}>
               <SectionHeader title="3MF Embedded Settings"
                              sub="Settings baked into the file. Check the ones you want to apply — unchecked ones use the profile default." />
@@ -319,12 +336,13 @@ export function EditJobScreen() {
                 {selectedPrinters.map(sid => {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
-                  const done = !!(pp?.printProfile);
+                  const label = isModelKey(sid) ? `Any ${machineProfileOf(sid)}` : (printer?.name ?? sid);
+                  const done = gcode ? !!pp : !!(pp?.printProfile);
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
                       <span className="small" style={{ flex: 1, minWidth: 0, color: done ? 'var(--text-1)' : 'var(--text-3)' }}>
-                        {printer?.name ?? sid}
+                        {label}
                       </span>
                     </div>
                   );
@@ -333,7 +351,7 @@ export function EditJobScreen() {
             </div>
           )}
 
-          {job && job.printer_configs.length > 0 && (
+          {job && !gcode && job.printer_configs.length > 0 && (
             <div className="card" style={{ padding: 18 }}>
               <div className="tag-key" style={{ marginBottom: 8 }}>Test slicer</div>
               <div className="col gap-2">
