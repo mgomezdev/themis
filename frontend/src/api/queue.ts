@@ -110,6 +110,7 @@ export interface SliceCacheInfo {
   slicer_version_current?: string | null;
   stale?: boolean | null;
   stale_reasons?: string[];
+  gate?: 'laminus_down' | null;   // claimed on this version while Laminus was down
   policy?: 'use_latest' | 'pin_cached' | null;
   save?: {
     outcome: 'saved' | 'duplicate' | 'failed';

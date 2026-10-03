@@ -37,6 +37,8 @@ _LEVELS = {
     "pack_reused": logging.INFO,
     "pack_new": logging.INFO,
     "version_detached": logging.INFO,
+    "gate_bypass": logging.INFO,             # Laminus down, but a cached version let a printer claim the job (BIZ-201)
+    "gate_bypass_released": logging.WARNING,  # ...and that version was gone by dispatch: job blocked again
 }
 MISS_REASONS = ("no_version", "stale_resliced", "file_missing", "uncacheable", "lookup_error", "cache_disabled")
 
@@ -235,7 +237,7 @@ def decision_info(
     decision: str, *, reason: str | None = None, cache_key: str | None, inputs: CacheKeyInputs | None = None,
     version: Any = None, cached_file_hash: str | None = None, current: SlicerFingerprint | None = None,
     stale: bool | None = None, stale_reasons: list[str] | None = None, policy: str | None = None,
-    previous: dict | None = None,
+    previous: dict | None = None, gate: str | None = None,
 ) -> dict:
     """The `jobs.slice_cache_info` record for a dispatch decision (`hit` | `miss`). Keeps a prior `save` outcome."""
     info: dict = {
@@ -255,6 +257,8 @@ def decision_info(
         "stale_reasons": stale_reasons or [],
         "policy": policy,
     }
+    if gate:   # the claim passed the Laminus health gate on this cached version (BIZ-201)
+        info["gate"] = gate
     if previous and previous.get("save"):
         info["save"] = previous["save"]
     return info
