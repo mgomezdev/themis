@@ -18,7 +18,7 @@ from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
-from ...services.library_scanner import library_abs_path
+from ...services.library_scanner import is_gcode_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services import model_targets, scheduling
@@ -59,7 +59,7 @@ class FilamentMapEntry(BaseModel):
 
 class PrinterConfigInput(BaseModel):
     printer_id: int
-    print_profile: str
+    print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced .gcode jobs
     filament_profile: str | None = None
     filament_id: int | None = None
     filament_type: str
@@ -90,7 +90,7 @@ class ModelTargetInput(BaseModel):
     """Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
     machine_profile: str
-    print_profile: str
+    print_profile: str = ""
     filament_profile: str | None = None
     filament_id: int | None = None
     filament_type: str = "any"
@@ -120,6 +120,23 @@ class ModelTargetInput(BaseModel):
         if not v or not v.strip():
             raise ValueError('must be "any" or a specific value, not null/blank')
         return v
+
+
+def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
+    """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
+    path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
+    grams, secs, per_extruder = _parse_gcode_estimates(str(path))
+    if grams is None and secs is None:
+        job.estimate_status = None
+        return
+    job.estimate_status = "done"
+    job.estimate_seconds = secs
+    job.estimate_filament_grams = grams
+    job.estimate_filament_breakdown = (
+        [{"extruder_index": i, "filament_profile": None, "grams": g} for i, g in enumerate(per_extruder)]
+        if per_extruder else None
+    )
+    job.estimate_preset_label = None
 
 
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
@@ -279,7 +296,8 @@ async def create_job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
         order_id=body.order_id,
-        overrides=_clean_overrides(body.overrides),
+        # Slicing overrides mean nothing to pre-sliced gcode; they are dropped, not stored.
+        overrides=None if is_gcode_file(uploaded_file) else _clean_overrides(body.overrides),
         queue_position=pos,
         status="queued",
         not_before=body.not_before,
@@ -311,6 +329,11 @@ async def create_job(
     await session.refresh(job)
 
     queue_engine.wake()
+
+    if is_gcode_file(uploaded_file):
+        _apply_gcode_estimate(job, uploaded_file)
+        await session.commit()
+        return _to_dict(job)
 
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
@@ -715,11 +738,18 @@ async def update_job_configs(
     job.status = "queued"
     job.block_reason = None
     job.assigned_printer_id = None
-    job.overrides = _clean_overrides(body.overrides)
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    gcode_job = is_gcode_file(uploaded_file)
+    job.overrides = None if gcode_job else _clean_overrides(body.overrides)
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
     queue_engine.wake()
+
+    if gcode_job:
+        _apply_gcode_estimate(job, uploaded_file)
+        await session.commit()
+        return _to_dict(job)
 
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
@@ -931,6 +961,9 @@ async def verify_slice(
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
 
+    if is_gcode_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced .gcode file; there is nothing to slice")
+
     if not printer.current_orca_printer_profile:
         return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
 
@@ -966,7 +999,7 @@ _manual_complete_in_flight: set[int] = set()
     responses={
         404: {"description": "Job, printer, or printer config not found"},
         409: {"description": "Job is terminal, or already being manually completed"},
-        422: {"description": "No OrcaSlicer machine preset on the printer, or the slice failed"},
+        422: {"description": "No OrcaSlicer machine preset on the printer, the job prints pre-sliced gcode, or the slice failed"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )

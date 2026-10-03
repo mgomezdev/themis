@@ -3148,7 +3148,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf or .stl file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
+        "description": "Upload a .3mf, .stl or .gcode file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
@@ -3174,7 +3174,7 @@
             }
           },
           "422": {
-            "description": "Unsupported file type (only .3mf and .stl accepted)"
+            "description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"
           }
         }
       }
@@ -4343,7 +4343,7 @@
             "description": "Job is terminal, or already being manually completed"
           },
           "422": {
-            "description": "No OrcaSlicer machine preset on the printer, or the slice failed"
+            "description": "No OrcaSlicer machine preset on the printer, the job prints pre-sliced gcode, or the slice failed"
           }
         }
       }
@@ -9106,7 +9106,8 @@
           },
           "print_profile": {
             "type": "string",
-            "title": "Print Profile"
+            "title": "Print Profile",
+            "default": ""
           },
           "filament_profile": {
             "anyOf": [
@@ -9158,8 +9159,7 @@
         },
         "type": "object",
         "required": [
-          "machine_profile",
-          "print_profile"
+          "machine_profile"
         ],
         "title": "ModelTargetInput",
         "description": "Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
@@ -9777,7 +9777,8 @@
           },
           "print_profile": {
             "type": "string",
-            "title": "Print Profile"
+            "title": "Print Profile",
+            "default": ""
           },
           "filament_profile": {
             "anyOf": [
@@ -9839,7 +9840,6 @@
         "type": "object",
         "required": [
           "printer_id",
-          "print_profile",
           "filament_type",
           "filament_color"
         ],

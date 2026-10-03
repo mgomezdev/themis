@@ -84,7 +84,7 @@ export function buildEligibility(
     const pp = perPrinter[key];
     // "any" is the wire form of "no preference" — the backend rejects null/blank here.
     const ask = {
-      print_profile: pp.printProfile!,
+      print_profile: pp.printProfile ?? '',   // gcode jobs have none
       filament_profile: pp.filamentProfile ?? null,
       filament_id: pp.filamentId ?? null,
       filament_type: pp.filamentType ?? 'any',

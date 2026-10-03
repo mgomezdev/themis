@@ -6,6 +6,7 @@ import type { ApiPrinter } from '../api/printers';
 import { getJobDetails, updateJobConfigs, getModelFilaments, getEmbeddedSettings, verifySlice, type ApiJobDetails, type ModelFilament, type EmbeddedSetting } from '../api/queue';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { OverridePanel } from '../components/OverridePanel';
+import { GcodeWarning } from '../components/GcodeWarning';
 import { ModelPicker, buildEligibility, isModelKey, machineProfileOf, modelConfigSource, modelKey } from '../components/ModelTargets';
 import { apiFetch } from '../api/client';
 
@@ -170,9 +171,12 @@ export function EditJobScreen() {
     setPerPrinter(prev => ({ ...prev, [sid]: { ...prev[sid], ...patch } }));
   }
 
+  // A pre-sliced .gcode job is never sliced: no print profile, no 3MF overrides, no test slice.
+  const gcode = !!job?.file?.original_filename.toLowerCase().endsWith('.gcode');
+
   const isComplete = selectedPrinters.length > 0 && selectedPrinters.every(sid => {
     const pp = perPrinter[sid];
-    return !!(pp?.printProfile);
+    return gcode ? !!pp : !!(pp?.printProfile);
   });
 
   async function handleSave() {
@@ -263,6 +267,7 @@ export function EditJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader title="Eligible printers"
                            sub="Which printers may claim this job. Configure slicing settings for each." />
+            {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
             <PrinterPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
             <ModelPicker printers={printers} selected={selectedPrinters} onToggle={togglePrinter} />
           </div>
@@ -284,6 +289,7 @@ export function EditJobScreen() {
                       config={perPrinter[sid] ?? defaultPerPrinterCfg()}
                       onChange={patch => patchPerPrinter(sid, patch)}
                       modelFilaments={isModelKey(sid) ? undefined : modelFilaments}
+                      gcode={gcode}
                     />
                   );
                 })}
@@ -292,7 +298,7 @@ export function EditJobScreen() {
           )}
 
           {/* Embedded settings overrides */}
-          {embeddedSettings.length > 0 && (
+          {!gcode && embeddedSettings.length > 0 && (
             <div className="card" style={{ padding: 20 }}>
               <SectionHeader title="3MF Embedded Settings"
                              sub="Settings baked into the file. Check the ones you want to apply — unchecked ones use the profile default." />
@@ -331,7 +337,7 @@ export function EditJobScreen() {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
                   const label = isModelKey(sid) ? `Any ${machineProfileOf(sid)}` : (printer?.name ?? sid);
-                  const done = !!(pp?.printProfile);
+                  const done = gcode ? !!pp : !!(pp?.printProfile);
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>
                       <span style={{ width: 8, height: 8, borderRadius: '50%', flexShrink: 0, background: done ? 'var(--ok)' : 'var(--warn)', boxShadow: done ? '0 0 4px var(--ok)' : 'none' }} />
@@ -345,7 +351,7 @@ export function EditJobScreen() {
             </div>
           )}
 
-          {job && job.printer_configs.length > 0 && (
+          {job && !gcode && job.printer_configs.length > 0 && (
             <div className="card" style={{ padding: 18 }}>
               <div className="tag-key" style={{ marginBottom: 8 }}>Test slicer</div>
               <div className="col gap-2">

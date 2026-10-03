@@ -67,7 +67,7 @@ describe('NewJobScreen - upload failures', () => {
     await upload('big.3mf');
     expect(await screen.findByText('Upload failed: 413 file too large')).toBeTruthy();
     expect(screen.queryByText('Barnabus')).toBeNull();
-    expect(screen.getAllByText(/Drop a \.3mf or \.stl file/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Drop a \.3mf, \.stl or \.gcode file/i).length).toBeGreaterThan(0);
 
     await upload('model.3mf');
 
@@ -81,7 +81,7 @@ describe('NewJobScreen - upload failures', () => {
 
     await upload('notes.txt', userEvent.setup({ applyAccept: false }));
 
-    expect(await screen.findByText('Only .3mf and .stl files are supported.')).toBeTruthy();
+    expect(await screen.findByText('Only .3mf, .stl and .gcode files are supported.')).toBeTruthy();
     expect(api.to('POST', '/api/v1/files/upload')).toEqual([]);
   });
 
@@ -112,7 +112,7 @@ describe('NewJobScreen - creating the job', () => {
       }],
       model_targets: [],
     }]);
-    expect(screen.getAllByText(/Drop a \.3mf or \.stl file/i).length).toBeGreaterThan(0);   // ready for the next file
+    expect(screen.getAllByText(/Drop a \.3mf, \.stl or \.gcode file/i).length).toBeGreaterThan(0);   // ready for the next file
     await userEvent.click(screen.getByRole('button', { name: 'view queue' }));
     expect(where()).toBe('/queue');
   });
@@ -134,6 +134,29 @@ describe('NewJobScreen - creating the job', () => {
         filament_id: null, filament_type: 'any', filament_color: 'any',
       }],
     }]);
+  });
+
+  it('queues a .gcode file without a print profile, warning about the printer match and skipping slicing reads', async () => {
+    localStorage.clear();
+    const api = open([plate(1)], { 'POST /api/v1/files/upload': { id: 42, original_filename: 'part.gcode' } });
+    await upload('part.gcode');
+
+    expect(await screen.findByTestId('gcode-warning')).toBeTruthy();
+    await userEvent.click(await screen.findByText('Barnabus'));
+    expect(screen.queryByTestId('print-profile-select')).toBeNull();   // nothing to slice
+    await userEvent.click(addButton());
+
+    expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
+    expect(jobPosts(api).map(c => c.body)).toEqual([{
+      uploaded_file_id: 42, plate_number: 1, order_id: null, overrides: null,
+      printer_configs: [{
+        printer_id: 1, print_profile: '', filament_profile: null, filament_id: null,
+        filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
+      }],
+      model_targets: [],
+    }]);
+    expect(api.to('GET', '/api/v1/files/42/embedded-settings')).toEqual([]);
+    expect(api.to('GET', '/api/v1/files/42/model-filaments')).toEqual([]);
   });
 
   it('shows why the server refused the job and keeps everything editable for a retry', async () => {
