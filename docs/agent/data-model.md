@@ -5,7 +5,7 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (24)
+## Tables (25)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -23,8 +23,9 @@ jobs                ← job_printer_configs.job_id, gcode_files.job_id, job_item
 job_printer_configs  ← (model_target_id, plain int → job_model_targets.id, no FK)
 job_model_targets   (job_id CASCADE; v031)
 gcode_files
+sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
-                       estimates_enabled)
+                       estimates_enabled, slice_cache_use_latest_settings)
 spoolman_config     (enabled, url, api_key)
 webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
 notification_config (singleton id=1: ntfy/discord/email — see its own section below)
@@ -159,6 +160,28 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   loaded slots ordered by tool as N `filament_presets` and forwards the map into `SliceRequest`;
   `_mapped_tools_loaded` gates eligibility on every mapped tool having a loaded filament.
 
+### sliced_versions  (v033 — slicing cache, BIZ-189)
+A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCADE) is what model `source_file_id`
+(SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
+process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
+`SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` → `cache_key` = sha256 of
+their canonical JSON (`services/slice_cache.cache_key`; filament colour is deliberately **not** in it). Non-key:
+`preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (Laminus
+`/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
+unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
+`created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
+
+Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version),
+`allow_cached_slice: bool` (print a matching version instead of slicing when claimed), `sliced_version_id?` (plain int —
+the version it printed), `slice_cache_info: JSON?` (latest decision `{decision: hit|miss, reason?, at, cache_key,
+source_content_hash, sliced_version_id?, cached_file_id?, cached_file_hash?, preset_content_hash_stored/current?,
+slicer_version_stored/current?, stale?, stale_reasons, policy: use_latest|pin_cached, save?: {outcome:
+saved|duplicate|failed, sliced_version_id?, cache_key, file_id?, error?, at}}`). `uploaded_files.pack_recipe_hash?`
+(project packs). `queue_config.slice_cache_use_latest_settings: bool = True` (on: automatic reuse reslices a stale
+version; off: it still prints, flagged stale). Every decision also logs one line `slice_cache event=<lookup|
+hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack_new> key=value …` on logger
+`app.services.slice_cache` (`grep slice_cache` in `docker compose logs themis`).
+
 ### gcode_files
 `id, job_id FK, printer_id FK, path, filament_grams: float?, estimated_seconds: int?`.
 - `filament_grams` / `estimated_seconds`: parsed from the gcode header after slice completes (OrcaSlicer
@@ -186,7 +209,7 @@ on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both)
 
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
-estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-slice estimate pipeline
+estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline
 (see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
 Managed via `GET/PUT /api/v1/settings/queue`.
 

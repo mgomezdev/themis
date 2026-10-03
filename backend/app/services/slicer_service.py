@@ -47,6 +47,66 @@ class SliceRequest:
     extra_config: dict = field(default_factory=dict)
 
 
+def resolve_preset_uuids(
+    machine_preset: str, process_preset: str, filament_presets: list[str], sidecar_url: str,
+) -> "tuple[str, str, list[str]]":
+    """Look up profile UUIDs from the sidecar catalog by name.
+
+    Returns (machine_uuid, process_uuid, [filament_uuid, ...]). Raises SliceError
+    naming the specific preset(s) and kind that didn't resolve, so the user knows
+    exactly what to fix instead of re-checking three presets at once.
+    """
+    # Prefer the Themis-side catalog cache (populated at boot) over a fresh
+    # sidecar call. Falls back to a direct fetch only if not yet warmed.
+    from ..api.routes import laminus as _laminus_module
+    catalog = _laminus_module._catalog_dict
+    if catalog is None:
+        try:
+            from .laminus_sidecar_client import LaminusSidecarClient
+            catalog = LaminusSidecarClient(sidecar_url).get_catalog()
+            _laminus_module._catalog_dict = catalog
+        except Exception as exc:
+            logger.warning("Could not fetch sidecar catalog: %s", exc)
+            raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
+    machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
+    process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
+    filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
+
+    machine_uuid = machine_map.get(machine_preset)
+    process_uuid = process_map.get(process_preset)
+
+    # Name every unresolved preset and its kind — not just "something didn't match".
+    missing: list[str] = []
+    if not machine_uuid:
+        missing.append(f"machine preset {machine_preset!r}")
+    if not process_uuid:
+        missing.append(f"process preset {process_preset!r}")
+
+    filament_uuids = []
+    missing_filaments: list[str] = []
+    for name in filament_presets:
+        fid = filament_map.get(name)
+        if fid:
+            filament_uuids.append(fid)
+        else:
+            missing_filaments.append(name)
+    if not filament_presets:
+        missing.append("no filament preset was supplied")
+    elif missing_filaments:
+        missing.append(f"filament preset(s) {missing_filaments!r}")
+
+    if missing:
+        detail = "; ".join(missing)
+        logger.warning("Sidecar UUID miss — %s", detail)
+        raise SliceError(
+            f"{detail} — not found in Laminus sidecar catalog. Refresh the profile "
+            f"sync from Laminus so the picker offers valid choices, then re-select "
+            f"the affected preset(s)."
+        )
+
+    return machine_uuid, process_uuid, filament_uuids
+
+
 class SlicerService:
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
@@ -81,61 +141,7 @@ class SlicerService:
         req: SliceRequest,
         sidecar_url: str,
     ) -> "tuple[str, str, list[str]]":
-        """Look up profile UUIDs from the sidecar catalog by name.
-
-        Returns (machine_uuid, process_uuid, [filament_uuid, ...]). Raises SliceError
-        naming the specific preset(s) and kind that didn't resolve, so the user knows
-        exactly what to fix instead of re-checking three presets at once.
-        """
-        # Prefer the Themis-side catalog cache (populated at boot) over a fresh
-        # sidecar call. Falls back to a direct fetch only if not yet warmed.
-        from ..api.routes import laminus as _laminus_module
-        catalog = _laminus_module._catalog_dict
-        if catalog is None:
-            try:
-                from .laminus_sidecar_client import LaminusSidecarClient
-                catalog = LaminusSidecarClient(sidecar_url).get_catalog()
-                _laminus_module._catalog_dict = catalog
-            except Exception as exc:
-                logger.warning("Could not fetch sidecar catalog: %s", exc)
-                raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
-        machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
-        process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
-        filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
-
-        machine_uuid = machine_map.get(req.machine_preset)
-        process_uuid = process_map.get(req.process_preset)
-
-        # Name every unresolved preset and its kind — not just "something didn't match".
-        missing: list[str] = []
-        if not machine_uuid:
-            missing.append(f"machine preset {req.machine_preset!r}")
-        if not process_uuid:
-            missing.append(f"process preset {req.process_preset!r}")
-
-        filament_uuids = []
-        missing_filaments: list[str] = []
-        for name in req.filament_presets:
-            fid = filament_map.get(name)
-            if fid:
-                filament_uuids.append(fid)
-            else:
-                missing_filaments.append(name)
-        if not req.filament_presets:
-            missing.append("no filament preset was supplied")
-        elif missing_filaments:
-            missing.append(f"filament preset(s) {missing_filaments!r}")
-
-        if missing:
-            detail = "; ".join(missing)
-            logger.warning("Sidecar UUID miss — %s", detail)
-            raise SliceError(
-                f"{detail} — not found in Laminus sidecar catalog. Refresh the profile "
-                f"sync from Laminus so the picker offers valid choices, then re-select "
-                f"the affected preset(s)."
-            )
-
-        return machine_uuid, process_uuid, filament_uuids
+        return resolve_preset_uuids(req.machine_preset, req.process_preset, req.filament_presets, sidecar_url)
 
     def _execute_slice_by_ids(
         self,

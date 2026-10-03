@@ -483,3 +483,21 @@ async def test_notifications_test_email_missing_field(client: AsyncClient):
     body = resp.json()
     assert body["ok"] is False
     assert "message" in body
+
+
+async def test_slice_cache_stale_policy_defaults_on_and_round_trips(client: AsyncClient, session_factory):
+    """BIZ-191: 'always use latest slicer settings' is on by default; turning it off persists and leaves the other
+    queue settings alone."""
+    from app.models import QueueConfig
+    assert (await client.get("/api/v1/settings/queue")).json()["slice_cache_use_latest_settings"] is True
+
+    resp = await client.put("/api/v1/settings/queue", json={"slice_cache_use_latest_settings": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["slice_cache_use_latest_settings"] is False
+    async with session_factory() as s:
+        row = await s.get(QueueConfig, 1)
+        assert row.slice_cache_use_latest_settings is False
+        assert row.check_interval_minutes == 5
+    resp = await client.put("/api/v1/settings/queue", json={"operator_name": "x"})
+    assert resp.json()["slice_cache_use_latest_settings"] is False   # omitted ⇒ unchanged

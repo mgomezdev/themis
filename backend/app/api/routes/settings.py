@@ -29,6 +29,8 @@ class QueueConfigOut(BaseModel):
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
+    # Slicing cache (BIZ-191): reslice a cached version whose presets/slicer changed (True) or still print it (False).
+    slice_cache_use_latest_settings: bool
 
 
 class QueueConfigIn(BaseModel):
@@ -36,6 +38,7 @@ class QueueConfigIn(BaseModel):
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
+    slice_cache_use_latest_settings: bool | None = None
 
 
 class CostConfigModel(BaseModel):
@@ -69,7 +72,8 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False)
+        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False,
+                          slice_cache_use_latest_settings=True)
         session.add(row)
         await session.flush()
     return row
@@ -78,7 +82,8 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
 @router.get("/queue", response_model=QueueConfigOut, summary="Get queue config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_queue_config(session: AsyncSession = Depends(get_session)):
-    """Queue engine settings: poll interval, operator name, and snapshot interval."""
+    """Queue engine settings: poll interval, operator name, snapshot interval, background estimates, and the slicing
+    cache's stale-version policy."""
     return await _get_or_create_queue(session)
 
 
@@ -103,6 +108,8 @@ async def update_queue_config(
             await session.execute(
                 _text("UPDATE jobs SET estimate_status=NULL WHERE estimate_status='pending'")
             )
+    if body.slice_cache_use_latest_settings is not None:
+        row.slice_cache_use_latest_settings = body.slice_cache_use_latest_settings
     await session.commit()
     await session.refresh(row)
     return row
