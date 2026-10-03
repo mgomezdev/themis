@@ -36,6 +36,36 @@ from . import scheduling
 from . import webhook_service
 
 
+_HEADER_BYTES = 16000
+_TAIL_BYTES = 64000   # OrcaSlicer writes the "filament used" / "estimated printing time" summary at the END of the file
+
+
+def _gcode_summary_text(path: str, plate: int | None) -> str | None:
+    """The head + tail of a gcode file (or of one plate's gcode inside a sliced .gcode.3mf archive) — where slicers
+    put the estimate lines — without reading the whole (often multi-MB) file into memory."""
+    if path.lower().endswith(".3mf"):
+        with zipfile.ZipFile(path) as z:
+            names = sorted(n for n in z.namelist() if n.endswith(".gcode"))
+            if not names:
+                return None
+            wanted = f"Metadata/plate_{plate}.gcode"
+            with z.open(wanted if wanted in names else names[0]) as fh:
+                head = fh.read(_HEADER_BYTES)
+                tail = b""
+                while chunk := fh.read(1 << 20):   # stream (zip members can't seek cheaply); keep only the end
+                    tail = (tail + chunk)[-_TAIL_BYTES:]
+        return (head + b"\n" + tail).decode("utf-8", errors="replace")
+    with open(path, "rb") as f:
+        head = f.read(_HEADER_BYTES)
+        f.seek(0, os.SEEK_END)
+        size = f.tell()
+        tail = b""
+        if size > _HEADER_BYTES:
+            f.seek(max(_HEADER_BYTES, size - _TAIL_BYTES))
+            tail = f.read()
+    return (head + b"\n" + tail).decode("utf-8", errors="replace")
+
+
 def _parse_gcode_estimates(
     path: str, plate: int | None = None,
 ) -> tuple[float | None, int | None, list[float] | None]:
@@ -43,21 +73,15 @@ def _parse_gcode_estimates(
 
     Returns (total_grams, seconds, extruder_grams_list). extruder_grams_list has one
     entry per comma-separated value in the 'filament used [g]' line. Returns None for
-    each field independently if parsing fails. For a sliced archive (.gcode.3mf), `plate`
-    picks that plate's `Metadata/plate_N.gcode`; otherwise the first gcode in it is read.
+    each field independently if parsing fails. Both the start and the end of the file are
+    searched. For a sliced archive (.gcode.3mf), `plate` picks that plate's
+    `Metadata/plate_N.gcode`; otherwise the first gcode in it is read.
     """
     try:
-        if path.endswith(".3mf"):
-            with zipfile.ZipFile(path) as z:
-                names = sorted(n for n in z.namelist() if n.endswith(".gcode"))
-                if not names:
-                    return None, None, None
-                wanted = f"Metadata/plate_{plate}.gcode"
-                text = z.read(wanted if wanted in names else names[0]).decode("utf-8", errors="replace")[:16000]
-        else:
-            with open(path, "r", errors="replace") as f:
-                text = f.read(16000)
+        text = _gcode_summary_text(path, plate)
     except Exception:
+        return None, None, None
+    if text is None:
         return None, None, None
 
     grams: float | None = None
@@ -65,7 +89,7 @@ def _parse_gcode_estimates(
     seconds: int | None = None
     for raw in text.splitlines():
         line = raw.lstrip("; ").strip()
-        if "filament used [g]" in line.lower():
+        if grams is None and "filament used [g]" in line.lower():
             raw_val = line.split("=")[-1].strip()
             parts = [p.strip() for p in raw_val.split(",")]
             try:
@@ -74,11 +98,13 @@ def _parse_gcode_estimates(
             except ValueError:
                 extruder_grams = None
                 grams = None
-        if "estimated printing time" in line.lower():
+        if seconds is None and "estimated printing time" in line.lower():
             time_str = re.split(r"\s*\(", line.split("=")[-1].strip())[0].strip()
             total = 0
-            for num, unit in re.findall(r"(\d+)([hms])", time_str):
-                if unit == "h":
+            for num, unit in re.findall(r"(\d+)([dhms])", time_str):
+                if unit == "d":
+                    total += int(num) * 86400
+                elif unit == "h":
                     total += int(num) * 3600
                 elif unit == "m":
                     total += int(num) * 60
@@ -784,10 +810,17 @@ class QueueEngine:
             await self._block_job(session, job, mismatch)
             return
 
+        # A pre-sliced file only goes to a printer that prints that format as-is (create/PATCH and target sync already
+        # refuse the rest; this catches configs that predate that check). Block, never fail — failed is terminal.
+        source_file = await session.get(UploadedFile, job.uploaded_file_id)
+        if source_file is not None and not model_targets.accepts_file(printer.printer_type, source_file.original_filename):
+            await self._block_job(session, job, f"{printer.name} can't print this pre-sliced file as-is")
+            return
+
         # Pre-flight: ensure Laminus is reachable before claiming this job.
         # Block (not fail) so the job auto-retries when Laminus comes back.
         # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
-        if not is_presliced_file(await session.get(UploadedFile, job.uploaded_file_id)):
+        if not is_presliced_file(source_file):
             sidecar_url = get_laminus_sidecar_url()
             if not sidecar_url:
                 await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")

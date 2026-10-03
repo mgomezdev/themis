@@ -75,7 +75,13 @@ class LibraryScanner:
         candidate = folder_abs / filename
         if not candidate.exists():
             return candidate
-        stem, suffix = Path(filename).stem, Path(filename).suffix
+        # A sliced archive's suffix is the whole `.gcode.3mf`: splitting at the last dot would give "x (2).3mf" —
+        # a name that reads back as a sliceable model (BIZ-190).
+        if file_kind(filename) == "gcode_3mf":
+            suffix = filename[-len(SLICED_ARCHIVE_SUFFIX):]
+            stem = filename[: -len(SLICED_ARCHIVE_SUFFIX)]
+        else:
+            stem, suffix = Path(filename).stem, Path(filename).suffix
         n = 2
         while True:
             candidate = folder_abs / f"{stem} ({n}){suffix}"

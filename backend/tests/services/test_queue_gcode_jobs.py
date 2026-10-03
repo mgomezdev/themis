@@ -100,7 +100,7 @@ async def test_gcode_job_missing_from_library_blocks_instead_of_failing(session_
 async def test_sliced_archive_job_prints_without_slicing_and_keeps_its_extension(session_factory, tmp_path, monkeypatch):
     """BIZ-190: a .gcode.3mf is pre-sliced too — staged with its full extension (the printer tells the formats apart by
     it) and the plate's own estimate recorded."""
-    from tests.api.test_sliced_archive_jobs import make_sliced_archive
+    from tests.conftest import make_sliced_archive
     library = tmp_path / "library"
     monkeypatch.setenv("THEMIS_LIBRARY_DIR", str(library))
     mgr = _make_mock_printer_manager([1])
@@ -138,3 +138,30 @@ async def test_sliced_archive_job_prints_without_slicing_and_keeps_its_extension
         job = await s.get(Job, job_id)
         assert (job.actual_filament_grams, job.actual_seconds) == (7.5, 1200)
     assert (library / "My Part.gcode.3mf").read_bytes() == archive
+
+
+@pytest.mark.asyncio
+async def test_presliced_job_on_a_printer_that_cannot_take_it_blocks_instead_of_failing(
+        session_factory, tmp_path, monkeypatch):
+    """A config that predates the create-time check (raw .gcode on a Bambu): blocked at claim, nothing sent."""
+    library = tmp_path / "library"
+    monkeypatch.setenv("THEMIS_LIBRARY_DIR", str(library))
+    mgr = _make_mock_printer_manager([1])
+    slicer = MagicMock()
+    slicer._data_dir = tmp_path / "data"
+    qe = QueueEngine(session_factory, mgr, slicer)
+    _install_fake_put(qe)
+    job_id, _ = await _seed(session_factory, library)
+    async with session_factory() as s:
+        (await s.get(Printer, 1)).printer_type = "bambu"
+        await s.commit()
+
+    await qe._process_queue()
+    await settle_background_tasks()
+
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        assert job.status == "blocked"
+        assert "pre-sliced" in (job.block_reason or "")
+    mgr.get_client.return_value.start_print.assert_not_called()
+    mgr.get_client.return_value.upload_file.assert_not_called()

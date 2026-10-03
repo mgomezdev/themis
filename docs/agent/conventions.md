@@ -28,7 +28,9 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   printers or a make/model target (BIZ-187). Vendors that only ingest a sliced archive set
   `raw_gcode_supported = False` (Bambu — raw-gcode start unverified); a `.gcode.3mf` needs `sliced_archive_supported = True`
   (Bambu only). `model_targets.accepts_file(printer_type, filename)` is the one check: a job on a file a printer can't
-  take is 422'd for that explicit printer/model and never materialized onto it. A staged copy keeps the full extension.
+  take is 422'd for that explicit printer/model and never materialized onto it, and a config that slipped through
+  blocks (never fails) at claim. A staged copy, and `LibraryScanner.unique_path`'s "name (2)" collision rename, keep the
+  full `.gcode.3mf` suffix. A job on an archive must name a plate the archive has (422 otherwise).
 - **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
   for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
   `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy

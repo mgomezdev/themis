@@ -1,7 +1,5 @@
 """Library files and jobs on a pre-sliced .gcode.3mf archive (BIZ-190): a sliced archive is not a sliceable model —
 it's printed as-is, only by vendors that ingest that archive (Bambu)."""
-import io
-import zipfile
 from unittest.mock import patch
 
 import pytest
@@ -10,25 +8,9 @@ from sqlalchemy import select
 from app.models import Job, JobPrinterConfig
 from app.services.library_scanner import file_kind, is_presliced_name
 from app.services.model_targets import accepts_file
+from tests.conftest import make_sliced_archive
 
 P1S = "Bambu Lab P1S 0.4"
-
-
-def _plate_gcode(grams: float, mins: int) -> bytes:
-    return (f"; filament used [g] = {grams}\n; estimated printing time (normal mode) = {mins}m 0s\nG28\n").encode()
-
-
-def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20))) -> bytes:
-    """A Bambu-style sliced archive: `Metadata/plate_N.gcode` (+ a thumbnail for plate 1). Fixed zip timestamps so
-    the content hash is stable."""
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as zf:
-        def put(name, data):
-            zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)
-        for num, grams, mins in plates:
-            put(f"Metadata/plate_{num}.gcode", _plate_gcode(grams, mins))
-        put("Metadata/plate_1.png", b"\x89PNG-archive")
-    return buf.getvalue()
 
 
 @pytest.fixture
@@ -163,3 +145,87 @@ async def test_rescan_indexes_a_hand_added_archive_as_sliced(client, library, tm
     assert listed["kind"] == "gcode_3mf"
     plates = (await client.get(f"/api/v1/files/{listed['id']}/plates")).json()["plates"]
     assert [(p["plate_number"], p["estimated_time"], p["filament_g"]) for p in plates] == [(3, 300, 1.5)]
+
+
+async def test_a_name_collision_keeps_the_archive_suffix_whole(client, library, upload_3mf):
+    """Two different archives called the same: the second is "part (2).gcode.3mf", not "part.gcode (2).3mf" — which
+    would read back as a sliceable model."""
+    await upload_3mf("part.gcode.3mf", make_sliced_archive())
+    second = await upload_3mf("part.gcode.3mf", make_sliced_archive(((1, 9.0, 30),)))
+
+    listed = next(f for f in (await client.get("/api/v1/files")).json() if f["id"] == second)
+    assert (listed["original_filename"], listed["kind"]) == ("part (2).gcode.3mf", "gcode_3mf")
+
+
+async def test_an_uppercase_archive_name_still_reads_each_plate(client, library, upload_3mf):
+    file_id = await upload_3mf("PART.GCODE.3MF", make_sliced_archive())
+    plates = (await client.get(f"/api/v1/files/{file_id}/plates")).json()["plates"]
+    assert [(p["plate_number"], p["estimated_time"], p["filament_g"]) for p in plates] == [(1, 600, 4.0), (2, 1200, 7.5)]
+
+
+async def test_archive_estimates_prefer_slice_info(client, library, upload_3mf, tmp_path):
+    """slice_info.config is the archive's authoritative per-plate summary; the gcode lines are only a fallback."""
+    import io
+    import zipfile
+    raw = make_sliced_archive(((1, 4.0, 10),), slice_info=True)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(raw)) as src, zipfile.ZipFile(buf, "w") as dst:
+        for info in src.infolist():
+            data = src.read(info)
+            if info.filename == "Metadata/slice_info.config":
+                data = data.replace(b'value="600"', b'value="777"').replace(b'value="4.0"', b'value="5.5"')
+            dst.writestr(info, data)
+    file_id = await upload_3mf("info.gcode.3mf", buf.getvalue())
+    plates = (await client.get(f"/api/v1/files/{file_id}/plates")).json()["plates"]
+    assert [(p["estimated_time"], p["filament_g"]) for p in plates] == [(777, 5.5)]
+
+
+async def test_archive_job_refused_for_a_plate_the_file_does_not_have(client, library, upload_3mf, create_printer):
+    resp = await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive(((3, 1.0, 5),))),
+        "plate_number": 1,
+        "printer_configs": [_cfg(await create_printer())],
+    })
+    assert resp.status_code == 422
+    assert "Plate 1 is not in this file" in resp.json()["detail"]
+
+
+async def test_editing_an_archive_job_drops_overrides_and_keeps_the_header_estimate(
+        client, library, upload_3mf, create_printer):
+    from app.services.override_inspector import CURATED_KEYS
+    pid = await create_printer()
+    job_id = (await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
+        "printer_configs": [_cfg(pid)],
+    })).json()["id"]
+
+    with patch("app.api.routes.jobs.queue_engine") as qe:
+        resp = await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
+            "printer_configs": [_cfg(pid)], "overrides": {sorted(CURATED_KEYS)[0]: "0.1"}})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["overrides"] is None
+    assert (resp.json()["estimate_status"], resp.json()["estimate_seconds"]) == ("done", 600)
+    qe.spawn_estimate.assert_not_called()
+
+
+async def test_target_sync_only_adds_archive_jobs_to_printers_that_take_archives(
+        client, library, upload_3mf, create_printer, session_factory):
+    """A printer that joins a make/model later gets the waiting archive job only if it prints archives."""
+    from app.models import Printer
+    from app.services import model_targets
+    bambu = await create_printer(name="bambu", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    job_id = (await _post(client, {
+        "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
+        "model_targets": [{"machine_profile": P1S}],
+    })).json()["id"]
+    late_bambu = await create_printer(name="bambu2", current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    centauri = await create_printer(name="centauri", printer_type="elegoo_centauri",
+                                    current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+
+    async with session_factory() as s:
+        for pid in (late_bambu, centauri):
+            await model_targets.sync_targets_for_printer(s, await s.get(Printer, pid))
+        await s.commit()
+        rows = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
+    assert sorted(r.printer_id for r in rows) == sorted([bambu, late_bambu])

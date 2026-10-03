@@ -222,16 +222,36 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
     return plates
 
 
+def _sliced_plate_meta(zf: zipfile.ZipFile, names: set[str]) -> dict[int, tuple[int, float]]:
+    """Per-plate (seconds, grams) from a sliced archive's `Metadata/slice_info.config` — the XML Bambu Studio /
+    OrcaSlicer write next to the plate gcode (`<plate><metadata key="index"|"prediction"|"weight" value=…/>`)."""
+    if "Metadata/slice_info.config" not in names:
+        return {}
+    try:
+        root = ET.fromstring(zf.read("Metadata/slice_info.config"))
+    except Exception:
+        return {}
+    out: dict[int, tuple[int, float]] = {}
+    for plate in root.iter("plate"):
+        meta = {m.get("key"): m.get("value") for m in plate.findall("metadata")}
+        try:
+            out[int(meta["index"])] = (int(float(meta.get("prediction") or 0)), float(meta.get("weight") or 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) -> list[PlateInfo]:
-    """Plates of a sliced archive (.gcode.3mf, BIZ-190): one per `Metadata/plate_N.gcode`, with the estimate read
-    from that plate's gcode header and the thumbnail from the archive's own `Metadata/plate_N.png`. Returns [] for a
-    corrupt/unreadable ZIP, like its siblings."""
+    """Plates of a sliced archive (.gcode.3mf, BIZ-190): one per `Metadata/plate_N.gcode`, with the estimate from the
+    archive's `slice_info.config` (falling back to that plate's gcode summary lines) and the thumbnail from the
+    archive's own `Metadata/plate_N.png`. Returns [] for a corrupt/unreadable ZIP, like its siblings."""
     from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports the library scanner
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
             names = set(zf.namelist())
             gcode_re = re.compile(r"Metadata/plate_(\d+)\.gcode$")
             plate_numbers = sorted(int(m.group(1)) for n in names if (m := gcode_re.match(n)))
+            meta = _sliced_plate_meta(zf, names)
             thumbs: dict[int, str] = {}
             if thumbnail_dir:
                 Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
@@ -244,7 +264,10 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
         return []
     plates = []
     for num in plate_numbers:
-        grams, secs, _ = _parse_gcode_estimates(file_path, plate=num)
+        secs, grams = meta.get(num, (0, 0.0))
+        if not secs or not grams:
+            g_grams, g_secs, _ = _parse_gcode_estimates(file_path, plate=num)
+            secs, grams = secs or g_secs or 0, grams or g_grams or 0.0
         plates.append(PlateInfo(plate_number=num, thumbnail_path=thumbs.get(num),
-                                estimated_time=secs or 0, filament_g=grams or 0.0))
+                                estimated_time=secs, filament_g=grams))
     return plates

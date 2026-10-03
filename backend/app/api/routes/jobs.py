@@ -154,18 +154,20 @@ async def _check_gcode_printers(
     if not is_presliced_file(uploaded_file):
         return
     filename = uploaded_file.original_filename
-    what = "a sliced .gcode.3mf archive" if file_kind(filename) == "gcode_3mf" else "a raw .gcode file"
-    need = "raw gcode" if file_kind(filename) == "gcode_3mf" else "a sliced 3MF"
+    if file_kind(filename) == "gcode_3mf":
+        why = "only prints raw .gcode, not a sliced .gcode.3mf archive"
+    else:
+        why = "can't print a raw .gcode file — it needs a sliced 3MF"
     for cfg in configs:
         printer = await session.get(Printer, cfg.printer_id)
         if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
-            raise HTTPException(422, f"{printer.name} can't print {what} — it needs {need}")
+            raise HTTPException(422, f"{printer.name} {why}")
     for t in targets:
         matching = (await session.execute(
             select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile)
         )).scalars().all()
         if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
-            raise HTTPException(422, f"No {t.machine_profile} printer can print {what} — it needs {need}")
+            raise HTTPException(422, f"No {t.machine_profile} printer can take this file: each one {why}")
 
 
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
@@ -315,6 +317,12 @@ async def create_job(
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
     await _check_gcode_printers(session, uploaded_file, body.printer_configs, body.model_targets)
+    # A pre-sliced archive prints exactly the plate asked for (Bambu is told `Metadata/plate_N.gcode`): a plate the
+    # file doesn't have would only fail at print time, and failed is terminal.
+    plates = [p.get("plate_number") for p in (uploaded_file.plates or [])]
+    if is_presliced_file(uploaded_file) and plates and body.plate_number not in plates:
+        raise HTTPException(422, f"Plate {body.plate_number} is not in this file (it has plate(s) "
+                                 f"{', '.join(str(n) for n in plates)})")
 
     if body.order_id is not None:
         order = await session.get(Order, body.order_id)
