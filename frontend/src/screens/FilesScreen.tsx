@@ -1008,7 +1008,7 @@ export function FilesScreen() {
               </select>
               <select className="select" aria-label="File kind" style={{ width: 'auto', paddingRight: 32 }}
                       value={kind} onChange={e => setKind(e.target.value as FileKindFilter)}>
-                <option value="all">All files</option>
+                <option value="all">All types</option>
                 <option value="models">Models</option>
                 <option value="sliced">Sliced gcode</option>
               </select>

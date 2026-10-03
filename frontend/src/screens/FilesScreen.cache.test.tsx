@@ -152,3 +152,13 @@ describe('FilesScreen — cached sliced versions', () => {
     expect(calls(api, 'DELETE').sort()).toEqual(['/api/v1/files/1', '/api/v1/files/2']);   // the other one went
   });
 });
+
+describe('FilesScreen — kind filter label', () => {
+  it('doesn\'t reuse the folder tree\'s "All files" text (an external e2e locates the tree by it)', async () => {
+    stub();
+    render(<MemoryRouter><FilesScreen /></MemoryRouter>);
+    await screen.findByTestId('sliced-badge');
+    const select = screen.getByLabelText('File kind') as HTMLSelectElement;
+    expect([...select.options].map(o => o.textContent)).toEqual(['All types', 'Models', 'Sliced gcode']);
+  });
+});
