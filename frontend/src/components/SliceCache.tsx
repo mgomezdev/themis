@@ -17,7 +17,7 @@ export function staleLabels(reasons: readonly string[] | undefined): string[] {
   return (reasons ?? []).map(r => STALE_LABELS[r] ?? `Stale: ${r}`);
 }
 
-type MarkerJob = Pick<ApiJob, 'save_slice' | 'sliced_version_id' | 'slice_cache_info'>;
+type MarkerJob = Pick<ApiJob, 'status' | 'save_slice' | 'sliced_version_id' | 'slice_cache_info'>;
 
 /** Short chips: saving / saved / save failed / used cached / stale. */
 export function SliceCacheMarkers({ job }: { job: MarkerJob }) {
@@ -29,7 +29,8 @@ export function SliceCacheMarkers({ job }: { job: MarkerJob }) {
     chips.push({ key: 'saved', label: 'Gcode saved to library', tone: 'var(--ok, #22c55e)' });
   } else if (save?.outcome === 'failed') {
     chips.push({ key: 'save-failed', label: 'Gcode save failed', tone: 'var(--err)', title: save.error ?? undefined });
-  } else if (job.save_slice) {
+  } else if (job.save_slice && job.sliced_version_id == null && !TERMINAL.has(job.status)) {
+    // only while a fresh slice can still come: a job printing cached gcode, or one that ended unsliced, never saves
     chips.push({ key: 'saving', label: 'Saving gcode', tone: 'var(--text-2)' });
   }
   if (info?.stale) {

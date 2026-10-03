@@ -20,14 +20,17 @@ const VERSION = {
 };
 
 test('New Job offers cached gcode and queues it for the model it was sliced for', async ({ page }) => {
-  const mocks = await mockApi(page, { files: [MODEL, CACHED], slicedVersions: { 1: [VERSION] } });
+  const mocks = await mockApi(page, {
+    files: [MODEL, CACHED], slicedVersions: { 1: [VERSION] },
+    platesByFile: { 7: [{ plate_number: 1, estimated_time: 3600, filament_g: 12, thumbnail_path: null }] },
+  });
   await page.goto('/queue/new');
   await page.waitForLoadState('networkidle');
 
   await page.getByRole('button', { name: /Pick from library/i }).click();
   await page.getByRole('button', { name: /^multi\.3mf/i }).click();
 
-  const prompt = page.getByRole('dialog', { name: 'Cached sliced versions' });
+  const prompt = page.getByRole('region', { name: 'Cached sliced versions' });
   await expect(prompt).toBeVisible();
   await expect(prompt.getByText(CACHED.original_filename)).toBeVisible();
   await prompt.getByRole('button', { name: 'Use this version' }).click();
@@ -37,7 +40,7 @@ test('New Job offers cached gcode and queues it for the model it was sliced for'
   await expect(page.getByText(/added to queue/)).toBeVisible();
 
   const posts = mocks.captured.filter(c => c.method === 'POST' && c.url === '/jobs');
-  expect(posts.length).toBeGreaterThan(0);
+  expect(posts).toHaveLength(1);   // the cached gcode has one plate
   expect(posts[0].body).toMatchObject({
     uploaded_file_id: 7, printer_configs: [], overrides: null,
     model_targets: [{ machine_profile: 'Mono', print_profile: '', filament_type: 'PETG', filament_color: '#000000' }],

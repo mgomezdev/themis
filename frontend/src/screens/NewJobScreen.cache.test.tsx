@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NewJobScreen } from './NewJobScreen';
-import { stubFetch } from '../test/fetchStub';
+import { Reply, stubFetch } from '../test/fetchStub';
 
 // New Job and the slicing cache (BIZ-194): the "save sliced gcode" option and the "use a cached version or reslice"
 // prompt.
@@ -63,7 +63,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     await upload();
     await screen.findByText('Barnabus');
     expect(api.to('GET', '/api/v1/files/42/sliced-versions?plate=1')).toHaveLength(1);
-    expect(screen.queryByRole('dialog', { name: 'Cached sliced versions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
   });
 
   it('offers the versions with their warnings', async () => {
@@ -74,7 +74,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     ]);
     await upload();
 
-    const prompt = await screen.findByRole('dialog', { name: 'Cached sliced versions' });
+    const prompt = await screen.findByRole('region', { name: 'Cached sliced versions' });
     const rows = within(prompt).getAllByTestId('cached-version');
     expect(rows).toHaveLength(2);
     expect(within(rows[0]).queryByText(/Stale/)).toBeNull();
@@ -89,7 +89,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     open([version({ stale: true, stale_reasons: ['presets_changed'] })],
          { 'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: false } });
     await upload();
-    const prompt = await screen.findByRole('dialog', { name: 'Cached sliced versions' });
+    const prompt = await screen.findByRole('region', { name: 'Cached sliced versions' });
     expect(within(prompt).getByText('Stale: presets edited')).toBeTruthy();
     await act(async () => {});   // the settings fetch has settled
     expect(within(prompt).queryByText('Automatic reuse would reslice this.')).toBeNull();
@@ -99,7 +99,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     localStorage.clear();
     const api = open([version()]);
     await upload();
-    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Use this version' }));
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
 
     expect(await screen.findByTestId('using-cached')).toBeTruthy();
     expect(screen.getByTestId('gcode-warning')).toBeTruthy();
@@ -119,12 +119,12 @@ describe('NewJobScreen — cached sliced versions', () => {
   it('"Reslice instead" goes back to the model and doesn\'t ask again', async () => {
     const api = open([version()]);
     await upload();
-    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Use this version' }));
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
     await userEvent.click(await screen.findByRole('button', { name: 'Reslice instead' }));
 
     await userEvent.click(await screen.findByText('Barnabus'));
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
-    expect(screen.queryByRole('dialog', { name: 'Cached sliced versions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
     await userEvent.click(addButton());
 
     await screen.findByText(/1 job added to queue/);
@@ -134,9 +134,9 @@ describe('NewJobScreen — cached sliced versions', () => {
   it('"Reslice" dismisses the prompt and the job slices as usual', async () => {
     const api = open([version()]);
     await upload();
-    await userEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Reslice' }));
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Reslice' }));
 
-    expect(screen.queryByRole('dialog', { name: 'Cached sliced versions' })).toBeNull();
+    expect(screen.queryByRole('region', { name: 'Cached sliced versions' })).toBeNull();
     await userEvent.click(await screen.findByText('Barnabus'));
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
@@ -145,6 +145,42 @@ describe('NewJobScreen — cached sliced versions', () => {
     const body = jobPosts(api)[0] as { uploaded_file_id: number; printer_configs: { print_profile: string }[] };
     expect(body.uploaded_file_id).toBe(42);
     expect(body.printer_configs[0].print_profile).toBe(PROFILE);
+  });
+});
+
+describe('NewJobScreen — cached versions, edge cases', () => {
+  it('a save choice made for the model is not sent with a cached version', async () => {
+    const api = open([version()]);
+    await upload();
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' }));
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
+    await screen.findByTestId('using-cached');
+    await userEvent.click(addButton());
+
+    await screen.findByText(/1 job added to queue/);
+    expect(jobPosts(api)[0]).not.toHaveProperty('save_slice');
+  });
+
+  it('if the cached file fails to load, the form goes back to the model', async () => {
+    const api = open([version()], { 'GET /api/v1/files/77/plates': new Reply(500, 'boom') });
+    await upload();
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
+
+    expect(await screen.findByText(/Failed to load the cached version/)).toBeTruthy();
+    expect(screen.queryByTestId('using-cached')).toBeNull();
+    await userEvent.click(await screen.findByText('Barnabus'));
+    await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
+    await userEvent.click(addButton());
+    await screen.findByText(/1 job added to queue/);
+    expect((jobPosts(api)[0] as { uploaded_file_id: number }).uploaded_file_id).toBe(42);
+  });
+
+  it('warns that only that plate is queued when the model has several', async () => {
+    open([version()], { 'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates: [plate(1), plate(2)] },
+                        'GET /api/v1/files/42/sliced-versions?plate=2': [] });
+    await upload();
+    const prompt = await screen.findByRole('region', { name: 'Cached sliced versions' });
+    expect(within(prompt).getByText(/the other plates of this model aren.t queued/)).toBeTruthy();
   });
 });
 

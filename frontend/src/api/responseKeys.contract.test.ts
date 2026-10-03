@@ -5,6 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import contractRaw from '../../../contracts/response-keys.json?raw';
 import type { LibraryFile } from '../data/types';
+import type { SlicedVersion } from './files';
 import type { AnalyticsMaterial, AnalyticsPrinter, AnalyticsRange, AnalyticsStats, FleetAnalytics } from './analytics';
 import type { FleetPrinter } from './fleet';
 import type { CostConfig, ProjectLabor } from './costs';
@@ -76,6 +77,10 @@ const LIBRARY_FILE = {
   tags: 1, thumbnail_url: 1, plate_thumbnails: 1, kind: 1, sliced_version_count: 1, sliced_version: 1,
 } satisfies Record<keyof LibraryFile, 1>;
 
+const SLICED_VERSION = {
+  id: 1, file_id: 1, name: 1, kind: 1, plate_number: 1, machine_preset: 1, process_preset: 1, filament_presets: 1, filament_type: 1, filament_color: 1, bed_type: 1, overrides: 1, estimated_seconds: 1, filament_grams: 1, created_at: 1, source_changed: 1, stale: 1, stale_reasons: 1, printable_now: 1,
+} satisfies Record<keyof SlicedVersion, 1>;
+
 const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;
 const ANALYTICS_RANGE = { start: 1, end: 1, days: 1 } satisfies Record<keyof AnalyticsRange, 1>;
 const ANALYTICS_TOTALS = {
@@ -121,6 +126,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['queue rows + job details core cover every ApiJob key', [...contract.queue_job, ...contract.job_details_core], keysOf(JOB)],
     ['job details (core + extra + queue-only enrichments)', [...contract.queue_job, ...contract.job_details_core, ...contract.job_details_extra], keysOf(JOB_DETAILS)],
     ['project', contract.project, keysOf(PROJECT)],
+    ['sliced version (GET /files/{id}/sliced-versions item)', contract.sliced_version_item, keysOf(SLICED_VERSION)],
     ['project item', contract.project_item, keysOf(PROJECT_ITEM)],
     ['project link', contract.project_link, keysOf(PROJECT_LINK)],
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
@@ -157,7 +163,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'portal_project', 'portal_quote', 'portal_payment',
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
-      'project_labor', 'project_costs', 'cost_config']);
+      'project_labor', 'project_costs', 'cost_config', 'sliced_version_item']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

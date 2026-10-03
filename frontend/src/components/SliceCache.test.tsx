@@ -29,6 +29,8 @@ describe('SliceCacheMarkers', () => {
     [job({ save_slice: true, slice_cache_info: saved('duplicate') }), ['Gcode saved to library']],
     [job({ save_slice: true, slice_cache_info: saved('failed', 'disk full') }), ['Gcode save failed']],
     [job({ sliced_version_id: 2 }), ['Used cached gcode']],
+    [job({ save_slice: true, sliced_version_id: 2 }), ['Used cached gcode']],   // a hit never saves
+    [job({ save_slice: true, status: 'cancelled' }), []],                       // ended before it was sliced
     [job({ sliced_version_id: 2, slice_cache_info: { stale: true, stale_reasons: ['presets_changed', 'slicer_version_changed'] } }),
      ['Used cached gcode', 'Stale: presets edited', 'Stale: OrcaSlicer updated']],
   ])('%#', (j, expected) => {

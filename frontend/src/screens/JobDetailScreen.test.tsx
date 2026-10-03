@@ -282,6 +282,18 @@ describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
     expect(screen.getByTestId('slice-cache-debug').textContent).toContain('feedbeef');
   });
 
+  it('ticking the box flags the job and the page shows it', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    const patch = vi.spyOn(queueApi, 'setJobSaveSlice').mockResolvedValue({ ...BASE_JOB, status: 'queued', save_slice: true });
+    renderJobDetail();
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' }));
+
+    expect(patch).toHaveBeenCalledWith(BASE_JOB.id, true, null);
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Save sliced gcode to library' }) as HTMLInputElement).checked).toBe(true));
+    expect(within(screen.getByTestId('slice-cache-markers')).getByText('Saving gcode')).toBeTruthy();
+  });
+
   it('hides the save option for a pre-sliced file', async () => {
     vi.mocked(queueApi.getJobDetails).mockResolvedValue({
       ...BASE_JOB, status: 'queued', file: { id: 10, original_filename: 'part.gcode.3mf' },

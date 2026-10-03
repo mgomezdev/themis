@@ -34,6 +34,8 @@ export async function mockApi(page: Page, over: Partial<{
   printers: any[]; fleet: any[] | (() => any[]); profiles: any; files: any[]; plates: any[]; modelFilaments: any[]; jobDetails: any;
   /** GET /files/{id}/sliced-versions body (slicing cache), keyed by model file id. */
   slicedVersions: Record<number, any[]>;
+  /** GET /files/{id}/plates per file id (default: `plates` for every file). */
+  platesByFile: Record<number, any[]>;
   /** GET /queue body (a function so a test can make it change as the journey progresses). */
   queue: () => any[];
   /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
@@ -92,7 +94,7 @@ export async function mockApi(page: Page, over: Partial<{
     if (path === '/files') return ok(route, files);
     if ((m = path.match(/^\/files\/(\d+)\/plates$/))) {
       const file = files.find(f => f.id === +m[1]) ?? files[0];
-      return ok(route, { filename: file?.original_filename ?? '', plates });
+      return ok(route, { filename: file?.original_filename ?? '', plates: over.platesByFile?.[+m[1]] ?? plates });
     }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
     if ((m = path.match(/^\/files\/(\d+)\/sliced-versions$/))) return ok(route, over.slicedVersions?.[+m[1]] ?? []);

@@ -51,7 +51,7 @@ interface DisplayJob {
   thumbnailPath: string | null;
   printerName: string | null;
   lowStockWarning: ApiJob['low_stock_warning'];
-  sliceCache: Pick<ApiJob, 'save_slice' | 'sliced_version_id' | 'slice_cache_info'>;
+  sliceCache: Pick<ApiJob, 'status' | 'save_slice' | 'sliced_version_id' | 'slice_cache_info'>;
 }
 
 // ---- FilterChip ----
@@ -801,7 +801,7 @@ export function QueueScreen() {
         rawId: j.id,
         fileName: fileName ?? null,
         sliceCache: {
-          save_slice: j.save_slice ?? false, sliced_version_id: j.sliced_version_id ?? null,
+          status: j.status, save_slice: j.save_slice ?? false, sliced_version_id: j.sliced_version_id ?? null,
           slice_cache_info: j.slice_cache_info ?? null,
         },
         plateName: `Plate ${j.plate_number}`,

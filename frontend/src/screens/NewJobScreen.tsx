@@ -716,17 +716,20 @@ function fmtDuration(seconds: number | null): string | null {
 }
 
 /** "This model has cached gcode for this plate — use it, or reslice?" (BIZ-194). */
-function CachedVersionPrompt({ plate, versions, useLatest, onUse, onReslice }: {
-  plate: number; versions: SlicedVersion[]; useLatest: boolean;
+function CachedVersionPrompt({ plate, multiPlate, versions, useLatest, onUse, onReslice }: {
+  plate: number; multiPlate: boolean; versions: SlicedVersion[]; useLatest: boolean;
   onUse: (v: SlicedVersion) => void; onReslice: () => void;
 }) {
   return (
-    <div className="card col gap-2" role="dialog" aria-label="Cached sliced versions" style={{ padding: '12px 14px' }}>
+    <section className="card col gap-2" aria-label="Cached sliced versions" style={{ padding: '12px 14px' }}>
       <div className="row between" style={{ alignItems: 'center' }}>
         <span style={{ fontWeight: 600 }}>Cached gcode for plate {plate}</span>
         <button className="btn ghost sm" onClick={onReslice}>Reslice</button>
       </div>
       <span className="tiny muted">This model was sliced before. Print a saved version instead of slicing again?</span>
+      {multiPlate && (
+        <span className="tiny muted">Using one queues just that plate&apos;s gcode — the other plates of this model aren&apos;t queued.</span>
+      )}
       {versions.map(v => {
         const chips = [
           ...(v.source_changed ? ['Model changed since slicing'] : []),
@@ -757,7 +760,7 @@ function CachedVersionPrompt({ plate, versions, useLatest, onUse, onReslice }: {
           </div>
         );
       })}
-    </div>
+    </section>
   );
 }
 
@@ -829,7 +832,8 @@ export function NewJobScreen() {
       setVersionPrompt(null);
       return;
     }
-    if (dismissedPrompts.has(`${uploadedFileId}:${activePlateIndex}`)) { setVersionPrompt(null); return; }
+    setVersionPrompt(null);   // never leave the previous file/plate's versions on screen while these load
+    if (dismissedPrompts.has(`${uploadedFileId}:${activePlateIndex}`)) return;
     let alive = true;
     getSlicedVersions(uploadedFileId, activePlateIndex)
       .then(v => { if (alive) setVersionPrompt(v.length ? { fileId: uploadedFileId, plate: activePlateIndex, versions: v } : null); })
@@ -843,7 +847,7 @@ export function NewJobScreen() {
   }
 
   async function useCachedVersion(version: SlicedVersion) {
-    if (uploadedFileId == null || !file) return;
+    if (uploadedFileId == null || !file || versionPrompt?.fileId !== uploadedFileId) return;
     const model = { id: uploadedFileId, info: file };
     setUploading(true);
     setError(null);
@@ -864,6 +868,8 @@ export function NewJobScreen() {
       });
     } catch (err) {
       setError(`Failed to load the cached version: ${err instanceof Error ? err.message : String(err)}`);
+      setCachedFrom(null);
+      await loadFileIntoState(model.id, model.info).catch(() => undefined);   // back to the model, not half-switched
     } finally {
       setUploading(false);
     }
@@ -1211,8 +1217,9 @@ export function NewJobScreen() {
             </div>
           )}
 
-          {versionPrompt && (
+          {versionPrompt && versionPrompt.fileId === uploadedFileId && versionPrompt.plate === activePlateIndex && (
             <CachedVersionPrompt
+              multiPlate={plates.length > 1}
               plate={versionPrompt.plate}
               versions={versionPrompt.versions}
               useLatest={queueConfig?.slice_cache_use_latest_settings ?? true}
