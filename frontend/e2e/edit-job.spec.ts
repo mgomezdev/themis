@@ -16,6 +16,7 @@ const JOB = {
   updated_at: '2026-06-01T00:00:00Z',
   file: { id: 1, original_filename: 'multi.3mf' },
   plate: { plate_number: 1, estimated_time: 3600, filament_g: 12, thumbnail_path: null },
+  model_targets: [],
   printer_configs: [
     {
       printer_id: 3,
@@ -31,6 +32,7 @@ const JOB = {
         { model_filament: 1, tool_index: 0, filament_id: null, filament_type: null, filament_color: null },
         { model_filament: 2, tool_index: 1, filament_id: null, filament_type: null, filament_color: null },
       ],
+      from_model_target: false,
       slice_failed: false,
       slice_error: null,
     },
