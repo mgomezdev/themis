@@ -235,6 +235,9 @@ class GcodeFile(Base):
     path: Mapped[str] = mapped_column(String(1024))
     filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The slicing-cache key inputs this artifact was sliced from (slice_cache.CacheKeyInputs.as_dict; null for a
+    # pre-sliced file or an uncacheable source) — so a job flagged "save" after slicing can still be saved (BIZ-192).
+    slice_inputs: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class QueueConfig(Base):
