@@ -6,8 +6,9 @@ import { Empty } from '../components/ui';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   useFiles, uploadLibraryFile, createFolder, deleteFolder, updateFile, deleteFile,
-  addFileTag, removeFileTag, rescanLibrary, getFolderDirs,
+  addFileTag, removeFileTag, rescanLibrary, getFolderDirs, getSlicedVersions,
 } from '../api/files';
+import type { CachedVersionRef, FileKindFilter, SlicedVersion } from '../api/files';
 import { useTags } from '../api/tags';
 import type { Tag } from '../api/tags';
 
@@ -487,6 +488,14 @@ function FileDetailPanel({
         </div>
       )}
 
+      {file.sliced_version && (
+        <div className="tiny" data-testid="sliced-from" style={{ marginTop: 6, color: 'var(--text-2)' }}>
+          Sliced {file.sliced_version.source_filename ? <>from <b>{file.sliced_version.source_filename}</b></> : '(model removed)'}
+          {' · '}{versionSummary(file.sliced_version)}
+        </div>
+      )}
+      {file.sliced_version_count > 0 && <SlicedVersionsList fileId={file.id} />}
+
       <div className="col gap-2" style={{ marginTop: 12 }}>
         <div className="row between"><span className="tiny muted">Folder</span>
           <span className="tiny">{file.folder || '/'}</span></div>
@@ -545,6 +554,66 @@ function FileDetailPanel({
           <span style={{ width: 14, height: 14, display: 'inline-flex' }}>{Icons.trash}</span>
           Delete
         </button>
+      </div>
+    </div>
+  );
+}
+
+function versionSummary(v: { machine_preset: string; filament_type: string; filament_color: string }): string {
+  const filament = [v.filament_type, v.filament_color].filter(x => x && x !== 'any').join(' ');
+  return [v.machine_preset, filament].filter(Boolean).join(' · ');
+}
+
+/** A model's cached sliced versions, in its detail panel (BIZ-196). */
+function SlicedVersionsList({ fileId }: { fileId: number }) {
+  const [versions, setVersions] = useState<SlicedVersion[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getSlicedVersions(fileId).then(v => { if (alive) setVersions(v); }).catch(() => { if (alive) setVersions([]); });
+    return () => { alive = false; };
+  }, [fileId]);
+  if (!versions) return null;
+  return (
+    <div style={{ marginTop: 12 }} data-testid="sliced-versions">
+      <div className="tag-key" style={{ marginBottom: 6 }}>Sliced versions</div>
+      {versions.length === 0 && <span className="tiny muted">None on disk</span>}
+      <div className="col gap-2">
+        {versions.map(v => (
+          <div key={v.id} className="tiny" style={{ padding: '4px 6px', background: 'var(--bg-1)' }}>
+            <div style={{ fontWeight: 600, wordBreak: 'break-word' }}>{v.name}</div>
+            <div className="muted">Plate {v.plate_number} · {v.process_preset} · {versionSummary(v)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Deleting a model that has cached sliced versions: delete them too, or keep them as standalone gcode (BIZ-195). */
+function DeleteVersionsDialog({ file, versions, onChoose, onCancel }: {
+  file: LibraryFile; versions: CachedVersionRef[];
+  onChoose: (choice: 'delete' | 'keep') => void; onCancel: () => void;
+}) {
+  return (
+    <div role="dialog" aria-label="Delete model with sliced versions" style={{
+      position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', zIndex: 60,
+      display: 'grid', placeItems: 'center', padding: 16,
+    }}>
+      <div className="card" style={{ width: 440, maxWidth: '100%', padding: 18 }}>
+        <div style={{ fontWeight: 600, marginBottom: 8 }}>Delete {file.original_filename}?</div>
+        <div className="small" style={{ marginBottom: 10 }}>
+          It has {versions.length} cached sliced version{versions.length === 1 ? '' : 's'}:
+        </div>
+        <ul className="small" style={{ margin: '0 0 14px 18px', maxHeight: 200, overflowY: 'auto' }}>
+          {versions.map(v => <li key={v.id}>{v.name} <span className="muted">({v.folder})</span></li>)}
+        </ul>
+        <div className="col gap-2">
+          <button className="btn primary" style={{ background: 'var(--err)' }} onClick={() => onChoose('delete')}>
+            Delete model and versions
+          </button>
+          <button className="btn ghost" onClick={() => onChoose('keep')}>Delete model, keep versions as gcode</button>
+          <button className="btn ghost" onClick={onCancel}>Cancel</button>
+        </div>
       </div>
     </div>
   );
@@ -644,6 +713,8 @@ export function FilesScreen() {
   const [currentFolder, setCurrentFolder] = useState('');
   const [activeTags, setActiveTags] = useState<string[]>([]);
   const [sort, setSort] = useState('updated');
+  const [kind, setKind] = useState<FileKindFilter>('all');
+  const [deleteChoice, setDeleteChoice] = useState<{ file: LibraryFile; versions: CachedVersionRef[] } | null>(null);
   const [selected, setSelected] = useState<LibraryFile | null>(null);
   const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
   const [folderExpanded, setFolderExpanded] = useState(true);
@@ -655,7 +726,8 @@ export function FilesScreen() {
     folder: currentFolder || undefined,
     tags: activeTags.length ? activeTags : undefined,
     sort,
-  }), [currentFolder, activeTags, sort]);
+    kind,
+  }), [currentFolder, activeTags, sort, kind]);
   const { files, refetch } = useFiles(filter);
   const { tags } = useTags();
 
@@ -751,7 +823,18 @@ export function FilesScreen() {
 
   async function handleDelete(f: LibraryFile) {
     if (!window.confirm(`Delete ${f.original_filename}?`)) return;
-    try { await deleteFile(f.id); setSelected(null); refetch(); }
+    try {
+      const res = await deleteFile(f.id);
+      if ('needsChoice' in res) { setDeleteChoice({ file: f, versions: res.versions }); return; }
+      setSelected(null); refetch();
+    } catch (err) { window.alert(String(err)); }
+  }
+
+  async function finishDelete(choice: 'delete' | 'keep') {
+    const pending = deleteChoice;
+    setDeleteChoice(null);
+    if (!pending) return;
+    try { await deleteFile(pending.file.id, choice); setSelected(null); refetch(); }
     catch (err) { window.alert(String(err)); }
   }
 
@@ -799,9 +882,13 @@ export function FilesScreen() {
     if (!ids.length) return;
     if (!window.confirm(`Delete ${ids.length} file${ids.length > 1 ? 's' : ''}?`)) return;
     const skipped: string[] = [];
+    const withVersions: string[] = [];
     let ok = 0;
     for (const id of ids) {
-      try { await deleteFile(id); ok++; }
+      try {
+        const res = await deleteFile(id);
+        if ('needsChoice' in res) withVersions.push(nameOf(id)); else ok++;
+      }
       catch { skipped.push(nameOf(id)); }
     }
     clearSelection();
@@ -809,6 +896,10 @@ export function FilesScreen() {
     refetch();
     if (skipped.length) {
       window.alert(`Deleted ${ok}. Skipped ${skipped.length} (in use by a job): ${skipped.join(', ')}`);
+    }
+    if (withVersions.length) {
+      window.alert(`Not deleted — these have cached sliced versions; delete them one at a time to choose what happens `
+        + `to the versions: ${withVersions.join(', ')}`);
     }
   }
 
@@ -907,6 +998,12 @@ export function FilesScreen() {
                 <option value="name">Name (A–Z)</option>
                 <option value="size">Largest first</option>
               </select>
+              <select className="select" aria-label="File kind" style={{ width: 'auto', paddingRight: 32 }}
+                      value={kind} onChange={e => setKind(e.target.value as FileKindFilter)}>
+                <option value="all">All files</option>
+                <option value="models">Models</option>
+                <option value="sliced">Sliced gcode</option>
+              </select>
             </div>
           </div>
 
@@ -986,6 +1083,23 @@ export function FilesScreen() {
                   }}>
                     {f.original_filename}
                   </div>
+                  {f.sliced_version_count > 0 && (
+                    <button className="elig" data-testid="sliced-badge"
+                            title="Show its cached sliced versions"
+                            onClick={e => { e.stopPropagation(); setSelected(f); }}
+                            style={{ marginTop: 4, fontSize: 10, padding: '1px 6px', cursor: 'pointer',
+                                     background: 'var(--accent-glow)', color: 'var(--accent-hi)', border: 'none' }}>
+                      {f.sliced_version_count} sliced version{f.sliced_version_count === 1 ? '' : 's'}
+                    </button>
+                  )}
+                  {f.sliced_version && (
+                    <div className="tiny muted" data-testid="sliced-from-chip" style={{
+                      marginTop: 4, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                    }} title={versionSummary(f.sliced_version)}>
+                      {f.sliced_version.source_filename ? `Sliced from ${f.sliced_version.source_filename}` : 'Sliced gcode'}
+                      {' · '}{versionSummary(f.sliced_version)}
+                    </div>
+                  )}
                   <div className="row between" style={{ marginTop: 3 }}>
                     <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>{fmtBytes(f.size_bytes)}</span>
                     <span className="tiny muted" style={{ whiteSpace: 'nowrap' }}>
@@ -1033,6 +1147,15 @@ export function FilesScreen() {
           count={movePicker.ids.length}
           onPick={applyMove}
           onClose={() => setMovePicker(null)}
+        />
+      )}
+
+      {deleteChoice && (
+        <DeleteVersionsDialog
+          file={deleteChoice.file}
+          versions={deleteChoice.versions}
+          onChoose={finishDelete}
+          onCancel={() => setDeleteChoice(null)}
         />
       )}
     </div>

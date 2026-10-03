@@ -18,6 +18,7 @@ import shutil
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
+from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
@@ -1131,14 +1132,13 @@ async def copy_stored_file_to_library(
     printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
-    deduplicated by content like any upload). A sliced .gcode.3mf lands as a pre-sliced library file (BIZ-190). Plain
-    .gcode is refused."""
+    deduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models."""
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     _require_capability(client, "file_download", "downloading files")
     name = os.path.basename(body.file_id)
-    if not name.lower().endswith((".3mf", ".stl")):
-        raise HTTPException(422, "Only .3mf and .stl files can be added to the library")
+    if not name.lower().endswith((".3mf", ".stl")) or is_presliced_name(name):
+        raise HTTPException(422, "Only .3mf and .stl models can be added to the library (not sliced gcode)")
     from ...services.abstract_printer_client import FileTooLargeError
     try:
         data = await asyncio.to_thread(client.download_file, body.file_id, _MAX_DIRECT_UPLOAD_BYTES)

@@ -36,6 +36,7 @@ _LEVELS = {
     "save_failed": logging.WARNING,
     "pack_reused": logging.INFO,
     "pack_new": logging.INFO,
+    "version_detached": logging.INFO,
 }
 MISS_REASONS = ("no_version", "stale_resliced", "file_missing", "uncacheable", "lookup_error", "cache_disabled")
 

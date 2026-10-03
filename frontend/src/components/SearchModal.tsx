@@ -103,7 +103,7 @@ export function SearchModal({ open, onClose, jobs, printers }: SearchModalProps)
           key: `file-${f.id}`,
           group: 'Files',
           label: f.original_filename,
-          sublabel: f.folder || 'Library',
+          sublabel: `${f.folder || 'Library'}${f.kind === 'gcode' || f.kind === 'gcode_3mf' ? ' · sliced gcode' : ''}`,
           onSelect: () => navigate('/files'),
         });
       }
