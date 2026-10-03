@@ -521,7 +521,8 @@ id is rejected.
    - Upload: a multipart stream to a temp file, with a size cap.
    - GitHub: resolve the ref to a commit SHA through the GitHub API, then download that commit's tarball
      (`codeload.github.com/<owner>/<repo>/tar.gz/<sha>`). **No `git` binary is needed in the image.**
-   - Private repos: use a token stored as a secret on the install record.
+   - **Public repos only** (D13). Private-repo support with a stored token is tracked in **BIZ-199**
+     (enhancement).
 2. **Extract safely** into `/data/plugins/.staging/<uuid>/`. Reject:
    - absolute paths and `..` segments (zip-slip)
    - symlinks, hard links, and device files
@@ -533,7 +534,8 @@ id is rejected.
    here, without ever touching the live process.
 5. **Commit:** move to `/data/plugins/<id>/<version>/` and write an `installed_plugins` row. Keep the previous
    version directory for one-step rollback.
-6. **Activate on restart** (MVP; see below). The UI shows "Restart Themis to finish installing".
+6. **Activate on restart** (MVP; see below). The plugin is listed as `pending_restart`, and the page shows
+   one "Restart Themis to apply N pending changes" banner.
 
 `installed_plugins`: `plugin_id` PK, `version`, `source` (`bundled`/`upload`/`github`), `source_url`,
 `ref`, `commit_sha`, `archive_sha256`, `installed_at`, `status` (`installed`/`active`/`error`/`pending_restart`/
@@ -550,8 +552,13 @@ id is rejected.
 **Restart, not hot-load (MVP, simplest first).**
 - Python can't reliably unload modules, and FastAPI route tables and OpenAPI are built at startup. So install,
   upgrade, and uninstall all take effect on the next start.
+- **The restart is always triggered by the admin, never automatically (D14).** This lets an admin queue
+  several installs, upgrades, and uninstalls and apply them all in one restart. Pending changes stack, and
+  the banner lists them all. The restart button warns about any printer that is currently printing.
 - `POST /api/v1/system/restart` exits the process cleanly, and Docker's restart policy brings it back. The
   compose file must set `restart: unless-stopped`. On bare-metal dev, the user restarts it themselves.
+- Every pending change is staged on disk and in `installed_plugins` before the restart, so a crash or an
+  unrelated restart applies them all the same way.
 - Hot-loading a *new* plugin is a later enhancement.
 
 **Updates.**
@@ -585,14 +592,14 @@ separate, explicit choice. Core refs to that provider become "inactive" (§4).
     sha256, and a plain warning that the plugin gets full access.
   - The commit SHA is pinned, and there are no automatic updates.
   - Every install, upgrade, uninstall, and restart goes into the audit log.
-  - Optional setting: "Allow plugin installation" (off disables the install UI and routes entirely).
-  - Optional setting: an allowlist of GitHub owners.
+  - Plugin installation is **always allowed** (D15). There is no kill switch and no owner allowlist. The
+    admin-session rule and the warning are the gate.
 - Running untrusted plugins safely would mean out-of-process plugins (approach B, §2). Out of scope.
 
 **API** (admin session only):
 ```
 POST   /api/v1/plugins/install                    # multipart archive
-POST   /api/v1/plugins/install-from-github        # {repo_url, ref?, subdir?, token?}
+POST   /api/v1/plugins/install-from-github        # {repo_url, ref?, subdir?} (public repos only; BIZ-199)
 GET    /api/v1/plugins/{id}/updates               # github-sourced only
 POST   /api/v1/plugins/{id}/upgrade | /rollback
 DELETE /api/v1/plugins/{id}?remove_data=false
@@ -699,15 +706,16 @@ ids and never blocks printing, and its deductions stay in the outbox as `pending
 - **Uploaded and GitHub plugins run arbitrary code with full trust (§3.11).**
   - This is the largest new risk in the design: a malicious or careless plugin can read every secret and
     command printers.
-  - Mitigations are procedural (admin session only, pinned commit, warning, audit, kill switch), not
-    technical.
+  - Mitigations are procedural (admin session only, pinned commit, warning, audit), not technical.
+    Installation can't be turned off (D15).
 - **Installed plugins are a new class of thing that can break Themis.**
   - Startup isolation (an error marks the plugin, never blocks boot) is a hard requirement, and it needs
     tests.
   - A Themis upgrade that bumps `host_api` disables every incompatible plugin until its author updates it.
-- **Restart-to-apply.** Install, upgrade, and uninstall each need a Themis restart. That is fine under
-  Docker's restart policy and briefly drops live printer connections. Schedule it for when nothing is
-  printing, or warn when something is.
+- **Restart-to-apply.** Install, upgrade, and uninstall need a Themis restart that the admin triggers.
+  Pending changes stack, so one restart applies a batch (D14). A restart briefly drops live printer
+  connections, so the button warns when something is printing. Until the restart, the plugin is visible
+  but inactive, which is a UI state to explain.
 - **Dependency limits.** In the MVP, installed plugins can only use Themis's own libraries plus pure-Python
   code they vendor. Compiled deps (anything with C extensions) won't work until a pip-install-at-install
   step exists, which brings network and architecture problems.
@@ -777,6 +785,9 @@ Unchanged: queue eligibility, slicing, printing, and costs (`job_costs.filament`
   - Uploads accept zip, tar.gz, and tgz.
   - GitHub install resolves the ref to a SHA and downloads that exact SHA (stubbed HTTP).
   - Upgrade keeps the previous version; rollback refuses a migration without `down()`.
+  - Several staged changes (install A, upgrade B, uninstall C) all apply on one restart, and a crash before
+    restart doesn't lose any of them.
+  - No route restarts Themis implicitly.
   - Uninstall keeps data unless asked.
   - Install routes reject API-key auth.
 - **Startup isolation:** a plugin that raises on import, fails a migration, or mismatches `host_api` is
@@ -858,17 +869,17 @@ Each phase is its own PR into `develop`, green at every step.
 10. Spoolman's `PATCH /api/v1/spool/{id}` accepts an absolute `remaining_weight` and keeps it. Unverified.
 11. Only completed jobs deduct, as today. A spool-linked slot is used by one printer at a time.
 12. Themis runs under a supervisor that restarts it after a clean exit (Docker `restart: unless-stopped`).
-13. Outbound access to `api.github.com` / `codeload.github.com` is available for GitHub installs. Offline
-    farms use upload.
+13. Outbound access to `api.github.com` / `codeload.github.com` is available for GitHub installs, public
+    repos only. Offline farms use upload.
 14. Suspended tracking is per spool, not farm-wide.
 
 ## 9. Remaining open questions
 
-- **Q12.** Should restart be automatic after install/upgrade/uninstall when nothing is printing, or always
-  wait for the admin to click it?
-- **Q13.** Should GitHub installs support private repos (a stored token) in the first cut, or public only?
-- **Q14.** Is the optional "Allow plugin installation" kill switch on or off by default?
+None blocking at ideation stage. Deferred to enhancement issues:
+- Private GitHub repos → **BIZ-199**.
 - Conflict handling for spools changed during a print → **BIZ-198**.
+
+Still unverified: Spoolman `PATCH remaining_weight` behavior (assumption 10).
 
 ## 10. Docs to update when implemented
 
@@ -894,3 +905,6 @@ loop never awaits a provider"), `frontend-review.md` §2, and a new `docs/plugin
 | D10 | Spool changed in the provider during a print: MVP always overwrites with `pre − spent` (simplest). Better behavior undecided; tracked in BIZ-198 (enhancement) | 2026-10-03 |
 | D11 | Missing pre-print snapshot: skip the deduction, flag the job, notify the user, and suspend usage tracking for that spool until the user corrects its weight (§3.5) | 2026-10-03 |
 | D12 | Plugins are installed from Settings → Plugins by uploading a zip/gzip archive or by pointing at a GitHub repo. Themis stores them under `/data/plugins` and registers their parts (§3.11) | 2026-10-03 |
+| D13 | GitHub installs: public repos only for now. Private-repo support tracked in BIZ-199 (enhancement) | 2026-10-03 |
+| D14 | Restart is always admin-triggered, never automatic. Pending installs, upgrades, and uninstalls stack and are applied together in one restart | 2026-10-03 |
+| D15 | Plugin installation is always allowed: no kill switch, no allowlist | 2026-10-03 |
