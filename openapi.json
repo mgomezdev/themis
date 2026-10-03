@@ -7122,7 +7122,7 @@
           "settings"
         ],
         "summary": "Get queue config",
-        "description": "Queue engine settings: poll interval, operator name, and snapshot interval.",
+        "description": "Queue engine settings: poll interval, operator name, snapshot interval, background estimates, and the slicing\ncache's stale-version policy.",
         "operationId": "get_queue_config_api_v1_settings_queue_get",
         "responses": {
           "200": {
@@ -10733,6 +10733,17 @@
               }
             ],
             "title": "Estimates Enabled"
+          },
+          "slice_cache_use_latest_settings": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slice Cache Use Latest Settings"
           }
         },
         "type": "object",
@@ -10762,6 +10773,10 @@
           "estimates_enabled": {
             "type": "boolean",
             "title": "Estimates Enabled"
+          },
+          "slice_cache_use_latest_settings": {
+            "type": "boolean",
+            "title": "Slice Cache Use Latest Settings"
           }
         },
         "type": "object",
@@ -10769,7 +10784,8 @@
           "check_interval_minutes",
           "operator_name",
           "snapshot_interval_seconds",
-          "estimates_enabled"
+          "estimates_enabled",
+          "slice_cache_use_latest_settings"
         ],
         "title": "QueueConfigOut"
       },

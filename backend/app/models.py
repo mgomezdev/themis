@@ -51,6 +51,40 @@ class UploadedFile(Base):
     content_hash: Mapped[str] = mapped_column(String(64), default="")
     mtime: Mapped[float] = mapped_column(Float, default=0.0)
     missing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Project-generated packs only (BIZ-193): hash of the pack inputs (STL hashes x quantities, bed, pack mode), so an
+    # identical later generation can reuse this 3MF instead of re-packing.
+    pack_recipe_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class SlicedVersion(Base):
+    """A cached slice (BIZ-191): the library file `file_id` (.gcode / .gcode.3mf) is what the model `source_file_id`
+    sliced to with these settings. `cache_key` hashes every input that changes the output (see services/slice_cache);
+    the preset-content hash and slicer version are kept apart from it and only decide whether the version is stale."""
+    __tablename__ = "sliced_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id", ondelete="CASCADE"), unique=True)
+    source_file_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_content_hash: Mapped[str] = mapped_column(String(64), default="")
+    plate_number: Mapped[int] = mapped_column(Integer, default=1)
+    machine_preset: Mapped[str] = mapped_column(String(255))
+    process_preset: Mapped[str] = mapped_column(String(512))
+    filament_presets: Mapped[list] = mapped_column(JSON, default=list)
+    extra_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    tool_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    artifact_kind: Mapped[str] = mapped_column(String(16))   # gcode | gcode_3mf
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    preset_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    slicer_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    filament_type: Mapped[str] = mapped_column(String(100), default="any")
+    filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_from_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # plain int: jobs get deleted
+    created_at: Mapped[str] = mapped_column(String(32))
 
 
 class Tag(Base):
@@ -130,6 +164,16 @@ class Job(Base):
     printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # UTC ISO instant before which the queue engine won't start this job (None = as soon as possible).
     not_before: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    # --- Slicing cache (BIZ-191) ---
+    # Save this job's production slice to the library as a cached version, under this name (None = default name).
+    save_slice: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    save_slice_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # When a printer claims the job, print a matching cached version instead of slicing.
+    allow_cached_slice: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # The cached version this job printed (plain int: a version can be deleted with its file).
+    sliced_version_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Latest cache decision + save outcome, for debugging (shape: services/slice_cache.py).
+    slice_cache_info: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -199,6 +243,9 @@ class QueueConfig(Base):
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Lowest alarm severity that raises a `printer.alarm` webhook/notification (info < warning < error < fatal).
     alarm_min_severity: Mapped[str] = mapped_column(String(10), default="warning", server_default="warning")
+    # Slicing cache (BIZ-191): True = automatic reuse reslices a cached version whose presets/slicer changed since it
+    # was sliced; False = it is still printed (flagged stale), pinning a known-good print across profile updates.
+    slice_cache_use_latest_settings: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
 
 
 class CostConfig(Base):

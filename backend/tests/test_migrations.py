@@ -616,3 +616,38 @@ async def test_v032_leaves_an_order_alone_when_a_project_already_covers_it():
 
         assert (await conn.execute(text("SELECT COUNT(*) FROM projects"))).scalar() == 1
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v033_slice_cache_schema_is_idempotent_and_defaults_are_right():
+    from app.migrations import v033_slice_cache
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await run_migrations(conn)
+        await v033_slice_cache.up(conn)  # re-running must not raise
+        tables = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).fetchall()}
+        job_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
+        q_cols = {r[1]: r[4] for r in (await conn.execute(text("PRAGMA table_info(queue_config)"))).fetchall()}
+        f_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(uploaded_files)"))).fetchall()}
+    assert "sliced_versions" in tables
+    assert {"save_slice", "save_slice_name", "allow_cached_slice", "sliced_version_id", "slice_cache_info"} <= job_cols
+    assert q_cols["slice_cache_use_latest_settings"] in ("1", "'1'", "TRUE", "true")
+    assert "pack_recipe_hash" in f_cols
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_v033_upgrades_an_existing_queue_config_row_to_use_latest_settings():
+    """An install from before v033 keeps its queue row and gets the safe default (reslice stale versions)."""
+    from app.migrations import v033_slice_cache
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await run_migrations(conn)
+        await v033_slice_cache.down(conn)
+        await conn.execute(text("INSERT INTO queue_config (id, check_interval_minutes, snapshot_interval_seconds, "
+                                "estimates_enabled, alarm_min_severity) VALUES (1, 7, 2, 0, 'warning')"))
+        await v033_slice_cache.up(conn)
+        row = (await conn.execute(text(
+            "SELECT check_interval_minutes, slice_cache_use_latest_settings FROM queue_config WHERE id=1"))).one()
+    assert tuple(row) == (7, 1)
+    await engine.dispose()
