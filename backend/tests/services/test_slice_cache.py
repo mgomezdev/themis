@@ -199,3 +199,19 @@ def test_log_event_keeps_multi_line_values_on_one_line_and_accepts_any_field_nam
     assert "\n" not in rec.getMessage()
     assert rec.getMessage() == 'slice_cache event=save_failed error="boom\\nTraceback\\tline" level=x event=y'
     assert rec.levelno == logging.WARNING
+
+
+def test_an_unreachable_sidecar_is_remembered_briefly_not_for_the_full_minute():
+    with patch("app.services.slice_cache.current_fingerprint", return_value=FP(None, None)) as fp, \
+         patch("time.monotonic", side_effect=[100.0, 105.0, 111.0]):
+        for _ in range(3):
+            sc.cached_fingerprint("M", "P", ["F"], "http://s")
+    assert fp.call_count == 2   # cached at +5s, refetched at +11s
+
+
+def test_a_good_fingerprint_is_remembered_for_a_minute():
+    with patch("app.services.slice_cache.current_fingerprint", return_value=FP("h", "2.3.1")) as fp, \
+         patch("time.monotonic", side_effect=[100.0, 150.0, 161.0]):
+        for _ in range(3):
+            sc.cached_fingerprint("M", "P", ["F"], "http://s")
+    assert fp.call_count == 2

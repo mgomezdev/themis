@@ -37,7 +37,7 @@ _LEVELS = {
     "pack_reused": logging.INFO,
     "pack_new": logging.INFO,
 }
-MISS_REASONS = ("no_version", "stale_resliced", "kind_mismatch", "file_missing", "cache_disabled")
+MISS_REASONS = ("no_version", "stale_resliced", "file_missing", "uncacheable", "lookup_error", "cache_disabled")
 
 
 def canonical_json(value: Any) -> str:
@@ -155,6 +155,28 @@ def normalize_version(raw: Any) -> str | None:
         return None
     m = re.search(r"\d+(?:\.\d+)+", str(raw))
     return m.group(0) if m else str(raw).strip() or None
+
+
+_FINGERPRINT_TTL = 60.0
+_UNKNOWN_TTL = 10.0
+_fingerprints: dict[tuple, tuple[float, SlicerFingerprint]] = {}
+
+
+def cached_fingerprint(
+    machine_preset: str, process_preset: str, filament_presets: list[str], sidecar_url: str | None,
+) -> SlicerFingerprint:
+    """`current_fingerprint`, memoised for a minute per preset set — listing a model's versions or a burst of claims
+    shouldn't each pay the sidecar round-trips. Blocking; call via asyncio.to_thread."""
+    import time
+    key = (machine_preset, process_preset, tuple(filament_presets), sidecar_url)
+    hit = _fingerprints.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < (_FINGERPRINT_TTL if (hit[1].preset_content_hash or hit[1].slicer_version)
+                               else _UNKNOWN_TTL):
+        return hit[1]
+    fp = current_fingerprint(machine_preset, process_preset, filament_presets, sidecar_url)
+    _fingerprints[key] = (now, fp)   # "unknown" too, briefly: a hung sidecar shouldn't stall every request
+    return fp
 
 
 def staleness(

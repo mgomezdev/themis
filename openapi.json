@@ -3509,6 +3509,73 @@
         }
       }
     },
+    "/api/v1/files/{file_id}/sliced-versions": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "List a model's cached sliced versions",
+        "description": "The cached slices of this model (BIZ-193), newest first, optionally for one `plate`; versions whose file is\nmissing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model\nchanged since), `stale` (`true`/`false`/`null` = unknown \u2014 presets or OrcaSlicer changed since, with\n`stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file).",
+        "operationId": "list_sliced_versions_api_v1_files__file_id__sliced_versions_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "plate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Plate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Sliced Versions Api V1 Files  File Id  Sliced Versions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files/{file_id}/plates": {
       "get": {
         "tags": [
@@ -4495,7 +4562,7 @@
             "description": "Job already finished (its slice is gone)"
           },
           "422": {
-            "description": "Job prints a pre-sliced file \u2014 there is no new slice to save"
+            "description": "Job prints a pre-sliced file or a cached version \u2014 there is no new slice to save"
           }
         }
       }
@@ -8690,6 +8757,11 @@
             "type": "boolean",
             "title": "Save Slice",
             "default": false
+          },
+          "allow_cached": {
+            "type": "boolean",
+            "title": "Allow Cached",
+            "default": true
           }
         },
         "type": "object",
