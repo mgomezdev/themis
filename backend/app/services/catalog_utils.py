@@ -1,30 +1,51 @@
 from __future__ import annotations
 
-import json
 import logging
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.services.spoolman_service import fetch_filaments
+from app.services.providers.slicing import Catalog
+from app.services.providers.filament_inventory import Filament, FilamentInventoryProvider
 
 logger = logging.getLogger("app.catalog_utils")
 
 
-def catalog_name_sets(catalog: dict) -> tuple[set[str], set[str], set[str], set[str]]:
-    """Return (machine_names, process_names, filament_names, filament_uuids)."""
-    machine_names = {m["name"] for m in catalog.get("machine", []) if m.get("name")}
-    process_names = {p["name"] for p in catalog.get("process", []) if p.get("name")}
-    filament_names = {f["name"] for f in catalog.get("filament", []) if f.get("name")}
-    filament_uuids = {f["uuid"] for f in catalog.get("filament", []) if f.get("uuid")}
-    return machine_names, process_names, filament_names, filament_uuids
+def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Return (machine_names, process_names, filament_names, filament_refs)."""
+    return (
+        catalog.names("machine"),
+        catalog.names("process"),
+        catalog.names("filament"),
+        catalog.refs("filament"),
+    )
+
+
+def stale_binding_groups(filaments: list[Filament], is_stale) -> dict[tuple[str, str], dict]:
+    """Group the profile names bound to inventory filaments that `is_stale(name)` flags, by (printer preset, name)."""
+    groups: dict[tuple[str, str], dict] = {}
+    for fil in filaments:
+        fil_id = int(fil.ref) if fil.ref.isdigit() else fil.ref
+        for printer_preset, names in fil.profile_bindings.items():
+            for name in names:
+                if is_stale(name):
+                    g = groups.setdefault((printer_preset, name), {
+                        "printer_preset": printer_preset,
+                        "stale_name": name,
+                        "required": False,
+                        "affected_filament_ids": [],
+                        "affected_filament_names": [],
+                    })
+                    g["affected_filament_ids"].append(fil_id)
+                    g["affected_filament_names"].append(fil.name or str(fil.ref))
+    return groups
 
 
 async def compute_drift(
-    old_catalog: dict,
-    new_catalog: dict,
+    old_catalog: Catalog,
+    new_catalog: Catalog,
     session: AsyncSession,
-    spoolman_cfg,  # SpoolmanConfig | None
+    inventory: FilamentInventoryProvider | None,
 ) -> dict | None:
     """Compare old vs new catalog; query live data for stale references.
 
@@ -118,36 +139,14 @@ async def compute_drift(
                 g["affected_config_ids"].append(cfg.id)
                 g["affected_file_names"].append(f"job#{job.id}")
 
-    # Spoolman filaments: check that profile NAME strings in orca_profiles exist in the new catalog.
-    # orca_profiles is {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
+    # Inventory filaments: check that the profile names bound to each filament still exist in the new catalog.
+    # Bindings are {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
     spoolman_groups: dict[tuple[str, str], dict] = {}
     spoolman_error: str | None = None
-    if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url and removed_filaments:
+    if inventory is not None and inventory.PROFILE_BINDINGS and removed_filaments:
         try:
-            spool_filaments = await fetch_filaments(spoolman_cfg.url, spoolman_cfg.api_key)
-            for fil in spool_filaments:
-                raw_extra = (fil.get("extra") or {}).get("orca_profiles")
-                if not raw_extra:
-                    continue
-                try:
-                    profiles: dict = json.loads(json.loads(raw_extra))
-                except Exception:
-                    continue
-                for printer_preset, names in profiles.items():
-                    if not isinstance(names, list):
-                        continue
-                    for name in names:
-                        if name in removed_filaments:
-                            key = (printer_preset, name)
-                            g = spoolman_groups.setdefault(key, {
-                                "printer_preset": printer_preset,
-                                "stale_name": name,
-                                "required": False,
-                                "affected_filament_ids": [],
-                                "affected_filament_names": [],
-                            })
-                            g["affected_filament_ids"].append(fil["id"])
-                            g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+            spoolman_groups = stale_binding_groups(
+                await inventory.list_filaments(), lambda name: name in removed_filaments)
         except Exception as exc:
             spoolman_error = str(exc)
             logger.warning("Spoolman fetch failed during drift check: %s", exc)

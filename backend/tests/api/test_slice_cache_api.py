@@ -1,4 +1,5 @@
 """Slicing cache over the API (BIZ-191..193)."""
+from tests.fake_providers import fake_packer
 import hashlib
 import os
 from unittest.mock import AsyncMock, patch
@@ -212,11 +213,10 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
-        mock_cls.return_value.pack_stls.return_value = packed
+        mock_get.return_value = fake_packer(packed)
         resp = await client.post(f"/api/v1/projects/{project_id}/generate",
                                  json={"eligible_printer_ids": [], "save_slice": True})
 
@@ -398,14 +398,13 @@ async def _generate(client, tmp_path, project_id, body):
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
-        mock_cls.return_value.pack_stls.return_value = _make_3mf_bytes(plate_count=2)
+        mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], **body})
     assert resp.status_code == 200, resp.text
-    return resp.json(), mock_cls.return_value.pack_stls
+    return resp.json(), mock_get.return_value.pack_models
 
 
 async def test_regenerating_an_identical_project_reuses_its_pack(client, tmp_path, session_factory, caplog):

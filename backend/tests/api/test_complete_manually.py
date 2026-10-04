@@ -279,9 +279,10 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
     assert resp.status_code == 200
     mock_deduct.assert_called_once()
     call_args = mock_deduct.call_args[0]
-    assert call_args[0] == "http://spoolman.test"  # url
-    assert call_args[2] == 42                       # spool_id
-    assert call_args[3] == 8.0                       # grams
+    from app.services.providers.spoolman import SpoolmanInventoryProvider
+    assert isinstance(call_args[0], SpoolmanInventoryProvider)
+    assert call_args[1] == 42                       # spool_id
+    assert call_args[2] == 8.0                       # grams
 
 
 async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, tmp_path, upload_3mf, create_job, create_printer):

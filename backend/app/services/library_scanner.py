@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import UploadedFile, Job
+from .providers.slicing import get_format_provider
 from .three_mf_parser import parse_sliced_archive, parse_three_mf, PlateInfo
 
 MODEL_EXTS = {".3mf", ".stl", ".gcode"}
@@ -153,8 +154,7 @@ class LibraryScanner:
         elif kind == "3mf":
             plates_raw = parse_three_mf(str(abs_path), thumbnail_dir=str(thumb_dir))
         elif kind == "gcode":
-            from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports this module
-            grams, secs, _ = _parse_gcode_estimates(str(abs_path))
+            grams, secs, _ = get_format_provider().parse_estimates(str(abs_path))
             thumb = extract_gcode_thumbnail(abs_path, thumb_dir / "plate_1.png")
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=str(thumb) if thumb else None,
                                     estimated_time=secs or 0, filament_g=grams or 0.0)]

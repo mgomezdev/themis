@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import NotificationConfig, SpoolmanConfig, WebhookConfig
 from . import notification_service, webhook_service
+from .providers.filament_inventory import Spool
 
 logger = logging.getLogger("app")
 
@@ -36,25 +37,29 @@ def threshold_for(filament_id: int | None, default_g: float | None, overrides: d
     return float(default_g) if default_g is not None else None
 
 
-def spool_name(spool: dict) -> str:
-    fil = spool.get("filament") or {}
-    vendor = (fil.get("vendor") or {}).get("name")
-    name = fil.get("name") or f"spool {spool.get('id')}"
-    return f"{vendor} {name}" if vendor else name
+def _as_int(ref: str | None) -> int | None:
+    """Persisted alert state (`low_stock_alerted`, overrides keyed by filament id) uses the integer ids."""
+    return int(ref) if ref is not None and ref.isdigit() else None
 
 
-def find_low(spools: list[dict], default_g: float | None, overrides: dict | None) -> list[LowSpool]:
+def spool_name(spool: Spool) -> str:
+    name = spool.filament_name or f"spool {spool.ref}"
+    return f"{spool.filament_vendor} {name}" if spool.filament_vendor else name
+
+
+def find_low(spools: list[Spool], default_g: float | None, overrides: dict | None) -> list[LowSpool]:
     out = []
     for s in spools:
-        remaining = s.get("remaining_weight")
-        if remaining is None or s.get("archived"):
+        remaining = s.remaining_weight
+        spool_id = _as_int(s.ref)
+        if remaining is None or s.archived or spool_id is None:
             continue
-        fil = s.get("filament") or {}
-        limit = threshold_for(fil.get("id"), default_g, overrides)
+        filament_id = _as_int(s.filament_ref)
+        limit = threshold_for(filament_id, default_g, overrides)
         if limit is None or remaining >= limit:
             continue
-        out.append(LowSpool(int(s["id"]), fil.get("id"), spool_name(s), float(remaining), limit,
-                            (s.get("location") or "").strip() or None))
+        out.append(LowSpool(spool_id, filament_id, spool_name(s), float(remaining), limit,
+                            (s.location or "").strip() or None))
     return out
 
 
@@ -64,7 +69,7 @@ def message_for(low: LowSpool) -> tuple[str, str]:
             f"{low.name}{where} has {low.remaining_g:.0f} g left (alert below {low.threshold_g:.0f} g).")
 
 
-async def process(session: AsyncSession, row: SpoolmanConfig, spools: list[dict]) -> list[LowSpool]:
+async def process(session: AsyncSession, row: SpoolmanConfig, spools: list[Spool]) -> list[LowSpool]:
     """Alert for spools newly below threshold and remember the ones actually delivered (so each drop alerts
     once). A spool whose delivery failed is *not* remembered and is retried at the next sync. A failure to
     load the notification configs (a DB error) propagates — the caller runs this inside a savepoint."""

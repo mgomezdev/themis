@@ -69,7 +69,7 @@ async def test_upload_of_a_plain_3mf_still_regenerates_thumbnails(client, librar
 
 async def test_archive_job_on_bambu_is_not_sliced_and_reads_its_plate_estimate(
         client, library, upload_3mf, create_printer, session_factory):
-    from app.services.override_inspector import CURATED_KEYS
+    from app.services.providers.laminus.overrides import CURATED_KEYS
     pid = await create_printer()   # Bambu
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),
@@ -192,7 +192,7 @@ async def test_archive_job_refused_for_a_plate_the_file_does_not_have(client, li
 
 async def test_editing_an_archive_job_drops_overrides_and_keeps_the_header_estimate(
         client, library, upload_3mf, create_printer):
-    from app.services.override_inspector import CURATED_KEYS
+    from app.services.providers.laminus.overrides import CURATED_KEYS
     pid = await create_printer()
     job_id = (await _post(client, {
         "uploaded_file_id": await upload_3mf("part.gcode.3mf", make_sliced_archive()),

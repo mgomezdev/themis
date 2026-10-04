@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, SpoolmanConfig, UploadedFile
+from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
 from ...services.model_targets import target_dicts
 from ...services.spool_check import check_spool_sufficiency
-from ...services.spoolman_service import fetch_spools
+from ...services.providers.filament_inventory import Spool, get_inventory_provider
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ async def _needed_grams(j: Job, session: AsyncSession) -> float | None:
     return plate.get("filament_g") if plate else None
 
 
-async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, dict]) -> dict:
+async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, Spool]) -> dict:
     d = _base_dict(j)
     cfg_result = await session.execute(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
@@ -123,13 +123,13 @@ async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
             if slot and slot.get("spoolman_spool_id") is not None:
                 spool_ids_needed.add(str(slot["spoolman_spool_id"]))
 
-    spools_by_id: dict[str, dict] = {}
+    spools_by_id: dict[str, Spool] = {}
     if spool_ids_needed:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        provider = await get_inventory_provider(session)
+        if provider is not None:
             try:
-                spools = await fetch_spools(spoolman_cfg.url, spoolman_cfg.api_key)
-                spools_by_id = {str(s.get("id")): s for s in spools}
+                spools = await provider.list_spools()
+                spools_by_id = {s.ref: s for s in spools}
             except Exception:
                 logger.warning("Spoolman unreachable while checking spool sufficiency for queue", exc_info=True)
 

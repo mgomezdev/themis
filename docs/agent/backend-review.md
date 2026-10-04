@@ -153,3 +153,20 @@ another's: `gcode/<job_id>` (production — a live upload/print may be reading f
 non-production paths exist specifically so a debug/manual slice action can safely run even while a job
 is genuinely `printing`/`uploading` through the production path. If you add another slice-invoking
 route, give it its own isolated subdirectory rather than reusing one of these.
+
+## 12. Provider boundary (Laminus / Spoolman)
+
+Core code reaches Laminus and Spoolman only through `SlicingProvider` / `FilamentInventoryProvider`
+(`app/services/providers/`, `docs/provider-interfaces.md`); `tests/test_provider_boundary.py` fails on a
+core import of an adapter-internal module, a vendor symbol, or a new `httpx` importer. When reviewing:
+- A new call to the sidecar or Spoolman = a new method on the ABC (+ fake + contract-suite case + adapter),
+  not an `httpx` call in a route/service. A new capability a provider might lack = a flag, and the call
+  site checks it (skip, don't error).
+- **Sync vs async.** Slicing-provider methods block (poll ≤ ~620 s): only from the queue thread pool,
+  `asyncio.to_thread`, or `run_in_executor` — never on the event loop. Inventory methods are awaited.
+- **Legacy shapes.** Routes that return vendor JSON use the DTO's `raw` (`[f.raw for f in …]`) so
+  `openapi.json` / `contracts/response-keys.json` don't move. Persisted ids stay opaque strings/ints as stored.
+- **Format knowledge** (gcode estimates, override inspection, curated keys) goes through
+  `get_format_provider()` — it works with no server configured; `get_slicing_provider()` returns `None` then.
+- Tests patch the accessor in the module under test with a `tests/fake_providers.py` fake; assert resulting
+  state (re-read the bindings / the job's estimate), not just that a mock was called.

@@ -11,11 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-import httpx
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..config import get_laminus_sidecar_url, get_library_dir
+from ..config import get_library_dir
 from ..models import (
     GcodeFile,
     Job,
@@ -32,92 +31,14 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
+from .providers.filament_inventory import FilamentInventoryProvider, get_inventory_provider
+from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
 from . import notification_service
 from . import scheduling
 from . import webhook_service
 
-
-_HEADER_BYTES = 16000
-_TAIL_BYTES = 64000   # OrcaSlicer writes the "filament used" / "estimated printing time" summary at the END of the file
-
-
-def _gcode_summary_text(path: str, plate: int | None) -> str | None:
-    """The head + tail of a gcode file (or of one plate's gcode inside a sliced .gcode.3mf archive) — where slicers
-    put the estimate lines — without reading the whole (often multi-MB) file into memory."""
-    if path.lower().endswith(".3mf"):
-        with zipfile.ZipFile(path) as z:
-            names = sorted(n for n in z.namelist() if n.endswith(".gcode"))
-            if not names:
-                return None
-            wanted = f"Metadata/plate_{plate}.gcode"
-            with z.open(wanted if wanted in names else names[0]) as fh:
-                head = fh.read(_HEADER_BYTES)
-                tail = b""
-                while chunk := fh.read(1 << 20):   # stream (zip members can't seek cheaply); keep only the end
-                    tail = (tail + chunk)[-_TAIL_BYTES:]
-        return (head + b"\n" + tail).decode("utf-8", errors="replace")
-    with open(path, "rb") as f:
-        head = f.read(_HEADER_BYTES)
-        f.seek(0, os.SEEK_END)
-        size = f.tell()
-        tail = b""
-        if size > _HEADER_BYTES:
-            f.seek(max(_HEADER_BYTES, size - _TAIL_BYTES))
-            tail = f.read()
-    return (head + b"\n" + tail).decode("utf-8", errors="replace")
-
-
-def _parse_gcode_estimates(
-    path: str, plate: int | None = None,
-) -> tuple[float | None, int | None, list[float] | None]:
-    """Extract filament_grams (total), estimated_seconds, per-extruder grams from gcode.
-
-    Returns (total_grams, seconds, extruder_grams_list). extruder_grams_list has one
-    entry per comma-separated value in the 'filament used [g]' line. Returns None for
-    each field independently if parsing fails. Both the start and the end of the file are
-    searched. For a sliced archive (.gcode.3mf), `plate` picks that plate's
-    `Metadata/plate_N.gcode`; otherwise the first gcode in it is read.
-    """
-    try:
-        text = _gcode_summary_text(path, plate)
-    except Exception:
-        return None, None, None
-    if text is None:
-        return None, None, None
-
-    grams: float | None = None
-    extruder_grams: list[float] | None = None
-    seconds: int | None = None
-    for raw in text.splitlines():
-        line = raw.lstrip("; ").strip()
-        if grams is None and "filament used [g]" in line.lower():
-            raw_val = line.split("=")[-1].strip()
-            parts = [p.strip() for p in raw_val.split(",")]
-            try:
-                extruder_grams = [float(p) for p in parts if p]
-                grams = sum(extruder_grams)
-            except ValueError:
-                extruder_grams = None
-                grams = None
-        if seconds is None and "estimated printing time" in line.lower():
-            time_str = re.split(r"\s*\(", line.split("=")[-1].strip())[0].strip()
-            total = 0
-            for num, unit in re.findall(r"(\d+)([dhms])", time_str):
-                if unit == "d":
-                    total += int(num) * 86400
-                elif unit == "h":
-                    total += int(num) * 3600
-                elif unit == "m":
-                    total += int(num) * 60
-                else:
-                    total += int(num)
-            if total > 0:
-                seconds = total
-        if grams is not None and seconds is not None:
-            break
-    return grams, seconds, extruder_grams
 
 logger = logging.getLogger(__name__)
 
@@ -129,11 +50,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _deduct_spool(url: str, api_key: str | None, spool_id: int, grams: float) -> None:
-    """Fire-and-forget Spoolman deduction. Logs warning on failure; never raises."""
+async def _deduct_spool(provider: FilamentInventoryProvider, spool_id: int, grams: float) -> None:
+    """Fire-and-forget inventory deduction. Logs warning on failure; never raises."""
     try:
-        from .spoolman_service import record_spool_use
-        await record_spool_use(url, api_key, spool_id, grams)
+        await provider.record_usage(str(spool_id), grams)
     except Exception:
         logger.warning("Spoolman deduction failed: spool_id=%s grams=%s", spool_id, grams)
 
@@ -489,7 +409,7 @@ class QueueEngine:
             return
 
         # Step 4 — Parse, discard gcode, write results
-        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+        grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path)
         shutil.rmtree(output_dir, ignore_errors=True)
 
         breakdown = None
@@ -847,17 +767,15 @@ class QueueEngine:
         # Block (not fail) so the job auto-retries when Laminus comes back.
         # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
         if not is_presliced_file(source_file):
-            sidecar_url = get_laminus_sidecar_url()
-            if not sidecar_url:
+            slicing = get_slicing_provider()
+            if slicing is None:
                 await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
                 return
             try:
-                r = await asyncio.to_thread(
-                    lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
-                )
-                if not r.is_success:
-                    await self._block_job(session, job, "Laminus is not ready — slicing paused")
-                    return
+                await asyncio.to_thread(slicing.health, 2)
+            except SlicingProviderNotReady:
+                await self._block_job(session, job, "Laminus is not ready — slicing paused")
+                return
             except Exception:
                 await self._block_job(session, job, "Laminus is unreachable — slicing paused")
                 return
@@ -1058,7 +976,7 @@ class QueueEngine:
                 except OSError:
                     pass
                 return
-            grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path, plate=plate_number)
+            grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path, plate_number)
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
                 filament_grams=grams, estimated_seconds=secs,
@@ -1158,7 +1076,7 @@ class QueueEngine:
         version, cached_file = found
         current = await asyncio.to_thread(
             slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), get_laminus_sidecar_url())
+            list(inputs.filament_presets), get_slicing_provider())
         stale, reasons = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
         policy = slice_cache.policy_name(use_latest)
         detail = {"sliced_version_id": version.id, "cached_file_id": cached_file.id,
@@ -1409,10 +1327,8 @@ class QueueEngine:
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
-        from ..models import SpoolmanConfig
         job_id = None
-        spoolman_url: str | None = None
-        spoolman_key: str | None = None
+        provider: FilamentInventoryProvider | None = None
         spool_id: int | None = None
         grams_to_deduct: float | None = None
 
@@ -1452,10 +1368,9 @@ class QueueEngine:
             # Collect Spoolman deduction data before session closes
             actual_grams = job.actual_filament_grams
             if actual_grams is not None:
-                spoolman_cfg = await session.get(SpoolmanConfig, 1)
-                if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
-                    spoolman_url = spoolman_cfg.url
-                    spoolman_key = spoolman_cfg.api_key
+                inventory = await get_inventory_provider(session)
+                if inventory is not None and inventory.RECORDS_USAGE:
+                    provider = inventory
                     loaded = (printer.loaded_filaments if printer else None) or []
                     cfg_result = await session.execute(
                         select(JobPrinterConfig).where(
@@ -1495,9 +1410,9 @@ class QueueEngine:
                 await session.delete(gcode)
             await session.commit()
 
-        if spool_id is not None and spoolman_url and grams_to_deduct is not None:
+        if spool_id is not None and provider is not None and grams_to_deduct is not None:
             task = asyncio.create_task(
-                _deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct)
+                _deduct_spool(provider, spool_id, grams_to_deduct)
             )
             self._estimate_tasks.add(task)
             task.add_done_callback(self._estimate_tasks.discard)

@@ -2,6 +2,7 @@
 client — with only the slicer faked: queue two jobs, the first prints, the printer is gated until the operator
 clears the plate, then the second job is claimed. API tests patch the engine and engine tests seed the DB
 directly, so this is the only place the seams between the layers are exercised together."""
+from tests.fake_providers import FakeSlicingProvider
 import asyncio
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -44,9 +45,7 @@ async def farm(client, session_factory, tmp_path, monkeypatch):
     printer_manager.set_job_complete_callback(engine.handle_print_complete)
     printer_manager.set_broadcast_callback(broadcast)
 
-    fake_sidecar_health = MagicMock(is_success=True)
-    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://fake-laminus"), \
-         patch("httpx.get", return_value=fake_sidecar_health):
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=FakeSlicingProvider()):
         yield SimpleNamespace(engine=engine, slicer=slicer, broadcasts=broadcasts)
 
     printer_manager._session_factory, printer_manager._on_job_complete, printer_manager._on_state_broadcast = saved

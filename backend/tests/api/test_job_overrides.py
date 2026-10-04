@@ -1,3 +1,4 @@
+from tests.catalog_helpers import patch_cached_catalog, prime_catalog
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -101,13 +102,11 @@ def test_extra_config_forwarded_to_sidecar():
     """extra_config is passed through to slice_start so the sidecar merges it."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = Path("/tmp")
-
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = {
+    prime_catalog({
         "machine": [{"name": "MyPrinter", "uuid": "m1"}],
         "process": [{"name": "MyProcess", "uuid": "p1"}],
         "filament": [{"name": "MyFilament", "uuid": "f1"}],
-    }
+    })
 
     req = SliceRequest(
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
@@ -159,7 +158,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.services.laminus_sidecar_client import SidecarError
+from app.services.providers.slicing import SlicingProviderError
+from app.services.providers.laminus import LaminusSlicingProvider
+from tests.fake_providers import FakeSlicingProvider
 
 _KEYS = {"has_embedded_settings", "has_findings", "setting_changes", "slot_warning"}  # what the frontend reads
 _CATALOG = {
@@ -184,27 +185,33 @@ def _project_3mf(settings: dict, model_xml: str | None = None) -> bytes:
     return buf.getvalue()
 
 
+def _merge_calls(provider) -> list:
+    return [c for c in provider.calls if c[0] == "merged_config"]
+
+
 @pytest.fixture
 def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
-    """`await check(data=..., printer=..., sidecar=..., catalog=..., merged=..., **body)` -> (response, client_mock)."""
+    """`await check(data=..., printer=..., sidecar=..., catalog=..., merged=..., **body)` -> (response, fake_provider).
+    `sidecar=None` means no slicing provider is configured."""
     async def _check(*, data: bytes | None = None, sidecar: str | None = "http://laminus.test",
-                     catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None, **body):
+                     catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None,
+                     real_inspector: bool = True, **body):
         file_id = await upload_3mf(data=data)
         printer_id = await create_printer(**(printer or {}))
         payload = {"uploaded_file_id": file_id, "printer_id": printer_id, "print_profile": "0.20mm Standard",
                    "filament_profile": "Bambu PLA Basic", **body}
-        catalog_mock = AsyncMock(side_effect=catalog) if isinstance(catalog, Exception) else AsyncMock(return_value=catalog)
-        sidecar_client = MagicMock()
+        provider = FakeSlicingProvider()
+        if real_inspector:   # exercise the Laminus (OrcaSlicer) inspection logic through the route
+            provider.inspect_overrides = LaminusSlicingProvider("").inspect_overrides
         if isinstance(merged, Exception):
-            sidecar_client.get_merged_config.side_effect = merged
+            provider.fail_on["merged_config"] = merged
         else:
-            sidecar_client.get_merged_config.return_value = merged if merged is not None else {}
+            provider.merged = merged if merged is not None else {}
         with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-             patch("app.config.get_laminus_sidecar_url", return_value=sidecar), \
-             patch("app.api.routes.laminus.get_cached_catalog", catalog_mock), \
-             patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=sidecar_client):
+             patch("app.services.providers.slicing.get_slicing_provider", return_value=provider if sidecar else None), \
+             patch_cached_catalog(catalog):
             resp = await client.post("/api/v1/jobs/check-overrides", json=payload)
-        return resp, sidecar_client
+        return resp, provider
     return _check
 
 
@@ -226,7 +233,7 @@ async def test_check_overrides_bare_3mf_has_nothing_to_lose_and_never_calls_the_
     assert resp.status_code == 200
     assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
                            "has_embedded_settings": False}
-    sidecar.get_merged_config.assert_not_called()
+    assert _merge_calls(sidecar) == []
 
 
 async def test_check_overrides_printer_without_active_preset_skips_the_diff(check):
@@ -235,7 +242,7 @@ async def test_check_overrides_printer_without_active_preset_skips_the_diff(chec
 
     assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
                            "has_embedded_settings": True}
-    sidecar.get_merged_config.assert_not_called()
+    assert _merge_calls(sidecar) == []
 
 
 @pytest.mark.parametrize("case, kwargs, error", [
@@ -247,7 +254,7 @@ async def test_check_overrides_printer_without_active_preset_skips_the_diff(chec
      "Profile not found in sidecar: machine='Bambu Lab P1S 0.4' process='0.28mm Draft'"),
     ("catalog has no filaments", {"catalog": {**_CATALOG, "filament": []}},
      "No filament profiles found in sidecar catalog"),
-    ("sidecar rejects the merge", {"merged": SidecarError("merge failed")}, "merge failed"),
+    ("sidecar rejects the merge", {"merged": SlicingProviderError("merge failed")}, "merge failed"),
 ])
 async def test_check_overrides_degrades_to_an_error_note_instead_of_blocking(check, case, kwargs, error):
     resp, _sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), **kwargs)
@@ -273,7 +280,7 @@ async def test_check_overrides_reports_only_curated_settings_the_presets_would_c
         {"key": "layer_height", "from": "0.2", "to": "0.16"},
         {"key": "wall_loops", "from": "3", "to": "4"},
     ]
-    sidecar.get_merged_config.assert_called_once_with("m-1", "p-1", ["f-bambu"])
+    assert _merge_calls(sidecar) == [("merged_config", "m-1", "p-1", ["f-bambu"])]
 
 
 async def test_check_overrides_clean_when_presets_agree_with_the_file(check):
@@ -286,7 +293,7 @@ async def test_check_overrides_clean_when_presets_agree_with_the_file(check):
 async def test_check_overrides_unknown_filament_falls_back_to_one_compatible_with_the_printer(check):
     _resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}), filament_profile="Not A Filament")
 
-    sidecar.get_merged_config.assert_called_once_with("m-1", "p-1", ["f-bambu"])  # not the first-listed generic one
+    assert _merge_calls(sidecar) == [("merged_config", "m-1", "p-1", ["f-bambu"])]  # not the first-listed generic one
 
 
 async def test_check_overrides_warns_when_the_file_uses_more_slots_than_the_printer_has(check):
@@ -298,3 +305,14 @@ async def test_check_overrides_warns_when_the_file_uses_more_slots_than_the_prin
     body = resp.json()
     assert body["slot_warning"] == {"used_slots": 3, "printer_slots": 1}  # printer has no loaded slots -> 1
     assert (body["has_findings"], body["setting_changes"]) == (True, [])
+
+
+async def test_check_overrides_returns_whatever_the_provider_inspects(check):
+    """The route delegates the file-format comparison to the slicing provider and passes its result through
+    unchanged, handing it the file, the merged config of the chosen presets and the printer's slot count."""
+    resp, provider = await check(data=_project_3mf({"layer_height": "0.2"}), merged={"layer_height": "0.3"},
+                                 real_inspector=False)
+    assert resp.status_code == 200
+    assert resp.json() == provider.override_findings
+    (call,) = [c for c in provider.calls if c[0] == "inspect_overrides"]
+    assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one

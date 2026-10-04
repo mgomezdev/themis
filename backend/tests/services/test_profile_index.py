@@ -1,7 +1,7 @@
 import json
 
-from app.services.preset_resolver import PresetResolver
-from app.services.profile_index import ProfileIndex
+from app.services.providers.laminus.preset_resolver import PresetResolver
+from app.services.providers.laminus.profile_index import ProfileIndex
 
 
 def _write(path, data):

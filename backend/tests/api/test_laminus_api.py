@@ -1,11 +1,14 @@
 """Tests for /api/v1/laminus/catalog/* routes (Features 2, 3, and 4)."""
+from tests.catalog_helpers import catalog_from_dict, cached_raw, prime_catalog
+from app.services import catalog_service
+from app.services.providers.slicing import SlicingProviderError
+from app.services.providers.filament_inventory import Filament
+from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from httpx import AsyncClient
-
-import app.api.routes.laminus as lmod
 
 SAMPLE_CATALOG = {
     "machine": [{"name": "Bambu X1C 0.4 nozzle", "uuid": "m1"}],
@@ -18,10 +21,10 @@ SAMPLE_CATALOG = {
 
 async def test_catalog_status_cold_cache_unconfigured(client: AsyncClient):
     """Status when no sidecar configured."""
-    lmod._catalog_dict = None
-    lmod._catalog_bytes = None
-    lmod._health_memo = None
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value=None):
+    prime_catalog(None)
+    catalog_service._catalog_bytes = None
+    catalog_service._health_memo = None
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=None):
         resp = await client.get("/api/v1/laminus/catalog/status")
     assert resp.status_code == 200
     body = resp.json()
@@ -32,10 +35,10 @@ async def test_catalog_status_cold_cache_unconfigured(client: AsyncClient):
 
 async def test_catalog_status_includes_catalog_counts(client: AsyncClient):
     """catalog/status returns catalog_counts when cache is warm."""
-    lmod._catalog_dict = SAMPLE_CATALOG
-    lmod._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
-    lmod._health_memo = None
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value=None):
+    prime_catalog(SAMPLE_CATALOG)
+    catalog_service._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
+    catalog_service._health_memo = None
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=None):
         resp = await client.get("/api/v1/laminus/catalog/status")
     body = resp.json()
     assert body["catalog_counts"] == {"machine": 1, "process": 1, "filament": 1}
@@ -43,56 +46,48 @@ async def test_catalog_status_includes_catalog_counts(client: AsyncClient):
 
 async def test_catalog_status_online(client: AsyncClient):
     """status='online' when health returns catalog_loaded=true."""
-    lmod._catalog_dict = SAMPLE_CATALOG
-    lmod._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
-    lmod._health_memo = None
-    health_resp = MagicMock()
-    health_resp.status_code = 200
-    health_resp.json.return_value = {
-        "catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 50
-    }
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch("httpx.get", return_value=health_resp):
+    prime_catalog(SAMPLE_CATALOG)
+    catalog_service._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
+    catalog_service._health_memo = None
+    fake = FakeSlicingProvider()
+    fake.default_health = {"catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 50}
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=fake):
         resp = await client.get("/api/v1/laminus/catalog/status")
     assert resp.json()["status"] == "online"
 
 
 async def test_catalog_status_building_via_flag(client: AsyncClient):
     """status='building' when catalog_building=true."""
-    lmod._catalog_dict = None
-    lmod._catalog_bytes = None
-    lmod._health_memo = None
-    health_resp = MagicMock()
-    health_resp.status_code = 200
-    health_resp.json.return_value = {
-        "catalog_loaded": False, "catalog_building": True, "catalog_profile_count": None
-    }
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch("httpx.get", return_value=health_resp):
+    prime_catalog(None)
+    catalog_service._catalog_bytes = None
+    catalog_service._health_memo = None
+    fake = FakeSlicingProvider()
+    fake.default_health = {"catalog_loaded": False, "catalog_building": True, "catalog_profile_count": None}
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=fake):
         resp = await client.get("/api/v1/laminus/catalog/status")
     assert resp.json()["status"] == "building"
 
 
 async def test_catalog_status_building_via_503(client: AsyncClient):
-    """status='building' when health returns 503 (catalog rebuild in progress)."""
-    lmod._catalog_dict = None
-    lmod._catalog_bytes = None
-    lmod._health_memo = None
-    health_resp = MagicMock()
-    health_resp.status_code = 503
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch("httpx.get", return_value=health_resp):
+    """status='building' when the provider reports its "building" marker (Laminus answers 503 mid-rebuild)."""
+    prime_catalog(None)
+    catalog_service._catalog_bytes = None
+    catalog_service._health_memo = None
+    fake = FakeSlicingProvider()
+    fake.default_health = {"catalog_loaded": False, "catalog_building": True}
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=fake):
         resp = await client.get("/api/v1/laminus/catalog/status")
     assert resp.json()["status"] == "building"
 
 
 async def test_catalog_status_offline_when_health_fails(client: AsyncClient):
     """status='offline' when health check raises."""
-    lmod._catalog_dict = None
-    lmod._catalog_bytes = None
-    lmod._health_memo = None
-    with patch("app.api.routes.laminus.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch("httpx.get", side_effect=Exception("connection refused")):
+    prime_catalog(None)
+    catalog_service._catalog_bytes = None
+    catalog_service._health_memo = None
+    fake = FakeSlicingProvider()
+    fake.fail_on["catalog_health"] = SlicingProviderError("connection refused")
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=fake):
         resp = await client.get("/api/v1/laminus/catalog/status")
     assert resp.json()["status"] == "offline"
 
@@ -101,44 +96,44 @@ async def test_catalog_status_offline_when_health_fails(client: AsyncClient):
 
 async def test_refresh_cold_cache_commits_immediately(client: AsyncClient):
     """Cold cache (first sync) commits without drift check."""
-    lmod._catalog_dict = None
-    lmod._catalog_bytes = None
-    lmod._pending_sync = None
+    prime_catalog(None)
+    catalog_service._catalog_bytes = None
+    catalog_service._pending_sync = None
 
-    with patch("app.api.routes.laminus._fetch_catalog", new_callable=AsyncMock) as mock_fetch:
-        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), SAMPLE_CATALOG)
+    with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch:
+        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_from_dict(SAMPLE_CATALOG))
         resp = await client.post("/api/v1/laminus/catalog/refresh")
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
-    assert lmod._catalog_dict == SAMPLE_CATALOG
-    assert lmod._pending_sync is None
+    assert cached_raw() == SAMPLE_CATALOG
+    assert catalog_service._pending_sync is None
 
 
 async def test_refresh_no_drift_commits_and_returns_ok(client: AsyncClient):
     """Identical catalog (no drift) commits immediately."""
-    lmod._catalog_dict = SAMPLE_CATALOG
-    lmod._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
-    lmod._pending_sync = None
+    prime_catalog(SAMPLE_CATALOG)
+    catalog_service._catalog_bytes = json.dumps(SAMPLE_CATALOG).encode()
+    catalog_service._pending_sync = None
 
-    with patch("app.api.routes.laminus._fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
+    with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
          patch("app.services.catalog_utils.compute_drift", new_callable=AsyncMock) as mock_drift:
-        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), SAMPLE_CATALOG)
+        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_from_dict(SAMPLE_CATALOG))
         mock_drift.return_value = None  # no drift
 
         resp = await client.post("/api/v1/laminus/catalog/refresh")
 
     assert resp.status_code == 200
     assert resp.json()["status"] == "ok"
-    assert lmod._pending_sync is None
+    assert catalog_service._pending_sync is None
 
 
 async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: AsyncClient):
     """Drift detected → pending_remaps returned, old catalog stays, _pending_sync set."""
     old_bytes = json.dumps(SAMPLE_CATALOG).encode()
-    lmod._catalog_dict = SAMPLE_CATALOG
-    lmod._catalog_bytes = old_bytes
-    lmod._pending_sync = None
+    prime_catalog(SAMPLE_CATALOG)
+    catalog_service._catalog_bytes = old_bytes
+    catalog_service._pending_sync = None
 
     new_catalog = {"machine": [], "process": [], "filament": []}
     new_bytes = json.dumps(new_catalog).encode()
@@ -155,9 +150,9 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
         "spoolman_error": None,
     }
 
-    with patch("app.api.routes.laminus._fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
+    with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
          patch("app.services.catalog_utils.compute_drift", new_callable=AsyncMock) as mock_drift:
-        mock_fetch.return_value = (new_bytes, new_catalog)
+        mock_fetch.return_value = (new_bytes, catalog_from_dict(new_catalog))
         mock_drift.return_value = drift_payload
 
         resp = await client.post("/api/v1/laminus/catalog/refresh")
@@ -169,49 +164,49 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
     assert len(body["pending"]["printers"]) == 1
 
     # Old catalog still active
-    assert lmod._catalog_bytes == old_bytes
+    assert catalog_service._catalog_bytes == old_bytes
     # Pending sync was parked
-    assert lmod._pending_sync is not None
-    assert lmod._pending_sync["sync_id"] == body["sync_id"]
-    assert lmod._pending_sync["raw"] == new_bytes
+    assert catalog_service._pending_sync is not None
+    assert catalog_service._pending_sync["sync_id"] == body["sync_id"]
+    assert catalog_service._pending_sync["raw"] == new_bytes
 
 
 # ---- confirm-remap tests (Feature 4) ----
 
 async def test_confirm_remap_no_pending_returns_409(client: AsyncClient):
     """No pending slot → 409."""
-    lmod._pending_sync = None
-    catalog_before = lmod._catalog_bytes
+    catalog_service._pending_sync = None
+    catalog_before = catalog_service._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "any-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
-    assert lmod._pending_sync is None
-    assert lmod._catalog_bytes == catalog_before
+    assert catalog_service._pending_sync is None
+    assert catalog_service._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
     """Wrong sync_id → 409."""
-    lmod._pending_sync = {
-        "sync_id": "correct-id", "raw": b'{}', "catalog": {},
+    catalog_service._pending_sync = {
+        "sync_id": "correct-id", "raw": b'{}', "catalog": catalog_from_dict({}),
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
-    catalog_before = lmod._catalog_bytes
+    catalog_before = catalog_service._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "wrong-id",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 409
-    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "correct-id"  # still parked
-    assert lmod._catalog_bytes == catalog_before  # not committed
+    assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "correct-id"  # still parked
+    assert catalog_service._catalog_bytes == catalog_before  # not committed
 
 
 async def test_confirm_remap_missing_required_printer_resolution_returns_422(client: AsyncClient):
     """Missing required printer resolution → 422."""
-    lmod._pending_sync = {
-        "sync_id": "sync-1", "raw": b'{}', "catalog": {},
+    catalog_service._pending_sync = {
+        "sync_id": "sync-1", "raw": b'{}', "catalog": catalog_from_dict({}),
         "pending": {
             "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
@@ -221,14 +216,14 @@ async def test_confirm_remap_missing_required_printer_resolution_returns_422(cli
         },
         "created_at": 0,
     }
-    catalog_before = lmod._catalog_bytes
+    catalog_before = catalog_service._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-1",
         "resolutions": {"printers": [], "jobs": [], "spoolman_filaments": []}
     })
     assert resp.status_code == 422
-    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-1"  # operator can retry
-    assert lmod._catalog_bytes == catalog_before
+    assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "sync-1"  # operator can retry
+    assert catalog_service._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncClient, session_factory, create_job):
@@ -240,10 +235,10 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
     async with session_factory() as s:
         config_id = (await s.execute(
             select(JobPrinterConfig.id).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-    lmod._pending_sync = {
+    catalog_service._pending_sync = {
         "sync_id": "sync-job",
         "raw": b"{}",
-        "catalog": {"machine": [], "process": [], "filament": []},
+        "catalog": catalog_from_dict({"machine": [], "process": [], "filament": []}),
         "pending": {
             "printers": [],
             "jobs": [{"field": "print_profile", "stale_value": "Old Process",
@@ -253,7 +248,7 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
         },
         "created_at": 0,
     }
-    catalog_before = lmod._catalog_bytes
+    catalog_before = catalog_service._catalog_bytes
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-job",
         "resolutions": {
@@ -266,16 +261,16 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
     assert resp.status_code == 422
     async with session_factory() as s:  # nothing was applied
         assert (await s.get(JobPrinterConfig, config_id)).print_profile == "Old Process"
-    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-job"
-    assert lmod._catalog_bytes == catalog_before
+    assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "sync-job"
+    assert catalog_service._catalog_bytes == catalog_before
 
 
 async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: AsyncClient):
     """A malformed resolutions payload is a validation error, not an unhandled 500."""
-    lmod._pending_sync = {
+    catalog_service._pending_sync = {
         "sync_id": "sync-malformed",
         "raw": b"{}",
-        "catalog": {},
+        "catalog": catalog_from_dict({}),
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
@@ -284,7 +279,7 @@ async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: A
         "resolutions": {"printers": "not-a-list", "jobs": [], "spoolman_filaments": []},
     })
     assert resp.status_code == 422
-    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-malformed"
+    assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "sync-malformed"
 
 
 async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncClient):
@@ -304,10 +299,10 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
     new_catalog = {"machine": [{"name": "New Machine", "uuid": "m2"}], "process": [], "filament": []}
     pending_bytes = json.dumps(new_catalog).encode()
 
-    lmod._pending_sync = {
+    catalog_service._pending_sync = {
         "sync_id": "sync-apply",
         "raw": pending_bytes,
-        "catalog": new_catalog,
+        "catalog": catalog_from_dict(new_catalog),
         "pending": {
             "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
@@ -330,8 +325,8 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
     body = resp.json()
     assert body["status"] == "ok"
     assert body["applied"]["printers"] == 1
-    assert lmod._pending_sync is None
-    assert lmod._catalog_dict == new_catalog
+    assert catalog_service._pending_sync is None
+    assert cached_raw() == new_catalog
 
     # Verify DB updated
     printer_resp = await client.get(f"/api/v1/printers/{printer_id}")
@@ -340,8 +335,8 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
 
 async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client: AsyncClient):
     """raw=None (Spoolman-only pending): clears pending, does NOT swap catalog."""
-    original_catalog = lmod._catalog_dict
-    lmod._pending_sync = {
+    original_catalog = cached_raw()
+    catalog_service._pending_sync = {
         "sync_id": "spoolman-only",
         "raw": None,
         "catalog": None,
@@ -358,9 +353,8 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
         "created_at": 0,
     }
 
-    with patch("app.services.spoolman_service.fetch_filament", new_callable=AsyncMock,
-               return_value={"extra": {"orca_profiles": '"\\"{}\\""'}}), \
-         patch("app.services.spoolman_service.patch_filament", new_callable=AsyncMock):
+    inventory = FakeInventoryProvider(filaments=[Filament(ref="5", name="Red PLA")])
+    with _inventory(inventory):
         resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
             "sync_id": "spoolman-only",
             "resolutions": {
@@ -375,15 +369,15 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
         })
 
     assert resp.status_code == 200
-    assert lmod._pending_sync is None
-    assert lmod._catalog_dict is original_catalog  # NOT swapped
+    assert catalog_service._pending_sync is None
+    assert cached_raw() is original_catalog  # NOT swapped
 
 
 # ---- confirm-remap: applying each resolution type -------------------------------------------
 
 from sqlalchemy import select
 
-from app.models import JobPrinterConfig, Printer, SpoolmanConfig
+from app.models import JobPrinterConfig, Printer
 
 _NEW_CATALOG = {
     "machine": [{"name": "New Machine", "uuid": "m2"}],
@@ -393,7 +387,7 @@ _NEW_CATALOG = {
 
 
 def _park(pending: dict, *, raw: bytes | None = b'{"new": true}', catalog: dict | None = _NEW_CATALOG, sync_id="sync-x"):
-    lmod._pending_sync = {"sync_id": sync_id, "raw": raw, "catalog": catalog, "pending": pending, "created_at": 0}
+    catalog_service._pending_sync = {"sync_id": sync_id, "raw": raw, "catalog": catalog_from_dict(catalog), "pending": pending, "created_at": 0}
     return sync_id
 
 
@@ -438,8 +432,8 @@ async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles
     assert row_a.current_orca_printer_profile == row_b.current_orca_printer_profile == "New Machine"
     assert [s["filament_profile"] for s in row_a.loaded_filaments] == ["New PLA", "Keep Me"]
     assert row_a.loaded_filaments[0]["type"] == "PLA"  # the rest of the slot survives
-    assert lmod._catalog_dict == _NEW_CATALOG and lmod._catalog_bytes == b'{"new": true}'
-    assert lmod._pending_sync is None
+    assert cached_raw() == _NEW_CATALOG and catalog_service._catalog_bytes == b'{"new": true}'
+    assert catalog_service._pending_sync is None
 
 
 async def test_confirm_remap_optional_printer_entry_without_a_resolution_clears_the_field(client, create_printer, session_factory):
@@ -504,7 +498,7 @@ async def test_confirm_remap_lists_every_unresolved_or_invalid_entry_and_changes
         "Invalid value 'Ghost Process' for job print_profile",
     ]
     assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"
-    assert lmod._pending_sync is not None and lmod._pending_sync["sync_id"] == "sync-x"  # operator can retry
+    assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "sync-x"  # operator can retry
 
 
 async def test_confirm_remap_failure_midway_rolls_back_every_change_and_keeps_the_pending_remap(client, create_printer, session_factory):
@@ -516,15 +510,15 @@ async def test_confirm_remap_failure_midway_rolls_back_every_change_and_keeps_th
         jobs=[{"field": "print_profile", "stale_value": "Old Process", "options_kind": "process", "required": False,
                "affected_config_ids": None, "affected_file_names": []}],   # malformed: blows up after the printer update
     ))
-    catalog_before = lmod._catalog_dict
+    catalog_before = cached_raw()
 
     with pytest.raises(TypeError):
         await _confirm(client, sync, printers=[
             {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "new_value": "New Machine"}])
 
     assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"  # not half-applied
-    assert lmod._catalog_dict is catalog_before
-    assert lmod._pending_sync is not None
+    assert cached_raw() is catalog_before
+    assert catalog_service._pending_sync is not None
 
 
 # ---- confirm-remap: Spoolman follow-up (best effort, after the DB commit) ----------------------
@@ -534,37 +528,32 @@ def _spoolman_entry(*ids, preset="Bambu X1C 0.4 nozzle", stale="Old PLA"):
             "affected_filament_ids": list(ids), "affected_filament_names": [f"fil{i}" for i in ids]}
 
 
-def _orca_extra(profiles: dict) -> dict:
-    return {"extra": {"orca_profiles": json.dumps(json.dumps(profiles))}}  # Spoolman stores it double-encoded
+def _bound(ref, bindings):
+    return Filament(ref=str(ref), name=f"fil{ref}", profile_bindings={k: list(v) for k, v in bindings.items()})
 
 
-async def _enable_spoolman(session_factory):
-    async with session_factory() as s:
-        s.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key="k"))
-        await s.commit()
+def _inventory(provider):
+    return patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=provider))
 
 
-async def test_confirm_remap_patches_spoolman_filaments_and_reports_the_ones_that_failed(client, session_factory):
-    await _enable_spoolman(session_factory)
+async def test_confirm_remap_rewrites_filament_bindings_and_reports_the_ones_that_failed(client):
     preset = "Bambu X1C 0.4 nozzle"
-    stored = {
-        5: {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]},
-        6: {preset: ["Old PLA"]},
-        7: {preset: ["Old PLA"]},
-    }
+    inventory = FakeInventoryProvider(filaments=[
+        _bound(5, {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]}),
+        _bound(6, {preset: ["Old PLA"]}),
+        _bound(7, {preset: ["Old PLA"]}),
+    ])
+    real_get = inventory.get_profile_bindings
 
-    async def fake_fetch(url, key, fil_id):
-        if fil_id == 7:
+    async def flaky_get(ref):
+        if ref == "7":
             raise RuntimeError("spoolman down")
-        return _orca_extra(stored[fil_id])
+        return await real_get(ref)
 
-    patched = {}
-    async def fake_patch(url, key, fil_id, profiles):
-        patched[fil_id] = profiles
+    inventory.get_profile_bindings = flaky_get
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, 7)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=fake_fetch), \
-         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+    with _inventory(inventory):
         resp = await _confirm(client, sync, spoolman=[
             {"printer_preset": preset, "stale_name": "Old PLA", "new_name": "New PLA"}])
 
@@ -572,39 +561,49 @@ async def test_confirm_remap_patches_spoolman_filaments_and_reports_the_ones_tha
     body = resp.json()
     assert body["applied"]["spoolman_filaments"] == 2
     assert body["spoolman_failures"] == ["filament 7: spoolman down"]
-    # stale name swapped for the new one on this preset only; other presets and other names untouched
-    assert patched[5] == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
-    assert patched[6] == {preset: ["New PLA"]}
-    assert 7 not in patched
-    assert lmod._catalog_dict == _NEW_CATALOG and lmod._pending_sync is None  # a Spoolman failure never blocks the commit
+    # re-read: stale name swapped for the new one on this preset only; other presets and other names untouched
+    assert (await real_get("5")) == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
+    assert (await real_get("6")) == {preset: ["New PLA"]}
+    assert (await real_get("7")) == {preset: ["Old PLA"]}          # the failed one is left as it was
+    assert cached_raw() == _NEW_CATALOG and catalog_service._pending_sync is None  # a Spoolman failure never blocks the commit
 
 
-async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client, session_factory):
-    await _enable_spoolman(session_factory)
+async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client):
     preset = "Bambu X1C 0.4 nozzle"
-    patched = {}
-
-    async def fake_patch(url, key, fil_id, profiles):
-        patched[fil_id] = profiles
+    inventory = FakeInventoryProvider(filaments=[_bound(5, {preset: ["Old PLA"]})])
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock(return_value=_orca_extra({preset: ["Old PLA"]}))), \
-         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+    with _inventory(inventory):
         resp = await _confirm(client, sync, spoolman=[{"printer_preset": preset, "stale_name": "Old PLA", "new_name": None}])
 
     assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 1
-    assert patched == {5: {}}  # the preset key is removed rather than left as an empty list
+    assert await inventory.get_profile_bindings("5") == {}  # the preset key is removed rather than left as an empty list
 
 
 async def test_confirm_remap_skips_spoolman_entirely_when_it_is_not_configured(client):
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock()) as fetch:
+    with patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=None)) as accessor:
         resp = await _confirm(client, sync)
 
     assert resp.status_code == 200
     assert resp.json()["applied"]["spoolman_filaments"] == 0
-    fetch.assert_not_called()
-    assert lmod._pending_sync is None
+    accessor.assert_awaited_once()
+    assert catalog_service._pending_sync is None
+
+
+async def test_confirm_remap_skips_the_binding_rewrite_for_a_provider_without_profile_bindings(client):
+    inventory = FakeInventoryProvider(filaments=[_bound(5, {"P": ["Old PLA"]})])
+    inventory.PROFILE_BINDINGS = False
+
+    sync = _park(_pending(spoolman=[_spoolman_entry(5, preset="P")]))
+    with _inventory(inventory):
+        resp = await _confirm(client, sync)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["applied"]["spoolman_filaments"] == 0 and resp.json()["spoolman_failures"] == []
+    assert inventory.calls == []                                   # nothing read or written
+    assert inventory.filaments["5"].profile_bindings == {"P": ["Old PLA"]}
+    assert cached_raw() == _NEW_CATALOG                            # the catalog commit still happens
 
 
 async def test_confirm_remap_job_print_profile_without_a_replacement_becomes_blank_not_null(client, create_job, session_factory):
@@ -620,3 +619,18 @@ async def test_confirm_remap_job_print_profile_without_a_replacement_becomes_bla
     async with session_factory() as s:
         assert (await s.get(JobPrinterConfig, cfg_id)).print_profile == ""  # the column is NOT NULL
 
+
+
+async def test_catalog_status_memoizes_provider_health_for_thirty_seconds(client: AsyncClient):
+    """Two status polls inside the memo window hit the provider once; after the TTL it is asked again."""
+    catalog_service._health_memo = None
+    catalog_service._health_memo_at = 0.0
+    fake = FakeSlicingProvider()
+    with patch("app.services.catalog_service.get_slicing_provider", return_value=fake):
+        await client.get("/api/v1/laminus/catalog/status")
+        await client.get("/api/v1/laminus/catalog/status")
+        assert [c[0] for c in fake.calls].count("catalog_health") == 1
+
+        catalog_service._health_memo_at -= catalog_service._HEALTH_MEMO_TTL + 1
+        await client.get("/api/v1/laminus/catalog/status")
+    assert [c[0] for c in fake.calls].count("catalog_health") == 2

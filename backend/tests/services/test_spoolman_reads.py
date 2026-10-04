@@ -6,7 +6,9 @@ import httpx
 import pytest
 
 from app.models import SpoolmanConfig
-from app.services import spoolman_service, spoolman_sync
+from app.services import spoolman_sync
+from app.services.providers.spoolman import service as spoolman_service
+from app.services.providers.filament_inventory import InventoryProviderError
 from app.services.spoolman_sync import SpoolmanSyncLoop, _describe_error, record_sync
 from tests import spoolman_mock
 
@@ -65,12 +67,9 @@ async def test_reads_raise_on_http_errors_and_timeouts(spoolman_upstream, call):
 # _describe_error
 # ---------------------------------------------------------------------------
 
-def test_describe_error_classifies_status_transport_and_other_failures():
-    status_code, status_msg = _describe_error(_http_error(502))
-    assert status_code == "502" and "502" in status_msg
-
-    transport = httpx.ConnectError("refused", request=httpx.Request("GET", URL))
-    assert _describe_error(transport) == ("ConnectError", "refused")
+def test_describe_error_uses_the_provider_error_code_or_the_exception_type():
+    assert _describe_error(InventoryProviderError("Server error", code="502", status=502)) == ("502", "Server error")
+    assert _describe_error(InventoryProviderError("refused", code="ConnectError")) == ("ConnectError", "refused")
     assert _describe_error(ValueError("bad json")) == ("ValueError", "bad json")
 
 
@@ -105,7 +104,7 @@ async def test_record_sync_failure_records_the_error_keeps_the_last_success_and_
     spoolman_upstream.handler = lambda request: httpx.Response(500, text="boom")
 
     async with session_factory() as s:
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(InventoryProviderError):
             await record_sync(s, await s.get(SpoolmanConfig, 1))
 
     row = await _reload(session_factory)
@@ -127,8 +126,8 @@ def _loop_for(session_factory) -> SpoolmanSyncLoop:
 @pytest.fixture
 def fetched():
     """Count sync attempts without touching the network."""
-    with patch.object(spoolman_sync.spoolman_service, "fetch_filaments", new=AsyncMock(return_value=[])) as f, \
-         patch.object(spoolman_sync.spoolman_service, "fetch_spools", new=AsyncMock(return_value=[])):
+    with patch("app.services.providers.spoolman.service.fetch_filaments", new=AsyncMock(return_value=[])) as f, \
+         patch("app.services.providers.spoolman.service.fetch_spools", new=AsyncMock(return_value=[])):
         yield f
 
 
@@ -166,8 +165,8 @@ async def test_tick_syncs_when_due_and_records_the_attempt(session_factory, fetc
 
 async def test_tick_swallows_a_failed_sync_after_it_was_recorded_on_the_row(session_factory):
     await _row(session_factory, sync_interval_minutes=1)
-    with patch.object(spoolman_sync.spoolman_service, "fetch_filaments",
-                      new=AsyncMock(side_effect=_http_error(500))):
+    with patch("app.services.providers.spoolman.service.fetch_filaments",
+               new=AsyncMock(side_effect=_http_error(500))):
         await _loop_for(session_factory)._tick()  # must not raise
 
     row = await _reload(session_factory)

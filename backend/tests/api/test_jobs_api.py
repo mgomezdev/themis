@@ -1,6 +1,7 @@
 # backend/tests/api/test_jobs_api.py
-import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from app.services.providers.filament_inventory import Spool
+from tests.fake_providers import FakeInventoryProvider
 from app.models import Job
 
 
@@ -620,9 +621,9 @@ async def test_job_details_spool_warning_none_when_sufficient(client, session_fa
     internal-only name — see queue.py's matching field for the sibling contract."""
     job_id, printer_id = await _seed_spool_warning_fixture(session_factory, estimate_grams=200.0)
 
-    fake_spool = {"id": 99, "remaining_weight": 900.0,
-                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
-    with patch("app.api.routes.jobs.fetch_spools", return_value=[fake_spool]):
+    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=900.0, filament_name="Bambu PLA Basic Black",
+                                               filament_material="PLA")])
+    with patch("app.api.routes.jobs.get_inventory_provider", AsyncMock(return_value=fake)):
         resp = await client.get(f"/api/v1/jobs/{job_id}/details")
     assert resp.status_code == 200
     data = resp.json()
@@ -635,9 +636,9 @@ async def test_job_details_spool_warning_set_when_insufficient(client, session_f
     remaining grams in the message, when the bound spool is short on filament."""
     job_id, printer_id = await _seed_spool_warning_fixture(session_factory, estimate_grams=340.0)
 
-    fake_spool = {"id": 99, "remaining_weight": 220.0,
-                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
-    with patch("app.api.routes.jobs.fetch_spools", return_value=[fake_spool]):
+    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=220.0, filament_name="Bambu PLA Basic Black",
+                                               filament_material="PLA")])
+    with patch("app.api.routes.jobs.get_inventory_provider", AsyncMock(return_value=fake)):
         resp = await client.get(f"/api/v1/jobs/{job_id}/details")
     assert resp.status_code == 200
     data = resp.json()

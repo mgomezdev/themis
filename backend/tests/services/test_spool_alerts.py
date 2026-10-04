@@ -6,13 +6,14 @@ import pytest
 
 from app.models import NotificationConfig, SpoolmanConfig, WebhookConfig
 from app.services import spool_alerts
+from app.services.providers.filament_inventory import Spool
 from app.services.spool_alerts import EVENT, find_low, threshold_for
 from app.services.spoolman_sync import record_sync
 
 
 def spool(sid, remaining, filament_id=1, location=None, vendor="Elegoo", archived=False):
-    return {"id": sid, "remaining_weight": remaining, "archived": archived, "location": location,
-            "filament": {"id": filament_id, "name": f"PLA {filament_id}", "vendor": {"name": vendor}}}
+    return Spool(ref=str(sid), filament_ref=str(filament_id), filament_name=f"PLA {filament_id}",
+                 filament_vendor=vendor, location=location, remaining_weight=remaining, archived=archived)
 
 
 # ---- thresholds ------------------------------------------------------------------------------
@@ -31,7 +32,7 @@ def test_threshold_for(filament_id, default, overrides, expected):
 
 
 def test_find_low_is_strictly_below_threshold_and_skips_archived_and_unweighed_spools():
-    spools = [spool(1, 199.9), spool(2, 200), spool(3, 10, archived=True), {"id": 4, "filament": {"id": 1}},
+    spools = [spool(1, 199.9), spool(2, 200), spool(3, 10, archived=True), Spool(ref="4", filament_ref="1"),
               spool(5, 5, filament_id=9, location=" Shelf B ")]
     low = find_low(spools, 200, {"9": 10})
 

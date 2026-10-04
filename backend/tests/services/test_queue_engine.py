@@ -2,6 +2,7 @@
 import asyncio
 import os
 import pytest
+from tests.fake_providers import FakeSlicingProvider
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
@@ -416,7 +417,7 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
 
 
 def test_parse_gcode_estimates_single_extruder(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text(
         "; filament used [g] = 12.50\n"
@@ -429,7 +430,7 @@ def test_parse_gcode_estimates_single_extruder(tmp_path):
 
 
 def test_parse_gcode_estimates_multi_extruder(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text(
         "; filament used [g] = 15.23, 8.45\n"
@@ -442,7 +443,7 @@ def test_parse_gcode_estimates_multi_extruder(tmp_path):
 
 
 def test_parse_gcode_estimates_missing_returns_none(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; no filament info here\n")
     grams, secs, extruder_grams = _parse_gcode_estimates(str(gcode))
@@ -726,6 +727,52 @@ async def test_run_estimate_sets_done_with_fields(db):
 
 
 @pytest.mark.asyncio
+async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(db):
+    """The estimate on the job comes from SlicingProvider.parse_estimates, not from a gcode parser baked into the
+    queue: the artifact's own text says 10 g / 30 min, the fake provider says otherwise, and the fake wins."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "Test Machine"
+        printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n; estimated printing time (normal mode) = 30m 0s\n")
+        artifact = f.name
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer)
+
+    async def inline_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = inline_put
+    fake = FakeSlicingProvider()
+    fake.estimates = (77.5, 4242, [77.5])
+    with patch.object(slicer, "slice", return_value=artifact), \
+         patch("app.services.queue_engine.get_format_provider", return_value=fake):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.estimate_status, job.estimate_filament_grams, job.estimate_seconds) == ("done", 77.5, 4242)
+    assert ("parse_estimates", artifact, None) in fake.calls
+    os.unlink(artifact)
+
+
+@pytest.mark.asyncio
 async def test_run_estimate_fails_when_no_printer_config(db):
     """A job with no JobPrinterConfig row must fail the estimate rather than
     return silently — leaving estimate_status stuck on 'pending' means the UI
@@ -935,8 +982,10 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
     # Simulate an unexpected error in a step that has no existing try/except of
     # its own (Step 4 gcode parsing), rather than the already-handled slice
     # failure path.
+    broken = FakeSlicingProvider()
+    broken.parse_estimates = MagicMock(side_effect=RuntimeError("boom"))
     with patch.object(slicer, "slice", return_value=fake_gcode), \
-         patch("app.services.queue_engine._parse_gcode_estimates", side_effect=RuntimeError("boom")):
+         patch("app.services.queue_engine.get_format_provider", return_value=broken):
         await engine.run_estimate(job_id)
 
     async with db() as session:
@@ -1030,7 +1079,7 @@ async def test_handle_print_complete_fires_spoolman_deduction(db):
 
     deduction_calls = []
 
-    async def fake_deduct(url, api_key, spool_id, grams):
+    async def fake_deduct(provider, spool_id, grams):
         deduction_calls.append({"spool_id": spool_id, "grams": grams})
 
     with patch("app.services.queue_engine._deduct_spool", fake_deduct):
@@ -1039,6 +1088,87 @@ async def test_handle_print_complete_fires_spoolman_deduction(db):
     assert len(deduction_calls) == 1
     assert deduction_calls[0]["spool_id"] == 42
     assert deduction_calls[0]["grams"] == pytest.approx(17.5)
+
+
+async def _seed_completing_job(db, grams=17.5):
+    from unittest.mock import MagicMock
+    from app.models import Job, GcodeFile
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
+                                      "spoolman_spool_id": 42}]
+        job = await session.get(Job, job_id)
+        job.assigned_printer_id = printer_id
+        job.actual_filament_grams = grams
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
+        await session.commit()
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    return QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer), printer_id, job_id
+
+
+@pytest.mark.asyncio
+async def test_completion_records_usage_through_the_inventory_provider(db):
+    """The deduction goes through FilamentInventoryProvider.record_usage with the slot's spool ref."""
+    from unittest.mock import patch, AsyncMock
+    from app.models import Job
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.waiting import wait_until
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider()
+    fake.spools = {"42": __import__("app.services.providers.filament_inventory", fromlist=["Spool"]).Spool(ref="42", remaining_weight=500.0)}
+
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
+        await engine.handle_print_complete(printer_id)
+        await wait_until(lambda: fake.usage, what="usage recorded")
+
+    assert fake.usage == [("42", pytest.approx(17.5))]
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "complete"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("records_usage", [None, False])   # None: no provider configured at all
+async def test_completion_skips_deduction_when_provider_cannot_record_usage_or_is_absent(db, records_usage):
+    from unittest.mock import patch, AsyncMock
+    from tests.fake_providers import FakeInventoryProvider
+
+    engine, printer_id, _ = await _seed_completing_job(db)
+    provider = None
+    if records_usage is not None:
+        provider = FakeInventoryProvider()
+        provider.RECORDS_USAGE = records_usage
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=provider)):
+        await engine.handle_print_complete(printer_id)
+    await asyncio.sleep(0.05)
+    if provider is not None:
+        assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_provider_never_breaks_completion(db):
+    from unittest.mock import patch, AsyncMock
+    from app.models import Job
+    from app.services.providers.filament_inventory import InventoryProviderError
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.waiting import wait_until
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider()
+    fake.fail_with = InventoryProviderError("down", code="503", status=503)
+
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
+        await engine.handle_print_complete(printer_id)
+        await wait_until(lambda: "record_usage" in fake.calls, what="deduction attempted")
+
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "complete"
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1241,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
 
     deduction_calls = []
 
-    async def fake_deduct(url, api_key, spool_id, grams):
+    async def fake_deduct(provider, spool_id, grams):
         deduction_calls.append({"spool_id": spool_id, "grams": grams})
 
     # Force the interleave that the old code let happen implicitly: right after the
@@ -1226,7 +1356,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
 
     loop = asyncio.get_running_loop()
 
-    def fake_httpx_get(url, timeout=None):
+    def cancel_during_probe():
         # Runs in the to_thread executor, simulating a user cancel that commits
         # while the health probe is in flight.
         async def _cancel():
@@ -1236,12 +1366,11 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
                 await session.commit()
         fut = asyncio.run_coroutine_threadsafe(_cancel(), loop)
         fut.result(timeout=5)
-        resp = MagicMock()
-        resp.is_success = True
-        return resp
+        return {"status": "ok"}
 
-    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
-         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+    probe = FakeSlicingProvider()
+    probe.health = lambda timeout=None: cancel_during_probe()
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1265,7 +1394,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
 
     loop = asyncio.get_running_loop()
 
-    def fake_httpx_get(url, timeout=None):
+    def cancel_then_fail_probe():
         # Runs in the to_thread executor, simulating a user cancel that commits
         # while the health probe is in flight.
         async def _cancel():
@@ -1277,8 +1406,9 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
         fut.result(timeout=5)
         raise ConnectionError("simulated Laminus unreachable")
 
-    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
-         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+    probe = FakeSlicingProvider()
+    probe.health = lambda timeout=None: cancel_then_fail_probe()
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1287,6 +1417,38 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
         # Must stay cancelled, not resurrected to "blocked".
         assert job.status == "cancelled"
         assert job.block_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario, reason", [
+    ("unconfigured", "Laminus sidecar not configured — slicing paused"),
+    ("not_ready", "Laminus is not ready — slicing paused"),
+    ("unreachable", "Laminus is unreachable — slicing paused"),
+])
+async def test_an_unusable_slicing_provider_blocks_the_job_with_a_specific_reason(db, scenario, reason):
+    """No provider / provider says not ready / provider unreachable → the job is blocked (not failed) with its own
+    reason, and the health probe keeps its 2 s timeout."""
+    from unittest.mock import patch, MagicMock
+    from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
+
+    qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+
+    provider = None
+    if scenario != "unconfigured":
+        provider = FakeSlicingProvider()
+        provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if scenario == "not_ready"
+                                      else SlicingProviderError("health check request failed: refused"))
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=provider):
+        await qe._process_queue()
+        await settle_background_tasks()
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason) == ("blocked", reason)
+    if provider is not None:
+        assert provider.calls == [("health", 2)]
 
 
 @pytest.mark.asyncio
@@ -1572,7 +1734,7 @@ async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_pa
 
 def test_parse_gcode_estimates_reads_the_summary_at_the_end_of_a_long_file(tmp_path):
     """OrcaSlicer writes "filament used" / "estimated printing time" after the toolpaths — far past the header."""
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "long.gcode"
     gcode.write_text("; HEADER_BLOCK_START\n" + "G1 X1 Y1\n" * 20000 +
                      "; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n")

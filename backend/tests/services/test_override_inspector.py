@@ -1,6 +1,6 @@
 import zipfile
 
-from app.services.override_inspector import inspect_overrides
+from app.services.providers.laminus.overrides import inspect_overrides
 
 
 def _make_3mf(tmp_path, project=None, model_xml=None):
