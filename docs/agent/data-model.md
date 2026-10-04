@@ -187,7 +187,8 @@ builds the key from the exact `SliceRequest`, takes the newest present same-key 
 unless the policy pins it, stages a private copy; any lookup error just slices), `sliced_version_id?` (plain int —
 the version it printed), `slice_cache_info: JSON?` (latest decision `{decision: hit|miss, reason?, at, cache_key,
 source_content_hash, sliced_version_id?, cached_file_id?, cached_file_hash?, preset_content_hash_stored/current?,
-slicer_version_stored/current?, stale?, stale_reasons, policy: use_latest|pin_cached, save?: {outcome:
+slicer_version_stored/current?, stale?, stale_reasons, policy: use_latest|pin_cached, gate?: laminus_down (claimed on this
+version while Laminus was down — BIZ-201), save?: {outcome:
 saved|duplicate|failed, sliced_version_id?, cache_key, file_id?, error?, at}}`). `uploaded_files.pack_recipe_hash?`
 (project packs). `queue_config.slice_cache_use_latest_settings: bool = True` (on: automatic reuse reslices a stale
 version; off: it still prints, flagged stale). Every decision also logs one line `slice_cache event=<lookup|

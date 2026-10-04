@@ -46,10 +46,8 @@ the decisions the code relies on. Delivered as stacked PRs into `develop` (each 
 
 ## Known follow-ups (deliberately not in these PRs)
 
-- **Claim-time Laminus health gate vs cached jobs.** A job with `allow_cached_slice` is still blocked by the claim's
-  sidecar health check during a sidecar outage, even if a usable cached version exists. Skipping the gate would let a
-  cache *miss* fall through to a slice that fails (and marks the config `slice_failed`, needing an unblock), which is
-  worse than waiting. Fixing it properly means doing the lookup at claim time; left for a follow-up if outages matter.
+- **Claim-time Laminus health gate vs cached jobs.** Done in BIZ-201: the lookup now also runs at claim time, per
+  printer, so a usable cached version lets that printer claim during an outage; a miss by dispatch re-blocks.
 - **Index freshness.** The library index is refreshed by rescans, not a watcher. The cache re-hashes a model / pack /
   cached file whose size or mtime moved since it was indexed before trusting its hash (dispatch, generate, lookup), so
   an in-place edit is never served stale; other library views still show the indexed hash until the next rescan.
