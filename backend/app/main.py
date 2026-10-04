@@ -204,6 +204,8 @@ def _resolve_within(root_dir: Path, full_path: str) -> Path | None:
     normalise "..". Both (and symlinks pointing outside) must be rejected before
     the file is served.
     """
+    if "\x00" in full_path:  # Windows resolve() accepts NUL instead of raising ValueError
+        return None
     root = root_dir.resolve()
     try:
         candidate = (root / full_path).resolve()

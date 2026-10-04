@@ -11,7 +11,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
-from ...services.model_targets import target_dicts
+from ...services.model_targets import target_dicts_by_job
 from ...services.spool_check import check_spool_sufficiency
 from ...services.providers.filament_inventory import Spool, get_inventory_provider
 
@@ -68,7 +68,9 @@ async def _needed_grams(j: Job, session: AsyncSession) -> float | None:
     return plate.get("filament_g") if plate else None
 
 
-async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, Spool]) -> dict:
+async def _enrich(
+    j: Job, session: AsyncSession, spools_by_id: dict[str, Spool], targets: list[dict]
+) -> dict:
     d = _base_dict(j)
     cfg_result = await session.execute(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
@@ -91,7 +93,7 @@ async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, Spool])
                 if spool is not None:
                     low_stock_warning = check_spool_sufficiency(needed_g, spool)
     d["eligible_printers"] = eligible
-    d["model_targets"] = await target_dicts(session, j.id)
+    d["model_targets"] = targets
     d["low_stock_warning"] = low_stock_warning
     return d
 
@@ -134,7 +136,8 @@ async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
                 logger.warning("Spoolman unreachable while checking spool sufficiency for queue", exc_info=True)
 
     # Second pass: build the enriched dicts using the precomputed spool lookup.
-    return [await _enrich(j, session, spools_by_id) for j in jobs]
+    targets_by_job = await target_dicts_by_job(session, [j.id for j in jobs])
+    return [await _enrich(j, session, spools_by_id, targets_by_job[j.id]) for j in jobs]
 
 
 @router.get("", summary="Get active queue", dependencies=[Depends(require_scope("queue:read"))])

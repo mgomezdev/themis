@@ -220,3 +220,48 @@ async def test_a_duplicate_job_printer_config_is_rejected_by_the_database(sessio
         async with session_factory() as s:
             s.add(JobPrinterConfig(job_id=job_id, printer_id=1, print_profile="b"))
             await s.commit()
+
+
+@pytest.mark.asyncio
+async def test_target_dicts_by_job_groups_per_job_and_keys_targetless_jobs(session_factory):
+    a, _ = await _targeted_job(session_factory, P1S)
+    b, _ = await _targeted_job(session_factory, X1C)
+    async with session_factory() as s:
+        f = UploadedFile(original_filename="n.3mf", plates=[], uploaded_at=_now())
+        s.add(f)
+        await s.flush()
+        bare = Job(uploaded_file_id=f.id, plate_number=1, queue_position=3.0, status="queued",
+                   created_at=_now(), updated_at=_now())
+        s.add(bare)
+        await s.commit()
+        bare_id = bare.id
+    async with session_factory() as s:
+        got = await model_targets.target_dicts_by_job(s, [a, b, bare_id])
+    assert [t["machine_profile"] for t in got[a]] == [P1S]
+    assert [t["machine_profile"] for t in got[b]] == [X1C]
+    assert got[bare_id] == []
+    async with session_factory() as s:
+        assert await model_targets.target_dicts_by_job(s, []) == {}
+
+
+@pytest.mark.asyncio
+async def test_queue_route_reads_model_targets_in_one_query_for_all_jobs(client, session_factory):
+    from sqlalchemy import event
+    for _ in range(3):
+        await _targeted_job(session_factory)
+    seen: list[str] = []
+    engine = session_factory.kw["bind"]
+
+    def count(conn, cursor, statement, *_):
+        if "FROM job_model_targets" in statement:
+            seen.append(statement)
+
+    event.listen(engine.sync_engine, "before_cursor_execute", count)
+    try:
+        resp = await client.get("/api/v1/queue")
+    finally:
+        event.remove(engine.sync_engine, "before_cursor_execute", count)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 3 and all(len(j["model_targets"]) == 1 for j in body)
+    assert len(seen) == 1

@@ -514,6 +514,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     result = await session.execute(select(Job).order_by(Job.queue_position))
     jobs = result.scalars().all()
 
+    targets_by_job = await model_targets.target_dicts_by_job(session, [j.id for j in jobs])
     out = []
     for j in jobs:
         d = _to_dict(j)
@@ -529,7 +530,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
                 eligible_printers.append({"id": p.id, "name": p.name})
         d["materials"] = materials
         d["eligible_printers"] = eligible_printers
-        d["model_targets"] = await model_targets.target_dicts(session, j.id)
+        d["model_targets"] = targets_by_job[j.id]
         out.append(d)
     return out
 
