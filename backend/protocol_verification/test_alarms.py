@@ -76,8 +76,12 @@ def test_elegoo_status_carries_an_integer_error_number(elegoo_client):
     c = elegoo_client
     info = (c.state.raw.get("Status") or c.state.raw).get("PrintInfo", {})
     print("PrintInfo:", json.dumps(info)[:400])
-    assert "ErrorNumber" in info, f"no ErrorNumber in PrintInfo: {sorted(info)} — the SDCP error mapping assumes it"
-    assert isinstance(info["ErrorNumber"], int)
+    # A healthy Centauri Carbon (V1.4.49) omits ErrorNumber entirely (hardware-verified); the client treats absent
+    # as 0. Only a real fault shows the key, so when present it must be an int.
+    if "ErrorNumber" in info:
+        assert isinstance(info["ErrorNumber"], int)
+    else:
+        assert c.get_alarms() == [], "no ErrorNumber must mean no alarms"
     print("alarms:", c.get_alarms())
 
 

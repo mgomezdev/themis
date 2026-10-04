@@ -48,7 +48,37 @@ _SUBSCRIBE_OBJECTS = {
     "extruder2": None,
     "extruder3": None,
     "toolhead": None,
+    "print_task_config": None,
 }
+
+
+def _trays_from_task_config(cfg: dict) -> list[dict]:
+    """One loaded-filament dict per tool (T0..T3), from Klipper `print_task_config` (the U1's per-tool filament
+    setup: type/vendor/colour and whether a spool is present). Positional on purpose: the queue resolves a job's
+    `tool_index` as the list index, so an empty tool stays in the list as a typeless placeholder (type "")."""
+    exist = cfg.get("filament_exist") or []
+    types = cfg.get("filament_type") or []
+    vendors = cfg.get("filament_vendor") or []
+    subs = cfg.get("filament_sub_type") or []
+    colors = cfg.get("filament_color_rgba") or []
+    out: list[dict] = []
+    for i in range(4):
+        ftype = str(types[i]).strip() if i < len(types) and types[i] else ""
+        if not (i < len(exist) and exist[i]) or ftype.upper() in ("", "NONE"):
+            out.append({"slot": i, "filament_id": None, "name": "", "type": "", "color": ""})
+            continue
+        vendor = str(vendors[i]).strip() if i < len(vendors) and vendors[i] else ""
+        sub = str(subs[i]).strip() if i < len(subs) and subs[i] else ""
+        rgba = str(colors[i]).strip() if i < len(colors) and colors[i] else ""
+        out.append({
+            "slot": i,
+            "filament_id": None,
+            "name": " ".join(p for p in ("" if vendor.upper() == "NONE" else vendor, sub or ftype) if p),
+            "type": ftype,
+            "color": f"#{rgba[:6].upper()}" if len(rgba) >= 6 else "",
+        })
+    return out
+
 
 _EXTRUDER_NAMES = ("extruder", "extruder1", "extruder2", "extruder3")
 _EXTRUDER_INDEX = {name: i for i, name in enumerate(_EXTRUDER_NAMES)}
@@ -72,6 +102,8 @@ class SnapmakerState:
     klippy_state: str | None = None      # webhooks.state
     klippy_message: str | None = None    # webhooks.state_message
     print_message: str | None = None     # print_stats.message
+    task_config: dict = field(default_factory=dict)   # print_task_config, merged (notifications carry changed keys only)
+    trays: list = field(default_factory=list)         # loaded filaments per tool, derived from task_config
     raw: dict = field(default_factory=dict)
 
     @property
@@ -125,6 +157,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._api_key = (api_key or "").strip() or None
         self._on_state_change = on_state_change
         self._on_print_complete = on_print_complete
+        self._on_ams_change = None          # wired by PrinterManager.connect_printer: persists loaded_filaments
         self.state = SnapmakerState()
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -199,7 +232,9 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
 
     @property
     def camera_mjpeg_url(self) -> str | None:
-        return f"http://{self._ip}/webcam/stream"
+        # Verified on a U1: /webcam/stream is a 404; the MJPEG endpoint is /webcam/stream.mjpg (Moonraker's webcam
+        # entry only advertises webrtc + /webcam/snapshot.jpg).
+        return f"http://{self._ip}/webcam/stream.mjpg"
 
     @property
     def camera_rtsp_url(self) -> str | None:
@@ -368,7 +403,17 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
             th = status.get("toolhead")
             if th and th.get("extruder"):
                 self.state.active_extruder = _EXTRUDER_INDEX.get(th["extruder"], 0)
+            trays_changed = False
+            ptc = status.get("print_task_config")
+            if ptc:
+                self.state.task_config = {**self.state.task_config, **ptc}
+                trays = _trays_from_task_config(self.state.task_config)
+                if trays != self.state.trays:
+                    self.state.trays, trays_changed = trays, True
             cur = self.state.print_state
+            trays_now = list(self.state.trays)
+        if trays_changed:
+            self._fire_trays_change(trays_now)
         self._fire_state_change()
         if cur == "complete" and self._prev_print_state != "complete":
             self._fire_print_complete()
@@ -381,6 +426,18 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
                 asyncio.run_coroutine_threadsafe(self._on_state_change(self.state), self._loop)
             except Exception:
                 pass
+
+    def _fire_trays_change(self, trays: list) -> None:
+        if self._on_ams_change and self._loop:
+            import asyncio
+            try:
+                asyncio.run_coroutine_threadsafe(self._on_ams_change(trays), self._loop)
+            except Exception:
+                pass
+
+    def get_loaded_filaments(self) -> list:
+        with self._lock:
+            return list(self.state.trays)
 
     def _fire_print_complete(self) -> None:
         if self._on_print_complete and self._loop:

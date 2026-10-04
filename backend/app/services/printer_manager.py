@@ -37,7 +37,7 @@ def _serialize_bambu(state, printer_id: int) -> dict:
 def _serialize_elegoo(state, printer_id: int) -> dict:
     total_ticks = getattr(state, "total_ticks", 0)
     current_ticks = getattr(state, "current_ticks", 0)
-    if total_ticks > 0 and current_ticks < total_ticks:
+    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
         remaining_time = int((total_ticks - current_ticks) / 60)
     else:
         remaining_time = getattr(state, "remaining_time", 0) or 0
@@ -69,7 +69,7 @@ def _serialize_snapmaker(state, printer_id: int) -> dict:
         "connected": conn,
         "state": getattr(state, "state", "unknown"),
         "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
+        "progress": getattr(state, "progress", 0.0) * 100.0,  # Klipper display_status.progress is 0..1; the API is 0..100
         "remaining_time": getattr(state, "remaining_time", 0) or 0,
         "layer_num": getattr(state, "layer_num", 0),
         "total_layers": getattr(state, "total_layers", 0),
