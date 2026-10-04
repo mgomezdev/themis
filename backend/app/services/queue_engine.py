@@ -71,9 +71,9 @@ def _is_any_filament_ask(value) -> bool:
 
 
 def _is_loaded(slot: dict) -> bool:
-    """A slot with a filament type. Tool-changer printers (Snapmaker U1) keep a typeless placeholder for an
-    empty tool so list positions stay equal to tool indexes."""
-    return bool(str(slot.get("type", "")).strip())
+    """False only for a tool-changer placeholder (Snapmaker U1 keeps `{"empty": True, "type": ""}` for an empty tool
+    so list positions stay equal to tool indexes). A hand-entered slot without a type is still a slot."""
+    return bool(str(slot.get("type", "")).strip()) or not slot.get("empty")
 
 
 def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:

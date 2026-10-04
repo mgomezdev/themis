@@ -65,7 +65,7 @@ def _trays_from_task_config(cfg: dict) -> list[dict]:
     for i in range(4):
         ftype = str(types[i]).strip() if i < len(types) and types[i] else ""
         if not (i < len(exist) and exist[i]) or ftype.upper() in ("", "NONE"):
-            out.append({"slot": i, "filament_id": None, "name": "", "type": "", "color": ""})
+            out.append({"slot": i, "filament_id": None, "name": "", "type": "", "color": "", "empty": True})
             continue
         vendor = str(vendors[i]).strip() if i < len(vendors) and vendors[i] else ""
         sub = str(subs[i]).strip() if i < len(subs) and subs[i] else ""

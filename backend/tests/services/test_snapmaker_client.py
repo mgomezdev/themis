@@ -109,7 +109,7 @@ def test_loaded_filaments_come_from_print_task_config_positionally():
     c._apply_status({"print_task_config": _TASK_CONFIG})
     trays = c.get_loaded_filaments()
     assert [t["slot"] for t in trays] == [0, 1, 2, 3]                       # list index == tool index
-    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "type": "", "color": ""}   # empty tool kept as a placeholder
+    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "type": "", "color": "", "empty": True}   # empty tool kept as a placeholder
     assert trays[1] == {"slot": 1, "filament_id": None, "name": "Generic PLA", "type": "PLA", "color": "#8C9099"}
     assert trays[3]["color"] == "#519F61"
 
@@ -146,3 +146,13 @@ def test_a_tool_with_no_spool_is_not_loaded_for_the_queue():
     assert _mapped_tools_loaded([{"tool_index": 1}, {"tool_index": 3}], loaded) is True
     any_ask = MagicMock(tool_index=None, filament_type="any", filament_color="any")
     assert _slot_for_config(any_ask, loaded)["slot"] == 1                                             # "any" skips the empty T0
+
+
+def test_a_hand_entered_slot_without_a_type_still_counts_as_loaded():
+    """Only the U1's explicit empty-tool placeholder is "not loaded"; a manual slot with a blank type (e.g. from the
+    scan-spool flow) used to match "any" asks and tool_index, and must keep doing so."""
+    from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
+    manual = [{"slot": 0, "type": "", "name": "", "color": "", "filament_profile": "Generic PLA"}]
+    assert _slot_for_config(MagicMock(tool_index=0), manual) is manual[0]
+    assert _slot_for_config(MagicMock(tool_index=None, filament_type="any", filament_color="any"), manual) is manual[0]
+    assert _mapped_tools_loaded([{"tool_index": 0}], manual) is True
