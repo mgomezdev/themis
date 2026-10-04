@@ -149,6 +149,14 @@ describe('toFleetPrinter', () => {
     expect(p.bedTempTarget).toBe(100);
   });
 
+  it('maps nozzle_target and the per-tool extruders list (tool changers)', () => {
+    const extruders = [{ index: 0, temp: 32, target: 0 }, { index: 2, temp: 220, target: 220 }];
+    const p = toFleetPrinter({ ...BASE, temperatures: { nozzle: 220, nozzle_target: 220, extruders } });
+    expect(p.nozzleTempTarget).toBe(220);
+    expect(p.nozzles).toEqual(extruders);
+    expect(toFleetPrinter(BASE).nozzles).toBeUndefined();
+  });
+
   it('defaults bedTempTarget to 0 when bed_target absent', () => {
     const p = toFleetPrinter(BASE);
     expect(p.bedTempTarget).toBe(0);

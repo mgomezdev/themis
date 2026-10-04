@@ -19,6 +19,9 @@ export interface Printer {
   timeElapsed: number;
   layer: { now: number; total: number } | null;
   nozzleTemp: number;
+  nozzleTempTarget?: number;
+  /** Per-tool temperatures for tool-changer printers (Snapmaker U1: T0..T3); absent for single-nozzle printers. */
+  nozzles?: { index: number; temp: number; target: number }[];
   bedTemp: number;
   chamberTemp: number | null;
   material: Material;
