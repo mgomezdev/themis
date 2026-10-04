@@ -471,11 +471,10 @@ async def check_overrides(
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
     # project config. If the sidecar is unavailable or any required UUID is missing,
     # skip the diff rather than blocking job creation.
-    from ...config import get_laminus_sidecar_url
-    from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+    from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 
-    sidecar_url = get_laminus_sidecar_url()
-    if not sidecar_url:
+    slicing = get_slicing_provider()
+    if slicing is None:
         return {**empty, "has_embedded_settings": True, "error": "Override check requires Laminus sidecar"}
 
     from ...services import catalog_service
@@ -501,11 +500,10 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
 
     try:
-        client = LaminusSidecarClient(sidecar_url)
         config = await asyncio.get_running_loop().run_in_executor(
-            None, client.get_merged_config, machine_uuid, process_uuid, [filament_uuid]
+            None, slicing.merged_config, machine_uuid, process_uuid, [filament_uuid]
         )
-    except SidecarError as e:
+    except SlicingProviderError as e:
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1

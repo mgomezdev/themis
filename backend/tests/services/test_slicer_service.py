@@ -7,7 +7,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.services.providers.slicing import SlicingProviderError
 from app.services.slicer_service import SlicerService, SliceRequest, SliceError
+from tests.fake_providers import FakeSlicingProvider, make_catalog
 
 
 def _req(tmp_path, export_args=None, **kw):
@@ -133,29 +135,51 @@ def test_error_reports_missing_filament_when_none_supplied(tmp_path):
             svc.slice(req)
 
 
+def _fake_provider(**kw):
+    fake = FakeSlicingProvider(**kw)
+    return fake, patch("app.services.slicer_service.get_slicing_provider", return_value=fake)
+
+
+def _slice_spec(fake):
+    return next(c[1] for c in fake.calls if c[0] == "slice")
+
+
 def test_raises_with_clear_message_when_sidecar_unreachable(tmp_path):
     """Catalog fetch failure surfaces 'unreachable', not a misleading profile-not-found message."""
     svc = _make_service(tmp_path)
     prime_catalog(None)  # force a live sidecar fetch
 
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.get_catalog.side_effect = _mod.SidecarError("Connection refused")
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+    fake, use = _fake_provider()
+    fake.fail_on["get_catalog"] = SlicingProviderError("Connection refused")
+    with use:
         with pytest.raises(SliceError, match="Laminus sidecar unreachable"):
             svc.slice(_req(tmp_path))
+
+
+def test_a_cold_cache_resolves_presets_from_a_live_catalog_fetch_and_remembers_it(tmp_path):
+    svc = _make_service(tmp_path)
+    prime_catalog(None)
+
+    fake, use = _fake_provider(catalog=make_catalog(
+        machines=(("Elegoo Centauri Carbon", "m1"),), processes=(("0.20mm Standard", "p1"),),
+        filaments=(("Generic PLA", "f1"),)))
+    with use:
+        svc.slice(_req(tmp_path))
+        svc.slice(_req(tmp_path))
+
+    assert [c[0] for c in fake.calls].count("get_catalog") == 1   # fetched once, then served from the cache
+    assert cached_raw() is not None
+    spec = _slice_spec(fake)
+    assert (spec.machine_ref, spec.process_ref, spec.filament_refs) == ("m1", "p1", ["f1"])
 
 
 def test_sidecar_error_converted_to_slice_error(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
 
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.slice_start.side_effect = _mod.SidecarError("timeout")
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+    fake, use = _fake_provider()
+    fake.fail_on["slice"] = SlicingProviderError("timeout")
+    with use:
         with pytest.raises(SliceError, match="timeout"):
             svc.slice(_req(tmp_path))
 
@@ -166,70 +190,58 @@ def test_default_returns_raw_gcode(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
 
-    gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
-    gcode.parent.mkdir(parents=True, exist_ok=True)
-    gcode.write_text("G28\n")
-
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "job-1"
-    mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
-    mock_client.download.return_value = gcode
-
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+    fake, use = _fake_provider()
+    fake.artifact_name = "plate_1.gcode"
+    with use:
         path = svc.slice(_req(tmp_path))
 
-    assert path == str(gcode)
-    mock_client.slice_start.assert_called_once()
-    call_kw = mock_client.slice_start.call_args[1]
-    assert call_kw.get("export_3mf") is False
+    assert path == str(tmp_path / "gcode" / "1" / "plate_1.gcode")
+    assert (tmp_path / "gcode" / "1" / "plate_1.gcode").exists()
+    assert [c[0] for c in fake.calls].count("slice") == 1
+    spec = _slice_spec(fake)
+    assert spec.export_3mf is False
+    assert (spec.machine_ref, spec.process_ref, spec.filament_refs, spec.plate) == ("m1", "p1", ["f1"], 1)
+    assert spec.source_file == tmp_path / "model.3mf"
 
 
 def test_export_3mf_flag_forwarded(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
 
-    archive = tmp_path / "gcode" / "1" / "model.gcode.3mf"
-    archive.parent.mkdir(parents=True, exist_ok=True)
-    archive.write_bytes(b"PK")
-
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "job-1"
-    mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "model.gcode.3mf"}
-    mock_client.download.return_value = archive
-
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+    fake, use = _fake_provider()
+    fake.artifact_name = "model.gcode.3mf"
+    with use:
         path = svc.slice(_req(tmp_path, export_args=["--export-3mf", "model.gcode.3mf"]))
 
     assert path.endswith("model.gcode.3mf")
-    call_kw = mock_client.slice_start.call_args[1]
-    assert call_kw.get("export_3mf") is True
+    assert _slice_spec(fake).export_3mf is True
 
 
-def test_extra_config_passed_to_client(tmp_path):
+def test_extra_config_passed_to_provider(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
 
-    gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
-    gcode.parent.mkdir(parents=True, exist_ok=True)
-    gcode.write_text("G28\n")
-
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "job-1"
-    mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
-    mock_client.download.return_value = gcode
-
+    fake, use = _fake_provider()
     overrides = {"curr_bed_type": "textured_plate", "layer_height": "0.15"}
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client):
+    with use:
         svc.slice(_req(tmp_path, extra_config=overrides))
 
-    call_kw = mock_client.slice_start.call_args[1]
-    assert call_kw.get("extra_config") == overrides
+    assert _slice_spec(fake).extra_config == overrides
+
+
+def test_stale_artifacts_are_removed_before_slicing(tmp_path):
+    svc = _make_service(tmp_path)
+    prime_catalog(_DEFAULT_CATALOG)
+    out = tmp_path / "gcode" / "1"
+    out.mkdir(parents=True)
+    (out / "old.gcode").write_text("old")
+    (out / "old.gcode.3mf").write_bytes(b"PK")
+
+    fake, use = _fake_provider()
+    with use:
+        svc.slice(_req(tmp_path))
+
+    assert sorted(p.name for p in out.iterdir()) == ["fake.gcode"]
 
 
 def test_slice_calls_inject_thumbnail_for_3mf_source(tmp_path):
@@ -237,22 +249,13 @@ def test_slice_calls_inject_thumbnail_for_3mf_source(tmp_path):
     prime_catalog(_DEFAULT_CATALOG)
 
     three_mf = _3mf_with_thumb(tmp_path, plate=1)
-    gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
-    gcode.parent.mkdir(parents=True, exist_ok=True)
-    gcode.write_text("G28\n")
-
-    from app.services import laminus_sidecar_client as _mod
-    mock_client = MagicMock()
-    mock_client.slice_start.return_value = "job-1"
-    mock_client.poll_status.return_value = {"status": "completed", "sliced_file": "plate_1.gcode"}
-    mock_client.download.return_value = gcode
+    fake, use = _fake_provider()
+    fake.artifact_name = "plate_1.gcode"
 
     req = _req(tmp_path)
     req.source_3mf = str(three_mf)
 
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
-         patch.object(_mod, "LaminusSidecarClient", return_value=mock_client), \
-         patch.object(svc, "_inject_thumbnail") as mock_inject:
+    with use, patch.object(svc, "_inject_thumbnail") as mock_inject:
         svc.slice(req)
 
     mock_inject.assert_called_once()

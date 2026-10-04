@@ -11,11 +11,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-import httpx
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..config import get_laminus_sidecar_url, get_library_dir
+from ..config import get_library_dir
 from ..models import (
     GcodeFile,
     Job,
@@ -33,6 +32,7 @@ from .library_scanner import (
 )
 from .printer_manager import PrinterManager
 from .providers.filament_inventory import FilamentInventoryProvider, get_inventory_provider
+from .providers.slicing import SlicingProviderNotReady, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
 from . import notification_service
@@ -847,17 +847,15 @@ class QueueEngine:
         # Block (not fail) so the job auto-retries when Laminus comes back.
         # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
         if not is_presliced_file(source_file):
-            sidecar_url = get_laminus_sidecar_url()
-            if not sidecar_url:
+            slicing = get_slicing_provider()
+            if slicing is None:
                 await self._block_job(session, job, "Laminus sidecar not configured — slicing paused")
                 return
             try:
-                r = await asyncio.to_thread(
-                    lambda: httpx.get(f"{sidecar_url}/api/health", timeout=2)
-                )
-                if not r.is_success:
-                    await self._block_job(session, job, "Laminus is not ready — slicing paused")
-                    return
+                await asyncio.to_thread(slicing.health, 2)
+            except SlicingProviderNotReady:
+                await self._block_job(session, job, "Laminus is not ready — slicing paused")
+                return
             except Exception:
                 await self._block_job(session, job, "Laminus is unreachable — slicing paused")
                 return
@@ -1158,7 +1156,7 @@ class QueueEngine:
         version, cached_file = found
         current = await asyncio.to_thread(
             slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), get_laminus_sidecar_url())
+            list(inputs.filament_presets), get_slicing_provider())
         stale, reasons = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
         policy = slice_cache.policy_name(use_latest)
         detail = {"sliced_version_id": version.id, "cached_file_id": cached_file.id,

@@ -7,6 +7,7 @@ import pytest
 
 from app.services import slice_cache as sc
 from app.services.slicer_service import SliceRequest
+from tests.fake_providers import FakeSlicingProvider
 
 
 def _req(**kw) -> SliceRequest:
@@ -89,37 +90,37 @@ def test_staleness(stored_hash, stored_ver, current, expected):
 
 
 def _client(merged=None, merged_exc=None, health=None, health_exc=None):
-    c = MagicMock()
-    c.get_merged_config.side_effect = merged_exc
-    c.get_merged_config.return_value = merged
-    c.health.side_effect = health_exc
-    c.health.return_value = health
-    return c
+    """A fake slicing provider with a scripted merged config / health response (or failure)."""
+    p = FakeSlicingProvider()
+    p.merged = merged
+    p.health_body = health
+    if merged_exc is not None:
+        p.fail_on["merged_config"] = merged_exc
+    if health_exc is not None:
+        p.fail_on["health"] = health_exc
+    return p
 
 
 def test_current_fingerprint_hashes_the_merged_config_and_reads_the_orca_version():
     client = _client(merged={"layer_height": "0.2", "a": [1, 2]}, health={"orca_version": "2.3.1",
                                                                           "orcaslicer_version": "OrcaSlicer 2.3.1"})
-    with patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=client), \
-         patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])) as resolve:
-        fp = sc.current_fingerprint("M", "P", ["F"], "http://sidecar")
-    resolve.assert_called_once_with("M", "P", ["F"], "http://sidecar")
-    client.get_merged_config.assert_called_once_with("m", "p", ["f"])
+    with patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])) as resolve:
+        fp = sc.current_fingerprint("M", "P", ["F"], client)
+    resolve.assert_called_once_with("M", "P", ["F"], client)
+    assert [c for c in client.calls if c[0] == "merged_config"] == [("merged_config", "m", "p", ["f"])]
     assert fp == FP(sc.sha256_of({"a": [1, 2], "layer_height": "0.2"}), "2.3.1")
 
 
 def test_current_fingerprint_falls_back_to_the_binary_version_string():
     client = _client(merged={}, health={"orca_version": None, "orcaslicer_version": "2.2.0"})
-    with patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=client), \
-         patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
-        assert sc.current_fingerprint("M", "P", ["F"], "http://sidecar").slicer_version == "2.2.0"
+    with patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
+        assert sc.current_fingerprint("M", "P", ["F"], client).slicer_version == "2.2.0"
 
 
 def test_current_fingerprint_never_raises():
     client = _client(merged_exc=RuntimeError("down"), health_exc=RuntimeError("down"))
-    with patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=client), \
-         patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
-        assert sc.current_fingerprint("M", "P", ["F"], "http://sidecar") == FP(None, None)
+    with patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
+        assert sc.current_fingerprint("M", "P", ["F"], client) == FP(None, None)
     assert sc.current_fingerprint("M", "P", ["F"], None) == FP(None, None)
 
 
@@ -186,9 +187,8 @@ def test_normalize_version(raw, expected):
 
 def test_a_fallback_between_the_two_version_fields_is_not_a_slicer_change():
     client = _client(merged={}, health={"orca_version": None, "orcaslicer_version": "OrcaSlicer 2.3.1"})
-    with patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=client), \
-         patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
-        fp = sc.current_fingerprint("M", "P", ["F"], "http://sidecar")
+    with patch("app.services.slicer_service.resolve_preset_uuids", return_value=("m", "p", ["f"])):
+        fp = sc.current_fingerprint("M", "P", ["F"], client)
     assert sc.staleness(None, "2.3.1", fp) == (False, [])
 
 
@@ -205,7 +205,7 @@ def test_an_unreachable_sidecar_is_remembered_briefly_not_for_the_full_minute():
     with patch("app.services.slice_cache.current_fingerprint", return_value=FP(None, None)) as fp, \
          patch("time.monotonic", side_effect=[100.0, 105.0, 111.0]):
         for _ in range(3):
-            sc.cached_fingerprint("M", "P", ["F"], "http://s")
+            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"))
     assert fp.call_count == 2   # cached at +5s, refetched at +11s
 
 
@@ -213,5 +213,15 @@ def test_a_good_fingerprint_is_remembered_for_a_minute():
     with patch("app.services.slice_cache.current_fingerprint", return_value=FP("h", "2.3.1")) as fp, \
          patch("time.monotonic", side_effect=[100.0, 150.0, 161.0]):
         for _ in range(3):
-            sc.cached_fingerprint("M", "P", ["F"], "http://s")
+            sc.cached_fingerprint("M", "P", ["F"], FakeSlicingProvider(identity="fake://s"))
     assert fp.call_count == 2
+
+
+def test_the_fingerprint_memo_is_keyed_per_provider_identity():
+    with patch("app.services.slice_cache.current_fingerprint", return_value=FP("h", "2.3.1")) as fp:
+        a1 = FakeSlicingProvider(identity="fake://a")
+        a2 = FakeSlicingProvider(identity="fake://a")    # same identity, different instance: shares the memo
+        b = FakeSlicingProvider(identity="fake://b")
+        for provider in (a1, a2, b, None):
+            sc.cached_fingerprint("M", "P", ["F"], provider)
+    assert fp.call_count == 3

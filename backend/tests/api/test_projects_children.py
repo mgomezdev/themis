@@ -1,6 +1,7 @@
 """Project child resources (items, links), stage promotion, generate preconditions, project jobs, delete."""
 from unittest.mock import patch
 
+from tests.fake_providers import FakeSlicingProvider
 import pytest
 import pytest_asyncio
 from sqlalchemy import event, func, select
@@ -242,7 +243,7 @@ _STL = b"solid x\nendsolid x\n"
 
 async def _generate(client, project_id: int, tmp_path, *, sidecar: str | None = "http://laminus.test"):
     with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.api.routes.projects.get_laminus_sidecar_url", return_value=sidecar):
+         patch("app.api.routes.projects.get_slicing_provider", return_value=FakeSlicingProvider() if sidecar else None):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"process_preset": "0.20mm Standard"})
 
 

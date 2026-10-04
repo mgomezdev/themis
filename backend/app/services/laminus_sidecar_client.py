@@ -15,6 +15,10 @@ class SidecarError(Exception):
     pass
 
 
+class SidecarNotReady(SidecarError):
+    """The sidecar answered /api/health with a non-200 (still starting or building its catalog)."""
+
+
 class LaminusSidecarClient:
     """Synchronous httpx client for the Laminus sidecar API.
 
@@ -35,7 +39,7 @@ class LaminusSidecarClient:
         except httpx.HTTPError as e:
             raise SidecarError(f"health check request failed: {e}") from e
         if r.status_code != 200:
-            raise SidecarError(f"health check returned {r.status_code}")
+            raise SidecarNotReady(f"health check returned {r.status_code}")
         return r.json()
 
     def catalog_state(self, timeout: float = 5.0) -> dict:

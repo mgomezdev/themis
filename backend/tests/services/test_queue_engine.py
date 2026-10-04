@@ -2,6 +2,7 @@
 import asyncio
 import os
 import pytest
+from tests.fake_providers import FakeSlicingProvider
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1307,7 +1308,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
 
     loop = asyncio.get_running_loop()
 
-    def fake_httpx_get(url, timeout=None):
+    def cancel_during_probe():
         # Runs in the to_thread executor, simulating a user cancel that commits
         # while the health probe is in flight.
         async def _cancel():
@@ -1317,12 +1318,11 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
                 await session.commit()
         fut = asyncio.run_coroutine_threadsafe(_cancel(), loop)
         fut.result(timeout=5)
-        resp = MagicMock()
-        resp.is_success = True
-        return resp
+        return {"status": "ok"}
 
-    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
-         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+    probe = FakeSlicingProvider()
+    probe.health = lambda timeout=None: cancel_during_probe()
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1346,7 +1346,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
 
     loop = asyncio.get_running_loop()
 
-    def fake_httpx_get(url, timeout=None):
+    def cancel_then_fail_probe():
         # Runs in the to_thread executor, simulating a user cancel that commits
         # while the health probe is in flight.
         async def _cancel():
@@ -1358,8 +1358,9 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
         fut.result(timeout=5)
         raise ConnectionError("simulated Laminus unreachable")
 
-    with patch("app.services.queue_engine.get_laminus_sidecar_url", return_value="http://laminus.test"), \
-         patch("app.services.queue_engine.httpx.get", side_effect=fake_httpx_get):
+    probe = FakeSlicingProvider()
+    probe.health = lambda timeout=None: cancel_then_fail_probe()
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1368,6 +1369,38 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
         # Must stay cancelled, not resurrected to "blocked".
         assert job.status == "cancelled"
         assert job.block_reason is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scenario, reason", [
+    ("unconfigured", "Laminus sidecar not configured — slicing paused"),
+    ("not_ready", "Laminus is not ready — slicing paused"),
+    ("unreachable", "Laminus is unreachable — slicing paused"),
+])
+async def test_an_unusable_slicing_provider_blocks_the_job_with_a_specific_reason(db, scenario, reason):
+    """No provider / provider says not ready / provider unreachable → the job is blocked (not failed) with its own
+    reason, and the health probe keeps its 2 s timeout."""
+    from unittest.mock import patch, MagicMock
+    from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
+
+    qe = QueueEngine(db, _make_mock_printer_manager([1]), MagicMock())
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+
+    provider = None
+    if scenario != "unconfigured":
+        provider = FakeSlicingProvider()
+        provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if scenario == "not_ready"
+                                      else SlicingProviderError("health check request failed: refused"))
+    with patch("app.services.queue_engine.get_slicing_provider", return_value=provider):
+        await qe._process_queue()
+        await settle_background_tasks()
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.status, job.block_reason) == ("blocked", reason)
+    if provider is not None:
+        assert provider.calls == [("health", 2)]
 
 
 @pytest.mark.asyncio

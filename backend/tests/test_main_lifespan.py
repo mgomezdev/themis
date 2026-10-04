@@ -146,3 +146,30 @@ async def test_an_unreachable_sidecar_only_warns_and_the_catalog_warmup_is_still
 
     assert any("sidecar.invalid" in r.getMessage() and "not reachable" in r.getMessage() for r in caplog.records)
     warm.assert_awaited_once()
+
+
+async def test_a_healthy_slicing_provider_is_logged_at_startup_and_the_catalog_warmup_scheduled(boot, monkeypatch, caplog):
+    from tests.fake_providers import FakeSlicingProvider
+    provider = FakeSlicingProvider(identity="http://laminus.test")
+    monkeypatch.setattr("app.services.providers.slicing.get_slicing_provider", lambda: provider)
+    warm = AsyncMock()
+    monkeypatch.setattr("app.services.catalog_service.warm", warm)
+
+    with caplog.at_level(logging.INFO, logger="app"):
+        async with main.lifespan(main.app):
+            await asyncio.sleep(0)
+
+    assert any("Laminus sidecar healthy at http://laminus.test" in r.getMessage() for r in caplog.records)
+    assert ("health", None) in provider.calls
+    warm.assert_awaited_once()
+
+
+async def test_no_slicing_provider_means_no_health_probe_and_no_warmup(boot, monkeypatch):
+    monkeypatch.setattr("app.services.providers.slicing.get_slicing_provider", lambda: None)
+    warm = AsyncMock()
+    monkeypatch.setattr("app.services.catalog_service.warm", warm)
+
+    async with main.lifespan(main.app):
+        await asyncio.sleep(0)
+
+    warm.assert_not_awaited()

@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...laminus_sidecar_client import LaminusSidecarClient, SidecarError
-from ..slicing import Catalog, Preset, SliceSpec, SlicingProvider, SlicingProviderError
+from ...laminus_sidecar_client import LaminusSidecarClient, SidecarError, SidecarNotReady
+from ..slicing import (
+    Catalog,
+    Preset,
+    SliceSpec,
+    SlicingProvider,
+    SlicingProviderError,
+    SlicingProviderNotReady,
+)
 
 
 def _preset(raw: dict) -> Preset:
@@ -44,6 +51,8 @@ class LaminusSlicingProvider(SlicingProvider):
     def health(self, timeout: float | None = None) -> dict:
         try:
             return self._client(timeout).health()
+        except SidecarNotReady as e:
+            raise SlicingProviderNotReady(str(e)) from e
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
 

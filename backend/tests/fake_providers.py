@@ -110,6 +110,7 @@ class FakeSlicingProvider(SlicingProvider):
         self.artifact_name = "fake.gcode"
         self.artifact_bytes = b"; fake gcode\n"
         self.merged: dict = {}
+        self.health_body: dict = {"status": "ok"}
         self.health_script: list = []
         self.default_health: dict = {"catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 3}
         self.rebuild_error: SlicingProviderError | None = None
@@ -127,7 +128,7 @@ class FakeSlicingProvider(SlicingProvider):
 
     def health(self, timeout: float | None = None) -> dict:
         self._enter("health", timeout)
-        return {"status": "ok"}
+        return self.health_body
 
     def get_catalog(self) -> Catalog:
         self._enter("get_catalog")
@@ -165,3 +166,12 @@ class FakeSlicingProvider(SlicingProvider):
     def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None) -> bytes:
         self._enter("pack_models", list(paths), machine_ref, bed)
         return b"PACKED"
+
+
+def fake_packer(packed: bytes) -> FakeSlicingProvider:
+    """A fake slicing provider whose `pack_models` is a MagicMock returning `packed` (for call assertions)."""
+    from unittest.mock import MagicMock
+
+    fake = FakeSlicingProvider()
+    fake.pack_models = MagicMock(return_value=packed)
+    return fake

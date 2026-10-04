@@ -11,11 +11,15 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
-from ...config import get_laminus_sidecar_url
+from ... import config
 
 
 class SlicingProviderError(Exception):
     """Neutral failure from a slicing provider (unreachable, bad response, failed/timed-out slice)."""
+
+
+class SlicingProviderNotReady(SlicingProviderError):
+    """The provider answered but says it can't slice yet (e.g. still starting / building its catalog)."""
 
 
 @dataclass
@@ -116,7 +120,7 @@ def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    url = get_laminus_sidecar_url()
+    url = config.get_laminus_sidecar_url()
     if not url:
         return None
     return _REGISTRY["laminus"](url)
