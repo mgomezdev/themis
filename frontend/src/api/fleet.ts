@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { LoadedFilament } from './printers';
 import type { Printer } from '../data/types';
 import { apiFetch, openLiveSocket } from './client';
@@ -109,6 +109,8 @@ export function useFleetRaw(): [FleetPrinter[], () => void] {
   const [fetchTick, setFetchTick] = useState(0);
 
   const refetch = useCallback(() => setFetchTick(t => t + 1), []);
+  const knownIds = useRef(new Set<number>());
+  knownIds.current = new Set(raw.map(p => p.id));
 
   useEffect(() => {
     let alive = true;
@@ -119,16 +121,22 @@ export function useFleetRaw(): [FleetPrinter[], () => void] {
   }, [fetchTick]);
 
   useEffect(() => {
+    const requested = new Set<number>();   // unknown ids already refetched, so a chatty new printer can't storm /fleet
     // After a reconnect, refetch: printer states pushed while the socket was down are gone.
     return openLiveSocket((e) => {
       try {
         const msg = JSON.parse(e.data) as { type: string; data: FleetPrinter };
         if (msg.type === 'printer_state' && typeof msg.data?.id === 'number') {
-          setRaw(prev => {
-            const idx = prev.findIndex(p => p.id === msg.data.id);
-            if (idx === -1) return [...prev, msg.data];
-            return prev.map(p => (p.id === msg.data.id ? { ...p, ...msg.data } : p));
-          });
+          // A live frame is only vendor telemetry (no name, loaded_filaments, enabled…), so an unknown
+          // printer can't be built from it: fetch the full row once instead of rendering the fragment.
+          if (!knownIds.current.has(msg.data.id)) {
+            if (!requested.has(msg.data.id)) {
+              requested.add(msg.data.id);
+              refetch();
+            }
+            return;
+          }
+          setRaw(prev => prev.map(p => (p.id === msg.data.id ? { ...p, ...msg.data } : p)));
         }
       } catch {
         // ignore malformed frames
