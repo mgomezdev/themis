@@ -60,8 +60,9 @@ trigger math, never reset except by construction (per-item resets live on `print
   - `filament_profile` = OrcaSlicer filament preset used when slicing with this slot.
   - `spoolman_spool_id` = optional mapped Spoolman spool id (written by EditForm/FilamentPicker).
   For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
-  (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped); for
-  others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
+  (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped). The Snapmaker U1
+  syncs the same way from Klipper `print_task_config`, **positionally** (list index == tool index; an empty tool is a
+  typeless placeholder, which the queue engine treats as not loaded); for others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
 `quiet_start` / `quiet_end: str?` (v028) — server-local `HH:MM` window (wraps midnight; both or neither, validated in `PrinterUpdate`) in which a *ready* printer starts no new jobs (neither claims nor resumes pre-sliced gcode); running prints are never interrupted and offline slice-ahead still happens. The end of a window is noticed at the next periodic queue check (no dedicated wake). The UI times are server-local (UTC in a default Docker container). Logic in `services/scheduling.py::in_quiet_hours`.
 
 ### uploaded_files

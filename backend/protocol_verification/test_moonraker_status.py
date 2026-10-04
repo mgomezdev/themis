@@ -41,3 +41,15 @@ def test_camera_mjpeg_url_serves_an_mjpeg_stream(client):
         print(url, r.status_code, r.headers.get("content-type"))
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("multipart/x-mixed-replace")
+
+
+def test_print_task_config_describes_each_tool_s_filament(client):
+    """Source of the U1's loaded_filaments: four parallel per-tool lists, `filament_color_rgba` as RRGGBBAA."""
+    cfg = _status(client, "print_task_config")["print_task_config"]
+    print({k: cfg.get(k) for k in ("filament_exist", "filament_type", "filament_vendor", "filament_color_rgba")})
+    for key in ("filament_exist", "filament_type", "filament_vendor", "filament_sub_type", "filament_color_rgba"):
+        assert isinstance(cfg[key], list) and len(cfg[key]) == 4, key
+    assert all(len(c) == 8 for c in cfg["filament_color_rgba"])
+    from app.services.snapmaker_client import _trays_from_task_config
+    trays = _trays_from_task_config(cfg)
+    assert [t["slot"] for t in trays] == [0, 1, 2, 3]
