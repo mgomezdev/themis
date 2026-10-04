@@ -4555,7 +4555,7 @@
           "jobs"
         ],
         "summary": "Link or unlink a job's project",
-        "description": "Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it\nwith `project_id: null`. A job moves between projects only by being unlinked first. While the project is not\nyet queued, the queue engine holds its jobs back, whatever their status.",
+        "description": "Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it\nwith `project_id: null`. A job moves between projects only by being unlinked first. A project that has an\norder grouping replaces the job's own `order_id`; unlinking clears `order_id` only when it is that project's. While the project is not\nyet queued, the queue engine holds its queued/blocked jobs back (already sliced or running ones are unaffected).",
         "operationId": "set_job_project_api_v1_jobs__job_id__project_patch",
         "parameters": [
           {

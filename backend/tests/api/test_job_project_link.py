@@ -152,3 +152,38 @@ async def test_a_projects_order_wins_over_the_order_id_sent_with_it(client, sess
     job = (await _create(client, upload_3mf, create_printer, project_id=proj["id"], order_id=other_id)).json()
 
     assert job["project_id"] == proj["id"] and job["order_id"] == order_id
+
+
+async def test_create_with_a_project_that_has_no_order_keeps_the_sent_order(client, session_factory, upload_3mf, create_printer):
+    from app.models import Order
+    async with session_factory() as s:
+        own = Order(title="Mine", customer="x", order_type="internal",
+                    created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        s.add(own)
+        await s.commit()
+        own_id = own.id
+    plain = await _project(client, stage="planning")
+
+    job = (await _create(client, upload_3mf, create_printer, project_id=plain["id"], order_id=own_id)).json()
+
+    assert job["project_id"] == plain["id"] and job["order_id"] == own_id
+
+
+async def test_linking_replaces_a_different_own_order_and_unlinking_does_not_restore_it(client, session_factory, upload_3mf, create_printer):
+    """Pinned as accepted: a project's order grouping is authoritative for its jobs, so a job's own order is not
+    remembered across link/unlink (the UI no longer offers per-job orders)."""
+    from app.models import Order
+    proj, proj_order = await _project_with_order(client, session_factory, stage="planning")
+    async with session_factory() as s:
+        own = Order(title="Mine", customer="x", order_type="internal",
+                    created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        s.add(own)
+        await s.commit()
+        own_id = own.id
+    job = (await _create(client, upload_3mf, create_printer, order_id=own_id)).json()
+
+    linked = (await client.patch(f"/api/v1/jobs/{job['id']}/project", json={"project_id": proj["id"]})).json()
+    assert linked["order_id"] == proj_order
+
+    unlinked = (await client.patch(f"/api/v1/jobs/{job['id']}/project", json={"project_id": None})).json()
+    assert unlinked["order_id"] is None

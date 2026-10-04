@@ -1330,8 +1330,9 @@ async def set_job_project(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it
-    with `project_id: null`. A job moves between projects only by being unlinked first. While the project is not
-    yet queued, the queue engine holds its jobs back, whatever their status."""
+    with `project_id: null`. A job moves between projects only by being unlinked first. A project that has an
+    order grouping replaces the job's own `order_id`; unlinking clears `order_id` only when it is that project's. While the project is not
+    yet queued, the queue engine holds its queued/blocked jobs back (already sliced or running ones are unaffected)."""
     job = await _get_or_404(job_id, session)
     if body.project_id is None:
         current = await session.get(Project, job.project_id) if job.project_id is not None else None
