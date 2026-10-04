@@ -224,3 +224,25 @@ async def test_rescan_reports_pending_remaps_instead_of_swapping_a_catalog_that_
     assert (resp.status_code, body["status"]) == (200, "pending_remaps") and body["sync_id"]
     assert catalog_service._catalog_bytes == b"old"  # the old catalog stays active until the operator confirms
     assert catalog_service._pending_sync["sync_id"] == body["sync_id"] and catalog_service._pending_sync["catalog"].raw == CATALOG
+
+
+async def test_warm_up_retries_while_the_provider_is_unreachable_then_caches(sidecar):
+    """Boot before the sidecar is up: the real CatalogUnavailable(502) path must be retried, not abandoned."""
+    sidecar.fail_on["get_catalog"] = SlicingProviderError("profiles request failed: ConnectError")
+    sleeps = []
+
+    async def fake_sleep(n):
+        sleeps.append(n)
+        if len(sleeps) == 2:
+            sidecar.fail_on.clear()          # the sidecar comes up
+
+    with patch("app.services.catalog_service.asyncio.sleep", fake_sleep):
+        await catalog_service.warm()
+
+    assert sleeps == [5, 5] and cached_raw() == CATALOG
+
+
+def test_ref_for_prefers_the_last_preset_of_a_duplicated_name():
+    from app.services.providers.slicing import Catalog, Preset
+    cat = Catalog(filaments=[Preset(ref="a", name="PLA"), Preset(ref="b", name="PLA"), Preset(ref="", name="PLA")])
+    assert cat.ref_for("filament", "PLA") == "b"

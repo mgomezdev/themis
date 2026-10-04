@@ -121,7 +121,11 @@ async def warm() -> None:
             return
         except Exception as exc:
             msg = str(exc)
-            if "503" in msg or "building_catalog" in msg or "502" in msg:
+            # An unreachable / still-building provider is transient (CatalogUnavailable 502/503, as the old
+            # HTTPException("502: ...") text matched); anything else gives up.
+            transient = (isinstance(exc, CatalogUnavailable) and exc.status in (502, 503)) or any(
+                t in msg for t in ("503", "building_catalog", "502"))
+            if transient:
                 await asyncio.sleep(5)
                 continue
             logger.warning("Startup catalog warm-up failed: %s", exc)

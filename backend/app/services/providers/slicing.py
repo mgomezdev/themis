@@ -50,10 +50,11 @@ class Catalog:
 
     def ref_for(self, kind: str, name: str) -> str | None:
         """Name -> ref for a preset kind ("machine" | "process" | "filament"); None when unknown."""
+        found = None
         for p in self.presets_of(kind):
             if p.name == name and p.ref:
-                return p.ref
-        return None
+                found = p.ref          # last wins on duplicate names, as the old {name: uuid} maps did
+        return found
 
 
 @dataclass
