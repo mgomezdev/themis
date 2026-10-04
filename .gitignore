@@ -30,3 +30,6 @@ test-results/
 # Coverage output
 frontend/coverage/
 backend/.coverage
+
+# Dev server logs
+*.log
