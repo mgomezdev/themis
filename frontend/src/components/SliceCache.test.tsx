@@ -121,4 +121,11 @@ describe('SliceCacheDebug', () => {
     expect(writeText).toHaveBeenCalledWith('abc123');
     expect(screen.getByRole('button', { name: 'Copied' })).toBeTruthy();
   });
+
+  it('says when the job was claimed on the cache while Laminus was down', () => {
+    const { rerender } = render(<SliceCacheDebug info={{ decision: 'hit', cache_key: 'k', gate: 'laminus_down' }} />);
+    expect(screen.getByTestId('slice-cache-debug').textContent).toContain('while Laminus was down');
+    rerender(<SliceCacheDebug info={{ decision: 'hit', cache_key: 'k' }} />);
+    expect(screen.getByTestId('slice-cache-debug').textContent).not.toContain('Laminus');
+  });
 });

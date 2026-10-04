@@ -130,6 +130,9 @@ export function SliceCacheDebug({ info }: { info: SliceCacheInfo | null }) {
         {ROWS.filter(([k]) => info[k] != null && info[k] !== '').map(([k, label]) => (
           <div key={k} className="row gap-2"><span className="muted">{label}</span><span>{String(info[k])}</span></div>
         ))}
+        {info.gate === 'laminus_down' && (
+          <div className="row gap-2"><span className="muted">Claimed</span><span>while Laminus was down</span></div>
+        )}
         {info.stale && (
           <div className="row gap-2"><span className="muted">Stale</span><span>{staleLabels(info.stale_reasons).join(', ')}</span></div>
         )}
