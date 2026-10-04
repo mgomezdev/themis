@@ -21,6 +21,7 @@ export interface FleetPrinter {
   temperatures: {
     nozzle?: number; bed?: number; chamber?: number;
     nozzle_target?: number; bed_target?: number; chamber_target?: number;
+    extruders?: { index: number; temp: number; target: number }[];
   };
   capabilities: Record<string, boolean>;
   current_print: string | null;
@@ -75,6 +76,8 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
         ? { now: p.layer_num, total: p.total_layers }
         : null,
     nozzleTemp: p.temperatures?.nozzle ?? 0,
+    nozzleTempTarget: p.temperatures?.nozzle_target ?? 0,
+    nozzles: p.temperatures?.extruders,
     bedTemp: p.temperatures?.bed ?? 0,
     chamberTemp: p.temperatures?.chamber ?? null,
     material: mat

@@ -757,8 +757,14 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
             <div className="card" style={{ padding: 14, background: 'var(--bg-1)' }}>
               <div className="tag-key" style={{ marginBottom: 10 }}>Temperatures</div>
               <div className="col gap-3">
-                <Telem label="Nozzle" value={`${p.nozzleTemp}°C`} target={isPrinting ? '220°C' : '—'} tone={isPrinting ? 'warn' : null} />
-                <Telem label="Bed" value={`${p.bedTemp}°C`} target={isPrinting ? '60°C' : '—'} />
+                {p.nozzles && p.nozzles.length > 1
+                  ? p.nozzles.map(n => (
+                      <Telem key={n.index} label={`Nozzle T${n.index}`} value={`${n.temp}°C`}
+                             target={n.target > 0 ? `${n.target}°C` : '—'} tone={n.target > 0 ? 'warn' : null} />
+                    ))
+                  : <Telem label="Nozzle" value={`${p.nozzleTemp}°C`}
+                           target={p.nozzleTempTarget ? `${p.nozzleTempTarget}°C` : '—'} tone={p.nozzleTempTarget ? 'warn' : null} />}
+                <Telem label="Bed" value={`${p.bedTemp}°C`} target={p.bedTempTarget ? `${p.bedTempTarget}°C` : '—'} />
                 {p.chamberTemp != null && (
                   <Telem label="Chamber" value={`${p.chamberTemp}°C`} target={p.chamber ? '60°C' : '—'} />
                 )}
