@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar
 
@@ -135,6 +136,17 @@ class ElegooState:
         if self.total_ticks > 0 and self.current_ticks < self.total_ticks:
             return int((self.total_ticks - self.current_ticks) / 60)
         return 0
+
+
+def _epoch_to_iso(value) -> str | None:
+    """SDCP `CreateTime` is epoch seconds; absent or 0 means the printer did not report one."""
+    try:
+        seconds = int(value)
+    except (TypeError, ValueError):
+        return None
+    if seconds <= 0:
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
 
 
 class ElegooCentauriClient(AbstractPrinterClient):
@@ -750,11 +762,14 @@ class ElegooCentauriClient(AbstractPrinterClient):
         ok, resp = self._send_with_response(_Cmd.GET_FILE_LIST, {"Url": directory})
         if not ok:
             return []
+        # Real Centauri entries (verified against hardware): {name, type, CreateTime (epoch s), FileSize,
+        # LayerHeight, TotalLayers, EstFilamentLength}. There is no lowercase `size` key.
         return [
             PrinterFile(
                 id=f.get("name", ""),
                 name=os.path.basename(f.get("name", "").rstrip("/")) or f.get("name", ""),
-                size=int(f.get("size", 0)),
+                size=int(f.get("FileSize", 0) or 0),
+                modified_at=_epoch_to_iso(f.get("CreateTime")),
             )
             for f in resp.get("FileList", [])
         ]
