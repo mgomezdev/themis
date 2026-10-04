@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .. import config
 from ..models import Job, JobPrinterConfig, SlicedVersion, UploadedFile
 from . import slice_cache
-from .providers.slicing import get_slicing_provider
+from .providers.slicing import get_format_provider, get_slicing_provider
 from .library_scanner import LibraryScanner, folder_of, library_abs_path, sha256_file
 
 logger = logging.getLogger(__name__)
@@ -169,8 +169,8 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         digest = await asyncio.to_thread(sha256_file, dest)
         stat = dest.stat()
 
-        from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports this module
-        grams, secs, _ = await asyncio.to_thread(_parse_gcode_estimates, str(dest), inputs.plate_number)
+        grams, secs, _ = await asyncio.to_thread(
+            get_format_provider().parse_estimates, str(dest), inputs.plate_number)
         rel = dest.relative_to(library).as_posix()
         record = UploadedFile(
             original_filename=dest.name, relative_path=rel, folder=folder_of(rel), size_bytes=stat.st_size,

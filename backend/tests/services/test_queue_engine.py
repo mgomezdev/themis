@@ -417,7 +417,7 @@ async def test_offline_does_not_reslice_when_sliced_job_pending(db, tmp_path):
 
 
 def test_parse_gcode_estimates_single_extruder(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text(
         "; filament used [g] = 12.50\n"
@@ -430,7 +430,7 @@ def test_parse_gcode_estimates_single_extruder(tmp_path):
 
 
 def test_parse_gcode_estimates_multi_extruder(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text(
         "; filament used [g] = 15.23, 8.45\n"
@@ -443,7 +443,7 @@ def test_parse_gcode_estimates_multi_extruder(tmp_path):
 
 
 def test_parse_gcode_estimates_missing_returns_none(tmp_path):
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "test.gcode"
     gcode.write_text("; no filament info here\n")
     grams, secs, extruder_grams = _parse_gcode_estimates(str(gcode))
@@ -727,6 +727,52 @@ async def test_run_estimate_sets_done_with_fields(db):
 
 
 @pytest.mark.asyncio
+async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(db):
+    """The estimate on the job comes from SlicingProvider.parse_estimates, not from a gcode parser baked into the
+    queue: the artifact's own text says 10 g / 30 min, the fake provider says otherwise, and the fake wins."""
+    import tempfile, os
+    from unittest.mock import patch, MagicMock
+    from app.models import Job
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id)
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        job.estimate_status = "pending"
+        job.estimate_token = 1
+        printer = await session.get(Printer, printer_id)
+        printer.current_orca_printer_profile = "Test Machine"
+        printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
+        await session.commit()
+
+    with tempfile.NamedTemporaryFile(suffix=".gcode", delete=False, mode="w") as f:
+        f.write("; filament used [g] = 10.00\n; estimated printing time (normal mode) = 30m 0s\n")
+        artifact = f.name
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path(tempfile.mkdtemp())
+    engine = QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer)
+
+    async def inline_put(item):
+        _, _seq, coro = item
+        await coro
+
+    engine._slice_queue.put = inline_put
+    fake = FakeSlicingProvider()
+    fake.estimates = (77.5, 4242, [77.5])
+    with patch.object(slicer, "slice", return_value=artifact), \
+         patch("app.services.queue_engine.get_format_provider", return_value=fake):
+        await engine.run_estimate(job_id)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        assert (job.estimate_status, job.estimate_filament_grams, job.estimate_seconds) == ("done", 77.5, 4242)
+    assert ("parse_estimates", artifact, None) in fake.calls
+    os.unlink(artifact)
+
+
+@pytest.mark.asyncio
 async def test_run_estimate_fails_when_no_printer_config(db):
     """A job with no JobPrinterConfig row must fail the estimate rather than
     return silently — leaving estimate_status stuck on 'pending' means the UI
@@ -936,8 +982,10 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
     # Simulate an unexpected error in a step that has no existing try/except of
     # its own (Step 4 gcode parsing), rather than the already-handled slice
     # failure path.
+    broken = FakeSlicingProvider()
+    broken.parse_estimates = MagicMock(side_effect=RuntimeError("boom"))
     with patch.object(slicer, "slice", return_value=fake_gcode), \
-         patch("app.services.queue_engine._parse_gcode_estimates", side_effect=RuntimeError("boom")):
+         patch("app.services.queue_engine.get_format_provider", return_value=broken):
         await engine.run_estimate(job_id)
 
     async with db() as session:
@@ -1686,7 +1734,7 @@ async def test_planning_project_job_is_claimed_once_project_is_queued(db, tmp_pa
 
 def test_parse_gcode_estimates_reads_the_summary_at_the_end_of_a_long_file(tmp_path):
     """OrcaSlicer writes "filament used" / "estimated printing time" after the toolpaths — far past the header."""
-    from app.services.queue_engine import _parse_gcode_estimates
+    from app.services.providers.laminus.gcode import parse_gcode_estimates as _parse_gcode_estimates
     gcode = tmp_path / "long.gcode"
     gcode.write_text("; HEADER_BLOCK_START\n" + "G1 X1 Y1\n" * 20000 +
                      "; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1d 2h 3m 4s\n")

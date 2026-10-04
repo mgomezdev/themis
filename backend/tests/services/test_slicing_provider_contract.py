@@ -251,3 +251,42 @@ def test_laminus_rebuild_request_maps_transport_errors(sidecar):
     sidecar.handler = boom
     with pytest.raises(SlicingProviderError, match="Could not reach Laminus sidecar: refused"):
         LaminusSlicingProvider(URL).request_catalog_rebuild()
+
+
+# ---- slicer-specific file-format methods ----
+
+def test_format_methods_are_provided_without_any_server(monkeypatch):
+    """get_format_provider never returns None and its format methods do no I/O to a server."""
+    from app.services.providers.slicing import get_format_provider
+    monkeypatch.delenv("LAMINUS_SIDECAR_URL", raising=False)
+    fmt = get_format_provider()
+    assert get_slicing_provider() is None
+    assert "enable_support" in fmt.curated_override_keys()
+
+
+def test_parse_estimates_reads_the_orca_summary_lines(provider, tmp_path):
+    gcode = tmp_path / "m.gcode"
+    gcode.write_text("; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1h 2m 3s\n")
+    grams, secs, per_extruder = provider.parse_estimates(str(gcode))
+    assert isinstance(grams, float) and isinstance(secs, int) and per_extruder
+    if isinstance(provider, LaminusSlicingProvider):
+        assert (grams, secs, per_extruder) == (4.0, 3723, [1.25, 2.75])
+
+
+def test_inspect_overrides_returns_the_documented_shape(provider, tmp_path):
+    import zipfile
+    proj = tmp_path / "p.3mf"
+    with zipfile.ZipFile(proj, "w") as zf:
+        zf.writestr("Metadata/project_settings.config", json.dumps({"enable_support": "1"}))
+    result = provider.inspect_overrides(str(proj), {"enable_support": "0"}, 1)
+    assert set(result) >= {"has_findings", "setting_changes", "slot_warning"}
+    if isinstance(provider, LaminusSlicingProvider):
+        assert result["has_findings"] is True
+        assert [c["key"] for c in result["setting_changes"]] == ["enable_support"]
+
+
+def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printers_list(provider):
+    cat = provider.get_catalog()
+    assert [p.name for p in provider.compatible_presets(cat, "Printer A", "filament")] == ["PLA @A"]
+    assert [p.name for p in provider.compatible_presets(cat, "Printer A", "process")] == ["0.20mm Standard"]
+    assert provider.compatible_presets(cat, "Some Other Printer", "filament") == []

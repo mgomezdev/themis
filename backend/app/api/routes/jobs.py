@@ -21,24 +21,22 @@ from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinter
 from ...services import slice_cache, slice_saver
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
-from ...services.override_inspector import inspect_overrides, CURATED_KEYS
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
+from ...services.queue_engine import queue_engine, _slot_for_config, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
 from ...services.spool_check import check_spool_sufficiency
 from ...services.providers.filament_inventory import Spool, get_inventory_provider
+from ...services.providers.slicing import get_format_provider
 
 logger = logging.getLogger(__name__)
-
-_CURATED_KEYS_SET: frozenset[str] = frozenset(CURATED_KEYS)
-
 
 def _clean_overrides(o: dict | None) -> dict | None:
     """Strip any key not in the curated allowlist before storing."""
     if not o:
         return None
-    cleaned = {k: str(v) for k, v in o.items() if k in _CURATED_KEYS_SET}
+    allowed = frozenset(get_format_provider().curated_override_keys())
+    cleaned = {k: str(v) for k, v in o.items() if k in allowed}
     return cleaned or None
 
 
@@ -126,7 +124,7 @@ class ModelTargetInput(BaseModel):
 def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
     """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
     path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
-    grams, secs, per_extruder = _parse_gcode_estimates(str(path), plate=job.plate_number)
+    grams, secs, per_extruder = get_format_provider().parse_estimates(str(path), job.plate_number)
     if grams is None and secs is None:
         job.estimate_status = None
         return
@@ -494,7 +492,7 @@ async def check_overrides(
     # filament isn't in the catalog, pick the first compatible one as a stand-in.
     filament_uuid = catalog.ref_for("filament", body.filament_profile or "")
     if not filament_uuid:
-        compat = [f.ref for f in catalog.filaments if machine_name in f.compatible_printers]
+        compat = [f.ref for f in slicing.compatible_presets(catalog, machine_name, "filament")]
         filament_uuid = compat[0] if compat else next((f.ref for f in catalog.filaments if f.name and f.ref), None)
     if not filament_uuid:
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
@@ -507,7 +505,7 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1
-    return inspect_overrides(str(source_path), config, slots)
+    return slicing.inspect_overrides(str(source_path), config, slots)
 
 
 @router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
@@ -1148,7 +1146,7 @@ async def complete_job_manually(
         gcode_path = await queue_engine.run_verify_slice(req, output_dir)
         # Parse before the `finally` cleanup below removes output_dir - the gcode
         # file must be read while it still exists.
-        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+        grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path)
     except SliceError as exc:
         raise HTTPException(422, f"Slicing failed: {exc}")
     except Exception as exc:

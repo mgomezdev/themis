@@ -159,6 +159,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.providers.slicing import SlicingProviderError
+from app.services.providers.laminus import LaminusSlicingProvider
 from tests.fake_providers import FakeSlicingProvider
 
 _KEYS = {"has_embedded_settings", "has_findings", "setting_changes", "slot_warning"}  # what the frontend reads
@@ -193,12 +194,15 @@ def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
     """`await check(data=..., printer=..., sidecar=..., catalog=..., merged=..., **body)` -> (response, fake_provider).
     `sidecar=None` means no slicing provider is configured."""
     async def _check(*, data: bytes | None = None, sidecar: str | None = "http://laminus.test",
-                     catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None, **body):
+                     catalog=_CATALOG, merged: dict | Exception = None, printer: dict | None = None,
+                     real_inspector: bool = True, **body):
         file_id = await upload_3mf(data=data)
         printer_id = await create_printer(**(printer or {}))
         payload = {"uploaded_file_id": file_id, "printer_id": printer_id, "print_profile": "0.20mm Standard",
                    "filament_profile": "Bambu PLA Basic", **body}
         provider = FakeSlicingProvider()
+        if real_inspector:   # exercise the Laminus (OrcaSlicer) inspection logic through the route
+            provider.inspect_overrides = LaminusSlicingProvider("").inspect_overrides
         if isinstance(merged, Exception):
             provider.fail_on["merged_config"] = merged
         else:
@@ -301,3 +305,14 @@ async def test_check_overrides_warns_when_the_file_uses_more_slots_than_the_prin
     body = resp.json()
     assert body["slot_warning"] == {"used_slots": 3, "printer_slots": 1}  # printer has no loaded slots -> 1
     assert (body["has_findings"], body["setting_changes"]) == (True, [])
+
+
+async def test_check_overrides_returns_whatever_the_provider_inspects(check):
+    """The route delegates the file-format comparison to the slicing provider and passes its result through
+    unchanged, handing it the file, the merged config of the chosen presets and the printer's slot count."""
+    resp, provider = await check(data=_project_3mf({"layer_height": "0.2"}), merged={"layer_height": "0.3"},
+                                 real_inspector=False)
+    assert resp.status_code == 200
+    assert resp.json() == provider.override_findings
+    (call,) = [c for c in provider.calls if c[0] == "inspect_overrides"]
+    assert call[2] == 1   # slot count: a printer with no loaded filaments counts as one

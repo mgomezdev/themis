@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.services.preset_resolver import PresetResolver, PresetNotFoundError
+from app.services.providers.laminus.preset_resolver import PresetResolver, PresetNotFoundError
 
 
 def _write(path, data):

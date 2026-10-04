@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ...laminus_sidecar_client import LaminusSidecarClient, SidecarError, SidecarNotReady
+from . import gcode, overrides
 from ..slicing import (
     Catalog,
     Preset,
@@ -55,6 +56,15 @@ class LaminusSlicingProvider(SlicingProvider):
             raise SlicingProviderNotReady(str(e)) from e
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
+
+    def parse_estimates(self, artifact_path: str, plate_number: int | None = None):
+        return gcode.parse_gcode_estimates(artifact_path, plate_number)
+
+    def inspect_overrides(self, source_project: str, merged_config: dict, slots: int) -> dict:
+        return overrides.inspect_overrides(source_project, merged_config, slots)
+
+    def curated_override_keys(self) -> tuple[str, ...]:
+        return overrides.CURATED_KEYS
 
     def catalog_health(self, timeout: float = 5.0) -> dict:
         try:

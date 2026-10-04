@@ -39,18 +39,18 @@ class Catalog:
     # re-serialize the exact shape they always returned.
     raw: dict = field(default_factory=dict)
 
-    def _by_kind(self, kind: str) -> list[Preset]:
+    def presets_of(self, kind: str) -> list[Preset]:
         return {"machine": self.machines, "process": self.processes, "filament": self.filaments}[kind]
 
     def names(self, kind: str) -> set[str]:
-        return {p.name for p in self._by_kind(kind) if p.name}
+        return {p.name for p in self.presets_of(kind) if p.name}
 
     def refs(self, kind: str) -> set[str]:
-        return {p.ref for p in self._by_kind(kind) if p.ref}
+        return {p.ref for p in self.presets_of(kind) if p.ref}
 
     def ref_for(self, kind: str, name: str) -> str | None:
         """Name -> ref for a preset kind ("machine" | "process" | "filament"); None when unknown."""
-        for p in self._by_kind(kind):
+        for p in self.presets_of(kind):
             if p.name == name and p.ref:
                 return p.ref
         return None
@@ -104,6 +104,31 @@ class SlicingProvider(ABC):
     def slice(self, spec: SliceSpec, output_dir: Path) -> str:
         """Slice and write the artifact into `output_dir`; returns its path."""
 
+    # ── slicer-specific file-format knowledge ─────────────────────────────────────────────────────────────────
+    # Pure local work on files Themis already holds — no calls to the slicing server, so they work (via
+    # `get_format_provider()`) even when no server is configured, e.g. when scanning a library of sliced gcode.
+
+    @abstractmethod
+    def parse_estimates(
+        self, artifact_path: str, plate_number: int | None = None,
+    ) -> tuple[float | None, int | None, list[float] | None]:
+        """(total_grams, seconds, per_extruder_grams) from a sliced artifact (gcode or sliced archive); each
+        None independently when it can't be read. `plate_number` picks the plate inside a multi-plate archive."""
+
+    @abstractmethod
+    def inspect_overrides(self, source_project: str, merged_config: dict, slots: int) -> dict:
+        """Compare a project file's embedded settings with `merged_config` (what the chosen presets would
+        produce); returns {has_findings, setting_changes, slot_warning}."""
+
+    @abstractmethod
+    def curated_override_keys(self) -> tuple[str, ...]:
+        """The high-impact setting keys job-level overrides / embedded-settings display may touch."""
+
+    def compatible_presets(self, catalog: Catalog, machine_preset: str, kind: str) -> list[Preset]:
+        """Presets of `kind` ("process" | "filament") usable with `machine_preset`. Default: the preset names the
+        machine in its `compatible_printers`; a provider with richer rules overrides this."""
+        return [p for p in catalog.presets_of(kind) if machine_preset in p.compatible_printers]
+
     def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
         raise NotImplementedError("provider does not support ARRANGE")
 
@@ -124,6 +149,14 @@ def get_slicing_provider() -> SlicingProvider | None:
     if not url:
         return None
     return _REGISTRY["laminus"](url)
+
+
+def get_format_provider() -> SlicingProvider:
+    """The slicing provider to use for local file-format work (estimates, override inspection). Unlike
+    `get_slicing_provider()` it never returns None: format methods don't need a configured server."""
+    from . import laminus  # noqa: F401  (registers the adapter)
+
+    return _REGISTRY["laminus"](config.get_laminus_sidecar_url() or "")
 
 
 # name -> adapter class. Adding a provider = one adapter class + one entry here.

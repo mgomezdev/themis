@@ -20,7 +20,7 @@ from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
 from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
-from ...services.providers.slicing import Catalog
+from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services import scheduling
@@ -470,8 +470,9 @@ async def get_profiles(
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
 
-    processes = sorted(p.name for p in cat.processes if machine_name in p.compatible_printers)
-    filaments = sorted(f.name for f in cat.filaments if machine_name in f.compatible_printers)
+    slicer = get_format_provider()
+    processes = sorted(p.name for p in slicer.compatible_presets(cat, machine_name, "process"))
+    filaments = sorted(f.name for f in slicer.compatible_presets(cat, machine_name, "filament"))
     return {"print_profiles": processes, "filament_profiles": filaments}
 
 

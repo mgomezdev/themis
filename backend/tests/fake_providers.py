@@ -111,6 +111,9 @@ class FakeSlicingProvider(SlicingProvider):
         self.artifact_bytes = b"; fake gcode\n"
         self.merged: dict = {}
         self.health_body: dict = {"status": "ok"}
+        self.estimates: tuple = (12.5, 3600, [12.5])     # canned parse_estimates() -> (grams, seconds, per-extruder)
+        self.override_findings: dict = {"has_findings": False, "setting_changes": [], "slot_warning": None}
+        self.override_keys: tuple = ("layer_height", "sparse_infill_density")
         self.health_script: list = []
         self.default_health: dict = {"catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 3}
         self.rebuild_error: SlicingProviderError | None = None
@@ -133,6 +136,17 @@ class FakeSlicingProvider(SlicingProvider):
     def get_catalog(self) -> Catalog:
         self._enter("get_catalog")
         return self.catalog
+
+    def parse_estimates(self, artifact_path, plate_number=None):
+        self._enter("parse_estimates", artifact_path, plate_number)
+        return self.estimates
+
+    def inspect_overrides(self, source_project, merged_config, slots) -> dict:
+        self._enter("inspect_overrides", source_project, slots)
+        return self.override_findings
+
+    def curated_override_keys(self) -> tuple[str, ...]:
+        return self.override_keys
 
     def catalog_health(self, timeout: float = 5.0) -> dict:
         """Scripted: pops from `health_script` (a dict is returned, an Exception raised), else `default_health`."""
