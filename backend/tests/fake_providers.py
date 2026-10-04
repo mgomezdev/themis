@@ -61,3 +61,86 @@ class FakeInventoryProvider(FilamentInventoryProvider):
         fil = await self.get_filament(filament_ref)
         fil.profile_bindings = {k: list(v) for k, v in bindings.items()}
         return fil
+
+
+# ---- slicing ----
+
+from pathlib import Path  # noqa: E402
+
+from app.services.providers.slicing import (  # noqa: E402
+    Catalog,
+    Preset,
+    SliceSpec,
+    SlicingProvider,
+    SlicingProviderError,
+)
+
+
+def make_catalog(machines=(("Printer A", "m-1"),), processes=(("0.20mm Standard", "p-1"),),
+                 filaments=(("PLA @A", "f-1"), ("PETG @A", "f-2"))) -> Catalog:
+    """Items are (name, ref) or (name, ref, compatible_printers); non-machine presets default to
+    compatible with "Printer A"."""
+    def presets(items, kind):
+        out = []
+        for item in items:
+            name, ref = item[0], item[1]
+            compat = list(item[2]) if len(item) > 2 else ([] if kind == "machine" else ["Printer A"])
+            raw = {"name": name, "uuid": ref, **({"compatible_printers": compat} if compat else {})}
+            out.append(Preset(ref=ref, name=name, compatible_printers=compat, raw=raw))
+        return out
+
+    cat = Catalog(machines=presets(machines, "machine"), processes=presets(processes, "process"),
+                  filaments=presets(filaments, "filament"))
+    cat.raw = {"machine": [p.raw for p in cat.machines], "process": [p.raw for p in cat.processes],
+               "filament": [p.raw for p in cat.filaments]}
+    return cat
+
+
+class FakeSlicingProvider(SlicingProvider):
+    ARRANGE = True
+    PACK_MODELS = True
+    PREPARED_PROJECT = True
+
+    def __init__(self, catalog: Catalog | None = None, identity: str = "fake://slicer") -> None:
+        self.catalog = catalog or make_catalog()
+        self._identity = identity
+        self.calls: list[tuple] = []
+        self.fail_with: SlicingProviderError | None = None
+        self.artifact_name = "fake.gcode"
+        self.artifact_bytes = b"; fake gcode\n"
+        self.merged: dict = {}
+
+    @property
+    def identity(self) -> str:
+        return self._identity
+
+    def _enter(self, name: str, *args) -> None:
+        self.calls.append((name, *args))
+        if self.fail_with is not None:
+            raise self.fail_with
+
+    def health(self, timeout: float | None = None) -> dict:
+        self._enter("health", timeout)
+        return {"status": "ok"}
+
+    def get_catalog(self) -> Catalog:
+        self._enter("get_catalog")
+        return self.catalog
+
+    def merged_config(self, machine_ref, process_ref, filament_refs, timeout=None) -> dict:
+        self._enter("merged_config", machine_ref, process_ref, list(filament_refs))
+        return self.merged
+
+    def slice(self, spec: SliceSpec, output_dir: Path) -> str:
+        self._enter("slice", spec)
+        dest = Path(output_dir) / self.artifact_name
+        dest.write_bytes(self.artifact_bytes)
+        return str(dest)
+
+    def arrange(self, project_path, arrange=True, orient=True, timeout=130.0) -> bytes:
+        self._enter("arrange", project_path)
+        return b"ARRANGED"
+
+    def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None) -> bytes:
+        self._enter("pack_models", list(paths), machine_ref, bed)
+        return b"PACKED"
