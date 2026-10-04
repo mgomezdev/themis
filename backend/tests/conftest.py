@@ -242,7 +242,7 @@ def spoolman_upstream():
         hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.spoolman_service.httpx.AsyncClient", _factory):
+    with patch("app.services.providers.spoolman.service.httpx.AsyncClient", _factory):
         yield up
 
 

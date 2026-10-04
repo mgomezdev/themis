@@ -1,6 +1,6 @@
 """Filament inventory provider interface (async).
 
-Mirrors what `spoolman_service` does today. Refs (`Filament.ref`, `Spool.ref`) are opaque provider
+Mirrors what the Spoolman client does today. Refs (`Filament.ref`, `Spool.ref`) are opaque provider
 strings; persisted ids elsewhere in Themis (`loaded_filaments[].spoolman_spool_id`, low-stock overrides)
 stay as they are and are converted at the call site.
 """

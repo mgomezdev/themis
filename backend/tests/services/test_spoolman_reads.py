@@ -6,7 +6,8 @@ import httpx
 import pytest
 
 from app.models import SpoolmanConfig
-from app.services import spoolman_service, spoolman_sync
+from app.services import spoolman_sync
+from app.services.providers.spoolman import service as spoolman_service
 from app.services.providers.filament_inventory import InventoryProviderError
 from app.services.spoolman_sync import SpoolmanSyncLoop, _describe_error, record_sync
 from tests import spoolman_mock
@@ -125,8 +126,8 @@ def _loop_for(session_factory) -> SpoolmanSyncLoop:
 @pytest.fixture
 def fetched():
     """Count sync attempts without touching the network."""
-    with patch("app.services.spoolman_service.fetch_filaments", new=AsyncMock(return_value=[])) as f, \
-         patch("app.services.spoolman_service.fetch_spools", new=AsyncMock(return_value=[])):
+    with patch("app.services.providers.spoolman.service.fetch_filaments", new=AsyncMock(return_value=[])) as f, \
+         patch("app.services.providers.spoolman.service.fetch_spools", new=AsyncMock(return_value=[])):
         yield f
 
 
@@ -164,7 +165,7 @@ async def test_tick_syncs_when_due_and_records_the_attempt(session_factory, fetc
 
 async def test_tick_swallows_a_failed_sync_after_it_was_recorded_on_the_row(session_factory):
     await _row(session_factory, sync_interval_minutes=1)
-    with patch("app.services.spoolman_service.fetch_filaments",
+    with patch("app.services.providers.spoolman.service.fetch_filaments",
                new=AsyncMock(side_effect=_http_error(500))):
         await _loop_for(session_factory)._tick()  # must not raise
 

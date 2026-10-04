@@ -4,7 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+from app.services.providers.laminus.sidecar_client import LaminusSidecarClient, SidecarError
 
 
 def _client(transport: httpx.MockTransport) -> LaminusSidecarClient:

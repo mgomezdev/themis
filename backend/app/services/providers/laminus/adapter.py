@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ...laminus_sidecar_client import LaminusSidecarClient, SidecarError, SidecarNotReady
+from .sidecar_client import LaminusSidecarClient, SidecarError, SidecarNotReady
 from . import gcode, overrides
 from ..slicing import (
     Catalog,

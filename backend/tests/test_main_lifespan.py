@@ -134,7 +134,7 @@ async def test_a_placeholder_still_referenced_by_a_job_is_kept_with_a_warning_an
 
 async def test_an_unreachable_sidecar_only_warns_and_the_catalog_warmup_is_still_scheduled(boot, monkeypatch, caplog):
     monkeypatch.setenv("LAMINUS_SIDECAR_URL", "http://sidecar.invalid:5000")
-    monkeypatch.setattr("app.services.laminus_sidecar_client.LaminusSidecarClient.health",
+    monkeypatch.setattr("app.services.providers.laminus.sidecar_client.LaminusSidecarClient.health",
                         MagicMock(side_effect=ConnectionError("no route to host")))
     warm = AsyncMock()
     monkeypatch.setattr("app.services.catalog_service.warm", warm)

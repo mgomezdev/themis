@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
-from ...services import catalog_service, spoolman_service
+from ...services import catalog_service
 from ...services.providers.filament_inventory import make_inventory_provider
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
@@ -196,44 +196,22 @@ async def test_spoolman_connection(
             api_key = row.api_key
     if not url:
         return {"ok": False, "message": "No URL configured"}
+    inventory = make_inventory_provider(url, api_key)
     try:
-        info = await make_inventory_provider(url, api_key).test_connection()
+        info = await inventory.test_connection()
     except Exception as e:
         return {"ok": False, "message": str(e)}
 
     # --- Spoolman profile-name sanity check (best-effort) ---
-    # Check that profile name strings in each filament's orca_profiles exist in the catalog.
-    from ...services.catalog_utils import catalog_name_sets
+    # Check that profile name strings bound to each filament exist in the catalog.
+    from ...services.catalog_utils import catalog_name_sets, stale_binding_groups
 
     _catalog = catalog_service.cached_catalog()
-    if _catalog is not None:
+    if _catalog is not None and inventory.PROFILE_BINDINGS:
         try:
             _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
-            spool_filaments = await spoolman_service.fetch_filaments(url, api_key)
-            spoolman_groups: dict[tuple[str, str], dict] = {}
-            for fil in spool_filaments:
-                raw_extra = (fil.get("extra") or {}).get("orca_profiles")
-                if not raw_extra:
-                    continue
-                try:
-                    profiles: dict = json.loads(json.loads(raw_extra))
-                except Exception:
-                    continue
-                for printer_preset, names in profiles.items():
-                    if not isinstance(names, list):
-                        continue
-                    for name in names:
-                        if name not in catalog_filaments:
-                            key = (printer_preset, name)
-                            g = spoolman_groups.setdefault(key, {
-                                "printer_preset": printer_preset,
-                                "stale_name": name,
-                                "required": False,
-                                "affected_filament_ids": [],
-                                "affected_filament_names": [],
-                            })
-                            g["affected_filament_ids"].append(fil["id"])
-                            g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+            spoolman_groups = stale_binding_groups(
+                await inventory.list_filaments(), lambda name: name not in catalog_filaments)
 
             if spoolman_groups:
                 import uuid as _uuid

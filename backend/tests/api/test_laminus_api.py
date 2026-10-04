@@ -2,7 +2,8 @@
 from tests.catalog_helpers import cached_raw, prime_catalog
 from app.services import catalog_service
 from app.services.providers.slicing import SlicingProviderError
-from tests.fake_providers import FakeSlicingProvider
+from app.services.providers.filament_inventory import Filament
+from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -352,9 +353,8 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
         "created_at": 0,
     }
 
-    with patch("app.services.spoolman_service.fetch_filament", new_callable=AsyncMock,
-               return_value={"extra": {"orca_profiles": '"\\"{}\\""'}}), \
-         patch("app.services.spoolman_service.patch_filament", new_callable=AsyncMock):
+    inventory = FakeInventoryProvider(filaments=[Filament(ref="5", name="Red PLA")])
+    with _inventory(inventory):
         resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
             "sync_id": "spoolman-only",
             "resolutions": {
@@ -377,7 +377,7 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
 
 from sqlalchemy import select
 
-from app.models import JobPrinterConfig, Printer, SpoolmanConfig
+from app.models import JobPrinterConfig, Printer
 
 _NEW_CATALOG = {
     "machine": [{"name": "New Machine", "uuid": "m2"}],
@@ -528,37 +528,32 @@ def _spoolman_entry(*ids, preset="Bambu X1C 0.4 nozzle", stale="Old PLA"):
             "affected_filament_ids": list(ids), "affected_filament_names": [f"fil{i}" for i in ids]}
 
 
-def _orca_extra(profiles: dict) -> dict:
-    return {"extra": {"orca_profiles": json.dumps(json.dumps(profiles))}}  # Spoolman stores it double-encoded
+def _bound(ref, bindings):
+    return Filament(ref=str(ref), name=f"fil{ref}", profile_bindings={k: list(v) for k, v in bindings.items()})
 
 
-async def _enable_spoolman(session_factory):
-    async with session_factory() as s:
-        s.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", api_key="k"))
-        await s.commit()
+def _inventory(provider):
+    return patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=provider))
 
 
-async def test_confirm_remap_patches_spoolman_filaments_and_reports_the_ones_that_failed(client, session_factory):
-    await _enable_spoolman(session_factory)
+async def test_confirm_remap_rewrites_filament_bindings_and_reports_the_ones_that_failed(client):
     preset = "Bambu X1C 0.4 nozzle"
-    stored = {
-        5: {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]},
-        6: {preset: ["Old PLA"]},
-        7: {preset: ["Old PLA"]},
-    }
+    inventory = FakeInventoryProvider(filaments=[
+        _bound(5, {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]}),
+        _bound(6, {preset: ["Old PLA"]}),
+        _bound(7, {preset: ["Old PLA"]}),
+    ])
+    real_get = inventory.get_profile_bindings
 
-    async def fake_fetch(url, key, fil_id):
-        if fil_id == 7:
+    async def flaky_get(ref):
+        if ref == "7":
             raise RuntimeError("spoolman down")
-        return _orca_extra(stored[fil_id])
+        return await real_get(ref)
 
-    patched = {}
-    async def fake_patch(url, key, fil_id, profiles):
-        patched[fil_id] = profiles
+    inventory.get_profile_bindings = flaky_get
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, 7)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=fake_fetch), \
-         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+    with _inventory(inventory):
         resp = await _confirm(client, sync, spoolman=[
             {"printer_preset": preset, "stale_name": "Old PLA", "new_name": "New PLA"}])
 
@@ -566,39 +561,49 @@ async def test_confirm_remap_patches_spoolman_filaments_and_reports_the_ones_tha
     body = resp.json()
     assert body["applied"]["spoolman_filaments"] == 2
     assert body["spoolman_failures"] == ["filament 7: spoolman down"]
-    # stale name swapped for the new one on this preset only; other presets and other names untouched
-    assert patched[5] == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
-    assert patched[6] == {preset: ["New PLA"]}
-    assert 7 not in patched
+    # re-read: stale name swapped for the new one on this preset only; other presets and other names untouched
+    assert (await real_get("5")) == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
+    assert (await real_get("6")) == {preset: ["New PLA"]}
+    assert (await real_get("7")) == {preset: ["Old PLA"]}          # the failed one is left as it was
     assert cached_raw() == _NEW_CATALOG and catalog_service._pending_sync is None  # a Spoolman failure never blocks the commit
 
 
-async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client, session_factory):
-    await _enable_spoolman(session_factory)
+async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client):
     preset = "Bambu X1C 0.4 nozzle"
-    patched = {}
-
-    async def fake_patch(url, key, fil_id, profiles):
-        patched[fil_id] = profiles
+    inventory = FakeInventoryProvider(filaments=[_bound(5, {preset: ["Old PLA"]})])
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock(return_value=_orca_extra({preset: ["Old PLA"]}))), \
-         patch("app.services.spoolman_service.patch_filament", new=fake_patch):
+    with _inventory(inventory):
         resp = await _confirm(client, sync, spoolman=[{"printer_preset": preset, "stale_name": "Old PLA", "new_name": None}])
 
     assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 1
-    assert patched == {5: {}}  # the preset key is removed rather than left as an empty list
+    assert await inventory.get_profile_bindings("5") == {}  # the preset key is removed rather than left as an empty list
 
 
 async def test_confirm_remap_skips_spoolman_entirely_when_it_is_not_configured(client):
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with patch("app.services.spoolman_service.fetch_filament", new=AsyncMock()) as fetch:
+    with patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=None)) as accessor:
         resp = await _confirm(client, sync)
 
     assert resp.status_code == 200
     assert resp.json()["applied"]["spoolman_filaments"] == 0
-    fetch.assert_not_called()
+    accessor.assert_awaited_once()
     assert catalog_service._pending_sync is None
+
+
+async def test_confirm_remap_skips_the_binding_rewrite_for_a_provider_without_profile_bindings(client):
+    inventory = FakeInventoryProvider(filaments=[_bound(5, {"P": ["Old PLA"]})])
+    inventory.PROFILE_BINDINGS = False
+
+    sync = _park(_pending(spoolman=[_spoolman_entry(5, preset="P")]))
+    with _inventory(inventory):
+        resp = await _confirm(client, sync)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["applied"]["spoolman_filaments"] == 0 and resp.json()["spoolman_failures"] == []
+    assert inventory.calls == []                                   # nothing read or written
+    assert inventory.filaments["5"].profile_bindings == {"P": ["Old PLA"]}
+    assert cached_raw() == _NEW_CATALOG                            # the catalog commit still happens
 
 
 async def test_confirm_remap_job_print_profile_without_a_replacement_becomes_blank_not_null(client, create_job, session_factory):

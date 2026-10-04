@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from ... import spoolman_service
+from . import service as spoolman_service
 from ..filament_inventory import (
     Filament,
     FilamentInventoryProvider,

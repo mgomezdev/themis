@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,9 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import SpoolmanConfig
 from ...services import catalog_service
 from ...services.catalog_service import CatalogUnavailable
+from ...services.providers.filament_inventory import get_inventory_provider
 from ...services.providers.slicing import Catalog
 
 
@@ -216,41 +215,29 @@ async def confirm_remap(
 
     await session.commit()
 
-    # Spoolman patches — best-effort after DB commit
-    # For each stale entry: remove the stale name from the printer_preset list in orca_profiles;
-    # optionally insert the new_name in its place.
-    from ...services import spoolman_service as _spoolman
+    # Inventory binding rewrites — best-effort after DB commit
+    # For each stale entry: remove the stale name from the printer_preset list in the filament's profile
+    # bindings; optionally insert the new_name in its place. A provider without PROFILE_BINDINGS is skipped.
     spoolman_failures: list[str] = []
     applied_spoolman = 0
     if pending.get("spoolman_filaments"):
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.url:
+        inventory = await get_inventory_provider(session)
+        if inventory is not None and inventory.PROFILE_BINDINGS:
             for entry in pending["spoolman_filaments"]:
                 printer_preset = entry["printer_preset"]
                 stale_name = entry["stale_name"]
                 new_name = spoolman_res_map.get((printer_preset, stale_name))
                 for fil_id in entry["affected_filament_ids"]:
                     try:
-                        fil_data = await _spoolman.fetch_filament(
-                            spoolman_cfg.url, spoolman_cfg.api_key, fil_id
-                        )
-                        raw_extra = (fil_data.get("extra") or {}).get("orca_profiles", "null")
-                        try:
-                            profiles: dict = json.loads(json.loads(raw_extra))
-                        except Exception:
-                            profiles = {}
-                        names = profiles.get(printer_preset, [])
-                        if isinstance(names, list):
-                            names = [n for n in names if n != stale_name]
-                            if new_name:
-                                names.append(new_name)
+                        bindings = await inventory.get_profile_bindings(str(fil_id))
+                        names = [n for n in bindings.get(printer_preset, []) if n != stale_name]
+                        if new_name:
+                            names.append(new_name)
                         if names:
-                            profiles[printer_preset] = names
+                            bindings[printer_preset] = names
                         else:
-                            profiles.pop(printer_preset, None)
-                        await _spoolman.patch_filament(
-                            spoolman_cfg.url, spoolman_cfg.api_key, fil_id, profiles
-                        )
+                            bindings.pop(printer_preset, None)
+                        await inventory.set_profile_bindings(str(fil_id), bindings)
                         applied_spoolman += 1
                     except Exception as exc:
                         spoolman_failures.append(f"filament {fil_id}: {exc}")

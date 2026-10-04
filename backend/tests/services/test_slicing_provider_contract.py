@@ -63,7 +63,7 @@ def sidecar():
         hooks = {"request": [record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.laminus_sidecar_client.httpx.Client", factory):
+    with patch("app.services.providers.laminus.sidecar_client.httpx.Client", factory):
         yield sc
 
 
@@ -177,7 +177,7 @@ def test_laminus_timeouts_unchanged(sidecar, tmp_path):
     p.merged_config("m-1", "p-1", ["f-1"], timeout=10)
     assert sidecar.client_kwargs[-1]["timeout"] == 10
     import inspect
-    from app.services.laminus_sidecar_client import LaminusSidecarClient
+    from app.services.providers.laminus.sidecar_client import LaminusSidecarClient
     assert inspect.signature(LaminusSidecarClient.poll_status).parameters["timeout"].default == 620.0
 
 
