@@ -7,6 +7,8 @@ import { SaveSliceControl, SliceCacheDebug, SliceCacheMarkers } from '../compone
 import { isPresliced } from '../lib/fileKind';
 import { getJobDetails, cancelJob, unblockJob, completeJobManually, setJobCost, setJobSchedule, plateThumbnailUrl, type ApiJobDetails, type ApiJobPrinterConfig } from '../api/queue';
 import type { StatusKey } from '../data/types';
+import { JobProjectControl } from '../components/JobProjectControl';
+import { getProject } from '../api/projects';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
 
 const BADGE: Record<string, string> = {
@@ -116,6 +118,7 @@ export function JobDetailScreen() {
   const [startInput, setStartInput] = useState('');
   const [savingStart, setSavingStart] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState<string | null>(null);
 
   useEffect(() => {
     if (jobId == null) return;
@@ -126,6 +129,14 @@ export function JobDetailScreen() {
       .catch(e => { if (alive) { setError(String(e)); setLoading(false); } });
     return () => { alive = false; };
   }, [jobId]);
+
+  const projectId = job?.project_id ?? null;
+  useEffect(() => {
+    if (projectId == null) { setProjectName(null); return; }
+    let alive = true;
+    getProject(projectId).then(p => { if (alive) setProjectName(p.name); }).catch(() => {});
+    return () => { alive = false; };
+  }, [projectId]);
 
   async function handleSaveCost() {
     if (!job || savingCost) return;
@@ -540,6 +551,16 @@ export function JobDetailScreen() {
                 <StatusPill status={job.status as StatusKey} />
               </div>
             </div>
+          </div>
+
+          <div className="card" style={{ padding: 18 }}>
+            <div className="tag-key" style={{ marginBottom: 8 }}>Project</div>
+            <JobProjectControl
+              jobId={job.id}
+              projectId={projectId}
+              projectName={projectName}
+              onChanged={updated => setJob(prev => (prev ? { ...prev, project_id: updated.project_id, order_id: updated.order_id } : prev))}
+            />
           </div>
 
           {job.order_id != null && (
