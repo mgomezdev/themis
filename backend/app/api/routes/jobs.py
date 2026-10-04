@@ -239,6 +239,9 @@ class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
+    # Link to a project (customer or internal work). The job then takes the project's order grouping, and
+    # `order_id` is ignored. Not allowed while the project is still a draft.
+    project_id: int | None = None
     printer_configs: list[PrinterConfigInput] = []
     # Make/model eligibility ("any Bambu P1S"); at least one printer config or target is required.
     model_targets: list[ModelTargetInput] = []
@@ -252,6 +255,16 @@ class JobCreate(BaseModel):
     @classmethod
     def _valid_not_before(cls, v: str | None) -> str | None:
         return _normalise_not_before(v)
+
+
+async def _linkable_project(session: AsyncSession, project_id: int) -> Project:
+    """The project a job may be attached to, or 404 / 409 (a draft project can't have jobs yet)."""
+    project = await session.get(Project, project_id)
+    if project is None:
+        raise HTTPException(404, f"Project {project_id} not found")
+    if project.stage == "draft":
+        raise HTTPException(409, "Promote the project to planning before adding jobs")
+    return project
 
 
 def _to_dict(j: Job) -> dict:
@@ -365,6 +378,7 @@ async def create_job(
             raise HTTPException(404, f"Order {body.order_id} not found")
         if order.order_type == "customer":
             raise HTTPException(422, "Customer work is recorded as a project — link jobs to internal orders only")
+    project = await _linkable_project(session, body.project_id) if body.project_id is not None else None
     if body.save_slice and is_presliced_file(uploaded_file):
         raise HTTPException(422, "This file is already sliced; there is no new slice to save")
 
@@ -374,7 +388,8 @@ async def create_job(
     job = Job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
-        order_id=body.order_id,
+        order_id=project.order_id if project is not None else body.order_id,
+        project_id=project.id if project is not None else None,
         # Slicing overrides mean nothing to pre-sliced gcode; they are dropped, not stored.
         overrides=None if is_presliced_file(uploaded_file) else _clean_overrides(body.overrides),
         queue_position=pos,
@@ -1294,6 +1309,46 @@ class JobSaveSlicePatch(BaseModel):
 
 
 _TERMINAL_STATUSES = ("complete", "failed", "cancelled")
+
+
+class JobProjectLink(BaseModel):
+    project_id: int | None = None
+
+
+@router.patch(
+    "/{job_id}/project",
+    summary="Link or unlink a job's project",
+    responses={
+        404: {"description": "Job or project not found"},
+        409: {"description": "The job already belongs to another project, or the project is still a draft"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def set_job_project(
+    job_id: int,
+    body: JobProjectLink,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it
+    with `project_id: null`. A job moves between projects only by being unlinked first. While the project is not
+    yet queued, the queue engine holds its jobs back, whatever their status."""
+    job = await _get_or_404(job_id, session)
+    if body.project_id is None:
+        current = await session.get(Project, job.project_id) if job.project_id is not None else None
+        if current is not None and job.order_id is not None and job.order_id == current.order_id:
+            job.order_id = None
+        job.project_id = None
+    else:
+        project = await _linkable_project(session, body.project_id)
+        if job.project_id is not None and job.project_id != project.id:
+            raise HTTPException(409, f"Job {job_id} already belongs to project {job.project_id}; unlink it first")
+        job.project_id = project.id
+        job.order_id = project.order_id
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+    await session.refresh(job)
+    queue_engine.wake()
+    return _to_dict(job)
 
 
 @router.patch(

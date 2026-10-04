@@ -890,7 +890,7 @@ export function ProjectBuilderScreen() {
           )}
         </div>
 
-        {/* Printer picker (shown when Generate… is clicked) */}
+        {/* Printer picker (shown when Create… is clicked) */}
         {showPrinterPicker && !generating && !saving && (
           <div style={{
             border: '1px solid var(--border)', borderRadius: 8,
@@ -914,7 +914,7 @@ export function ProjectBuilderScreen() {
                   ? 'No printers selected — jobs will be created but not dispatched'
                   : undefined}
               >
-                {eligiblePrinterIds.length === 0 ? 'Generate without dispatch' : 'Generate'}
+                {eligiblePrinterIds.length === 0 ? 'Create without dispatch' : 'Create'}
               </button>
             </div>
           </div>
@@ -969,7 +969,7 @@ export function ProjectBuilderScreen() {
             disabled={!canSave || items.length === 0 || isDraft}
             title={isDraft ? 'Promote to planning before creating jobs' : undefined}
           >
-            {generating ? 'Generating…' : 'Generate…'}
+            {generating ? 'Creating…' : 'Create…'}
           </button>
         </div>
       </div>

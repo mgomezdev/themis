@@ -12,6 +12,7 @@ import {
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
 import { PaymentsCard } from '../components/PaymentsCard';
+import { LinkJobsModal } from '../components/LinkJobsModal';
 import { CostsCard } from '../components/CostsCard';
 import { listCustomers, promoteProject, NEXT_STAGE, type Customer } from '../api/customers';
 
@@ -35,6 +36,7 @@ export function ProjectDetailScreen() {
 
   const [project, setProject] = useState<Project | null>(null);
   const [jobs, setJobs] = useState<ProjectJob[]>([]);
+  const [linking, setLinking] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
   const [generateResult, setGenerateResult] = useState<{ jobCount: number; files: GenerateOut['files'] } | null>(null);
@@ -638,12 +640,32 @@ export function ProjectDetailScreen() {
 
       {/* ── Jobs ────────────────────────────────────────────────────────── */}
       <div className="card" style={{ padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)', marginBottom: 12 }}>
-          Jobs ({jobs.length})
+        <div className="row between" style={{ alignItems: 'center', marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-2)' }}>
+            Jobs ({jobs.length})
+          </div>
+          <div className="row gap-2">
+            <button
+              className="btn sm"
+              onClick={() => setLinking(true)}
+              disabled={project.stage === 'draft'}
+              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+            >
+              Link existing job
+            </button>
+            <button
+              className="btn sm"
+              onClick={() => navigate(`/queue/new?project=${project.id}`)}
+              disabled={project.stage === 'draft'}
+              title={project.stage === 'draft' ? 'Promote to planning before adding jobs' : undefined}
+            >
+              {Icons.plus} Add job
+            </button>
+          </div>
         </div>
         {jobs.length === 0 ? (
           <div style={{ color: 'var(--text-4)', fontSize: 13 }}>
-            No jobs yet — click Generate to create print jobs.
+            No jobs yet — click Generate to create print jobs, or add or link one by hand.
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
@@ -689,6 +711,14 @@ export function ProjectDetailScreen() {
         )}
       </div>
 
+      {linking && (
+        <LinkJobsModal
+          projectId={project.id}
+          projectName={project.name}
+          onClose={() => setLinking(false)}
+          onLinked={reload}
+        />
+      )}
     </div>
   );
 }

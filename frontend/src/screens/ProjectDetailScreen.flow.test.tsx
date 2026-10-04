@@ -28,7 +28,7 @@ const projectJob = (id: number, over: object = {}) => ({
 });
 const generated = (n: number) => ({ project_id: 42, jobs: Array.from({ length: n }, (_, i) => ({ id: i + 1 })), files: [], eligible_printer_ids: [], pack_bed_x: 256, pack_bed_y: 256 });
 
-function Where() { return <div data-testid="where">{useLocation().pathname}</div>; }
+function Where() { const l = useLocation(); return <><div data-testid="where">{l.pathname}</div><div data-testid="search">{l.search}</div></>; }
 const where = () => screen.getByTestId('where').textContent;
 
 /** `state.project` is what GET /projects/42 returns next, so a promote/reload cycle can be observed. */
@@ -51,6 +51,7 @@ function open(over: Record<string, unknown> = {}, initial: object = project()) {
         <Route path="/projects/:id/edit" element={<div>EDIT PAGE</div>} />
         <Route path="/jobs/:id" element={<div>JOB PAGE</div>} />
         <Route path="/queue" element={<div>QUEUE PAGE</div>} />
+        <Route path="/queue/new" element={<div>NEW JOB PAGE</div>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -233,6 +234,69 @@ describe('ProjectDetailScreen - generating jobs', () => {
     await userEvent.click(button('Generate…'));
 
     expect(screen.queryByText('1 job queued')).toBeNull();
+  });
+});
+
+describe('ProjectDetailScreen - adding jobs by hand', () => {
+  const unlinked = (id: number, over: object = {}) => ({
+    id, uploaded_file_id: 5, plate_number: 1, project_id: null, status: 'queued', ...over,
+  });
+
+  it('Add job opens the new-job flow already linked to this project', async () => {
+    open();
+    await ready();
+
+    await userEvent.click(button(/add job/i));
+
+    expect(where()).toBe('/queue/new');
+    expect(screen.getByTestId('search').textContent).toBe('?project=42');
+  });
+
+  it('cannot add or link jobs to a draft project', async () => {
+    open({}, project({ stage: 'draft' }));
+    await ready();
+
+    expect((button(/add job/i) as HTMLButtonElement).disabled).toBe(true);
+    expect((button(/link existing job/i) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('lists only jobs without a project, links the chosen one, and reloads the project jobs', async () => {
+    const { api } = open({
+      'GET /api/v1/jobs': [unlinked(11), unlinked(12, { project_id: 7 }), unlinked(13, { status: 'complete' })],
+      'GET /api/v1/files': [{ id: 5, original_filename: 'Hinge.3mf' }],
+      'PATCH /api/v1/jobs/11/project': { id: 11, project_id: 42 },
+    });
+    await ready();
+
+    await userEvent.click(button(/link existing job/i));
+    const dialog = await screen.findByRole('dialog', { name: /link existing jobs/i });
+    expect(await within(dialog).findByText(/#11/)).toBeTruthy();
+    expect(within(dialog).getByText(/#13/)).toBeTruthy();
+    expect(within(dialog).queryByText(/#12/)).toBeNull();          // already belongs to project 7
+    const before = api.to('GET', '/api/v1/projects/42/jobs').length;
+    // newest first: [#13, #11], so [1] links #11
+
+    await userEvent.click(within(dialog).getAllByRole('button', { name: 'Link' })[1]);
+
+    await waitFor(() => expect(api.to('PATCH', '/api/v1/jobs/11/project').map(c => c.body)).toEqual([{ project_id: 42 }]));
+    await waitFor(() => expect(api.to('GET', '/api/v1/projects/42/jobs').length).toBeGreaterThan(before));
+    expect(within(dialog).queryByText(/#11/)).toBeNull();           // gone from the candidates
+  });
+
+  it('says so when every job already has a project, and shows why a link was refused', async () => {
+    open({
+      'GET /api/v1/jobs': [unlinked(11)],
+      'GET /api/v1/files': [],
+      'PATCH /api/v1/jobs/11/project': new Reply(409, { detail: 'Job 11 already belongs to project 9; unlink it first' }),
+    });
+    await ready();
+    await userEvent.click(button(/link existing job/i));
+    const dialog = await screen.findByRole('dialog', { name: /link existing jobs/i });
+
+    await userEvent.click(await within(dialog).findByRole('button', { name: 'Link' }));
+
+    expect(await within(dialog).findByText(/already belongs to project 9/)).toBeTruthy();
+    expect(within(dialog).getByText(/#11/)).toBeTruthy();           // still offered: nothing was linked
   });
 });
 
@@ -433,7 +497,7 @@ describe('ProjectDetailScreen - parts, jobs and estimates', () => {
     open();
     await ready();
 
-    expect(await screen.findByText('No jobs yet — click Generate to create print jobs.')).toBeTruthy();
+    expect(await screen.findByText('No jobs yet — click Generate to create print jobs, or add or link one by hand.')).toBeTruthy();
   });
 
   it('shows progress and estimate/actual totals once jobs exist', async () => {

@@ -27,7 +27,7 @@ const version = (over: Record<string, unknown> = {}) => ({
 function open(versions: unknown[] = [], over: Record<string, unknown> = {}) {
   const api = stubFetch({
     'GET /api/v1/printers': [PRINTER],
-    'GET /api/v1/orders': [],
+    'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
     'GET /api/v1/settings/spoolman': { enabled: false, url: '', has_api_key: false, sync_interval_minutes: 15 },
     'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: true },
@@ -108,7 +108,7 @@ describe('NewJobScreen — cached sliced versions', () => {
 
     await screen.findByText(/1 job added to queue/);
     expect(jobPosts(api)).toEqual([{
-      uploaded_file_id: 77, plate_number: 1, order_id: null, overrides: null, printer_configs: [],
+      uploaded_file_id: 77, plate_number: 1, project_id: null, overrides: null, printer_configs: [],
       model_targets: [{
         machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null,
         filament_type: 'PETG', filament_color: '#112233',

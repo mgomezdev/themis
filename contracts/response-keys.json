@@ -69,6 +69,7 @@
     "uploaded_file_id",
     "plate_number",
     "order_id",
+    "project_id",
     "assigned_printer_id",
     "queue_position",
     "status",
