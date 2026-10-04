@@ -1061,7 +1061,7 @@ function AddPrinterCard({ onClick, variant }: { onClick: () => void; variant: 'c
       </div>
       <div className="small" style={{ fontWeight: 500 }}>Add printer</div>
       <div className="tiny muted" style={{ textAlign: 'center', maxWidth: 220 }}>
-        Connect a Bambu, Elegoo, Snapmaker, Prusa or OctoPrint host.
+        Connect a Bambu, Elegoo or Snapmaker host.
       </div>
     </button>
   );
