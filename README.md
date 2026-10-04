@@ -159,10 +159,14 @@ backend/app
     ├── abstract_printer_client.py printer_client_factory.py
     ├── bambu_mqtt.py             elegoo_centauri_client.py
     ├── snapmaker_client.py       mock_printer_client.py   # test/E2E fake driver
-    ├── slicer_service.py         laminus_sidecar_client.py  # sidecar delegation
-    ├── catalog_utils.py          override_inspector.py
+    ├── slicer_service.py         catalog_service.py        # slicing orchestration + catalog cache
+    ├── catalog_utils.py
     ├── three_mf_parser.py
-    ├── spool_check.py            spoolman_service.py
+    ├── spool_check.py
+    ├── providers/                # SlicingProvider / FilamentInventoryProvider + adapters
+    │   ├── slicing.py  filament_inventory.py
+    │   ├── laminus/              # adapter, sidecar client, Orca gcode/override logic
+    │   └── spoolman/             # adapter, Spoolman client
     ├── webhook_service.py        notification_service.py
     ├── maintenance_service.py    thumbnail_regen.py
     ├── library_scanner.py        camera_proxy.py

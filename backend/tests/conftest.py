@@ -242,7 +242,7 @@ def spoolman_upstream():
         hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.spoolman_service.httpx.AsyncClient", _factory):
+    with patch("app.services.providers.spoolman.service.httpx.AsyncClient", _factory):
         yield up
 
 
@@ -256,15 +256,15 @@ def _reset_slice_cache_fingerprints():
 
 
 @pytest.fixture(autouse=True)
-def _reset_laminus_module_state():
-    """laminus.py keeps the catalog cache, health memo and pending remap in module globals that outlive a
+def _reset_catalog_service_state():
+    """catalog_service keeps the catalog cache, health memo and pending remap in module globals that outlive a
     test; restore them so a test that warms the cache (or parks a remap) cannot leak into the next one."""
-    import app.api.routes.laminus as laminus
-    names = ("_catalog_dict", "_catalog_bytes", "_catalog_fetched_at", "_pending_sync", "_health_memo", "_health_memo_at")
-    saved = {n: getattr(laminus, n) for n in names}
+    from app.services import catalog_service
+    names = ("_catalog", "_catalog_bytes", "_catalog_fetched_at", "_pending_sync", "_health_memo", "_health_memo_at")
+    saved = {n: getattr(catalog_service, n) for n in names}
     yield
     for n, v in saved.items():
-        setattr(laminus, n, v)
+        setattr(catalog_service, n, v)
 
 
 

@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.services.spoolman_service import patch_filament
+from app.services.providers.spoolman.service import patch_filament
 
 BASE_URL = "http://spoolman.test"
 FILAMENT_ID = 5
@@ -39,7 +39,7 @@ def _mock_client(patch_response: httpx.Response):
     async def _ctx(*args, **kwargs):
         yield mock_instance
 
-    return patch("app.services.spoolman_service.httpx.AsyncClient", side_effect=_ctx), mock_instance
+    return patch("app.services.providers.spoolman.service.httpx.AsyncClient", side_effect=_ctx), mock_instance
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ async def test_patch_target_url_is_correct():
 # record_spool_use tests
 # ---------------------------------------------------------------------------
 
-from app.services.spoolman_service import record_spool_use
+from app.services.providers.spoolman.service import record_spool_use
 
 
 def _ok_response_with_request(data: dict, url: str = "http://spoolman.test/api/v1/spool/42/use") -> httpx.Response:
@@ -208,7 +208,7 @@ def _mock_client_put(put_response: httpx.Response):
     async def _ctx(*args, **kwargs):
         yield mock_instance
 
-    return patch("app.services.spoolman_service.httpx.AsyncClient", side_effect=_ctx), mock_instance
+    return patch("app.services.providers.spoolman.service.httpx.AsyncClient", side_effect=_ctx), mock_instance
 
 
 @pytest.mark.asyncio

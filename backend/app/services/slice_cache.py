@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from .providers.slicing import SlicingProvider
 from .slicer_service import SliceRequest, _export_3mf_name
 
 logger = logging.getLogger("app.services.slice_cache")
@@ -126,25 +127,23 @@ class SlicerFingerprint:
 
 
 def current_fingerprint(
-    machine_preset: str, process_preset: str, filament_presets: list[str], sidecar_url: str | None,
+    machine_preset: str, process_preset: str, filament_presets: list[str], provider: "SlicingProvider | None",
 ) -> SlicerFingerprint:
-    """Blocking (HTTP to the Laminus sidecar) — call via asyncio.to_thread. Never raises: an unreachable sidecar or an
-    unresolvable preset yields None parts, which `staleness` treats as unknown."""
-    if not sidecar_url:
+    """Blocking (HTTP to the slicing provider) — call via asyncio.to_thread. Never raises: an unreachable provider or
+    an unresolvable preset yields None parts, which `staleness` treats as unknown."""
+    if provider is None:
         return SlicerFingerprint(None, None)
-    from .laminus_sidecar_client import LaminusSidecarClient
     from .slicer_service import resolve_preset_uuids
-    client = LaminusSidecarClient(sidecar_url, timeout=10)
     preset_hash: str | None = None
     version: str | None = None
     try:
         machine_uuid, process_uuid, filament_uuids = resolve_preset_uuids(
-            machine_preset, process_preset, list(filament_presets), sidecar_url)
-        preset_hash = sha256_of(client.get_merged_config(machine_uuid, process_uuid, filament_uuids))
-    except Exception as exc:   # SliceError (unresolvable preset), SidecarError, transport errors
+            machine_preset, process_preset, list(filament_presets), provider)
+        preset_hash = sha256_of(provider.merged_config(machine_uuid, process_uuid, filament_uuids, timeout=10))
+    except Exception as exc:   # SliceError (unresolvable preset), SlicingProviderError, transport errors
         logger.debug("slice_cache could not fingerprint presets: %s", exc)
     try:
-        health = client.health()
+        health = provider.health(timeout=10)
         version = health.get("orca_version") or health.get("orcaslicer_version") or None
     except Exception as exc:
         logger.debug("slice_cache could not read the slicer version: %s", exc)
@@ -166,18 +165,18 @@ _fingerprints: dict[tuple, tuple[float, SlicerFingerprint]] = {}
 
 
 def cached_fingerprint(
-    machine_preset: str, process_preset: str, filament_presets: list[str], sidecar_url: str | None,
+    machine_preset: str, process_preset: str, filament_presets: list[str], provider: "SlicingProvider | None",
 ) -> SlicerFingerprint:
     """`current_fingerprint`, memoised for a minute per preset set — listing a model's versions or a burst of claims
     shouldn't each pay the sidecar round-trips. Blocking; call via asyncio.to_thread."""
     import time
-    key = (machine_preset, process_preset, tuple(filament_presets), sidecar_url)
+    key = (machine_preset, process_preset, tuple(filament_presets), provider.identity if provider else None)
     hit = _fingerprints.get(key)
     now = time.monotonic()
     if hit and now - hit[0] < (_FINGERPRINT_TTL if (hit[1].preset_content_hash or hit[1].slicer_version)
                                else _UNKNOWN_TTL):
         return hit[1]
-    fp = current_fingerprint(machine_preset, process_preset, filament_presets, sidecar_url)
+    fp = current_fingerprint(machine_preset, process_preset, filament_presets, provider)
     _fingerprints[key] = (now, fp)   # "unknown" too, briefly: a hung sidecar shouldn't stall every request
     return fp
 

@@ -104,7 +104,7 @@ Library index fields (filesystem is source of truth; these cache it):
 `id, uploaded_file_id FK, plate_number, order_id FK?, assigned_printer_id FK?, queue_position: float?`
 (float → reorder without renumber), `status, project_id FK?, block_reason: text?, overrides: JSON?,
 project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`.
-- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated via `override_inspector`.
+- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `SlicingProvider.curated_override_keys()` (Laminus: `providers/laminus/overrides.py`).
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
 - `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.

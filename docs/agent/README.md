@@ -6,6 +6,7 @@ Start there. It covers stack, repo layout, running locally, the three core singl
 
 Supplementary files in this directory (may be stale — verify against source if in doubt):
 - `backend.md` — deeper backend service notes
+- `../provider-interfaces.md` — the Laminus (slicing) / Spoolman (inventory) provider interfaces and the enforced boundary
 - `frontend.md` — deeper frontend notes
 - `data-model.md` — column-level model reference
 - `printers.md` — printer protocol implementation guide; also see `docs/printer-interface.md`

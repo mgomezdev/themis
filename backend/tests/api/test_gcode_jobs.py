@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.services.override_inspector import CURATED_KEYS
+from app.services.providers.laminus.overrides import CURATED_KEYS
 
 KEY = sorted(CURATED_KEYS)[0]
 GCODE = (

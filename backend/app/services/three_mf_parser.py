@@ -60,7 +60,7 @@ def _plates_from_model_settings(names: set[str], zf: zipfile.ZipFile) -> set[int
     except Exception:
         return set()
 
-from .override_inspector import CURATED_KEYS
+from .providers.slicing import get_format_provider
 
 
 @dataclass
@@ -124,7 +124,7 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
         return []
 
     out = []
-    for key in CURATED_KEYS:
+    for key in get_format_provider().curated_override_keys():
         if key not in ps:
             continue
         val = ps[key]
@@ -245,7 +245,6 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
     """Plates of a sliced archive (.gcode.3mf, BIZ-190): one per `Metadata/plate_N.gcode`, with the estimate from the
     archive's `slice_info.config` (falling back to that plate's gcode summary lines) and the thumbnail from the
     archive's own `Metadata/plate_N.png`. Returns [] for a corrupt/unreadable ZIP, like its siblings."""
-    from .queue_engine import _parse_gcode_estimates   # lazy: queue_engine imports the library scanner
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
             names = set(zf.namelist())
@@ -266,7 +265,7 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
     for num in plate_numbers:
         secs, grams = meta.get(num, (0, 0.0))
         if not secs or not grams:
-            g_grams, g_secs, _ = _parse_gcode_estimates(file_path, plate=num)
+            g_grams, g_secs, _ = get_format_provider().parse_estimates(file_path, num)
             secs, grams = secs or g_secs or 0, grams or g_grams or 0.0
         plates.append(PlateInfo(plate_number=num, thumbnail_path=thumbs.get(num),
                                 estimated_time=secs, filament_g=grams))

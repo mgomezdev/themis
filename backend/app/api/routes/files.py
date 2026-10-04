@@ -21,6 +21,7 @@ from ...services.library_scanner import (
     LibraryScanner, file_kind, folder_of, is_presliced_name, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services import model_targets, slice_cache
+from ...services.providers.slicing import get_slicing_provider
 from ...services.thumbnail_regen import regen_file_thumbnails
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
@@ -601,9 +602,9 @@ async def list_sliced_versions(
         q = q.where(SlicedVersion.plate_number == plate)
     rows = (await session.execute(q)).all()
     printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
-    sidecar = config.get_laminus_sidecar_url()
+    slicing = get_slicing_provider()
     fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
-    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), sidecar)
+    results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), slicing)
                                      for m, pr, fl in fkeys))
     fingerprints = dict(zip(fkeys, results))
     out = []

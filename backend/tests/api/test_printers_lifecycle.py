@@ -2,6 +2,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from app.services.catalog_service import CatalogUnavailable
+from tests.catalog_helpers import patch_cached_catalog
 from fastapi import HTTPException
 
 from app.services.printer_manager import printer_manager
@@ -153,8 +155,7 @@ _CATALOG = {"machine": [
 
 
 async def _with_catalog(client, method: str, path: str, catalog):
-    mock = AsyncMock(side_effect=catalog) if isinstance(catalog, Exception) else AsyncMock(return_value=catalog)
-    with patch("app.api.routes.laminus.get_cached_catalog", mock):
+    with patch_cached_catalog(catalog):
         return await getattr(client, method)(path)
 
 
@@ -188,7 +189,7 @@ async def test_orca_presets_are_sorted_unique_names(client):
 
 async def test_rescan_profiles_counts_machines_that_have_a_model_and_nozzle(client):
     named = {"machine": _CATALOG["machine"][:-1]}  # real catalogs always name their presets
-    with patch("app.api.routes.laminus.refresh_catalog", new=AsyncMock()) as refresh:
+    with patch("app.services.catalog_service.refresh", new=AsyncMock()) as refresh:
         resp = await _with_catalog(client, "post", "/api/v1/printers/rescan-profiles", named)
         refresh.assert_awaited_once()
         assert (resp.status_code, resp.json()) == (200, {"machine_presets": 4})
@@ -198,8 +199,8 @@ async def test_rescan_profiles_counts_machines_that_have_a_model_and_nozzle(clie
 
 
 async def test_rescan_profiles_surfaces_a_sidecar_refresh_failure(client):
-    with patch("app.api.routes.laminus.refresh_catalog",
-               new=AsyncMock(side_effect=HTTPException(502, "Laminus sidecar unreachable"))):
+    with patch("app.services.catalog_service.refresh",
+               new=AsyncMock(side_effect=CatalogUnavailable("Laminus sidecar unreachable", 502))):
         resp = await client.post("/api/v1/printers/rescan-profiles")
 
     assert (resp.status_code, resp.json()["detail"]) == (502, "Laminus sidecar unreachable")

@@ -1,6 +1,8 @@
 # backend/tests/api/test_queue_api.py
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+from app.services.providers.filament_inventory import Spool
+from tests.fake_providers import FakeInventoryProvider
 
 
 async def test_queue_empty(client):
@@ -95,9 +97,9 @@ async def test_queue_low_stock_warning_none_when_sufficient(client, session_fact
     enough filament remaining for the job's estimated grams."""
     job_id, _printer_id = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=200.0)
 
-    fake_spool = {"id": 99, "remaining_weight": 900.0,
-                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
-    with patch("app.api.routes.queue.fetch_spools", return_value=[fake_spool]):
+    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=900.0, filament_name="Bambu PLA Basic Black",
+                                               filament_material="PLA")])
+    with patch("app.api.routes.queue.get_inventory_provider", AsyncMock(return_value=fake)):
         resp = await client.get("/api/v1/queue")
     assert resp.status_code == 200
     job = next(j for j in resp.json() if j["id"] == job_id)
@@ -109,9 +111,9 @@ async def test_queue_low_stock_warning_set_when_insufficient(client, session_fac
     remaining grams in the message, when the bound spool is short on filament."""
     job_id, _printer_id = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=340.0)
 
-    fake_spool = {"id": 99, "remaining_weight": 220.0,
-                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
-    with patch("app.api.routes.queue.fetch_spools", return_value=[fake_spool]):
+    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=220.0, filament_name="Bambu PLA Basic Black",
+                                               filament_material="PLA")])
+    with patch("app.api.routes.queue.get_inventory_provider", AsyncMock(return_value=fake)):
         resp = await client.get("/api/v1/queue")
     assert resp.status_code == 200
     job = next(j for j in resp.json() if j["id"] == job_id)
@@ -128,12 +130,12 @@ async def test_queue_fetch_spools_called_once_for_multiple_jobs(client, session_
     job1, _ = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=340.0, spool_id="99", position=1.0)
     job2, _ = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=340.0, spool_id="99", position=2.0)
 
-    fake_spool = {"id": 99, "remaining_weight": 220.0,
-                  "filament": {"name": "Bambu PLA Basic Black", "material": "PLA"}}
-    with patch("app.api.routes.queue.fetch_spools", return_value=[fake_spool]) as mock_fetch:
+    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=220.0, filament_name="Bambu PLA Basic Black",
+                                               filament_material="PLA")])
+    with patch("app.api.routes.queue.get_inventory_provider", AsyncMock(return_value=fake)):
         resp = await client.get("/api/v1/queue")
     assert resp.status_code == 200
     ids = [j["id"] for j in resp.json()]
     assert job1 in ids
     assert job2 in ids
-    mock_fetch.assert_called_once()
+    assert fake.calls.count("list_spools") == 1

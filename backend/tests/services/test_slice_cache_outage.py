@@ -5,13 +5,15 @@ version matches THAT printer's slice of it; dispatch then prints exactly that ve
 waits for Laminus, blocked, as before.
 """
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
 
 from app.models import Job, JobPrinterConfig, Printer
+from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
 from app.services import slice_cache
+from tests.fake_providers import FakeSlicingProvider
 from tests.services.test_slice_reuse import (  # noqa: F401 — `env` is a fixture
     INPUTS, _add_version, _cache_lines, _job, _seed_allowing, env,
 )
@@ -22,12 +24,13 @@ UNREACHABLE = "Laminus is unreachable — slicing paused"
 
 
 def _down(mode="unreachable"):
-    """Patch the claim's health probe to fail the way `mode` says (the autouse fixture makes it healthy)."""
-    if mode == "unconfigured":
-        return patch("app.services.queue_engine.get_laminus_sidecar_url", return_value=None)
-    if mode == "not_ready":
-        return patch("httpx.get", return_value=MagicMock(is_success=False))
-    return patch("httpx.get", side_effect=ConnectionError("laminus down"))
+    """Make the claim's slicing-provider health probe fail the way `mode` says (the autouse fixture makes it healthy)."""
+    provider = None
+    if mode != "unconfigured":
+        provider = FakeSlicingProvider()
+        provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if mode == "not_ready"
+                                      else SlicingProviderError("health check request failed: refused"))
+    return patch("app.services.queue_engine.get_slicing_provider", return_value=provider)
 
 
 async def _config(factory, job_id, printer_id=1) -> JobPrinterConfig:

@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
-from ...config import get_library_dir, get_laminus_sidecar_url
+from ...config import get_library_dir
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import job_costs, model_targets, slice_cache
@@ -26,7 +26,7 @@ from ...services.payments import adopt_manual_amount, has_payments, sync_project
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
 )
-from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 from ...services.queue_engine import queue_engine
 from ...services.thumbnail_regen import regen_file_thumbnails
 
@@ -1116,9 +1116,11 @@ async def generate_project(
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
 
-    sidecar_url = get_laminus_sidecar_url()
-    if not sidecar_url:
+    slicing = get_slicing_provider()
+    if slicing is None:
         raise HTTPException(422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
+    if not slicing.PACK_MODELS:
+        raise HTTPException(422, "The slicing provider cannot pack models — project generation is unavailable")
 
     # Resolve eligible printers and compute the smallest bed dimensions.
     eligible_printers: list[Printer] = []
@@ -1212,7 +1214,6 @@ async def generate_project(
     job_pack_dir = library_dir / "Job Pack 3MFs"
     job_pack_dir.mkdir(parents=True, exist_ok=True)
 
-    client = LaminusSidecarClient(sidecar_url)
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
@@ -1234,21 +1235,16 @@ async def generate_project(
                 if proj.machine_uuid and proj.process_uuid:
                     # Legacy path: project has OrcaSlicer profiles embedded
                     packed_bytes = await asyncio.to_thread(
-                        client.pack_stls_by_uuid,
-                        stl_paths,
-                        proj.machine_uuid,
-                        proj.process_uuid,
-                        [],
+                        lambda: slicing.pack_models(
+                            stl_paths, machine_ref=proj.machine_uuid, process_ref=proj.process_uuid,
+                            filament_refs=[]),
                     )
                 else:
                     # Geometry-only pack; slicing profiles applied at dispatch time
                     packed_bytes = await asyncio.to_thread(
-                        client.pack_stls,
-                        stl_paths,
-                        pack_bed_x,
-                        pack_bed_y,
+                        lambda: slicing.pack_models(stl_paths, bed=(pack_bed_x, pack_bed_y, 250.0)),
                     )
-            except SidecarError as exc:
+            except SlicingProviderError as exc:
                 if "timed out" in str(exc).lower():
                     raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
                 raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
