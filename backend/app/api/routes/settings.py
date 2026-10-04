@@ -15,6 +15,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
 from ...services import spoolman_service
+from ...services.providers.filament_inventory import make_inventory_provider
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
 from ...services.printer_manager import printer_manager
@@ -196,7 +197,7 @@ async def test_spoolman_connection(
     if not url:
         return {"ok": False, "message": "No URL configured"}
     try:
-        info = await spoolman_service.test_connection(url, api_key)
+        info = await make_inventory_provider(url, api_key).test_connection()
     except Exception as e:
         return {"ok": False, "message": str(e)}
 

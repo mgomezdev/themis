@@ -1,40 +1,37 @@
 # backend/app/services/spool_check.py
-"""Pure logic for the Spoolman low-stock preflight warning. No DB/HTTP access
-here — callers resolve the physical spool dict (from Spoolman's /api/v1/spool)
-and the needed-grams figure, and hand both to check_spool_sufficiency."""
+"""Pure logic for the low-stock preflight warning. No DB/HTTP access here — callers resolve the physical
+spool (a `Spool` from the inventory provider) and the needed-grams figure, and hand both to
+check_spool_sufficiency."""
 from __future__ import annotations
 
-
-def _spool_label(spool: dict) -> str:
-    """Human-readable label for a Spoolman spool: prefer the filament name,
-    fall back to a generic 'spool {id}' when filament info is unavailable."""
-    filament = spool.get("filament") or {}
-    name = filament.get("name")
-    if name:
-        return name
-    return f"spool {spool.get('id')}"
+from .providers.filament_inventory import Spool
 
 
-def _filament_type(spool: dict) -> str | None:
-    filament = spool.get("filament") or {}
-    return filament.get("material")
+def _spool_label(spool: Spool) -> str:
+    """Human-readable label for a spool: prefer the filament name, fall back to a generic
+    'spool {id}' when filament info is unavailable."""
+    return spool.filament_name or f"spool {spool.ref}"
 
 
-def check_spool_sufficiency(needed_g: float | None, spool: dict) -> dict | None:
-    """spool is a raw Spoolman spool dict (has id, remaining_weight, filament.name/material).
-    Returns None if there's nothing to warn about (needed_g unknown, spool has no
+def _spool_id(spool: Spool) -> int | str:
+    """Response `spool_id` stays the integer Spoolman id the frontend always got."""
+    return int(spool.ref) if spool.ref.isdigit() else spool.ref
+
+
+def check_spool_sufficiency(needed_g: float | None, spool: Spool) -> dict | None:
+    """Returns None if there's nothing to warn about (needed_g unknown, spool has no
     remaining_weight, or remaining_weight >= needed_g). Otherwise returns
     {spool_id, spool_label, remaining_g, needed_g, message}."""
     if needed_g is None:
         return None
-    remaining_g = spool.get("remaining_weight")
+    remaining_g = spool.remaining_weight
     if remaining_g is None:
         return None
     if remaining_g >= needed_g:
         return None
 
     spool_label = _spool_label(spool)
-    filament_type = _filament_type(spool)
+    filament_type = spool.filament_material
     needed_g = round(needed_g, 2)
     remaining_g = round(remaining_g, 2)
 
@@ -50,7 +47,7 @@ def check_spool_sufficiency(needed_g: float | None, spool: dict) -> dict | None:
         )
 
     return {
-        "spool_id": spool.get("id"),
+        "spool_id": _spool_id(spool),
         "spool_label": spool_label,
         "remaining_g": remaining_g,
         "needed_g": needed_g,

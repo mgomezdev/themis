@@ -1030,7 +1030,7 @@ async def test_handle_print_complete_fires_spoolman_deduction(db):
 
     deduction_calls = []
 
-    async def fake_deduct(url, api_key, spool_id, grams):
+    async def fake_deduct(provider, spool_id, grams):
         deduction_calls.append({"spool_id": spool_id, "grams": grams})
 
     with patch("app.services.queue_engine._deduct_spool", fake_deduct):
@@ -1039,6 +1039,87 @@ async def test_handle_print_complete_fires_spoolman_deduction(db):
     assert len(deduction_calls) == 1
     assert deduction_calls[0]["spool_id"] == 42
     assert deduction_calls[0]["grams"] == pytest.approx(17.5)
+
+
+async def _seed_completing_job(db, grams=17.5):
+    from unittest.mock import MagicMock
+    from app.models import Job, GcodeFile
+    from app.services.queue_engine import QueueEngine
+    from app.services.slicer_service import SlicerService
+
+    printer_id = 1
+    job_id = await _seed_job(db, printer_id, status="printing")
+    async with db() as session:
+        printer = await session.get(Printer, printer_id)
+        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
+                                      "spoolman_spool_id": 42}]
+        job = await session.get(Job, job_id)
+        job.assigned_printer_id = printer_id
+        job.actual_filament_grams = grams
+        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
+        await session.commit()
+    slicer = MagicMock(spec=SlicerService)
+    slicer._data_dir = Path("/tmp")
+    return QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer), printer_id, job_id
+
+
+@pytest.mark.asyncio
+async def test_completion_records_usage_through_the_inventory_provider(db):
+    """The deduction goes through FilamentInventoryProvider.record_usage with the slot's spool ref."""
+    from unittest.mock import patch, AsyncMock
+    from app.models import Job
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.waiting import wait_until
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider()
+    fake.spools = {"42": __import__("app.services.providers.filament_inventory", fromlist=["Spool"]).Spool(ref="42", remaining_weight=500.0)}
+
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
+        await engine.handle_print_complete(printer_id)
+        await wait_until(lambda: fake.usage, what="usage recorded")
+
+    assert fake.usage == [("42", pytest.approx(17.5))]
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "complete"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("records_usage", [None, False])   # None: no provider configured at all
+async def test_completion_skips_deduction_when_provider_cannot_record_usage_or_is_absent(db, records_usage):
+    from unittest.mock import patch, AsyncMock
+    from tests.fake_providers import FakeInventoryProvider
+
+    engine, printer_id, _ = await _seed_completing_job(db)
+    provider = None
+    if records_usage is not None:
+        provider = FakeInventoryProvider()
+        provider.RECORDS_USAGE = records_usage
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=provider)):
+        await engine.handle_print_complete(printer_id)
+    await asyncio.sleep(0.05)
+    if provider is not None:
+        assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_failing_provider_never_breaks_completion(db):
+    from unittest.mock import patch, AsyncMock
+    from app.models import Job
+    from app.services.providers.filament_inventory import InventoryProviderError
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.waiting import wait_until
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider()
+    fake.fail_with = InventoryProviderError("down", code="503", status=503)
+
+    with patch("app.services.queue_engine.get_inventory_provider", AsyncMock(return_value=fake)):
+        await engine.handle_print_complete(printer_id)
+        await wait_until(lambda: "record_usage" in fake.calls, what="deduction attempted")
+
+    async with db() as session:
+        assert (await session.get(Job, job_id)).status == "complete"
 
 
 @pytest.mark.asyncio
@@ -1111,7 +1192,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
 
     deduction_calls = []
 
-    async def fake_deduct(url, api_key, spool_id, grams):
+    async def fake_deduct(provider, spool_id, grams):
         deduction_calls.append({"spool_id": spool_id, "grams": grams})
 
     # Force the interleave that the old code let happen implicitly: right after the

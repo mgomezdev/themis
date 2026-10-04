@@ -135,6 +135,14 @@ async def test_spoolman_transport_error_maps_to_neutral_error(spoolman_upstream)
     assert ei.value.code == "ConnectError" and ei.value.status is None
 
 
+async def test_spoolman_http_status_maps_code_and_status(spoolman_upstream):
+    import httpx
+    spoolman_upstream.handler = lambda request: httpx.Response(502, text="bad gateway")
+    with pytest.raises(InventoryProviderError) as ei:
+        await SpoolmanInventoryProvider("http://spoolman.test").test_connection()
+    assert (ei.value.code, ei.value.status) == ("502", 502)
+
+
 # ---- accessor ----
 
 async def test_accessor_none_when_missing_disabled_or_no_url(session_factory):

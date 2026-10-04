@@ -41,6 +41,9 @@ class Spool:
     ref: str
     filament_ref: str | None = None
     filament_name: str = ""
+    filament_vendor: str | None = None
+    filament_material: str | None = None
+    location: str | None = None
     remaining_weight: float | None = None
     archived: bool = False
     raw: dict = field(default_factory=dict)
@@ -82,14 +85,20 @@ def register_inventory_provider(name: str, cls: type[FilamentInventoryProvider])
     _REGISTRY[name] = cls
 
 
+def make_inventory_provider(url: str, api_key: str | None = None) -> FilamentInventoryProvider:
+    """Build the provider for explicit credentials (e.g. testing a connection before it is saved)."""
+    from . import spoolman  # noqa: F401  (registers the adapter)
+
+    return _REGISTRY["spoolman"](url, api_key)
+
+
 async def get_inventory_provider(session: Any) -> FilamentInventoryProvider | None:
     """The configured inventory provider, or None when the integration is missing/disabled/unconfigured.
 
     Replaces the per-caller `SpoolmanConfig` enabled/url checks."""
-    from . import spoolman  # noqa: F401  (registers the adapter)
     from ...models import SpoolmanConfig
 
     row = await session.get(SpoolmanConfig, 1)
     if row is None or not row.enabled or not row.url:
         return None
-    return _REGISTRY["spoolman"](row.url, row.api_key)
+    return make_inventory_provider(row.url, row.api_key)

@@ -32,6 +32,7 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
+from .providers.filament_inventory import FilamentInventoryProvider, get_inventory_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
 from . import notification_service
@@ -129,11 +130,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _deduct_spool(url: str, api_key: str | None, spool_id: int, grams: float) -> None:
-    """Fire-and-forget Spoolman deduction. Logs warning on failure; never raises."""
+async def _deduct_spool(provider: FilamentInventoryProvider, spool_id: int, grams: float) -> None:
+    """Fire-and-forget inventory deduction. Logs warning on failure; never raises."""
     try:
-        from .spoolman_service import record_spool_use
-        await record_spool_use(url, api_key, spool_id, grams)
+        await provider.record_usage(str(spool_id), grams)
     except Exception:
         logger.warning("Spoolman deduction failed: spool_id=%s grams=%s", spool_id, grams)
 
@@ -1409,10 +1409,8 @@ class QueueEngine:
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
-        from ..models import SpoolmanConfig
         job_id = None
-        spoolman_url: str | None = None
-        spoolman_key: str | None = None
+        provider: FilamentInventoryProvider | None = None
         spool_id: int | None = None
         grams_to_deduct: float | None = None
 
@@ -1452,10 +1450,9 @@ class QueueEngine:
             # Collect Spoolman deduction data before session closes
             actual_grams = job.actual_filament_grams
             if actual_grams is not None:
-                spoolman_cfg = await session.get(SpoolmanConfig, 1)
-                if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
-                    spoolman_url = spoolman_cfg.url
-                    spoolman_key = spoolman_cfg.api_key
+                inventory = await get_inventory_provider(session)
+                if inventory is not None and inventory.RECORDS_USAGE:
+                    provider = inventory
                     loaded = (printer.loaded_filaments if printer else None) or []
                     cfg_result = await session.execute(
                         select(JobPrinterConfig).where(
@@ -1495,9 +1492,9 @@ class QueueEngine:
                 await session.delete(gcode)
             await session.commit()
 
-        if spool_id is not None and spoolman_url and grams_to_deduct is not None:
+        if spool_id is not None and provider is not None and grams_to_deduct is not None:
             task = asyncio.create_task(
-                _deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct)
+                _deduct_spool(provider, spool_id, grams_to_deduct)
             )
             self._estimate_tasks.add(task)
             task.add_done_callback(self._estimate_tasks.discard)

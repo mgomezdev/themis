@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, SpoolmanConfig, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
 from ...services import slice_cache, slice_saver
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
@@ -27,7 +27,7 @@ from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
 from ...services.spool_check import check_spool_sufficiency
-from ...services.spoolman_service import fetch_spools
+from ...services.providers.filament_inventory import Spool, get_inventory_provider
 
 logger = logging.getLogger(__name__)
 
@@ -646,13 +646,13 @@ async def get_job_details(
         if slot and slot.get("spoolman_spool_id") is not None:
             spool_ids_needed.add(str(slot["spoolman_spool_id"]))
 
-    spools_by_id: dict[str, dict] = {}
+    spools_by_id: dict[str, Spool] = {}
     if spool_ids_needed:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        provider = await get_inventory_provider(session)
+        if provider is not None:
             try:
-                spools = await fetch_spools(spoolman_cfg.url, spoolman_cfg.api_key)
-                spools_by_id = {str(s.get("id")): s for s in spools}
+                spools = await provider.list_spools()
+                spools_by_id = {s.ref: s for s in spools}
             except Exception:
                 logger.warning("Spoolman unreachable while checking spool sufficiency for job %s", job_id, exc_info=True)
 
@@ -1196,12 +1196,11 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     spool_id = None
-    spoolman_url = None
-    spoolman_key = None
+    provider = None
     grams_to_deduct = None
     if grams is not None:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        inventory = await get_inventory_provider(session)
+        if inventory is not None and inventory.RECORDS_USAGE:
             loaded = printer.loaded_filaments or []
             slot = _slot_for_config(config, loaded)
             if slot is not None:
@@ -1209,8 +1208,7 @@ async def complete_job_manually(
                 if raw_spool_id is not None:
                     try:
                         spool_id = int(raw_spool_id)
-                        spoolman_url = spoolman_cfg.url
-                        spoolman_key = spoolman_cfg.api_key
+                        provider = inventory
                         grams_to_deduct = grams
                         job.deduction_skipped = False
                     except (TypeError, ValueError):
@@ -1222,8 +1220,8 @@ async def complete_job_manually(
     await session.commit()
     await session.refresh(job)
 
-    if spool_id is not None and spoolman_url and grams_to_deduct is not None:
-        asyncio.create_task(_deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct))
+    if spool_id is not None and provider is not None and grams_to_deduct is not None:
+        asyncio.create_task(_deduct_spool(provider, spool_id, grams_to_deduct))
 
     return _to_dict(job)
 
