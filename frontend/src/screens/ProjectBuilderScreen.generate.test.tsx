@@ -69,7 +69,7 @@ async function newProjectWithBracket(name = 'Shelf set') {
   await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
 }
 async function openPicker() {
-  await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
   await screen.findByText('Printer A');
 }
 
@@ -85,7 +85,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
     await waitFor(() => expect(screen.getByTestId('process-preset-select').textContent).toContain('0.20mm Standard'));
     await userEvent.selectOptions(screen.getByTestId('process-preset-select'), '0.20mm Standard');
-    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await screen.findByText('2 jobs added to queue');
     expect(screen.queryByText('Eligible printers')).toBeNull();      // the picker does not pop back open when generation ends
@@ -119,7 +119,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     await newProjectWithBracket();
     await openPicker();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
 
     await screen.findByText('1 job added to queue');
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({ eligible_printer_ids: [], process_preset: null, allow_cached: true, save_slice: false });
@@ -132,7 +132,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
     });
     await newProjectWithBracket();
     await openPicker();
-    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
 
     expect(await screen.findByText('Orca sidecar is offline. Check the container.')).toBeTruthy();
     expect(where()).not.toBe('/projects/7');                                   // not bounced to the detail page
@@ -165,7 +165,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.type(screen.getByPlaceholderText('e.g. 3mm magnet'), '3mm magnet');
 
     await openPicker();
-    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
     await screen.findByText('2 jobs added to queue');
 
     expect(api.to('POST', '/api/v1/projects')[0].body).toEqual({
@@ -189,7 +189,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.type(screen.getAllByPlaceholderText('e.g. 3mm magnet')[1], 'screw');         // no cost entered
     await openPicker();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
 
     await screen.findByText('2 jobs added to queue');
     expect(api.to('POST', '/api/v1/projects/7/parts').map(c => c.body)).toEqual([
@@ -208,7 +208,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await userEvent.click(await screen.findByTitle('Add Bracket.stl'));
     await openPicker();
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create without dispatch' }));
     await screen.findByText('2 jobs added to queue');
 
     expect(api.to('POST', '/api/v1/projects')[0].body).toMatchObject({ order_type: 'internal', customer: '', customer_id: null });
@@ -222,7 +222,7 @@ describe('ProjectBuilderScreen - what gets saved before generating', () => {
     await newProjectWithBracket();
     await openPicker();
     await userEvent.click(screen.getByRole('checkbox', { name: /Printer B/ }));
-    await userEvent.click(screen.getByRole('button', { name: 'Generate' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create' }));
     await screen.findByText('Generation timed out. Try fewer parts or reduce quantities.');
 
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -244,8 +244,8 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
     const bracketQty = spinbuttons[spinbuttons.length - 2];   // item rows are last (Price is a spinbutton too)
     fireEvent.change(bracketQty, { target: { value: '5' } });   // (clearing snaps the field back to 1, so type-over would give 15)
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
 
     await screen.findByText('2 jobs added to queue');
     expect(writes(api)).toEqual([
@@ -264,8 +264,8 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
   it('opens the project from the result banner', async () => {
     open('/projects/7/edit');
     await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
     await screen.findByText('2 jobs added to queue');
 
     await userEvent.click(screen.getByRole('button', { name: 'Details' }));
@@ -275,8 +275,8 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
   it('opens the queue from the result banner', async () => {
     open('/projects/7/edit');
     await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
     await screen.findByText('2 jobs added to queue');
 
     await userEvent.click(screen.getByRole('button', { name: 'Queue' }));
@@ -286,8 +286,8 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
   it('does not generate when saving the edits fails, and says so', async () => {
     const api = open('/projects/7/edit', { 'PATCH /api/v1/projects/7': new Reply(500, 'disk full') });
     await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
 
     expect(await screen.findByText('Generation failed: 500 disk full')).toBeTruthy();
     expect(api.to('POST', '/api/v1/projects/7/generate')).toEqual([]);
@@ -298,8 +298,8 @@ describe('ProjectBuilderScreen - generate errors', () => {
   async function failWith(reply: Reply) {
     const api = open('/projects/7/edit', { 'POST /api/v1/projects/7/generate': reply });
     await screen.findByText('Bracket.stl', { selector: 'span[title="Bracket.stl"]' });
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
-    await userEvent.click(await screen.findByRole('button', { name: 'Generate without dispatch' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Create without dispatch' }));
     return api;
   }
 
@@ -326,7 +326,7 @@ describe('ProjectBuilderScreen - generate errors', () => {
     await failWith(new Reply(502, 'down'));
     await screen.findByText('Orca sidecar is offline. Check the container.');
 
-    await userEvent.click(screen.getByRole('button', { name: 'Generate…' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Create…' }));
 
     expect(screen.queryByText('Orca sidecar is offline. Check the container.')).toBeNull();
   });
@@ -335,7 +335,7 @@ describe('ProjectBuilderScreen - generate errors', () => {
 describe('ProjectBuilderScreen - generate guards', () => {
   it('cannot generate without a name or without parts', async () => {
     open('/projects/new');
-    const generate = await screen.findByRole('button', { name: 'Generate…' });
+    const generate = await screen.findByRole('button', { name: 'Create…' });
     expect(generate.hasAttribute('disabled')).toBe(true);           // nothing yet
 
     await userEvent.type(screen.getByLabelText(/Project name/), 'Named only');

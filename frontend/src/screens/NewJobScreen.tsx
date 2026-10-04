@@ -6,7 +6,7 @@ import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
 import { uploadFile, createJob, useQueueConfig, getFilePlates, getModelFilaments, getEmbeddedSettings, plateThumbnailUrl, type ApiPlate, type EmbeddedSetting, type ModelFilament } from '../api/queue';
 import { useFiles, getFiles, getSlicedVersions, type SlicedVersion } from '../api/files';
-import { useOrders } from '../api/orders';
+import { useProjects } from '../api/projects';
 import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
 import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey } from '../components/ModelTargets';
@@ -33,7 +33,7 @@ interface Plate {
 interface PlateConfig {
   selected: boolean;
   jobName: string;
-  orderId: number | null;
+  projectId: number | null;
   selectedPrinters: string[];
   perPrinter: Record<string, PerPrinterCfg>;
   confirmedOverrides: Record<string, string>;
@@ -291,25 +291,26 @@ function QueueToggle({ checked, onChange }: { checked: boolean; onChange: (v: bo
 }
 
 // ============================================================
-// OrdersPicker — single-select from real API orders
+// ProjectPicker — single-select from the projects jobs can be added to
 // ============================================================
 
-function OrdersPicker({ selectedOrderId, onChange }: {
-  selectedOrderId: number | null;
+function ProjectPicker({ selectedProjectId, onChange }: {
+  selectedProjectId: number | null;
   onChange: (id: number | null) => void;
 }) {
   const navigate = useNavigate();
-  const { orders } = useOrders();
-  // Customer work is recorded as a project; orders only group internal jobs.
-  const open = orders.filter(o => o.status !== 'complete' && o.order_type === 'internal');
+  const { projects } = useProjects();
+  // A draft project cannot have jobs yet; a finished one stays linkable on purpose (retro-linking costs).
+  const open = projects.filter(p => p.stage !== 'draft');
 
   return (
     <div className="col gap-2">
       <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-        {open.map(o => {
-          const selected = selectedOrderId === o.id;
+        {open.map(p => {
+          const selected = selectedProjectId === p.id;
           return (
-            <button key={o.id} onClick={() => onChange(selected ? null : o.id)}
+            <button key={p.id} onClick={() => onChange(selected ? null : p.id)}
+              title={p.stage === 'queued' ? undefined : `Jobs start once ${p.name} is moved to Queued`}
               style={{
                 display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 12px',
                 background: selected ? 'var(--bg-3)' : 'var(--bg-1)',
@@ -317,18 +318,19 @@ function OrdersPicker({ selectedOrderId, onChange }: {
                 boxShadow: selected ? '0 0 0 1px var(--accent)' : 'none',
                 borderRadius: 999, cursor: 'pointer', color: 'var(--text-1)', fontFamily: 'inherit', fontSize: 12,
               }}>
-              <span className="mono tiny" style={{ color: 'var(--text-3)' }}>#{o.id}</span>
-              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.customer}</span>
+              <span className="mono tiny" style={{ color: 'var(--text-3)' }}>#{p.id}</span>
+              <span style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
+              {p.stage !== 'queued' && <span className="tiny muted">{p.stage}</span>}
             </button>
           );
         })}
-        <button onClick={() => navigate('/orders/new')}
+        <button onClick={() => navigate('/projects/new')}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '6px 12px',
                    background: 'transparent', border: '1px dashed var(--border-2)', borderRadius: 999,
                    color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>
-          {Icons.plus} New order
+          {Icons.plus} New project
         </button>
-        {selectedOrderId != null && (
+        {selectedProjectId != null && (
           <button onClick={() => onChange(null)}
             style={{ padding: '6px 10px', background: 'transparent', border: 'none', color: 'var(--text-3)', cursor: 'pointer', fontFamily: 'inherit', fontSize: 12 }}>
             None — standalone job
@@ -443,7 +445,7 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetProject, onToggleQueued, onSetOverrides }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
@@ -454,7 +456,7 @@ function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelF
   onSetField: (patch: Partial<PlateConfig>) => void;
   onTogglePrinter: (id: string) => void;
   onSetPerPrinter: (printerId: string, patch: Partial<PerPrinterCfg>) => void;
-  onSetOrder: (id: number | null) => void;
+  onSetProject: (id: number | null) => void;
   onToggleQueued: (v: boolean) => void;
   onSetOverrides: (v: Record<string, string>) => void;
 }) {
@@ -539,13 +541,13 @@ function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelF
           {/* Orders */}
           <div>
             <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-1)' }}>
-              <StepNum n={3} done={config.orderId != null} />
-              Fulfills order
+              <StepNum n={3} done={config.projectId != null} />
+              Fulfills project
             </div>
             <div className="tiny muted" style={{ marginTop: 2, marginBottom: 10, marginLeft: 30 }}>
-              Link this plate to the customer or internal order its parts ship into. Optional.
+              Link this plate to the project its parts belong to. Optional.
             </div>
-            <OrdersPicker selectedOrderId={config.orderId} onChange={onSetOrder} />
+            <ProjectPicker selectedProjectId={config.projectId} onChange={onSetProject} />
           </div>
 
           <div className="divider" style={{ margin: 0 }} />
@@ -603,10 +605,10 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
     return a + (p?.estTime ?? 0);
   }, 0);
 
-  const allOrders = new Set<number>();
+  const allProjects = new Set<number>();
   selectedPlateIds.forEach(id => {
-    const oid = plateConfigs[id]?.orderId;
-    if (oid != null) allOrders.add(oid);
+    const pid = plateConfigs[id]?.projectId;
+    if (pid != null) allProjects.add(pid);
   });
 
   return (
@@ -667,12 +669,12 @@ function SummaryCard({ file, plates, plateConfigs, selectedPlateIds, activePlate
         </div>
       )}
 
-      {allOrders.size > 0 && (
+      {allProjects.size > 0 && (
         <>
           <div className="divider" />
           <div className="tag-key">Fulfills</div>
           <div className="row gap-1" style={{ marginTop: 6, flexWrap: 'wrap' }}>
-            {Array.from(allOrders).map(id => (
+            {Array.from(allProjects).map(id => (
               <span key={id} className="mono tiny" style={{ padding: '2px 8px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 999, color: 'var(--text-2)' }}>#{id}</span>
             ))}
           </div>
@@ -764,11 +766,11 @@ function CachedVersionPrompt({ plate, multiPlate, versions, useLatest, onUse, on
   );
 }
 
-function defaultConfigForPlate(plate: Plate): PlateConfig {
+function defaultConfigForPlate(plate: Plate, projectId: number | null = null): PlateConfig {
   return {
     selected: true,
     jobName: plate.name,
-    orderId: null,
+    projectId,
     selectedPrinters: [],
     perPrinter: {},
     confirmedOverrides: {},
@@ -780,6 +782,12 @@ export function NewJobScreen() {
   const navigate = useNavigate();
   const location = useLocation();
   const printers = usePrinterList();
+  // "Add job" from a project page arrives as /jobs/new?project=<id>: every plate starts linked to it.
+  const initialProjectId = (() => {
+    const raw = new URLSearchParams(location.search).get('project');
+    const id = raw ? Number(raw) : NaN;
+    return Number.isInteger(id) && id > 0 ? id : null;
+  })();
 
   const [file, setFile] = useState<FileInfo | null>(null);
   const [uploadedFileId, setUploadedFileId] = useState<number | null>(null);
@@ -901,7 +909,7 @@ export function NewJobScreen() {
     const detected = platesToLocal(apiPlates, fileId);
     setPlates(detected);
     const configs: Record<string, PlateConfig> = {};
-    detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p); });
+    detected.forEach(p => { configs[p.id] = defaultConfigForPlate(p, initialProjectId); });
     setPlateConfigs(configs);
     setActivePlateId(detected[0]?.id ?? null);
   }
@@ -1034,8 +1042,8 @@ export function NewJobScreen() {
     }));
   }
 
-  function setOrderForPlate(plateId: string, orderId: number | null) {
-    setPlateConfig(plateId, { orderId });
+  function setProjectForPlate(plateId: string, projectId: number | null) {
+    setPlateConfig(plateId, { projectId });
   }
 
   // ---- validation ----
@@ -1066,7 +1074,7 @@ export function NewJobScreen() {
         await createJob({
           uploaded_file_id: uploadedFileId,
           plate_number: plate.index,
-          order_id: cfg.orderId,
+          project_id: cfg.projectId,
           ...buildEligibility(cfg.selectedPrinters, cfg.perPrinter),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
           ...(saveSlice && !isPreslicedKind(file?.type)
@@ -1309,7 +1317,7 @@ export function NewJobScreen() {
                   onSetField={patch => setPlateConfig(activePlateId, patch)}
                   onTogglePrinter={pid => togglePrinterForPlate(activePlateId, pid)}
                   onSetPerPrinter={(pid, patch) => setPerPrinter(activePlateId, pid, patch)}
-                  onSetOrder={oid => setOrderForPlate(activePlateId, oid)}
+                  onSetProject={pid => setProjectForPlate(activePlateId, pid)}
                   onToggleQueued={v => togglePlate(activePlateId, v)}
                   onSetOverrides={v => setPlateConfig(activePlateId, { confirmedOverrides: v })}
                 />

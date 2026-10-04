@@ -105,7 +105,7 @@ export async function mockApi(page: Page, over: Partial<{
     if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5, slice_cache_use_latest_settings: true });
     if (path === '/queue') return ok(route, over.queue ? over.queue() : []);
     if (path === '/jobs') return ok(route, []);
-    if (path === '/orders') return ok(route, []);
+    if (path === '/orders' || path === '/projects') return ok(route, []);
     if (path === '/machine-catalog') return ok(route, []);
     return ok(route, {});  // permissive default for any unlisted GET
   });

@@ -89,20 +89,20 @@ describe('ProjectBuilderScreen', () => {
     expect(spinbuttons[spinbuttons.length - 1]).toHaveValue(1);
   });
 
-  it('labels Generate as "without dispatch" when no printers are selected', async () => {
+  it('labels Create as "without dispatch" when no printers are selected', async () => {
     const user = userEvent.setup();
     render(<ProjectBuilderScreen />, { wrapper });
     await user.type(screen.getByLabelText(/Project name/), 'Test Project');
     await user.click(await screen.findByTitle('Add Bracket.stl'));
-    await user.click(screen.getByRole('button', { name: 'Generate…' }));
+    await user.click(screen.getByRole('button', { name: 'Create…' }));
 
     await screen.findByText('Printer A');
-    expect(screen.getByRole('button', { name: 'Generate without dispatch' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create without dispatch' })).toBeTruthy();
   });
 });
 
 describe('ProjectBuilderScreen draft stage', () => {
-  it('disables Generate… for a draft project', async () => {
+  it('disables Create… for a draft project', async () => {
     const { Routes, Route } = await import('react-router-dom');
     mockFetch.mockImplementation((input: unknown) => {
       const url = String(input);
@@ -123,7 +123,7 @@ describe('ProjectBuilderScreen draft stage', () => {
       </MemoryRouter>,
     );
     await screen.findByDisplayValue('Customer Request');
-    const btn = screen.getByRole('button', { name: 'Generate…' }) as HTMLButtonElement;
+    const btn = screen.getByRole('button', { name: 'Create…' }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(btn.title).toBe('Promote to planning before creating jobs');
   });
