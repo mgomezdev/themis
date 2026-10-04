@@ -283,6 +283,35 @@ describe('ProjectDetailScreen - adding jobs by hand', () => {
     expect(within(dialog).queryByText(/#11/)).toBeNull();           // gone from the candidates
   });
 
+  it('warns that a queued job will be held while the project is not Queued yet, and marks held jobs in the list', async () => {
+    open({
+      'GET /api/v1/projects/42/jobs': [projectJob(21, { status: 'queued' }), projectJob(22, { status: 'printing' })],
+      'GET /api/v1/jobs': [unlinked(11), unlinked(12, { status: 'complete' })],
+      'GET /api/v1/files': [],
+    });
+    await ready();
+    expect(await screen.findByText(/Queued · held/)).toBeTruthy();      // the queued job in a planning project
+    expect(screen.queryByText(/Printing · held/)).toBeNull();            // already claimed: not held
+
+    await userEvent.click(button(/link existing job/i));
+    const dialog = await screen.findByRole('dialog', { name: /link existing jobs/i });
+
+    const rows = await within(dialog).findAllByText(/will be held until Shelf set is moved to Queued/);
+    expect(rows).toHaveLength(1);                                         // #11 (queued) only; the complete one is not held
+  });
+
+  it('does not warn once the project is Queued', async () => {
+    open({ 'GET /api/v1/jobs': [unlinked(11)], 'GET /api/v1/files': [],
+           'GET /api/v1/projects/42/jobs': [projectJob(21)] }, project({ stage: 'queued' }));
+    await ready();
+    expect(screen.queryByText(/· held/)).toBeNull();
+
+    await userEvent.click(button(/link existing job/i));
+    const dialog = await screen.findByRole('dialog', { name: /link existing jobs/i });
+    await within(dialog).findByText(/#11/);
+    expect(within(dialog).queryByText(/will be held/)).toBeNull();
+  });
+
   it('says so when every job already has a project, and shows why a link was refused', async () => {
     open({
       'GET /api/v1/jobs': [unlinked(11)],

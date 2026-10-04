@@ -679,6 +679,8 @@ export function ProjectDetailScreen() {
             </div>
             {jobs.map(job => {
               const st = STATUS_META[job.status] ?? { label: job.status, color: 'var(--text-3)' };
+              // The queue engine starts a project's jobs only once the project itself is Queued.
+              const held = project.stage !== 'queued' && (job.status === 'queued' || job.status === 'blocked');
               return (
                 <div key={job.id} style={{
                   display: 'grid', gridTemplateColumns: '44px 1fr 90px 70px 72px',
@@ -693,7 +695,10 @@ export function ProjectDetailScreen() {
                     {job.file_name ?? '—'}
                     {' '}<span style={{ fontSize: 11, color: 'var(--text-4)' }}>p{job.plate_number}</span>
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}>{st.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, color: st.color }}
+                        title={held ? `Held until ${project.name} is moved to Queued` : undefined}>
+                    {st.label}{held ? ' · held' : ''}
+                  </span>
                   <span style={{ fontSize: 12, color: 'var(--text-3)' }}>
                     {job.total_parts > 0 ? `${job.total_parts}` : '—'}
                   </span>
@@ -715,6 +720,7 @@ export function ProjectDetailScreen() {
         <LinkJobsModal
           projectId={project.id}
           projectName={project.name}
+          projectStage={project.stage}
           onClose={() => setLinking(false)}
           onLinked={reload}
         />

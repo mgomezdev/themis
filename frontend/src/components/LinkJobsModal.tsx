@@ -3,9 +3,10 @@ import { listJobs, setJobProject, type ApiJob } from '../api/queue';
 import { useFiles } from '../api/files';
 
 /** Pick existing jobs that belong to no project and attach them to `projectId`. */
-export function LinkJobsModal({ projectId, projectName, onClose, onLinked }: {
+export function LinkJobsModal({ projectId, projectName, projectStage, onClose, onLinked }: {
   projectId: number;
   projectName: string;
+  projectStage: string;
   onClose: () => void;
   onLinked: () => void;
 }) {
@@ -64,7 +65,12 @@ export function LinkJobsModal({ projectId, projectName, onClose, onLinked }: {
                 <div style={{ fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   #{job.id} · {fileName(job.uploaded_file_id)} <span className="tiny muted">p{job.plate_number}</span>
                 </div>
-                <div className="tiny muted">{job.status}</div>
+                <div className="tiny muted">
+                  {job.status}
+                  {projectStage !== 'queued' && (job.status === 'queued' || job.status === 'blocked') && (
+                    <span style={{ color: 'var(--warn)' }}> · will be held until {projectName} is moved to Queued</span>
+                  )}
+                </div>
               </div>
               <button className="btn sm" disabled={busyId !== null} onClick={() => link(job)}>
                 {busyId === job.id ? 'Linking…' : 'Link'}

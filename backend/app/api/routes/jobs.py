@@ -239,8 +239,8 @@ class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
-    # Link to a project (customer or internal work). The job then takes the project's order grouping, and
-    # `order_id` is ignored. Not allowed while the project is still a draft.
+    # Link to a project (customer or internal work). The job then takes the project's order grouping when the
+    # project has one (else `order_id` stands). Not allowed while the project is still a draft.
     project_id: int | None = None
     printer_configs: list[PrinterConfigInput] = []
     # Make/model eligibility ("any Bambu P1S"); at least one printer config or target is required.
@@ -388,7 +388,7 @@ async def create_job(
     job = Job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
-        order_id=project.order_id if project is not None else body.order_id,
+        order_id=project.order_id if project is not None and project.order_id is not None else body.order_id,
         project_id=project.id if project is not None else None,
         # Slicing overrides mean nothing to pre-sliced gcode; they are dropped, not stored.
         overrides=None if is_presliced_file(uploaded_file) else _clean_overrides(body.overrides),
@@ -1343,7 +1343,8 @@ async def set_job_project(
         if job.project_id is not None and job.project_id != project.id:
             raise HTTPException(409, f"Job {job_id} already belongs to project {job.project_id}; unlink it first")
         job.project_id = project.id
-        job.order_id = project.order_id
+        if project.order_id is not None:       # the project's grouping wins; a project without one keeps the job's own
+            job.order_id = project.order_id
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)

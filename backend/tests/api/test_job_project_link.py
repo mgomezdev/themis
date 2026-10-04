@@ -5,9 +5,9 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _no_engine_wake():
-    with patch("app.api.routes.jobs.queue_engine"):
-        yield
+def engine():
+    with patch("app.api.routes.jobs.queue_engine") as mock:
+        yield mock
 
 
 async def _project(client, **body) -> dict:
@@ -94,3 +94,61 @@ async def test_link_errors(client, create_job):
     assert (await client.patch(f"/api/v1/jobs/{job_id}/project", json={"project_id": 9999})).status_code == 404
     assert (await client.patch(f"/api/v1/jobs/{job_id}/project", json={"project_id": draft["id"]})).status_code == 409
     assert (await client.patch("/api/v1/jobs/9999/project", json={"project_id": None})).status_code == 404
+
+
+async def _project_with_order(client, session_factory, **body) -> tuple[dict, int]:
+    from app.models import Order, Project
+    proj = await _project(client, **body)
+    async with session_factory() as s:
+        order = Order(title="Internal grouping", customer="x", order_type="internal",
+                      created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        s.add(order)
+        await s.flush()
+        (await s.get(Project, proj["id"])).order_id = order.id
+        await s.commit()
+        return proj, order.id
+
+
+async def test_link_takes_the_projects_order_and_unlink_gives_it_back(client, session_factory, create_job, engine):
+    proj, order_id = await _project_with_order(client, session_factory, stage="planning")
+    job_id = await create_job()
+
+    linked = (await client.patch(f"/api/v1/jobs/{job_id}/project", json={"project_id": proj["id"]})).json()
+    assert linked["order_id"] == order_id
+    engine.wake.assert_called()
+
+    unlinked = (await client.patch(f"/api/v1/jobs/{job_id}/project", json={"project_id": None})).json()
+    assert unlinked["project_id"] is None and unlinked["order_id"] is None
+
+
+async def test_a_job_keeps_its_own_order_when_the_project_has_none(client, session_factory, upload_3mf, create_printer):
+    from app.models import Order
+    async with session_factory() as s:
+        own = Order(title="Mine", customer="x", order_type="internal",
+                    created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        s.add(own)
+        await s.commit()
+        own_id = own.id
+    plain = await _project(client, stage="planning")                  # no order of its own
+    job = (await _create(client, upload_3mf, create_printer, order_id=own_id)).json()
+    assert job["order_id"] == own_id
+
+    linked = (await client.patch(f"/api/v1/jobs/{job['id']}/project", json={"project_id": plain["id"]})).json()
+
+    assert linked["order_id"] == own_id                               # not erased by linking
+    assert (await client.patch(f"/api/v1/jobs/{job['id']}/project", json={"project_id": None})).json()["order_id"] == own_id
+
+
+async def test_a_projects_order_wins_over_the_order_id_sent_with_it(client, session_factory, upload_3mf, create_printer):
+    from app.models import Order
+    proj, order_id = await _project_with_order(client, session_factory, stage="planning")
+    async with session_factory() as s:
+        other = Order(title="Other", customer="x", order_type="internal",
+                      created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        s.add(other)
+        await s.commit()
+        other_id = other.id
+
+    job = (await _create(client, upload_3mf, create_printer, project_id=proj["id"], order_id=other_id)).json()
+
+    assert job["project_id"] == proj["id"] and job["order_id"] == order_id
