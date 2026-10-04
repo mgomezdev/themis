@@ -205,3 +205,49 @@ def test_accessor_returns_laminus_adapter_when_configured(monkeypatch):
     monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
     p = get_slicing_provider()
     assert isinstance(p, LaminusSlicingProvider) and p.identity == URL
+
+
+# ---- Laminus catalog readiness / rebuild ----
+
+def test_laminus_catalog_health_returns_body_on_200_and_building_marker_on_503(sidecar):
+    p = LaminusSlicingProvider(URL)
+    assert p.catalog_health()["status"] == "ok"
+    sidecar.handler = lambda request: httpx.Response(503, text="building")
+    assert p.catalog_health() == {"catalog_loaded": False, "catalog_building": True}
+    sidecar.handler = lambda request: httpx.Response(500)
+    with pytest.raises(SlicingProviderError, match="500"):
+        p.catalog_health()
+
+
+def test_laminus_catalog_health_uses_the_given_timeout_and_maps_transport_errors(sidecar):
+    p = LaminusSlicingProvider(URL)
+    p.catalog_health(timeout=5.0)
+    assert sidecar.requests[-1].extensions["timeout"]["read"] == 5.0
+
+    def boom(request):
+        raise httpx.ConnectError("refused")
+    sidecar.handler = boom
+    with pytest.raises(SlicingProviderError, match="refused"):
+        p.catalog_health()
+
+
+@pytest.mark.parametrize("status, ok", [(200, True), (503, True), (500, False)])
+def test_laminus_rebuild_request_accepts_200_and_503_only(sidecar, status, ok):
+    sidecar.handler = lambda request: httpx.Response(status)
+    p = LaminusSlicingProvider(URL)
+    if ok:
+        p.request_catalog_rebuild()
+        req = sidecar.requests[-1]
+        assert req.url.path == "/api/profiles" and req.url.params["refresh"] == "true"
+        assert req.extensions["timeout"]["read"] == 10.0
+    else:
+        with pytest.raises(SlicingProviderError, match="Laminus rescan trigger returned 500"):
+            p.request_catalog_rebuild()
+
+
+def test_laminus_rebuild_request_maps_transport_errors(sidecar):
+    def boom(request):
+        raise httpx.ConnectError("refused")
+    sidecar.handler = boom
+    with pytest.raises(SlicingProviderError, match="Could not reach Laminus sidecar: refused"):
+        LaminusSlicingProvider(URL).request_catalog_rebuild()

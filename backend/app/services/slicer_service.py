@@ -58,22 +58,19 @@ def resolve_preset_uuids(
     """
     # Prefer the Themis-side catalog cache (populated at boot) over a fresh
     # sidecar call. Falls back to a direct fetch only if not yet warmed.
-    from ..api.routes import laminus as _laminus_module
-    catalog = _laminus_module._catalog_dict
+    from . import catalog_service
+    catalog = catalog_service.cached_catalog()
     if catalog is None:
         try:
             from .laminus_sidecar_client import LaminusSidecarClient
-            catalog = LaminusSidecarClient(sidecar_url).get_catalog()
-            _laminus_module._catalog_dict = catalog
+            from .providers.laminus.adapter import catalog_from_legacy
+            catalog = catalog_from_legacy(LaminusSidecarClient(sidecar_url).get_catalog())
+            catalog_service.remember_catalog(catalog)
         except Exception as exc:
             logger.warning("Could not fetch sidecar catalog: %s", exc)
             raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
-    machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
-    process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
-    filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
-
-    machine_uuid = machine_map.get(machine_preset)
-    process_uuid = process_map.get(process_preset)
+    machine_uuid = catalog.ref_for("machine", machine_preset)
+    process_uuid = catalog.ref_for("process", process_preset)
 
     # Name every unresolved preset and its kind — not just "something didn't match".
     missing: list[str] = []
@@ -85,7 +82,7 @@ def resolve_preset_uuids(
     filament_uuids = []
     missing_filaments: list[str] = []
     for name in filament_presets:
-        fid = filament_map.get(name)
+        fid = catalog.ref_for("filament", name)
         if fid:
             filament_uuids.append(fid)
         else:

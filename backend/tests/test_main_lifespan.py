@@ -137,7 +137,7 @@ async def test_an_unreachable_sidecar_only_warns_and_the_catalog_warmup_is_still
     monkeypatch.setattr("app.services.laminus_sidecar_client.LaminusSidecarClient.health",
                         MagicMock(side_effect=ConnectionError("no route to host")))
     warm = AsyncMock()
-    monkeypatch.setattr("app.api.routes.laminus.warm_catalog_cache", warm)
+    monkeypatch.setattr("app.services.catalog_service.warm", warm)
 
     with caplog.at_level(logging.WARNING, logger="app"):
         async with main.lifespan(main.app):

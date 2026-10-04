@@ -6,14 +6,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.services.printer_manager import printer_manager
+from tests.catalog_helpers import patch_cached_catalog
 
 CATALOG = {"machine": [{"name": "Known Machine"}], "process": [], "filament": [{"name": "Known Filament"}]}
 
 
 async def _import(client, payload, *, catalog=CATALOG):
     body = payload if isinstance(payload, bytes) else json.dumps(payload).encode()
-    catalog_mock = AsyncMock(side_effect=catalog) if isinstance(catalog, Exception) else AsyncMock(return_value=catalog)
-    with patch("app.api.routes.laminus.get_cached_catalog", catalog_mock):
+    with patch_cached_catalog(catalog):
         return await client.post("/api/v1/settings/fleet-import",
                                  files={"file": ("backup.json", io.BytesIO(body), "application/json")})
 

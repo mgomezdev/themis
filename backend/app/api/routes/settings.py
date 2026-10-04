@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
-from ...services import spoolman_service
+from ...services import catalog_service, spoolman_service
 from ...services.providers.filament_inventory import make_inventory_provider
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
@@ -203,10 +203,9 @@ async def test_spoolman_connection(
 
     # --- Spoolman profile-name sanity check (best-effort) ---
     # Check that profile name strings in each filament's orca_profiles exist in the catalog.
-    import app.api.routes.laminus as _lam_mod
     from ...services.catalog_utils import catalog_name_sets
 
-    _catalog = _lam_mod._catalog_dict
+    _catalog = catalog_service.cached_catalog()
     if _catalog is not None:
         try:
             _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
@@ -241,7 +240,7 @@ async def test_spoolman_connection(
                 import time as _time
                 sync_id = str(_uuid.uuid4())
                 pending_entries = list(spoolman_groups.values())
-                _lam_mod._pending_sync = {
+                catalog_service.set_pending_sync({
                     "sync_id": sync_id,
                     "raw": None,
                     "catalog": None,
@@ -251,7 +250,7 @@ async def test_spoolman_connection(
                         "spoolman_filaments": pending_entries,
                     },
                     "created_at": _time.time(),
-                }
+                })
                 return {
                     "status": "pending_remaps",
                     "ok": True,
@@ -610,16 +609,15 @@ async def fleet_import(
         raise HTTPException(400, f"Unsupported backup version: {version}")
 
     # Fetch catalog once for profile-name validation (best-effort)
-    from .laminus import get_cached_catalog
-    cat: dict | None = None
+    cat = None
     try:
-        cat = await get_cached_catalog()
+        cat = await catalog_service.get_cached_catalog()
     except Exception:
         pass
 
     machine_names: set[str] = set()
     filament_names: set[str] = set()
-    if cat:
+    if cat is not None:
         from ...services.catalog_utils import catalog_name_sets
         machine_names, _, filament_names, _ = catalog_name_sets(cat)
 

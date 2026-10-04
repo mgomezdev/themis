@@ -478,30 +478,25 @@ async def check_overrides(
     if not sidecar_url:
         return {**empty, "has_embedded_settings": True, "error": "Override check requires Laminus sidecar"}
 
-    from ..routes.laminus import get_cached_catalog
+    from ...services import catalog_service
     try:
-        catalog = await get_cached_catalog()
+        catalog = await catalog_service.get_cached_catalog()
     except Exception as e:
         return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
     machine_name = printer.current_orca_printer_profile
-    machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
-    process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
-    filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
-
-    machine_uuid = machine_map.get(machine_name)
-    process_uuid = process_map.get(body.print_profile)
+    machine_uuid = catalog.ref_for("machine", machine_name)
+    process_uuid = catalog.ref_for("process", body.print_profile)
     if not machine_uuid or not process_uuid:
         return {**empty, "has_embedded_settings": True,
                 "error": f"Profile not found in sidecar: machine={machine_name!r} process={body.print_profile!r}"}
 
     # Filament content doesn't affect the curated (process) diff. If the named
     # filament isn't in the catalog, pick the first compatible one as a stand-in.
-    filament_uuid = filament_map.get(body.filament_profile or "")
+    filament_uuid = catalog.ref_for("filament", body.filament_profile or "")
     if not filament_uuid:
-        compat = [f["uuid"] for f in catalog.get("filament", [])
-                  if machine_name in (f.get("compatible_printers") or [])]
-        filament_uuid = compat[0] if compat else next(iter(filament_map.values()), None)
+        compat = [f.ref for f in catalog.filaments if machine_name in f.compatible_printers]
+        filament_uuid = compat[0] if compat else next((f.ref for f in catalog.filaments if f.name and f.ref), None)
     if not filament_uuid:
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
 

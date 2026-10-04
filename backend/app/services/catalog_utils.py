@@ -6,23 +6,25 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.providers.slicing import Catalog
 from app.services.spoolman_service import fetch_filaments
 
 logger = logging.getLogger("app.catalog_utils")
 
 
-def catalog_name_sets(catalog: dict) -> tuple[set[str], set[str], set[str], set[str]]:
-    """Return (machine_names, process_names, filament_names, filament_uuids)."""
-    machine_names = {m["name"] for m in catalog.get("machine", []) if m.get("name")}
-    process_names = {p["name"] for p in catalog.get("process", []) if p.get("name")}
-    filament_names = {f["name"] for f in catalog.get("filament", []) if f.get("name")}
-    filament_uuids = {f["uuid"] for f in catalog.get("filament", []) if f.get("uuid")}
-    return machine_names, process_names, filament_names, filament_uuids
+def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], set[str]]:
+    """Return (machine_names, process_names, filament_names, filament_refs)."""
+    return (
+        catalog.names("machine"),
+        catalog.names("process"),
+        catalog.names("filament"),
+        catalog.refs("filament"),
+    )
 
 
 async def compute_drift(
-    old_catalog: dict,
-    new_catalog: dict,
+    old_catalog: Catalog,
+    new_catalog: Catalog,
     session: AsyncSession,
     spoolman_cfg,  # SpoolmanConfig | None
 ) -> dict | None:

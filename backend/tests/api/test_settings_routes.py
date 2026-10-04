@@ -1,7 +1,7 @@
+from tests.catalog_helpers import cached_raw, prime_catalog
+from app.services import catalog_service
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
-
-import app.api.routes.laminus as lmod
 from httpx import AsyncClient
 
 
@@ -180,9 +180,9 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(c
 async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
     """All Spoolman filament UUIDs present in catalog → normal success response."""
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]}
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = catalog
+    original_catalog = cached_raw()
+    original_pending = catalog_service._pending_sync
+    prime_catalog(catalog)
 
     filaments_response = [
         {"id": 1, "name": "PLA Red", "extra": {"orca_profiles": json.dumps(json.dumps({"f1": "PLA"}))}}
@@ -203,18 +203,18 @@ async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
         assert body.get("status") == "ok" or body.get("ok") is True
         mock_fetch.assert_called_once()
     finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+        prime_catalog(original_catalog)
+        catalog_service._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client):
     """Three filaments share one stale profile name → single grouped entry with three affected_filament_ids."""
     # Catalog has "PLA New" but NOT "PLA Old" — so "PLA Old" is stale
     catalog = {"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]}
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = catalog
-    lmod._pending_sync = None
+    original_catalog = cached_raw()
+    original_pending = catalog_service._pending_sync
+    prime_catalog(catalog)
+    catalog_service._pending_sync = None
 
     # Three Spoolman filaments all reference "PLA Old" for the same printer preset
     filaments_response = [
@@ -243,18 +243,18 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
         assert set(entry["affected_filament_ids"]) == {9, 14, 22}
         assert body["pending"]["printers"] == []
         assert body["pending"]["jobs"] == []
-        assert lmod._pending_sync is not None
-        assert lmod._pending_sync["raw"] is None  # Spoolman-only
+        assert catalog_service._pending_sync is not None
+        assert catalog_service._pending_sync["raw"] is None  # Spoolman-only
     finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+        prime_catalog(original_catalog)
+        catalog_service._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
     """Cold cache → skip UUID check, return normal success."""
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = None
+    original_catalog = cached_raw()
+    original_pending = catalog_service._pending_sync
+    prime_catalog(None)
 
     try:
         with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
@@ -266,8 +266,8 @@ async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
         mock_fetch.assert_not_called()
         assert resp.status_code == 200
     finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+        prime_catalog(original_catalog)
+        catalog_service._pending_sync = original_pending
 
 
 # ---------------------------------------------------------------------------

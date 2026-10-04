@@ -133,8 +133,8 @@ async def lifespan(app: FastAPI):
                 "Laminus sidecar at %s is not reachable: %s", _sidecar_url, e
             )
         # Kick off catalog warm-up in the background — don't block startup.
-        from .api.routes.laminus import warm_catalog_cache as _warm_catalog
-        asyncio.create_task(_warm_catalog())
+        from .services import catalog_service
+        asyncio.create_task(catalog_service.warm())
 
     yield
 

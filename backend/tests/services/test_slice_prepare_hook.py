@@ -1,3 +1,4 @@
+from tests.catalog_helpers import cached_raw, prime_catalog
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from app.services.slicer_service import SlicerService, SliceRequest
@@ -31,9 +32,7 @@ def test_prepare_hook_runs_on_copy_leaves_source_untouched(tmp_path):
     def hook(p):
         hooked_paths.append(Path(p))
         Path(p).write_bytes(b"remapped-bytes")
-
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _catalog()
+    prime_catalog(_catalog())
 
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "job1"
@@ -56,9 +55,7 @@ def test_no_hook_with_sidecar_succeeds(tmp_path):
     """A request without a prepare_hook routes to sidecar successfully."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = tmp_path
-
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _catalog()
+    prime_catalog(_catalog())
 
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
          patch.object(SlicerService, "_execute_slice_by_ids", return_value="out.gcode"):

@@ -1,4 +1,5 @@
 # backend/tests/services/test_slicer_service.py
+from tests.catalog_helpers import cached_raw, prime_catalog
 import struct
 import zipfile as _zipfile
 from pathlib import Path
@@ -38,8 +39,7 @@ def _make_service(tmp_path):
 
 def test_raises_when_no_sidecar_url(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
     with patch("app.config.get_laminus_sidecar_url", return_value=None):
         with pytest.raises(SliceError, match="LAMINUS_SIDECAR_URL"):
             svc.slice(_req(tmp_path))
@@ -52,8 +52,7 @@ def test_raises_when_machine_not_in_catalog(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
@@ -66,8 +65,7 @@ def test_raises_when_filament_not_in_catalog(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [],
     }
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
@@ -84,8 +82,7 @@ def test_error_names_the_specific_unresolved_preset_and_kind(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError) as exc_info:
             svc.slice(_req(tmp_path))
@@ -100,8 +97,7 @@ def test_error_names_the_specific_unresolved_preset_and_kind(tmp_path):
 def test_error_names_multiple_unresolved_presets(tmp_path):
     svc = _make_service(tmp_path)
     catalog = {"machine": [], "process": [], "filament": []}
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError) as exc_info:
             svc.slice(_req(tmp_path))
@@ -114,8 +110,7 @@ def test_error_names_multiple_unresolved_presets(tmp_path):
 def test_error_advises_refreshing_the_profile_sync(tmp_path):
     svc = _make_service(tmp_path)
     catalog = {"machine": [], "process": [], "filament": []}
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="[Rr]efresh the profile sync"):
             svc.slice(_req(tmp_path))
@@ -130,8 +125,7 @@ def test_error_reports_missing_filament_when_none_supplied(tmp_path):
         "process": [{"name": "0.20mm Standard", "uuid": "p1"}],
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = catalog
+    prime_catalog(catalog)
     req = _req(tmp_path)
     req.filament_presets = []
     with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
@@ -142,8 +136,7 @@ def test_error_reports_missing_filament_when_none_supplied(tmp_path):
 def test_raises_with_clear_message_when_sidecar_unreachable(tmp_path):
     """Catalog fetch failure surfaces 'unreachable', not a misleading profile-not-found message."""
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = None  # force a live sidecar fetch
+    prime_catalog(None)  # force a live sidecar fetch
 
     from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
@@ -156,8 +149,7 @@ def test_raises_with_clear_message_when_sidecar_unreachable(tmp_path):
 
 def test_sidecar_error_converted_to_slice_error(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
 
     from app.services import laminus_sidecar_client as _mod
     mock_client = MagicMock()
@@ -172,8 +164,7 @@ def test_sidecar_error_converted_to_slice_error(tmp_path):
 
 def test_default_returns_raw_gcode(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
 
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
     gcode.parent.mkdir(parents=True, exist_ok=True)
@@ -197,8 +188,7 @@ def test_default_returns_raw_gcode(tmp_path):
 
 def test_export_3mf_flag_forwarded(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
 
     archive = tmp_path / "gcode" / "1" / "model.gcode.3mf"
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -221,8 +211,7 @@ def test_export_3mf_flag_forwarded(tmp_path):
 
 def test_extra_config_passed_to_client(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
 
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"
     gcode.parent.mkdir(parents=True, exist_ok=True)
@@ -245,8 +234,7 @@ def test_extra_config_passed_to_client(tmp_path):
 
 def test_slice_calls_inject_thumbnail_for_3mf_source(tmp_path):
     svc = _make_service(tmp_path)
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = _DEFAULT_CATALOG
+    prime_catalog(_DEFAULT_CATALOG)
 
     three_mf = _3mf_with_thumb(tmp_path, plate=1)
     gcode = tmp_path / "gcode" / "1" / "plate_1.gcode"

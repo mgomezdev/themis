@@ -47,6 +47,18 @@ class LaminusSlicingProvider(SlicingProvider):
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
 
+    def catalog_health(self, timeout: float = 5.0) -> dict:
+        try:
+            return self._client().catalog_state(timeout)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+
+    def request_catalog_rebuild(self, timeout: float = 10.0) -> None:
+        try:
+            self._client().request_catalog_rebuild(timeout)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+
     def get_catalog(self) -> Catalog:
         try:
             return catalog_from_legacy(self._client().get_catalog())

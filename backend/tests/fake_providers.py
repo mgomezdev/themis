@@ -106,9 +106,13 @@ class FakeSlicingProvider(SlicingProvider):
         self._identity = identity
         self.calls: list[tuple] = []
         self.fail_with: SlicingProviderError | None = None
+        self.fail_on: dict[str, SlicingProviderError] = {}   # per-method failures
         self.artifact_name = "fake.gcode"
         self.artifact_bytes = b"; fake gcode\n"
         self.merged: dict = {}
+        self.health_script: list = []
+        self.default_health: dict = {"catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 3}
+        self.rebuild_error: SlicingProviderError | None = None
 
     @property
     def identity(self) -> str:
@@ -116,6 +120,8 @@ class FakeSlicingProvider(SlicingProvider):
 
     def _enter(self, name: str, *args) -> None:
         self.calls.append((name, *args))
+        if name in self.fail_on:
+            raise self.fail_on[name]
         if self.fail_with is not None:
             raise self.fail_with
 
@@ -126,6 +132,21 @@ class FakeSlicingProvider(SlicingProvider):
     def get_catalog(self) -> Catalog:
         self._enter("get_catalog")
         return self.catalog
+
+    def catalog_health(self, timeout: float = 5.0) -> dict:
+        """Scripted: pops from `health_script` (a dict is returned, an Exception raised), else `default_health`."""
+        self._enter("catalog_health")
+        if self.health_script:
+            nxt = self.health_script.pop(0)
+            if isinstance(nxt, Exception):
+                raise nxt
+            return nxt
+        return self.default_health
+
+    def request_catalog_rebuild(self, timeout: float = 10.0) -> None:
+        self._enter("request_catalog_rebuild")
+        if self.rebuild_error is not None:
+            raise self.rebuild_error
 
     def merged_config(self, machine_ref, process_ref, filament_refs, timeout=None) -> dict:
         self._enter("merged_config", machine_ref, process_ref, list(filament_refs))

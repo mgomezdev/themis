@@ -38,6 +38,29 @@ class LaminusSidecarClient:
             raise SidecarError(f"health check returned {r.status_code}")
         return r.json()
 
+    def catalog_state(self, timeout: float = 5.0) -> dict:
+        """GET /api/health as catalog readiness: the body on 200, a "building" marker on 503
+        (the sidecar answers 503 while it builds its catalog), SidecarError otherwise."""
+        try:
+            r = self._client.get("/api/health", timeout=timeout)
+        except httpx.HTTPError as e:
+            raise SidecarError(f"health check request failed: {e}") from e
+        if r.status_code == 200:
+            return r.json()
+        if r.status_code == 503:
+            return {"catalog_loaded": False, "catalog_building": True}
+        raise SidecarError(f"health check returned {r.status_code}")
+
+    def request_catalog_rebuild(self, timeout: float = 10.0) -> None:
+        """GET /api/profiles?refresh=true — kicks off a background catalog rebuild. 503 means one is
+        already running and is accepted."""
+        try:
+            r = self._client.get("/api/profiles", params={"refresh": "true"}, timeout=timeout)
+        except httpx.HTTPError as e:
+            raise SidecarError(f"Could not reach Laminus sidecar: {e}") from e
+        if r.status_code not in (200, 503):
+            raise SidecarError(f"Laminus rescan trigger returned {r.status_code}")
+
     def slice_start(
         self,
         source_file: Path,

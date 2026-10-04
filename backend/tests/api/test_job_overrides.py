@@ -1,3 +1,4 @@
+from tests.catalog_helpers import patch_cached_catalog, prime_catalog
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -101,13 +102,11 @@ def test_extra_config_forwarded_to_sidecar():
     """extra_config is passed through to slice_start so the sidecar merges it."""
     svc = SlicerService.__new__(SlicerService)
     svc._data_dir = Path("/tmp")
-
-    import app.api.routes.laminus as _laminus
-    _laminus._catalog_dict = {
+    prime_catalog({
         "machine": [{"name": "MyPrinter", "uuid": "m1"}],
         "process": [{"name": "MyProcess", "uuid": "p1"}],
         "filament": [{"name": "MyFilament", "uuid": "f1"}],
-    }
+    })
 
     req = SliceRequest(
         job_id=1, source_3mf="/tmp/m.stl", plate_number=1,
@@ -193,7 +192,6 @@ def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
         printer_id = await create_printer(**(printer or {}))
         payload = {"uploaded_file_id": file_id, "printer_id": printer_id, "print_profile": "0.20mm Standard",
                    "filament_profile": "Bambu PLA Basic", **body}
-        catalog_mock = AsyncMock(side_effect=catalog) if isinstance(catalog, Exception) else AsyncMock(return_value=catalog)
         sidecar_client = MagicMock()
         if isinstance(merged, Exception):
             sidecar_client.get_merged_config.side_effect = merged
@@ -201,7 +199,7 @@ def check(client: AsyncClient, tmp_path, upload_3mf, create_printer):
             sidecar_client.get_merged_config.return_value = merged if merged is not None else {}
         with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
              patch("app.config.get_laminus_sidecar_url", return_value=sidecar), \
-             patch("app.api.routes.laminus.get_cached_catalog", catalog_mock), \
+             patch_cached_catalog(catalog), \
              patch("app.services.laminus_sidecar_client.LaminusSidecarClient", return_value=sidecar_client):
             resp = await client.post("/api/v1/jobs/check-overrides", json=payload)
         return resp, sidecar_client

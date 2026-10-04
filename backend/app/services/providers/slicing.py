@@ -87,6 +87,16 @@ class SlicingProvider(ABC):
     ) -> dict: ...
 
     @abstractmethod
+    def catalog_health(self, timeout: float = 5.0) -> dict:
+        """Catalog readiness: {catalog_loaded, catalog_building, catalog_profile_count?}. A provider that is
+        still building reports catalog_building=True instead of raising; raises SlicingProviderError when
+        unreachable/unhealthy."""
+
+    @abstractmethod
+    def request_catalog_rebuild(self, timeout: float = 10.0) -> None:
+        """Ask the provider to rebuild its catalog from source (returns immediately; poll `catalog_health`)."""
+
+    @abstractmethod
     def slice(self, spec: SliceSpec, output_dir: Path) -> str:
         """Slice and write the artifact into `output_dir`; returns its path."""
 
