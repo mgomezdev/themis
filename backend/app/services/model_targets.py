@@ -114,19 +114,30 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     await session.flush()
 
 
-async def target_dicts(session: AsyncSession, job_id: int) -> list[dict]:
+def _target_dict(t: JobModelTarget) -> dict:
+    return {
+        "machine_profile": t.machine_profile,
+        "print_profile": t.print_profile,
+        "filament_profile": t.filament_profile,
+        "filament_id": t.filament_id,
+        "filament_type": t.filament_type,
+        "filament_color": t.filament_color,
+        "filament_map": t.filament_map,
+    }
+
+
+async def target_dicts_by_job(session: AsyncSession, job_ids: list[int]) -> dict[int, list[dict]]:
+    """Targets for many jobs in one query (polled routes must not query per job); every id gets a key."""
+    out: dict[int, list[dict]] = {jid: [] for jid in job_ids}
+    if not job_ids:
+        return out
     rows = (await session.execute(
-        select(JobModelTarget).where(JobModelTarget.job_id == job_id).order_by(JobModelTarget.id)
+        select(JobModelTarget).where(JobModelTarget.job_id.in_(job_ids)).order_by(JobModelTarget.id)
     )).scalars().all()
-    return [
-        {
-            "machine_profile": t.machine_profile,
-            "print_profile": t.print_profile,
-            "filament_profile": t.filament_profile,
-            "filament_id": t.filament_id,
-            "filament_type": t.filament_type,
-            "filament_color": t.filament_color,
-            "filament_map": t.filament_map,
-        }
-        for t in rows
-    ]
+    for t in rows:
+        out[t.job_id].append(_target_dict(t))
+    return out
+
+
+async def target_dicts(session: AsyncSession, job_id: int) -> list[dict]:
+    return (await target_dicts_by_job(session, [job_id]))[job_id]
