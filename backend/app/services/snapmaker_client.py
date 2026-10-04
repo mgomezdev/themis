@@ -199,7 +199,9 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
 
     @property
     def camera_mjpeg_url(self) -> str | None:
-        return f"http://{self._ip}/webcam/stream"
+        # Verified on a U1: /webcam/stream is a 404; the MJPEG endpoint is /webcam/stream.mjpg (Moonraker's webcam
+        # entry only advertises webrtc + /webcam/snapshot.jpg).
+        return f"http://{self._ip}/webcam/stream.mjpg"
 
     @property
     def camera_rtsp_url(self) -> str | None:

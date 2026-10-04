@@ -20,7 +20,12 @@ def test_serialize_snapmaker_shape():
     assert d["connected"] is True
     assert d["state"] == "RUNNING"
     assert d["current_print"] == "cube.gcode"
-    assert d["progress"] == 0.5
+    assert d["progress"] == 50.0  # percent, like the other vendors (Klipper reports 0..1)
     assert d["remaining_time"] == 20
     assert d["temperatures"]["bed"] == 60.0
     assert d["temperatures"]["nozzle"] == 210.0
+
+
+def test_snapmaker_camera_url_is_the_mjpeg_endpoint_not_the_404_one():
+    from app.services.snapmaker_client import SnapmakerExtendedClient
+    assert SnapmakerExtendedClient(ip_address="192.168.0.119").camera_mjpeg_url == "http://192.168.0.119/webcam/stream.mjpg"
