@@ -140,20 +140,37 @@ const fleetPrinter = (id: number, over: object = {}) => ({
 });
 
 describe('useFleetData', () => {
-  it('loads printers, merges printer_state frames by id and adds unknown printers', async () => {
+  it('loads printers and merges printer_state frames by id', async () => {
     stubFetch({ 'GET /api/v1/fleet': [fleetPrinter(1), fleetPrinter(2)] });
     const { result } = renderHook(() => useFleetData());
     await waitFor(() => expect(result.current[0]).toHaveLength(2));
 
     act(() => sock().send({ type: 'printer_state', data: { id: 2, state: 'RUNNING', progress: 41.6 } }));
-    act(() => sock().send({ type: 'printer_state', data: fleetPrinter(3) }));
 
     const printers = result.current[0];
-    expect(printers.map(p => p.id)).toEqual(['1', '2', '3']);
+    expect(printers.map(p => p.id)).toEqual(['1', '2']);
     expect(printers[1]).toMatchObject({ status: 'printing', progress: 42, name: 'P2' });
     act(() => sock().send({ type: 'printer_state', data: { state: 'RUNNING' } }));            // no id: ignored
     act(() => sock().send('garbage'));
-    expect(result.current[0]).toHaveLength(3);
+    expect(result.current[0]).toHaveLength(2);
+  });
+
+  it('a state frame for a printer it has not loaded yet triggers one refetch instead of rendering the partial frame', async () => {
+    // The live frame is the vendor serializer's output: no name, loaded_filaments or enabled. Rendering it
+    // threw in toFleetPrinter (loaded_filaments[0]) and blanked the page right after "Add printer".
+    let fleet = [fleetPrinter(1)];
+    const api = stubFetch({ 'GET /api/v1/fleet': () => fleet });
+    const { result } = renderHook(() => useFleetData());
+    await waitFor(() => expect(result.current[0]).toHaveLength(1));
+    fleet = [fleetPrinter(1), fleetPrinter(3)];
+
+    const frame = { id: 3, printer_type: 'elegoo_centauri', connected: true, state: 'IDLE', progress: 0, temperatures: {} };
+    act(() => sock().send({ type: 'printer_state', data: frame }));
+    act(() => sock().send({ type: 'printer_state', data: frame }));
+
+    await waitFor(() => expect(result.current[0].map(p => p.id)).toEqual(['1', '3']));
+    expect(result.current[0][1].name).toBe('P3');
+    expect(api.to('GET', '/api/v1/fleet')).toHaveLength(2);                                   // one refetch, not one per frame
   });
 
   it('reloads the fleet after a reconnect and closes its socket on unmount', async () => {

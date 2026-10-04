@@ -175,6 +175,23 @@ describe('FleetScreen', () => {
     spy.mockRestore();
   });
 
+  it('details list every tool of a tool changer with its own temperature, and real targets', async () => {
+    const u1: FleetPrinter = {
+      ...PRINTER_CONTROLS, name: 'Shuna', printer_type: 'snapmaker_extended',
+      temperatures: {
+        nozzle: 220, nozzle_target: 220, bed: 55, bed_target: 55,
+        extruders: [0, 1, 2, 3].map(i => ({ index: i, temp: i === 2 ? 220 : 32, target: i === 2 ? 220 : 0 })),
+      },
+    };
+    mockFetch([u1]);
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Shuna'));
+    for (const t of ['T0', 'T1', 'T2', 'T3']) expect(await screen.findByText(`Nozzle ${t}`)).toBeInTheDocument();
+    expect(screen.getAllByText('/ 220°C')).toHaveLength(1);        // only the heated tool has a target
+    expect(screen.getByText('/ 55°C')).toBeInTheDocument();         // bed target is the printer's, not a fixed 60
+    expect(screen.queryByText(/^Nozzle$/)).toBeNull();
+  });
+
   it('clicking Stop calls stopPrinter', async () => {
     const spy = vi.spyOn(printersApi, 'stopPrinter').mockResolvedValue(undefined);
     mockFetch([PRINTER_CONTROLS]);

@@ -70,6 +70,12 @@ def _is_any_filament_ask(value) -> bool:
     return str(value or "").strip().lower() in ("", "any")
 
 
+def _is_loaded(slot: dict) -> bool:
+    """False only for a tool-changer placeholder (Snapmaker U1 keeps `{"empty": True, "type": ""}` for an empty tool
+    so list positions stay equal to tool indexes). A hand-entered slot without a type is still a slot."""
+    return bool(str(slot.get("type", "")).strip()) or not slot.get("empty")
+
+
 def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:
     """The printer's loaded filament slot that satisfies the job's ask (type AND
     color), or None. A job with no declared requirement (blank or "any") matches
@@ -81,7 +87,7 @@ def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | 
     req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
     req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
     if not req_type and not req_color:
-        return (loaded[0] if loaded else None)
+        return next((f for f in loaded or [] if _is_loaded(f)), None)
     for f in loaded or []:
         if str(f.get("type", "")).strip().lower() == req_type and _norm_color(f.get("color")) == req_color:
             return f
@@ -94,7 +100,7 @@ def _slot_for_config(config, loaded: list) -> dict | None:
     ti = getattr(config, "tool_index", None)
     if ti is not None:
         loaded = loaded or []
-        return loaded[ti] if 0 <= ti < len(loaded) else None
+        return loaded[ti] if 0 <= ti < len(loaded) and _is_loaded(loaded[ti]) else None
     return _matching_loaded_filament(config, loaded)
 
 
@@ -118,7 +124,7 @@ def _mapped_tools_loaded(filament_map: list, loaded: list) -> bool:
     Catalog entries (tool_index is None) are skipped."""
     loaded = loaded or []
     return all(
-        0 <= e["tool_index"] < len(loaded)
+        0 <= e["tool_index"] < len(loaded) and _is_loaded(loaded[e["tool_index"]])
         for e in (filament_map or [])
         if e.get("tool_index") is not None
     )
