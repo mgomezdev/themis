@@ -13,7 +13,6 @@ import uuid as _uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .providers.laminus.adapter import catalog_from_legacy
 from .providers.slicing import Catalog, SlicingProviderError, get_slicing_provider
 
 logger = logging.getLogger("app.laminus")
@@ -256,7 +255,3 @@ async def rescan(session: AsyncSession) -> dict:
 
     raw, new_catalog = await fetch_catalog()
     return await _apply_drift_gate(raw, new_catalog, session)
-
-
-def catalog_from_dict(raw: dict) -> Catalog:
-    return catalog_from_legacy(raw)

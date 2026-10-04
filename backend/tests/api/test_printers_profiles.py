@@ -1,4 +1,4 @@
-from tests.catalog_helpers import prime_catalog
+from tests.catalog_helpers import catalog_from_dict, prime_catalog
 from app.services import catalog_service
 import pytest
 from unittest.mock import AsyncMock, patch
@@ -18,7 +18,7 @@ _FAKE_CATALOG = {
     ],
 }
 
-_FAKE_CAT = catalog_service.catalog_from_dict(_FAKE_CATALOG)
+_FAKE_CAT = catalog_from_dict(_FAKE_CATALOG)
 
 
 async def test_get_profiles_no_active_preset(client):

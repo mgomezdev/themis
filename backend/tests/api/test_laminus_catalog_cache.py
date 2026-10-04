@@ -7,7 +7,7 @@ import pytest
 
 from app.services import catalog_service
 from app.services.providers.slicing import SlicingProviderError
-from tests.catalog_helpers import cached_raw, prime_catalog
+from tests.catalog_helpers import catalog_from_dict, cached_raw, prime_catalog
 from tests.fake_providers import FakeSlicingProvider
 
 
@@ -30,7 +30,7 @@ URL = "http://laminus.test"
 @pytest.fixture
 def sidecar():
     """A configured slicing provider whose catalog we control (`s.catalog`, `s.fail_on`), with call counting."""
-    s = FakeSlicingProvider(catalog=catalog_service.catalog_from_dict(CATALOG))
+    s = FakeSlicingProvider(catalog=catalog_from_dict(CATALOG))
     s.catalog_calls = lambda: sum(1 for c in s.calls if c[0] == "get_catalog")
     with patch("app.services.catalog_service.get_slicing_provider", return_value=s):
         yield s
@@ -77,7 +77,7 @@ async def test_catalog_503_when_no_sidecar_is_configured_and_502_when_it_is_unre
 
 async def test_get_cached_catalog_returns_the_warm_dict_and_fetches_only_when_cold(sidecar):
     assert (await catalog_service.get_cached_catalog()).raw == CATALOG
-    sidecar.catalog = catalog_service.catalog_from_dict({"machine": [], "process": [], "filament": []})  # would differ if re-fetched
+    sidecar.catalog = catalog_from_dict({"machine": [], "process": [], "filament": []})  # would differ if re-fetched
     assert (await catalog_service.get_cached_catalog()).raw == CATALOG
     assert sidecar.catalog_calls() == 1
 
@@ -216,7 +216,7 @@ async def test_rescan_reports_pending_remaps_instead_of_swapping_a_catalog_that_
     prime_catalog({"machine": [{"name": "Old Machine", "uuid": "m0"}], "process": [], "filament": []})
     catalog_service._catalog_bytes = b"old"
     await create_printer(current_orca_printer_profile="Old Machine")
-    sidecar.catalog = catalog_service.catalog_from_dict(CATALOG)  # the rebuilt catalog no longer has "Old Machine"
+    sidecar.catalog = catalog_from_dict(CATALOG)  # the rebuilt catalog no longer has "Old Machine"
 
     resp, _ = await rescan(health=[_health()])
 

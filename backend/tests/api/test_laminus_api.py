@@ -1,5 +1,5 @@
 """Tests for /api/v1/laminus/catalog/* routes (Features 2, 3, and 4)."""
-from tests.catalog_helpers import cached_raw, prime_catalog
+from tests.catalog_helpers import catalog_from_dict, cached_raw, prime_catalog
 from app.services import catalog_service
 from app.services.providers.slicing import SlicingProviderError
 from app.services.providers.filament_inventory import Filament
@@ -101,7 +101,7 @@ async def test_refresh_cold_cache_commits_immediately(client: AsyncClient):
     catalog_service._pending_sync = None
 
     with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch:
-        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_service.catalog_from_dict(SAMPLE_CATALOG))
+        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_from_dict(SAMPLE_CATALOG))
         resp = await client.post("/api/v1/laminus/catalog/refresh")
 
     assert resp.status_code == 200
@@ -118,7 +118,7 @@ async def test_refresh_no_drift_commits_and_returns_ok(client: AsyncClient):
 
     with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
          patch("app.services.catalog_utils.compute_drift", new_callable=AsyncMock) as mock_drift:
-        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_service.catalog_from_dict(SAMPLE_CATALOG))
+        mock_fetch.return_value = (json.dumps(SAMPLE_CATALOG).encode(), catalog_from_dict(SAMPLE_CATALOG))
         mock_drift.return_value = None  # no drift
 
         resp = await client.post("/api/v1/laminus/catalog/refresh")
@@ -152,7 +152,7 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
 
     with patch("app.services.catalog_service.fetch_catalog", new_callable=AsyncMock) as mock_fetch, \
          patch("app.services.catalog_utils.compute_drift", new_callable=AsyncMock) as mock_drift:
-        mock_fetch.return_value = (new_bytes, catalog_service.catalog_from_dict(new_catalog))
+        mock_fetch.return_value = (new_bytes, catalog_from_dict(new_catalog))
         mock_drift.return_value = drift_payload
 
         resp = await client.post("/api/v1/laminus/catalog/refresh")
@@ -189,7 +189,7 @@ async def test_confirm_remap_no_pending_returns_409(client: AsyncClient):
 async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
     """Wrong sync_id → 409."""
     catalog_service._pending_sync = {
-        "sync_id": "correct-id", "raw": b'{}', "catalog": catalog_service.catalog_from_dict({}),
+        "sync_id": "correct-id", "raw": b'{}', "catalog": catalog_from_dict({}),
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
@@ -206,7 +206,7 @@ async def test_confirm_remap_wrong_sync_id_returns_409(client: AsyncClient):
 async def test_confirm_remap_missing_required_printer_resolution_returns_422(client: AsyncClient):
     """Missing required printer resolution → 422."""
     catalog_service._pending_sync = {
-        "sync_id": "sync-1", "raw": b'{}', "catalog": catalog_service.catalog_from_dict({}),
+        "sync_id": "sync-1", "raw": b'{}', "catalog": catalog_from_dict({}),
         "pending": {
             "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
@@ -238,7 +238,7 @@ async def test_confirm_remap_invalid_job_resolution_returns_422(client: AsyncCli
     catalog_service._pending_sync = {
         "sync_id": "sync-job",
         "raw": b"{}",
-        "catalog": catalog_service.catalog_from_dict({"machine": [], "process": [], "filament": []}),
+        "catalog": catalog_from_dict({"machine": [], "process": [], "filament": []}),
         "pending": {
             "printers": [],
             "jobs": [{"field": "print_profile", "stale_value": "Old Process",
@@ -270,7 +270,7 @@ async def test_confirm_remap_malformed_resolutions_returns_422_not_500(client: A
     catalog_service._pending_sync = {
         "sync_id": "sync-malformed",
         "raw": b"{}",
-        "catalog": catalog_service.catalog_from_dict({}),
+        "catalog": catalog_from_dict({}),
         "pending": {"printers": [], "jobs": [], "spoolman_filaments": []},
         "created_at": 0,
     }
@@ -302,7 +302,7 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
     catalog_service._pending_sync = {
         "sync_id": "sync-apply",
         "raw": pending_bytes,
-        "catalog": catalog_service.catalog_from_dict(new_catalog),
+        "catalog": catalog_from_dict(new_catalog),
         "pending": {
             "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
@@ -387,7 +387,7 @@ _NEW_CATALOG = {
 
 
 def _park(pending: dict, *, raw: bytes | None = b'{"new": true}', catalog: dict | None = _NEW_CATALOG, sync_id="sync-x"):
-    catalog_service._pending_sync = {"sync_id": sync_id, "raw": raw, "catalog": catalog_service.catalog_from_dict(catalog), "pending": pending, "created_at": 0}
+    catalog_service._pending_sync = {"sync_id": sync_id, "raw": raw, "catalog": catalog_from_dict(catalog), "pending": pending, "created_at": 0}
     return sync_id
 
 

@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 
 from app.database import Base
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile
-from app.services.catalog_service import catalog_from_dict as C
+from tests.catalog_helpers import catalog_from_dict as C
 from app.services.providers.filament_inventory import Filament, InventoryProviderError
 from tests.fake_providers import FakeInventoryProvider
 from app.services.catalog_utils import catalog_name_sets, compute_drift
