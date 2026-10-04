@@ -5,7 +5,7 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (24)
+## Tables (25)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -20,10 +20,12 @@ tags                ← file_tags.tag_id
 file_tags           (junction: file_id + tag_id, both CASCADE DELETE)
 orders              ← jobs.order_id (nullable), projects.order_id (nullable)
 jobs                ← job_printer_configs.job_id, gcode_files.job_id, job_item_failures.job_id
-job_printer_configs
+job_printer_configs  ← (model_target_id, plain int → job_model_targets.id, no FK)
+job_model_targets   (job_id CASCADE; v031)
 gcode_files
+sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
-                       estimates_enabled)
+                       estimates_enabled, slice_cache_use_latest_settings)
 spoolman_config     (enabled, url, api_key)
 webhook_config      (singleton id=1: url?, secret?, events: JSON[str])
 notification_config (singleton id=1: ntfy/discord/email — see its own section below)
@@ -58,8 +60,10 @@ trigger math, never reset except by construction (per-item resets live on `print
   - `filament_profile` = OrcaSlicer filament preset used when slicing with this slot.
   - `spoolman_spool_id` = optional mapped Spoolman spool id (written by EditForm/FilamentPicker).
   For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
-  (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped); for
-  others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
+  (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped). The Snapmaker U1
+  syncs the same way from Klipper `print_task_config`, **positionally** (list index == tool index; an empty tool is a
+  `{"empty": true, "type": ""}` placeholder, which the queue engine treats as not loaded; the printer is the source of truth, so the
+  first report after every (re)connect replaces the stored list, keeping only per-slot `filament_profile`/`spoolman_spool_id`); for others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
 `quiet_start` / `quiet_end: str?` (v028) — server-local `HH:MM` window (wraps midnight; both or neither, validated in `PrinterUpdate`) in which a *ready* printer starts no new jobs (neither claims nor resumes pre-sliced gcode); running prints are never interrupted and offline slice-ahead still happens. The end of a window is noticed at the next periodic queue check (no dedicated wake). The UI times are server-local (UTC in a default Docker container). Logic in `services/scheduling.py::in_quiet_hours`.
 
 ### uploaded_files
@@ -68,6 +72,9 @@ Library index fields (filesystem is source of truth; these cache it):
 `relative_path, folder, size_bytes, content_hash, mtime: float, missing: bool`.
 - `plates`: `[{plate_number, estimated_time(min), filament_g, thumbnail_path}]` (parsed at upload).
 - `folder` defaults to `"/"`. `missing` is set by `library_scanner` when the file can't be found.
+- File kind is derived from the name (`library_scanner.file_kind`: `3mf` | `stl` | `gcode` | `gcode_3mf`), exposed as `kind`
+  in the file dict. A `.gcode.3mf` (Bambu sliced archive) is pre-sliced, not a model: its plates come from
+  `Metadata/plate_N.gcode` headers + `Metadata/plate_N.png` (`three_mf_parser.parse_sliced_archive`), no thumbnail regen.
 
 ### tags
 `id, name (unique), color: str ("#RRGGBB" default "#64748b"), category: str, created_at`.
@@ -83,8 +90,15 @@ Library index fields (filesystem is source of truth; these cache it):
   per-part fulfillment tracking. **Derived (not stored)**: `status` (hold if on_hold; else queued/
   in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`,
   `filament_cost_total` (sum of `jobs.filament_cost` across the order's non-cancelled jobs, or `null`).
-- `amount_paid`/`payment_status`: manually-entered customer payment tracking, for future profit/loss
-  reporting. Set/edited via `POST`/`PATCH /api/v1/orders`.
+- **Orders are internal-only (BIZ-186).** Customer sales and payments are recorded as *projects* (customer
+  pages + the financial summary read those). `POST /orders` with `order_type="customer"` and `PATCH`ing an order
+  *into* a customer order are 422; so is `POST /jobs` with an `order_id` of a customer order. Migration v032
+  converted every existing customer order that had no linked project into a project (name=title, same
+  customer/amount/status/due/hold, `amount_paid` → one opening payment, customer account linked when exactly one
+  matches the name, `parts` kept as text in `notes`, `projects.converted_from_order_id` = provenance) and
+  re-pointed its jobs; the order row stays as the project's internal job grouping — nothing is deleted. Legacy
+  customer orders already linked to a project were left alone. `amount_paid`/`payment_status` on orders are
+  historical and no longer feed reporting.
 - Internal orders (`order_type="internal"`) are auto-created by `generate_project` and linked to a
   Project via `projects.order_id`. All jobs generated for that project also set `job.order_id`.
 
@@ -92,7 +106,7 @@ Library index fields (filesystem is source of truth; these cache it):
 `id, uploaded_file_id FK, plate_number, order_id FK?, assigned_printer_id FK?, queue_position: float?`
 (float → reorder without renumber), `status, project_id FK?, block_reason: text?, overrides: JSON?,
 project_item_quantities: text?, created_at, updated_at, completed_at?, outcome?`.
-- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated via `override_inspector`.
+- `overrides`: optional dict of OrcaSlicer setting overrides applied at slice time; validated against `SlicingProvider.curated_override_keys()` (Laminus: `providers/laminus/overrides.py`).
 - `project_id`: set when a job is created by `generate_project`. SET NULL on project delete.
 - `project_item_quantities`: JSON dict mapping `project_item_id → quantity_on_this_plate`.
 - status enum: `queued|slicing|uploading|printing|paused|complete|blocked|failed|cancelled`.
@@ -135,7 +149,8 @@ manual-type fallback; the *authoritative* orca filament preset for slicing now l
 loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
 **ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
 tool/slot; `None` = default/legacy — queue uses type+color ask instead),
-`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`.
+`filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`,
+`model_target_id?` (v031; set on rows materialized from a `job_model_targets` row, null = explicit pick).
 - `filament_type`+`filament_color` = the eligibility "ask". Non-nullable, `server_default="any"` — the
   literal string `"any"` (never null/blank) means no constraint on that axis; matching logic checks for
   this keyword rather than a null/empty check. Same convention on `project_items.filament_type/color`
@@ -147,6 +162,41 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   loaded slots ordered by tool as N `filament_presets` and forwards the map into `SliceRequest`;
   `_mapped_tools_loaded` gates eligibility on every mapped tool having a loaded filament.
 
+### sliced_versions  (v033 — slicing cache, BIZ-189)
+A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCADE) is what model `source_file_id`
+(SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
+process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
+`SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` → `cache_key` = sha256 of
+their canonical JSON (`services/slice_cache.cache_key`; filament colour is deliberately **not** in it). Non-key:
+`preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (Laminus
+`/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
+unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
+`created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
+The link lives only in the DB (the filesystem stays the source of truth for the files themselves): a cached file moved
+by hand keeps its row/version (hash-matched move), deleted by hand goes `missing` (excluded from lookups) and comes
+back if it reappears, **edited** by hand (hash changes on rescan) is detached (`source_file_id` NULL, logged
+`event=version_detached`), and a gcode dropped in by hand or a rebuilt DB has no version link. Recovering a version
+from OrcaSlicer's `; CONFIG_BLOCK_START` header was considered and not done: the header names presets but not the
+model bytes it was sliced from, so the key (which hashes the source model) can't be rebuilt reliably.
+Raw `.gcode` thumbnails come from the embedded `; thumbnail begin WxH` PNG (largest), else the source model's plate
+thumbnail (file dict only).
+
+Job columns (v033): `save_slice: bool`, `save_slice_name?` (save this job's production slice as a version —
+`services/slice_saver.py` copies the artifact next to the model as a normal library file + a `sliced_versions` row; a
+same-key version for that model is never duplicated; failures are logged/recorded, never fail the job),
+`allow_cached_slice: bool` (print a matching version instead of slicing when claimed — `queue_engine._use_cached_slice`
+builds the key from the exact `SliceRequest`, takes the newest present same-key version for that model, reslices a stale one
+unless the policy pins it, stages a private copy; any lookup error just slices), `sliced_version_id?` (plain int —
+the version it printed), `slice_cache_info: JSON?` (latest decision `{decision: hit|miss, reason?, at, cache_key,
+source_content_hash, sliced_version_id?, cached_file_id?, cached_file_hash?, preset_content_hash_stored/current?,
+slicer_version_stored/current?, stale?, stale_reasons, policy: use_latest|pin_cached, gate?: laminus_down (claimed on this
+version while Laminus was down — BIZ-201), save?: {outcome:
+saved|duplicate|failed, sliced_version_id?, cache_key, file_id?, error?, at}}`). `uploaded_files.pack_recipe_hash?`
+(project packs). `queue_config.slice_cache_use_latest_settings: bool = True` (on: automatic reuse reslices a stale
+version; off: it still prints, flagged stale). Every decision also logs one line `slice_cache event=<lookup|
+hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack_new> key=value …` on logger
+`app.services.slice_cache` (`grep slice_cache` in `docker compose logs themis`).
+
 ### gcode_files
 `id, job_id FK, printer_id FK, path, filament_grams: float?, estimated_seconds: int?`.
 - `filament_grams` / `estimated_seconds`: parsed from the gcode header after slice completes (OrcaSlicer
@@ -154,13 +204,29 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
   Exposed on `GET /api/v1/jobs/{id}/details` as `filament_grams` / `estimated_seconds`.
   Aggregated per-project in the project dict as `filament_grams` / `estimated_seconds`.
   Row deleted when print completes or job is cancelled.
+- `slice_inputs: JSON?` (v033) — the slicing-cache key inputs this artifact was sliced from (null for pre-sliced files /
+  uncacheable sources), so a job flagged "save" after slicing can still be saved.
+
+### job_model_targets  (v031 — "any printer of this make/model")
+`id, job_id FK (CASCADE), machine_profile` (a printer's make/model = its `current_orca_printer_profile`),
+`print_profile, filament_profile?, filament_id?, filament_type, filament_color` (`"any"` default),
+`filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
+Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
+rows (at create/PATCH via `materialize_job`, and every queue cycle in `_try_claim_for_printer` via
+`sync_targets_for_printer`), so the claim query / slicer / estimates keep reading configs by (job, printer).
+Sync adds rows for printers added or re-profiled later and removes rows for printers that no longer match —
+only for `queued`/`blocked` jobs. An explicit per-printer config wins over a target for the same printer.
+`slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
+(v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
+on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
+`POST /projects/{id}/generate` (`eligible_machine_profiles`).
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
 
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
-estimates_enabled:bool=False}`. `estimates_enabled` gates the background test-slice estimate pipeline
+estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline
 (see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
 Managed via `GET/PUT /api/v1/settings/queue`.
 

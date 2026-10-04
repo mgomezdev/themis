@@ -120,6 +120,26 @@ async def _isolate_printer_manager():
 # Shared factories for API tests (previously copy-pasted per test file)
 # ---------------------------------------------------------------------------
 
+def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = False) -> bytes:
+    """A Bambu-style sliced archive (.gcode.3mf, BIZ-190): `Metadata/plate_N.gcode` per (plate, grams, minutes), a
+    thumbnail for plate 1 and — with `slice_info` — a `Metadata/slice_info.config` carrying the same estimates. Deflated
+    like real archives; fixed zip timestamps so the content hash is stable."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        def put(name, data):
+            zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data, compress_type=zipfile.ZIP_DEFLATED)
+        for num, grams, mins in plates:
+            put(f"Metadata/plate_{num}.gcode",
+                f"; filament used [g] = {grams}\n; estimated printing time (normal mode) = {mins}m 0s\nG28\n")
+        put("Metadata/plate_1.png", b"\x89PNG-archive")
+        if slice_info:
+            body = "".join(
+                f'<plate><metadata key="index" value="{n}"/><metadata key="prediction" value="{m * 60}"/>'
+                f'<metadata key="weight" value="{g}"/></plate>' for n, g, m in plates)
+            put("Metadata/slice_info.config", f'<?xml version="1.0" encoding="UTF-8"?><config>{body}</config>')
+    return buf.getvalue()
+
+
 def make_3mf_bytes() -> bytes:
     """Smallest 3MF the upload route accepts: one plate with a 60s / 5g estimate and a thumbnail."""
     # Entries carry a FIXED timestamp: zipfile stamps "now" (2-second resolution) by default, so two
@@ -222,20 +242,29 @@ def spoolman_upstream():
         hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.spoolman_service.httpx.AsyncClient", _factory):
+    with patch("app.services.providers.spoolman.service.httpx.AsyncClient", _factory):
         yield up
 
 
 @pytest.fixture(autouse=True)
-def _reset_laminus_module_state():
-    """laminus.py keeps the catalog cache, health memo and pending remap in module globals that outlive a
+def _reset_slice_cache_fingerprints():
+    """slice_cache memoises sidecar fingerprints in a module dict; never let one test's answer leak into another."""
+    from app.services import slice_cache
+    slice_cache._fingerprints.clear()
+    yield
+    slice_cache._fingerprints.clear()
+
+
+@pytest.fixture(autouse=True)
+def _reset_catalog_service_state():
+    """catalog_service keeps the catalog cache, health memo and pending remap in module globals that outlive a
     test; restore them so a test that warms the cache (or parks a remap) cannot leak into the next one."""
-    import app.api.routes.laminus as laminus
-    names = ("_catalog_dict", "_catalog_bytes", "_catalog_fetched_at", "_pending_sync", "_health_memo", "_health_memo_at")
-    saved = {n: getattr(laminus, n) for n in names}
+    from app.services import catalog_service
+    names = ("_catalog", "_catalog_bytes", "_catalog_fetched_at", "_pending_sync", "_health_memo", "_health_memo_at")
+    saved = {n: getattr(catalog_service, n) for n in names}
     yield
     for n, v in saved.items():
-        setattr(laminus, n, v)
+        setattr(catalog_service, n, v)
 
 
 

@@ -1,31 +1,15 @@
 """Project child resources (items, links), stage promotion, generate preconditions, project jobs, delete."""
 from unittest.mock import patch
 
+from tests.fake_providers import FakeSlicingProvider
 import pytest
-import pytest_asyncio
-from sqlalchemy import event, func, select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import func, select
 
-from app.database import Base, _set_sqlite_pragmas
 from app.models import Job, ProjectItem, ProjectLink, ProjectPart, UploadedFile
 
 _ITEM_KEYS = {"id", "project_id", "file_id", "file_name", "quantity", "quantity_completed", "quantity_failed",
               "filament_type", "filament_color", "filament_id", "sort_order"}  # src/api/projects.ts ProjectItem
 _LINK_KEYS = {"id", "project_id", "url", "label", "sort_order", "created_at"}
-
-
-@pytest_asyncio.fixture
-async def session_factory():
-    """conftest's factory with production's connect pragmas (FKs ON), so DELETE /projects can be
-    checked against the real ON DELETE CASCADE / SET NULL behavior."""
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
-    event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    try:
-        yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    finally:
-        await engine.dispose()
 
 
 @pytest.fixture
@@ -242,7 +226,7 @@ _STL = b"solid x\nendsolid x\n"
 
 async def _generate(client, project_id: int, tmp_path, *, sidecar: str | None = "http://laminus.test"):
     with patch("app.config.get_library_dir", return_value=tmp_path / "library"), \
-         patch("app.api.routes.projects.get_laminus_sidecar_url", return_value=sidecar):
+         patch("app.api.routes.projects.get_slicing_provider", return_value=FakeSlicingProvider() if sidecar else None):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"process_preset": "0.20mm Standard"})
 
 

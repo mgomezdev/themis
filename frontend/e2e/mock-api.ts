@@ -20,7 +20,7 @@ const MONO = {
   progress: 0, remaining_time: 0, temperatures: { nozzle: 25, bed: 25 }, loaded_filaments: [],
 };
 const PROFILES = { print_profiles: ['0.20mm Standard', '0.08 Extra Fine'], filament_profiles: ['Generic PLA @System', 'Generic PETG @System', 'Generic TPU @System'] };
-const FILE = { id: 1, original_filename: 'multi.3mf', folder: '/', plate_count: 2 };
+const FILE = { id: 1, original_filename: 'multi.3mf', folder: '/', plate_count: 2, kind: '3mf', sliced_version_count: 0, sliced_version: null };
 const PLATES = [
   { plate_number: 1, estimated_time: 3600, filament_g: 12, thumbnail_path: null },
   { plate_number: 2, estimated_time: 1800, filament_g: 6, thumbnail_path: null },
@@ -32,6 +32,10 @@ const ok: Json = (route, body = {}) => route.fulfill({ status: 200, contentType:
 
 export async function mockApi(page: Page, over: Partial<{
   printers: any[]; fleet: any[] | (() => any[]); profiles: any; files: any[]; plates: any[]; modelFilaments: any[]; jobDetails: any;
+  /** GET /files/{id}/sliced-versions body (slicing cache), keyed by model file id. */
+  slicedVersions: Record<number, any[]>;
+  /** GET /files/{id}/plates per file id (default: `plates` for every file). */
+  platesByFile: Record<number, any[]>;
   /** GET /queue body (a function so a test can make it change as the journey progresses). */
   queue: () => any[];
   /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
@@ -90,14 +94,15 @@ export async function mockApi(page: Page, over: Partial<{
     if (path === '/files') return ok(route, files);
     if ((m = path.match(/^\/files\/(\d+)\/plates$/))) {
       const file = files.find(f => f.id === +m[1]) ?? files[0];
-      return ok(route, { filename: file?.original_filename ?? '', plates });
+      return ok(route, { filename: file?.original_filename ?? '', plates: over.platesByFile?.[+m[1]] ?? plates });
     }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
+    if ((m = path.match(/^\/files\/(\d+)\/sliced-versions$/))) return ok(route, over.slicedVersions?.[+m[1]] ?? []);
     if (path === '/settings/spoolman') return ok(route, { enabled: false });
     if (path === '/spoolman/filaments' || path === '/spoolman/spools') return ok(route, []);
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
-    if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5 });
+    if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5, slice_cache_use_latest_settings: true });
     if (path === '/queue') return ok(route, over.queue ? over.queue() : []);
     if (path === '/jobs') return ok(route, []);
     if (path === '/orders') return ok(route, []);

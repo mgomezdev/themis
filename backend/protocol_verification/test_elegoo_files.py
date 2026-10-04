@@ -28,7 +28,7 @@ def test_get_file_list_response_shape(client):
     assert isinstance(entries, list)
     for e in entries:
         assert "name" in e, f"entry without 'name': {e}"
-        assert isinstance(e.get("size", 0), (int, float))
+        assert isinstance(e.get("FileSize"), (int, float)), f"expected a numeric FileSize (the client reads it): {e}"
     kinds = {e.get("type") for e in entries}
     print("distinct entry 'type' values (how are directories marked?):", kinds)
 

@@ -7,7 +7,7 @@ import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { fmtDate, fmtDuration, fmtMoney } from '../data/helpers';
 import {
-  getProject, getProjectJobs, generateProject, updateProjectPart,
+  getProject, getProjectJobs, generateProject, updateProjectPart, type GenerateOut,
   getProjectShare, createOrRegenerateProjectShare, revokeProjectShare,
   patchProject, type Project, type ProjectJob, type ProjectShare,
 } from '../api/projects';
@@ -37,7 +37,9 @@ export function ProjectDetailScreen() {
   const [jobs, setJobs] = useState<ProjectJob[]>([]);
   const [generating, setGenerating] = useState(false);
   const [generateError, setGenerateError] = useState('');
-  const [generateResult, setGenerateResult] = useState<{ jobCount: number } | null>(null);
+  const [generateResult, setGenerateResult] = useState<{ jobCount: number; files: GenerateOut['files'] } | null>(null);
+  const [allowCached, setAllowCached] = useState(true);
+  const [saveSlice, setSaveSlice] = useState(false);
   const [showPrinterPicker, setShowPrinterPicker] = useState(false);
   const [eligiblePrinterIds, setEligiblePrinterIds] = useState<number[]>([]);
   const [processPreset, setProcessPreset] = useState<string | null>(null);
@@ -153,8 +155,8 @@ export function ProjectDetailScreen() {
     setGenerateResult(null);
     setShowPrinterPicker(false);
     try {
-      const result = await generateProject(projectId, eligiblePrinterIds, processPreset);
-      setGenerateResult({ jobCount: result.jobs.length });
+      const result = await generateProject(projectId, eligiblePrinterIds, processPreset, { allowCached, saveSlice });
+      setGenerateResult({ jobCount: result.jobs.length, files: result.files ?? [] });
       reload();
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : String(e));
@@ -370,6 +372,16 @@ export function ProjectDetailScreen() {
             <div style={{ marginTop: 12 }}>
               <ProcessPresetPicker printerIds={eligiblePrinterIds} value={processPreset} onChange={setProcessPreset} />
             </div>
+            <div className="col gap-2" style={{ marginTop: 12 }}>
+              <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={allowCached} onChange={e => setAllowCached(e.target.checked)} />
+                Use cached slices when available
+              </label>
+              <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={saveSlice} onChange={e => setSaveSlice(e.target.checked)} />
+                Save sliced gcode to library
+              </label>
+            </div>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
               <button className="btn sm" onClick={() => setShowPrinterPicker(false)}>Cancel</button>
               <button
@@ -394,6 +406,13 @@ export function ProjectDetailScreen() {
             <span style={{ color: 'var(--ok)' }}>{Icons.check}</span>
             <span style={{ fontSize: 13, flex: 1 }}>
               {generateResult.jobCount} job{generateResult.jobCount !== 1 ? 's' : ''} queued
+              {generateResult.files.map(f => (f.pack_reused || f.cached_plates > 0) && (
+                <span key={f.id} className="tiny muted" data-testid="generate-cache-info" style={{ display: 'block' }}>
+                  {f.original_filename}:{f.pack_reused ? ' reused previous pack' : ''}
+                  {f.pack_reused && f.cached_plates > 0 ? ',' : ''}
+                  {f.cached_plates > 0 ? ` ${f.cached_plates} plate${f.cached_plates === 1 ? ' has' : 's have'} cached versions` : ''}
+                </span>
+              ))}
             </span>
             <button className="btn sm" onClick={() => navigate('/queue')}>View Queue</button>
           </div>

@@ -12,11 +12,11 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import SpoolmanConfig
-from . import spool_alerts, spoolman_service
+from . import spool_alerts
+from .providers.filament_inventory import InventoryProviderError, get_inventory_provider
 
 logger = logging.getLogger("app")
 
@@ -24,10 +24,8 @@ _POLL_SECONDS = 60
 
 
 def _describe_error(e: Exception) -> tuple[str, str]:
-    if isinstance(e, httpx.HTTPStatusError):
-        return str(e.response.status_code), str(e)
-    if isinstance(e, httpx.RequestError):
-        return type(e).__name__, str(e)
+    if isinstance(e, InventoryProviderError):
+        return e.code, str(e)
     return type(e).__name__, str(e)
 
 
@@ -39,8 +37,11 @@ async def record_sync(session: AsyncSession, row: SpoolmanConfig) -> dict:
     now = datetime.now(timezone.utc).isoformat()
     row.last_attempt_at = now
     try:
-        filaments = await spoolman_service.fetch_filaments(row.url, row.api_key)
-        spools = await spoolman_service.fetch_spools(row.url, row.api_key)
+        provider = await get_inventory_provider(session)
+        if provider is None:
+            raise InventoryProviderError("Spoolman not configured or disabled", code="NotConfigured")
+        filaments = await provider.list_filaments()
+        spools = await provider.list_spools()
     except Exception as e:
         row.last_sync_error_code, row.last_sync_error = _describe_error(e)
         await session.commit()

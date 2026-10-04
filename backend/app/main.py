@@ -121,20 +121,19 @@ async def lifespan(app: FastAPI):
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
-    from .config import get_laminus_sidecar_url as _get_sidecar_url
-    _sidecar_url = _get_sidecar_url()
-    if _sidecar_url:
+    from .services.providers.slicing import get_slicing_provider
+    _slicing = get_slicing_provider()
+    if _slicing is not None:
         try:
-            from .services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
-            await asyncio.to_thread(LaminusSidecarClient(_sidecar_url).health)
-            logging.getLogger("app").info("Laminus sidecar healthy at %s", _sidecar_url)
+            await asyncio.to_thread(_slicing.health)
+            logging.getLogger("app").info("Laminus sidecar healthy at %s", _slicing.identity)
         except Exception as e:
             logging.getLogger("app").warning(
-                "Laminus sidecar at %s is not reachable: %s", _sidecar_url, e
+                "Laminus sidecar at %s is not reachable: %s", _slicing.identity, e
             )
         # Kick off catalog warm-up in the background — don't block startup.
-        from .api.routes.laminus import warm_catalog_cache as _warm_catalog
-        asyncio.create_task(_warm_catalog())
+        from .services import catalog_service
+        asyncio.create_task(catalog_service.warm())
 
     yield
 
@@ -205,6 +204,8 @@ def _resolve_within(root_dir: Path, full_path: str) -> Path | None:
     normalise "..". Both (and symlinks pointing outside) must be rejected before
     the file is served.
     """
+    if "\x00" in full_path:  # Windows resolve() accepts NUL instead of raising ValueError
+        return None
     root = root_dir.resolve()
     try:
         candidate = (root / full_path).resolve()

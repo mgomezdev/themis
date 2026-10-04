@@ -113,6 +113,10 @@ export interface GenerateOut {
     original_filename: string;
     folder: string;
     plate_count: number;
+    /** Slicing cache: an identical earlier pack was reused instead of re-packing. */
+    pack_reused: boolean;
+    /** Slicing cache: how many of its plates already have cached gcode (used if a printer's slice matches). */
+    cached_plates: number;
   }[];
   eligible_printer_ids: number[];
   pack_bed_x: number;
@@ -165,11 +169,21 @@ export const deleteProjectItem = (projectId: number, itemId: number) =>
 export const reorderProjectItems = (
   projectId: number, items: { id: number; sort_order: number }[],
 ) => request<ProjectItem[]>(`/api/v1/projects/${projectId}/items/reorder`, json('PUT', items));
+export interface GenerateCacheOptions {
+  /** Reuse an identical earlier pack and let each job print matching cached gcode (default on server-side too). */
+  allowCached?: boolean;
+  /** Keep each generated job's slice in the library as cached gcode. */
+  saveSlice?: boolean;
+}
+
 export const generateProject = (
   projectId: number, eligiblePrinterIds: number[] = [], processPreset: string | null = null,
+  cache: GenerateCacheOptions = {},
 ) => request<GenerateOut>(`/api/v1/projects/${projectId}/generate`, json('POST', {
   eligible_printer_ids: eligiblePrinterIds,
   process_preset: processPreset,
+  allow_cached: cache.allowCached ?? true,
+  save_slice: cache.saveSlice ?? false,
 }));
 
 export interface ProjectJob {

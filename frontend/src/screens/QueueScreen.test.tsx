@@ -29,8 +29,9 @@ const nullEstimate = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
   deduction_skipped: null, estimate_status: null, estimate_seconds: null,
   estimate_filament_grams: null, estimate_filament_breakdown: null, estimate_preset_label: null,
-  materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>,
+  materials: [] as string[], eligible_printers: [] as Array<{ id: number; name: string }>, model_targets: [] as ApiJob['model_targets'],
   low_stock_warning: null, filament_cost: null, not_before: null,
+  save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
 };
 
 const mockJobs: ApiJob[] = [
@@ -89,6 +90,18 @@ describe('QueueScreen', () => {
     expect(screen.getAllByText(/^Plate \d$/)).toHaveLength(2);
     await user.click(screen.getByRole('button', { name: 'Active' }));
     expect(screen.getAllByText(/^Plate \d$/).map(e => e.textContent)).toEqual(['Plate 1']);
+  });
+
+  it('marks jobs that save their gcode or print a cached, stale version (BIZ-194)', () => {
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [
+      { ...mockJobs[1], save_slice: true },
+      { ...mockJobs[1], id: 3, plate_number: 3, sliced_version_id: 4,
+        slice_cache_info: { decision: 'hit', stale: true, stale_reasons: ['slicer_version_changed'] } },
+    ], refetch: vi.fn() });
+    render(<QueueScreen />, { wrapper });
+    expect(screen.getByText('Saving gcode')).toBeTruthy();
+    expect(screen.getByText('Used cached gcode')).toBeTruthy();
+    expect(screen.getByText('Stale: OrcaSlicer updated')).toBeTruthy();
   });
 
   it('renders empty state when no jobs', () => {

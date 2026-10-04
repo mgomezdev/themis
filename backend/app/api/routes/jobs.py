@@ -10,34 +10,33 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SpoolmanConfig, UploadedFile
-from ...services.library_scanner import library_abs_path
+from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
+from ...services import slice_cache, slice_saver
+from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
-from ...services.override_inspector import inspect_overrides, CURATED_KEYS
-from ...services import scheduling
+from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config, _parse_gcode_estimates, _deduct_spool
+from ...services.queue_engine import queue_engine, _slot_for_config, _deduct_spool
 from ...services.slicer_service import SliceError, SliceRequest
 from ...services.spool_check import check_spool_sufficiency
-from ...services.spoolman_service import fetch_spools
+from ...services.providers.filament_inventory import Spool, get_inventory_provider
+from ...services.providers.slicing import get_format_provider
 
 logger = logging.getLogger(__name__)
-
-_CURATED_KEYS_SET: frozenset[str] = frozenset(CURATED_KEYS)
-
 
 def _clean_overrides(o: dict | None) -> dict | None:
     """Strip any key not in the curated allowlist before storing."""
     if not o:
         return None
-    cleaned = {k: str(v) for k, v in o.items() if k in _CURATED_KEYS_SET}
+    allowed = frozenset(get_format_provider().curated_override_keys())
+    cleaned = {k: str(v) for k, v in o.items() if k in allowed}
     return cleaned or None
 
 
@@ -59,7 +58,7 @@ class FilamentMapEntry(BaseModel):
 
 class PrinterConfigInput(BaseModel):
     printer_id: int
-    print_profile: str
+    print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced (.gcode / .gcode.3mf) jobs
     filament_profile: str | None = None
     filament_id: int | None = None
     filament_type: str
@@ -86,6 +85,139 @@ class PrinterConfigInput(BaseModel):
         return v
 
 
+class ModelTargetInput(BaseModel):
+    """Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).
+    No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
+    machine_profile: str
+    print_profile: str = ""
+    filament_profile: str | None = None
+    filament_id: int | None = None
+    filament_type: str = "any"
+    filament_color: str = "any"
+    filament_map: list[dict] | None = None
+
+    @field_validator("machine_profile")
+    @classmethod
+    def _machine_profile_set(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("machine_profile must not be blank")
+        return v
+
+    @field_validator("filament_map")
+    @classmethod
+    def _no_slot_pinning(cls, v: list[dict] | None) -> list[dict] | None:
+        if v is None:
+            return None
+        entries = [FilamentMapEntry.model_validate(e).model_dump() for e in v]
+        if any(e.get("tool_index") is not None for e in entries):
+            raise ValueError("tool_index is printer-specific and can't be used with a make/model target")
+        return entries
+
+    @field_validator("filament_type", "filament_color")
+    @classmethod
+    def _validate_filament_ask(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError('must be "any" or a specific value, not null/blank')
+        return v
+
+
+def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
+    """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
+    path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
+    grams, secs, per_extruder = get_format_provider().parse_estimates(str(path), job.plate_number)
+    if grams is None and secs is None:
+        job.estimate_status = None
+        return
+    job.estimate_status = "done"
+    job.estimate_seconds = secs
+    job.estimate_filament_grams = grams
+    job.estimate_filament_breakdown = (
+        [{"extruder_index": i, "filament_profile": None, "grams": g} for i, g in enumerate(per_extruder)]
+        if per_extruder else None
+    )
+    job.estimate_preset_label = None
+
+
+async def _check_gcode_printers(
+    session: AsyncSession, uploaded_file: UploadedFile | None,
+    configs: list[PrinterConfigInput], targets: list[ModelTargetInput],
+) -> None:
+    """A pre-sliced file can only go to a vendor that prints that format as-is: a raw .gcode not to one that only
+    ingests a sliced archive (e.g. Bambu), a .gcode.3mf archive only to one that does (BIZ-190). Also refuses a
+    duplicated printer config (one config per job+printer)."""
+    seen: set[int] = set()
+    for cfg in configs:
+        if cfg.printer_id in seen:
+            raise HTTPException(422, f"Printer {cfg.printer_id} is listed more than once")
+        seen.add(cfg.printer_id)
+    if not is_presliced_file(uploaded_file):
+        return
+    filename = uploaded_file.original_filename
+    if file_kind(filename) == "gcode_3mf":
+        why = "only prints raw .gcode, not a sliced .gcode.3mf archive"
+    else:
+        why = "can't print a raw .gcode file — it needs a sliced 3MF"
+    for cfg in configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
+            raise HTTPException(422, f"{printer.name} {why}")
+    for t in targets:
+        matching = (await session.execute(
+            select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile)
+        )).scalars().all()
+        if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
+            raise HTTPException(422, f"No {t.machine_profile} printer can take this file: each one {why}")
+
+
+async def _cached_version_of(session: AsyncSession, uploaded_file: UploadedFile | None) -> SlicedVersion | None:
+    if uploaded_file is None:
+        return None
+    return (await session.execute(
+        select(SlicedVersion).where(SlicedVersion.file_id == uploaded_file.id))).scalar_one_or_none()
+
+
+async def _check_version_printers(
+    session: AsyncSession, version: SlicedVersion | None,
+    configs: list[PrinterConfigInput], targets: list[ModelTargetInput],
+) -> None:
+    """A cached version was sliced for one make/model: refuse printers/targets of any other (BIZ-193)."""
+    if version is None:
+        return
+    for cfg in configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is not None and printer.current_orca_printer_profile != version.machine_preset:
+            raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
+                                     "sliced for that printer model")
+    for t in targets:
+        if t.machine_profile != version.machine_preset:
+            raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}, not "
+                                     f"{t.machine_profile}")
+
+
+def _validate_targets(targets: list[ModelTargetInput]) -> None:
+    seen: set[str] = set()
+    for t in targets:
+        if t.machine_profile in seen:
+            raise HTTPException(422, f"Duplicate make/model target {t.machine_profile!r}")
+        seen.add(t.machine_profile)
+
+
+def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput]) -> None:
+    for t in targets:
+        session.add(JobModelTarget(
+            job_id=job_id,
+            machine_profile=t.machine_profile,
+            print_profile=t.print_profile,
+            # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
+            # each printer's loaded slot supplies the preset.
+            filament_profile=t.filament_profile or None,
+            filament_id=t.filament_id,
+            filament_type=t.filament_type,
+            filament_color=t.filament_color,
+            filament_map=t.filament_map,
+        ))
+
+
 class OverrideCheckRequest(BaseModel):
     uploaded_file_id: int
     printer_id: int
@@ -107,9 +239,14 @@ class JobCreate(BaseModel):
     uploaded_file_id: int
     plate_number: int = 1
     order_id: int | None = None
-    printer_configs: list[PrinterConfigInput]
+    printer_configs: list[PrinterConfigInput] = []
+    # Make/model eligibility ("any Bambu P1S"); at least one printer config or target is required.
+    model_targets: list[ModelTargetInput] = []
     overrides: dict | None = None
     not_before: str | None = None
+    # Slicing cache (BIZ-192): keep this job's production slice in the library, next to the model, as a cached version.
+    save_slice: bool = False
+    save_slice_name: str | None = Field(default=None, max_length=200)
 
     @field_validator("not_before")
     @classmethod
@@ -146,6 +283,12 @@ def _to_dict(j: Job) -> dict:
         "estimate_preset_label": j.estimate_preset_label,
         "filament_cost": j.filament_cost,
         "not_before": j.not_before,
+        # Slicing cache (BIZ-191..193)
+        "save_slice": bool(j.save_slice),
+        "save_slice_name": j.save_slice_name,
+        "allow_cached_slice": bool(j.allow_cached_slice),
+        "sliced_version_id": j.sliced_version_id,
+        "slice_cache_info": j.slice_cache_info,
     }
 
 
@@ -183,7 +326,7 @@ async def _front_queue_position(session: AsyncSession) -> float:
     summary="Create job",
     responses={
         404: {"description": "File, printer, or order not found"},
-        422: {"description": "printer_configs is empty"},
+        422: {"description": "Neither printer_configs nor model_targets given, a bad or duplicate target/printer, a gcode file on a printer that can't take raw gcode, or a customer order"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -191,25 +334,39 @@ async def create_job(
     body: JobCreate,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    """Queue a new print job for a specific file plate. At least one printer config is required.
-    The job is added at the end of the queue and the engine is woken immediately."""
+    """Queue a new print job for a specific file plate. At least one printer config or make/model target
+    (`model_targets`) is required. The job is added at the end of the queue and the engine is woken immediately."""
     # Validate file exists
     uploaded_file = await session.get(UploadedFile, body.uploaded_file_id)
     if uploaded_file is None:
         raise HTTPException(404, f"File {body.uploaded_file_id} not found")
 
-    if not body.printer_configs:
-        raise HTTPException(422, "printer_configs must not be empty")
+    if not body.printer_configs and not body.model_targets:
+        raise HTTPException(422, "printer_configs or model_targets must not be empty")
+    _validate_targets(body.model_targets)
 
     for cfg in body.printer_configs:
         printer = await session.get(Printer, cfg.printer_id)
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+    await _check_gcode_printers(session, uploaded_file, body.printer_configs, body.model_targets)
+    version = await _cached_version_of(session, uploaded_file)
+    await _check_version_printers(session, version, body.printer_configs, body.model_targets)
+    # A pre-sliced archive prints exactly the plate asked for (Bambu is told `Metadata/plate_N.gcode`): a plate the
+    # file doesn't have would only fail at print time, and failed is terminal.
+    plates = [p.get("plate_number") for p in (uploaded_file.plates or [])]
+    if is_presliced_file(uploaded_file) and plates and body.plate_number not in plates:
+        raise HTTPException(422, f"Plate {body.plate_number} is not in this file (it has plate(s) "
+                                 f"{', '.join(str(n) for n in plates)})")
 
     if body.order_id is not None:
         order = await session.get(Order, body.order_id)
         if order is None:
             raise HTTPException(404, f"Order {body.order_id} not found")
+        if order.order_type == "customer":
+            raise HTTPException(422, "Customer work is recorded as a project — link jobs to internal orders only")
+    if body.save_slice and is_presliced_file(uploaded_file):
+        raise HTTPException(422, "This file is already sliced; there is no new slice to save")
 
     now = datetime.now(timezone.utc).isoformat()
     pos = await _next_queue_position(session)
@@ -218,15 +375,28 @@ async def create_job(
         uploaded_file_id=body.uploaded_file_id,
         plate_number=body.plate_number,
         order_id=body.order_id,
-        overrides=_clean_overrides(body.overrides),
+        # Slicing overrides mean nothing to pre-sliced gcode; they are dropped, not stored.
+        overrides=None if is_presliced_file(uploaded_file) else _clean_overrides(body.overrides),
         queue_position=pos,
         status="queued",
         not_before=body.not_before,
+        save_slice=body.save_slice,
+        save_slice_name=_clean_save_name(body.save_slice_name) if body.save_slice else None,
         created_at=now,
         updated_at=now,
     )
+    if version is not None:   # printing a cached version picked by hand: always honoured, stale or not (BIZ-193)
+        job.sliced_version_id = version.id
+        job.slice_cache_info = slice_cache.decision_info(
+            "hit", reason="user_selected", cache_key=version.cache_key, version=version,
+            cached_file_hash=uploaded_file.content_hash)
     session.add(job)
     await session.flush()
+    if version is not None:
+        slice_cache.log_event("hit_slice_skipped", job_id=job.id, reason="user_selected",
+                              cache_key=version.cache_key, sliced_version_id=version.id,
+                              cached_file_id=uploaded_file.id, cached_file_hash=uploaded_file.content_hash,
+                              source_file_id=version.source_file_id)
 
     for cfg in body.printer_configs:
         config = JobPrinterConfig(
@@ -242,10 +412,19 @@ async def create_job(
         )
         session.add(config)
 
+    _add_targets(session, job.id, body.model_targets)
+    await session.flush()
+    await model_targets.materialize_job(session, job.id)
+
     await session.commit()
     await session.refresh(job)
 
     queue_engine.wake()
+
+    if is_presliced_file(uploaded_file):
+        _apply_gcode_estimate(job, uploaded_file)
+        await session.commit()
+        return _to_dict(job)
 
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
@@ -290,50 +469,43 @@ async def check_overrides(
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
     # project config. If the sidecar is unavailable or any required UUID is missing,
     # skip the diff rather than blocking job creation.
-    from ...config import get_laminus_sidecar_url
-    from ...services.laminus_sidecar_client import LaminusSidecarClient, SidecarError
+    from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 
-    sidecar_url = get_laminus_sidecar_url()
-    if not sidecar_url:
+    slicing = get_slicing_provider()
+    if slicing is None:
         return {**empty, "has_embedded_settings": True, "error": "Override check requires Laminus sidecar"}
 
-    from ..routes.laminus import get_cached_catalog
+    from ...services import catalog_service
     try:
-        catalog = await get_cached_catalog()
+        catalog = await catalog_service.get_cached_catalog()
     except Exception as e:
         return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
     machine_name = printer.current_orca_printer_profile
-    machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
-    process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
-    filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
-
-    machine_uuid = machine_map.get(machine_name)
-    process_uuid = process_map.get(body.print_profile)
+    machine_uuid = catalog.ref_for("machine", machine_name)
+    process_uuid = catalog.ref_for("process", body.print_profile)
     if not machine_uuid or not process_uuid:
         return {**empty, "has_embedded_settings": True,
                 "error": f"Profile not found in sidecar: machine={machine_name!r} process={body.print_profile!r}"}
 
     # Filament content doesn't affect the curated (process) diff. If the named
     # filament isn't in the catalog, pick the first compatible one as a stand-in.
-    filament_uuid = filament_map.get(body.filament_profile or "")
+    filament_uuid = catalog.ref_for("filament", body.filament_profile or "")
     if not filament_uuid:
-        compat = [f["uuid"] for f in catalog.get("filament", [])
-                  if machine_name in (f.get("compatible_printers") or [])]
-        filament_uuid = compat[0] if compat else next(iter(filament_map.values()), None)
+        compat = [f.ref for f in slicing.compatible_presets(catalog, machine_name, "filament")]
+        filament_uuid = compat[0] if compat else next((f.ref for f in catalog.filaments if f.name and f.ref), None)
     if not filament_uuid:
         return {**empty, "has_embedded_settings": True, "error": "No filament profiles found in sidecar catalog"}
 
     try:
-        client = LaminusSidecarClient(sidecar_url)
         config = await asyncio.get_running_loop().run_in_executor(
-            None, client.get_merged_config, machine_uuid, process_uuid, [filament_uuid]
+            None, slicing.merged_config, machine_uuid, process_uuid, [filament_uuid]
         )
-    except SidecarError as e:
+    except SlicingProviderError as e:
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1
-    return inspect_overrides(str(source_path), config, slots)
+    return slicing.inspect_overrides(str(source_path), config, slots)
 
 
 @router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
@@ -342,6 +514,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
     result = await session.execute(select(Job).order_by(Job.queue_position))
     jobs = result.scalars().all()
 
+    targets_by_job = await model_targets.target_dicts_by_job(session, [j.id for j in jobs])
     out = []
     for j in jobs:
         d = _to_dict(j)
@@ -357,6 +530,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
                 eligible_printers.append({"id": p.id, "name": p.name})
         d["materials"] = materials
         d["eligible_printers"] = eligible_printers
+        d["model_targets"] = targets_by_job[j.id]
         out.append(d)
     return out
 
@@ -464,13 +638,13 @@ async def get_job_details(
         if slot and slot.get("spoolman_spool_id") is not None:
             spool_ids_needed.add(str(slot["spoolman_spool_id"]))
 
-    spools_by_id: dict[str, dict] = {}
+    spools_by_id: dict[str, Spool] = {}
     if spool_ids_needed:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        provider = await get_inventory_provider(session)
+        if provider is not None:
             try:
-                spools = await fetch_spools(spoolman_cfg.url, spoolman_cfg.api_key)
-                spools_by_id = {str(s.get("id")): s for s in spools}
+                spools = await provider.list_spools()
+                spools_by_id = {s.ref: s for s in spools}
             except Exception:
                 logger.warning("Spoolman unreachable while checking spool sufficiency for job %s", job_id, exc_info=True)
 
@@ -494,6 +668,7 @@ async def get_job_details(
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
+            "from_model_target": cfg.model_target_id is not None,
             "low_stock_warning": spool_warning,
         })
 
@@ -515,6 +690,7 @@ async def get_job_details(
         "file": file_info,
         "plate": plate_info,
         "printer_configs": printer_configs,
+        "model_targets": await model_targets.target_dicts(session, job_id),
         "assigned_printer": assigned_printer,
         "filament_grams_live": gcode_rec.filament_grams if gcode_rec else None,
         "estimated_seconds_live": gcode_rec.estimated_seconds if gcode_rec else None,
@@ -582,7 +758,8 @@ async def cancel_job(
 
 
 class JobConfigsUpdate(BaseModel):
-    printer_configs: list[PrinterConfigInput]
+    printer_configs: list[PrinterConfigInput] = []
+    model_targets: list[ModelTargetInput] = []
     overrides: dict | None = None
 
 
@@ -591,7 +768,7 @@ class JobConfigsUpdate(BaseModel):
     summary="Update job configs",
     responses={
         404: {"description": "Job or printer not found"},
-        422: {"description": "Job is not in an editable status or printer_configs is empty"},
+        422: {"description": "Job is not in an editable status, or no printer_configs/model_targets given"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -605,17 +782,20 @@ async def update_job_configs(
     job = await _get_or_404(job_id, session)
     if job.status not in _EDITABLE:
         raise HTTPException(422, f"Job in status {job.status!r} cannot be edited")
-    if not body.printer_configs:
-        raise HTTPException(422, "printer_configs must not be empty")
+    if not body.printer_configs and not body.model_targets:
+        raise HTTPException(422, "printer_configs or model_targets must not be empty")
+    _validate_targets(body.model_targets)
     for cfg in body.printer_configs:
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
+    edited_file = await session.get(UploadedFile, job.uploaded_file_id)
+    await _check_gcode_printers(session, edited_file, body.printer_configs, body.model_targets)
+    await _check_version_printers(
+        session, await _cached_version_of(session, edited_file), body.printer_configs, body.model_targets)
 
-    existing = await session.execute(
-        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id)
-    )
-    for row in existing.scalars().all():
-        await session.delete(row)
+    # Configs first (they reference the targets), then the targets themselves.
+    await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
+    await session.execute(delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
 
     # Clear stale estimate fields
     job.estimate_status = None
@@ -640,15 +820,25 @@ async def update_job_configs(
             slice_failed=False,
             slice_error=None,
         ))
+    _add_targets(session, job_id, body.model_targets)
+    await session.flush()
+    await model_targets.materialize_job(session, job_id)
 
     job.status = "queued"
     job.block_reason = None
     job.assigned_printer_id = None
-    job.overrides = _clean_overrides(body.overrides)
+    uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
+    gcode_job = is_presliced_file(uploaded_file)
+    job.overrides = None if gcode_job else _clean_overrides(body.overrides)
     job.updated_at = datetime.now(timezone.utc).isoformat()
     await session.commit()
     await session.refresh(job)
     queue_engine.wake()
+
+    if gcode_job:
+        _apply_gcode_estimate(job, uploaded_file)
+        await session.commit()
+        return _to_dict(job)
 
     queue_cfg = await session.get(QueueConfig, 1)
     estimates_enabled = queue_cfg is not None and queue_cfg.estimates_enabled
@@ -860,6 +1050,9 @@ async def verify_slice(
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
 
+    if is_presliced_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
+
     if not printer.current_orca_printer_profile:
         return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
 
@@ -895,7 +1088,7 @@ _manual_complete_in_flight: set[int] = set()
     responses={
         404: {"description": "Job, printer, or printer config not found"},
         409: {"description": "Job is terminal, or already being manually completed"},
-        422: {"description": "No OrcaSlicer machine preset on the printer, or the slice failed"},
+        422: {"description": "No OrcaSlicer machine preset on the printer, the job prints pre-sliced gcode, or the slice failed"},
     },
     dependencies=[Depends(require_scope("jobs:write"))],
 )
@@ -934,6 +1127,9 @@ async def complete_job_manually(
     if uploaded_file is None:
         raise HTTPException(404, f"File {job.uploaded_file_id} not found")
 
+    if is_presliced_file(uploaded_file):
+        raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
+
     if not printer.current_orca_printer_profile:
         raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")
 
@@ -951,7 +1147,7 @@ async def complete_job_manually(
         gcode_path = await queue_engine.run_verify_slice(req, output_dir)
         # Parse before the `finally` cleanup below removes output_dir - the gcode
         # file must be read while it still exists.
-        grams, secs, extruder_grams = _parse_gcode_estimates(gcode_path)
+        grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path)
     except SliceError as exc:
         raise HTTPException(422, f"Slicing failed: {exc}")
     except Exception as exc:
@@ -992,12 +1188,11 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     spool_id = None
-    spoolman_url = None
-    spoolman_key = None
+    provider = None
     grams_to_deduct = None
     if grams is not None:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        inventory = await get_inventory_provider(session)
+        if inventory is not None and inventory.RECORDS_USAGE:
             loaded = printer.loaded_filaments or []
             slot = _slot_for_config(config, loaded)
             if slot is not None:
@@ -1005,8 +1200,7 @@ async def complete_job_manually(
                 if raw_spool_id is not None:
                     try:
                         spool_id = int(raw_spool_id)
-                        spoolman_url = spoolman_cfg.url
-                        spoolman_key = spoolman_cfg.api_key
+                        provider = inventory
                         grams_to_deduct = grams
                         job.deduction_skipped = False
                     except (TypeError, ValueError):
@@ -1018,8 +1212,8 @@ async def complete_job_manually(
     await session.commit()
     await session.refresh(job)
 
-    if spool_id is not None and spoolman_url and grams_to_deduct is not None:
-        asyncio.create_task(_deduct_spool(spoolman_url, spoolman_key, spool_id, grams_to_deduct))
+    if spool_id is not None and provider is not None and grams_to_deduct is not None:
+        asyncio.create_task(_deduct_spool(provider, spool_id, grams_to_deduct))
 
     return _to_dict(job)
 
@@ -1087,6 +1281,69 @@ async def set_job_schedule(
     await session.commit()
     await session.refresh(job)
     queue_engine.wake()
+    return _to_dict(job)
+
+
+def _clean_save_name(name: str | None) -> str | None:
+    return (name or "").strip() or None
+
+
+class JobSaveSlicePatch(BaseModel):
+    save_slice: bool
+    name: str | None = Field(default=None, max_length=200)
+
+
+_TERMINAL_STATUSES = ("complete", "failed", "cancelled")
+
+
+@router.patch(
+    "/{job_id}/save-slice",
+    summary="Save (or stop saving) a job's slice to the library",
+    responses={
+        404: {"description": "Job not found"},
+        409: {"description": "Job already finished (its slice is gone)"},
+        422: {"description": "Job prints a pre-sliced file or a cached version — there is no new slice to save"},
+    },
+    dependencies=[Depends(require_scope("jobs:write"))],
+)
+async def set_job_save_slice(
+    job_id: int,
+    body: JobSaveSlicePatch,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under
+    `name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.
+    Re-sending `save_slice: true` after a failed save retries it. Turning the flag off cancels a pending save but never
+    deletes a version already saved."""
+    job = await _get_or_404(job_id, session)
+    if job.status in _TERMINAL_STATUSES:
+        raise HTTPException(409, f"Job is {job.status}; its slice is no longer available to save")
+    if is_presliced_file(await session.get(UploadedFile, job.uploaded_file_id)):
+        raise HTTPException(422, "This job prints a pre-sliced file; there is no new slice to save")
+    if body.save_slice and job.sliced_version_id is not None:
+        raise HTTPException(422, "This job prints a cached version; there is no new slice to save")
+    last_save = (job.slice_cache_info or {}).get("save") or {}
+    # Save now if this turns the flag on, or retries a save that failed; a flag that was already on is the engine's job.
+    save_now = body.save_slice and (not job.save_slice or last_save.get("outcome") == "failed")
+    job.save_slice = body.save_slice
+    job.save_slice_name = _clean_save_name(body.name) if body.save_slice else None
+    job.updated_at = datetime.now(timezone.utc).isoformat()
+    await session.commit()
+
+    gcode = (await session.execute(
+        select(GcodeFile).where(GcodeFile.job_id == job_id).order_by(GcodeFile.id.desc()).limit(1)
+    )).scalar_one_or_none() if save_now else None
+    # Already sliced: save now (the engine only saves at slice time).
+    if gcode is not None and os.path.exists(gcode.path):
+        if gcode.slice_inputs:
+            await slice_saver.save_slice_version(
+                session, job_id=job_id, printer_id=gcode.printer_id, artifact_path=gcode.path,
+                inputs=slice_saver.inputs_from_dict(gcode.slice_inputs))
+        else:
+            await slice_saver.save_slice_version(
+                session, job_id=job_id, printer_id=gcode.printer_id, artifact_path=gcode.path, inputs=None,
+                uncacheable_reason="this slice was made before its inputs were recorded; it can't be keyed")
+    await session.refresh(job)
     return _to_dict(job)
 
 

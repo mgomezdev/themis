@@ -45,9 +45,11 @@ const BASE_JOB: queueApi.ApiJobDetails = {
   estimate_preset_label: null,
   materials: [],
   eligible_printers: [],
+  model_targets: [],
   low_stock_warning: null,
   filament_cost: null,
   not_before: null,
+  save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
   printer_configs: [
     {
       printer_id: 3,
@@ -59,6 +61,7 @@ const BASE_JOB: queueApi.ApiJobDetails = {
       filament_type: 'PLA',
       filament_color: '#000000',
       tool_index: 0,
+      from_model_target: false,
       slice_failed: false,
       slice_error: null,
       low_stock_warning: null,
@@ -244,5 +247,59 @@ describe('JobDetailScreen — scheduled start', () => {
     renderJobDetail();
     await screen.findByText(/part\.3mf/);
     expect(screen.queryByTestId('start-time-card')).toBeNull();
+  });
+});
+
+describe('JobDetailScreen — make/model targets', () => {
+  it('lists the models any printer of which may take the job, and says when none exists yet', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB,
+      printer_configs: [],
+      model_targets: [{
+        machine_profile: 'Bambu Lab P1S 0.4 nozzle', print_profile: '0.20mm', filament_profile: null,
+        filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+      }],
+    });
+
+    renderJobDetail();
+
+    const card = await screen.findByTestId('model-targets');
+    expect(card.textContent).toContain('Bambu Lab P1S 0.4 nozzle');
+    expect(card.textContent).toMatch(/No printer of this model is set up yet/);
+  });
+});
+
+describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
+  it('offers to save the slice for a model job, with markers and the debug block', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, status: 'queued', save_slice: true,
+      slice_cache_info: { decision: 'miss', reason: 'no_version', cache_key: 'feedbeef', policy: 'use_latest' },
+    });
+    renderJobDetail();
+
+    expect(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' })).toBeTruthy();
+    expect(within(screen.getByTestId('slice-cache-markers')).getByText('Saving gcode')).toBeTruthy();
+    expect(screen.getByTestId('slice-cache-debug').textContent).toContain('feedbeef');
+  });
+
+  it('ticking the box flags the job and the page shows it', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, status: 'queued' });
+    const patch = vi.spyOn(queueApi, 'setJobSaveSlice').mockResolvedValue({ ...BASE_JOB, status: 'queued', save_slice: true });
+    renderJobDetail();
+
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Save sliced gcode to library' }));
+
+    expect(patch).toHaveBeenCalledWith(BASE_JOB.id, true, null);
+    await waitFor(() => expect((screen.getByRole('checkbox', { name: 'Save sliced gcode to library' }) as HTMLInputElement).checked).toBe(true));
+    expect(within(screen.getByTestId('slice-cache-markers')).getByText('Saving gcode')).toBeTruthy();
+  });
+
+  it('hides the save option for a pre-sliced file', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, status: 'queued', file: { id: 10, original_filename: 'part.gcode.3mf' },
+    });
+    renderJobDetail();
+    await screen.findByText(/part\.gcode\.3mf/);
+    expect(screen.queryByTestId('save-slice-control')).toBeNull();
   });
 });

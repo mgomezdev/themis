@@ -51,6 +51,42 @@ class UploadedFile(Base):
     content_hash: Mapped[str] = mapped_column(String(64), default="")
     mtime: Mapped[float] = mapped_column(Float, default=0.0)
     missing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Project-generated packs only (BIZ-193): hash of the pack inputs (STL hashes x quantities, bed, pack mode), so an
+    # identical later generation can reuse this 3MF instead of re-packing.
+    pack_recipe_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class SlicedVersion(Base):
+    """A cached slice (BIZ-191): the library file `file_id` (.gcode / .gcode.3mf) is what the model `source_file_id`
+    sliced to with these settings. `cache_key` hashes every input that changes the output (see services/slice_cache);
+    the preset-content hash and slicer version are kept apart from it and only decide whether the version is stale."""
+    __tablename__ = "sliced_versions"
+    # Never reuse an id: jobs.sliced_version_id must not silently start pointing at a newer, unrelated version.
+    __table_args__ = {"sqlite_autoincrement": True}
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id", ondelete="CASCADE"), unique=True)
+    source_file_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("uploaded_files.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_content_hash: Mapped[str] = mapped_column(String(64), default="")
+    plate_number: Mapped[int] = mapped_column(Integer, default=1)
+    machine_preset: Mapped[str] = mapped_column(String(255))
+    process_preset: Mapped[str] = mapped_column(String(512))
+    filament_presets: Mapped[list] = mapped_column(JSON, default=list)
+    extra_config: Mapped[dict] = mapped_column(JSON, default=dict)
+    tool_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    artifact_kind: Mapped[str] = mapped_column(String(16))   # gcode | gcode_3mf
+    cache_key: Mapped[str] = mapped_column(String(64), index=True)
+    preset_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    slicer_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    filament_type: Mapped[str] = mapped_column(String(100), default="any")
+    filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    created_from_job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)   # plain int: jobs get deleted
+    created_at: Mapped[str] = mapped_column(String(32))
 
 
 class Tag(Base):
@@ -130,6 +166,18 @@ class Job(Base):
     printed_on_printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     # UTC ISO instant before which the queue engine won't start this job (None = as soon as possible).
     not_before: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    # --- Slicing cache (BIZ-191) ---
+    # Save this job's production slice to the library as a cached version, under this name (None = default name).
+    save_slice: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    save_slice_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # When a printer claims the job, print a matching cached version instead of slicing.
+    allow_cached_slice: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    # The cached version this job prints / printed. Plain int (an FK column can't be dropped by SQLite's ALTER, so
+    # v033 couldn't be rolled back); safe because sliced_versions never reuses an id (AUTOINCREMENT) — a deleted
+    # version leaves a pointer that resolves to nothing, never to a newer, unrelated version.
+    sliced_version_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Latest cache decision + save outcome, for debugging (shape: services/slice_cache.py).
+    slice_cache_info: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class JobPrinterConfig(Base):
@@ -148,6 +196,34 @@ class JobPrinterConfig(Base):
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.
+    # Plain integer, no FK (see v025/v031): SQLite can't DROP a column inside a table-level FOREIGN KEY, and the
+    # rows are always deleted with their target explicitly.
+    model_target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # One config per (job, printer); created by v031 for existing DBs, declared here for fresh ones.
+    __table_args__ = (
+        Index("ux_job_printer_configs_job_printer", "job_id", "printer_id", unique=True),
+        Index("ux_job_printer_configs_target_printer", "model_target_id", "printer_id", unique=True,
+              sqlite_where=text("model_target_id IS NOT NULL")),
+    )
+
+
+class JobModelTarget(Base):
+    """A job eligible on *any* printer whose `current_orca_printer_profile` equals `machine_profile`. The queue
+    engine materializes it into per-printer `JobPrinterConfig` rows (services/model_targets.py), so everything
+    downstream keeps looking configs up by (job, printer). Slot-specific asks (tool_index) don't apply here."""
+    __tablename__ = "job_model_targets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    machine_profile: Mapped[str] = mapped_column(String(255), index=True)
+    print_profile: Mapped[str] = mapped_column(String(512))
+    filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)
+    filament_type: Mapped[str] = mapped_column(String(100), default="any", server_default="any")
+    filament_color: Mapped[str] = mapped_column(String(20), default="any", server_default="any")
+    filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
 class GcodeFile(Base):
@@ -159,6 +235,9 @@ class GcodeFile(Base):
     path: Mapped[str] = mapped_column(String(1024))
     filament_grams: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     estimated_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The slicing-cache key inputs this artifact was sliced from (slice_cache.CacheKeyInputs.as_dict; null for a
+    # pre-sliced file or an uncacheable source) — so a job flagged "save" after slicing can still be saved (BIZ-192).
+    slice_inputs: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
 
 
 class QueueConfig(Base):
@@ -171,6 +250,9 @@ class QueueConfig(Base):
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     # Lowest alarm severity that raises a `printer.alarm` webhook/notification (info < warning < error < fatal).
     alarm_min_severity: Mapped[str] = mapped_column(String(10), default="warning", server_default="warning")
+    # Slicing cache (BIZ-191): True = automatic reuse reslices a cached version whose presets/slicer changed since it
+    # was sliced; False = it is still printed (flagged stale), pinning a known-good print across profile updates.
+    slice_cache_use_latest_settings: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
 
 
 class CostConfig(Base):
@@ -259,6 +341,8 @@ class Project(Base):
     customer_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("customers.id", ondelete="SET NULL"), nullable=True
     )
+    # Set by migration v032 when this project was created from a legacy customer order (provenance; plain int).
+    converted_from_order_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
 

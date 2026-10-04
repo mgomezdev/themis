@@ -54,11 +54,14 @@ themis/
 │           ├── bambu_mqtt.py
 │           ├── elegoo_centauri_client.py
 │           ├── snapmaker_client.py
-│           ├── laminus_sidecar_client.py
+│           ├── catalog_service.py       # catalog cache over SlicingProvider
+│           ├── providers/               # SlicingProvider + FilamentInventoryProvider, adapters/
+│           │   ├── slicing.py  filament_inventory.py
+│           │   ├── laminus/             # adapter, sidecar_client, gcode/overrides
+│           │   └── spoolman/            # adapter, service (Spoolman client)
 │           ├── library_scanner.py
 │           ├── three_mf_parser.py
-│           ├── override_inspector.py
-│           └── spoolman_service.py
+│           └── spool_check.py
 ├── mock/
 │   ├── server.py                # Themis API mock (published as ninjabuffalo/themis-mock)
 │   ├── __main__.py
@@ -125,7 +128,7 @@ Three singleton objects are wired together in `app/main.py`'s `lifespan` and pas
 3. `LibraryScanner.scan()` — walk library dir, hash files, sync `uploaded_files` table
 4. Wire `printer_manager` (load `awaiting_plate_clear` from DB, connect all enabled printers)
 5. Wire `queue_engine` with session factory, printer_manager, slicer_service
-6. If `LAMINUS_SIDECAR_URL` set: health-check sidecar, start `warm_catalog_cache()` background task
+6. If `LAMINUS_SIDECAR_URL` set: health-check sidecar, start `catalog_service.warm()` background task
 
 ### Job state machine
 
@@ -159,14 +162,14 @@ WebSocket updates push to all connected clients when queue, fleet, or order stat
 
 ### Laminus catalog caching
 
-The Laminus profile catalog is large and expensive to fetch. Themis caches it module-level in `app/api/routes/laminus.py`:
+The Laminus profile catalog is large and expensive to fetch. Themis caches it module-level in `app/services/catalog_service.py` (fetched through `SlicingProvider.get_catalog()`):
 
 ```python
-_catalog_dict: dict | None = None   # for internal callers
-_catalog_bytes: bytes | None = None  # pre-serialised for HTTP responses
+_catalog: Catalog | None = None       # neutral DTO for internal callers
+_catalog_bytes: bytes | None = None   # pre-serialised legacy JSON for HTTP responses
 ```
 
-All internal routes call `get_cached_catalog()` — never fetch from Laminus per-request. To force a refresh: `POST /api/v1/laminus/catalog/refresh`.
+All internal code calls `catalog_service.get_cached_catalog()` — never fetch from Laminus per-request. To force a refresh: `POST /api/v1/laminus/catalog/refresh`.
 
 ---
 
@@ -278,6 +281,7 @@ All models live in `backend/app/models.py`. Timestamps are stored as `VARCHAR(32
 | `UploadedFile` | `uploaded_files` | plates JSON, content_hash for dedup |
 | `Job` | `jobs` | queue_position FLOAT for fractional reordering, overrides JSON |
 | `JobPrinterConfig` | `job_printer_configs` | per-printer profile/filament assignments |
+| `JobModelTarget` | `job_model_targets` | job eligible on any printer of a make/model; materialized into `job_printer_configs` |
 | `GcodeFile` | `gcode_files` | path to downloaded gcode on disk |
 | `QueueConfig` | `queue_config` | singleton (id=1) |
 | `SpoolmanConfig` | `spoolman_config` | singleton (id=1) |
@@ -316,8 +320,8 @@ queue_engine.py :: _run_loop()
 
 ```
 slicer_service.py :: slice(request: SliceRequest)
-  → get_cached_catalog() → resolve profile name → UUID
-  → POST /api/slice/start to Laminus (uploads STL, passes profile UUIDs)
+  → catalog_service.get_cached_catalog() → resolve profile name → ref (UUID)
+  → provider.slice(SliceSpec) — Laminus adapter: POST /api/slice/start (uploads STL, passes profile UUIDs)
   → poll GET /api/slice/status/{job_id} (2s interval, up to SLICE_TIMEOUT)
   → GET /api/slice/download/{job_id} → bytes
   → save to <filecache_dir>/<job_id>.gcode

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fmtBytes } from '../data/helpers';
+import { isPresliced } from '../lib/fileKind';
 import { Icons } from '../components/icons';
 import {
   listAllPrinterFiles, listPrinterFiles, printStoredFile, deleteStoredFile, copyStoredFileToLibrary,
@@ -21,7 +22,8 @@ function metaText(f: PrinterFileEntry): string {
 }
 
 const parentOf = (dir: string) => dir.split('/').filter(Boolean).slice(0, -1).join('/') || '/';
-const isLibraryType = (name: string) => /\.(3mf|stl)$/i.test(name);
+// Models only: a sliced .gcode.3mf ends in .3mf too, but the library refuses it from here (BIZ-196).
+const isLibraryType = (name: string) => /\.(3mf|stl)$/i.test(name) && !isPresliced(name);
 
 interface Section extends MergedPrinterFiles { dir: string; busy: boolean }
 

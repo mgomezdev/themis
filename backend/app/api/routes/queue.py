@@ -9,10 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import Job, JobPrinterConfig, Printer, SpoolmanConfig, UploadedFile
+from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
+from ...services.model_targets import target_dicts_by_job
 from ...services.spool_check import check_spool_sufficiency
-from ...services.spoolman_service import fetch_spools
+from ...services.providers.filament_inventory import Spool, get_inventory_provider
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ def _base_dict(j: Job) -> dict:
         "block_reason": j.block_reason,
         "created_at": j.created_at,
         "updated_at": j.updated_at,
+        # Slicing cache (BIZ-194 queue markers)
+        "save_slice": bool(j.save_slice),
+        "save_slice_name": j.save_slice_name,
+        "allow_cached_slice": bool(j.allow_cached_slice),
+        "sliced_version_id": j.sliced_version_id,
+        "slice_cache_info": j.slice_cache_info,
     }
 
 
@@ -61,7 +68,9 @@ async def _needed_grams(j: Job, session: AsyncSession) -> float | None:
     return plate.get("filament_g") if plate else None
 
 
-async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, dict]) -> dict:
+async def _enrich(
+    j: Job, session: AsyncSession, spools_by_id: dict[str, Spool], targets: list[dict]
+) -> dict:
     d = _base_dict(j)
     cfg_result = await session.execute(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
@@ -84,6 +93,7 @@ async def _enrich(j: Job, session: AsyncSession, spools_by_id: dict[str, dict]) 
                 if spool is not None:
                     low_stock_warning = check_spool_sufficiency(needed_g, spool)
     d["eligible_printers"] = eligible
+    d["model_targets"] = targets
     d["low_stock_warning"] = low_stock_warning
     return d
 
@@ -115,18 +125,19 @@ async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
             if slot and slot.get("spoolman_spool_id") is not None:
                 spool_ids_needed.add(str(slot["spoolman_spool_id"]))
 
-    spools_by_id: dict[str, dict] = {}
+    spools_by_id: dict[str, Spool] = {}
     if spool_ids_needed:
-        spoolman_cfg = await session.get(SpoolmanConfig, 1)
-        if spoolman_cfg and spoolman_cfg.enabled and spoolman_cfg.url:
+        provider = await get_inventory_provider(session)
+        if provider is not None:
             try:
-                spools = await fetch_spools(spoolman_cfg.url, spoolman_cfg.api_key)
-                spools_by_id = {str(s.get("id")): s for s in spools}
+                spools = await provider.list_spools()
+                spools_by_id = {s.ref: s for s in spools}
             except Exception:
                 logger.warning("Spoolman unreachable while checking spool sufficiency for queue", exc_info=True)
 
     # Second pass: build the enriched dicts using the precomputed spool lookup.
-    return [await _enrich(j, session, spools_by_id) for j in jobs]
+    targets_by_job = await target_dicts_by_job(session, [j.id for j in jobs])
+    return [await _enrich(j, session, spools_by_id, targets_by_job[j.id]) for j in jobs]
 
 
 @router.get("", summary="Get active queue", dependencies=[Depends(require_scope("queue:read"))])

@@ -1,7 +1,9 @@
+from app.services.providers.filament_inventory import Filament, InventoryProviderError
+from tests.catalog_helpers import cached_raw, prime_catalog
+from tests.fake_providers import FakeInventoryProvider
+from app.services import catalog_service
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
-
-import app.api.routes.laminus as lmod
 from httpx import AsyncClient
 
 
@@ -136,7 +138,7 @@ async def test_spoolman_config_put_empty_api_key_clears_it(client: AsyncClient):
     assert resp.json()["has_api_key"] is False
 
 
-async def test_spoolman_test_falls_back_to_saved_api_key_when_omitted(client: AsyncClient):
+async def test_spoolman_test_falls_back_to_saved_api_key_when_omitted(client: AsyncClient, spoolman_upstream):
     """/spoolman/test must still be able to use the saved key even though GET
     no longer exposes it - the caller omits api_key rather than resending it."""
     await client.put(
@@ -144,19 +146,15 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_omitted(client: As
         json={"url": "http://spoolman.test", "api_key": "sm-key-value"},
     )
 
-    with patch(
-        "app.api.routes.settings.spoolman_service.test_connection",
-        new_callable=AsyncMock,
-        return_value={"version": "1.0"},
-    ) as mock_test:
-        resp = await client.post("/api/v1/settings/spoolman/test", json={})
+    resp = await client.post("/api/v1/settings/spoolman/test", json={})
 
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    mock_test.assert_called_once_with("http://spoolman.test", "sm-key-value")
+    assert [(str(r.url), r.headers.get("X-API-Key")) for r in spoolman_upstream.requests] == [
+        ("http://spoolman.test/api/v1/info", "sm-key-value")]
 
 
-async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(client: AsyncClient):
+async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(client: AsyncClient, spoolman_upstream):
     """The actual frontend path: it always sends url (required to even enable the
     Test button) but omits api_key when the user hasn't retyped it. The fallback
     must not be gated on the url also being missing."""
@@ -165,70 +163,55 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(c
         json={"url": "http://spoolman.test", "api_key": "sm-key-value"},
     )
 
-    with patch(
-        "app.api.routes.settings.spoolman_service.test_connection",
-        new_callable=AsyncMock,
-        return_value={"version": "1.0"},
-    ) as mock_test:
-        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+    resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
-    mock_test.assert_called_once_with("http://spoolman.test", "sm-key-value")
+    assert [(str(r.url), r.headers.get("X-API-Key")) for r in spoolman_upstream.requests] == [
+        ("http://spoolman.test/api/v1/info", "sm-key-value")]
 
 
-async def test_spoolman_test_connection_all_uuids_valid_returns_ok(client):
-    """All Spoolman filament UUIDs present in catalog → normal success response."""
-    catalog = {"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]}
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = catalog
+def _bound(ref, name, bindings):
+    return Filament(ref=str(ref), name=name, profile_bindings=bindings)
 
-    filaments_response = [
-        {"id": 1, "name": "PLA Red", "extra": {"orca_profiles": json.dumps(json.dumps({"f1": "PLA"}))}}
-    ]
+
+def _patch_inventory(provider):
+    return patch("app.api.routes.settings.make_inventory_provider", return_value=provider)
+
+
+async def test_spoolman_test_connection_all_names_valid_returns_ok(client):
+    """All profile names bound in Spoolman present in the catalog → normal success response."""
+    original_pending = catalog_service._pending_sync
+    prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]})
+    provider = FakeInventoryProvider(filaments=[_bound(1, "PLA Red", {"Bambu X1C": ["PLA"]})])
 
     try:
-        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-            mock_test.return_value = {"version": "0.19.0"}
-            mock_fetch.return_value = filaments_response
-
+        with _patch_inventory(provider):
             resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
         assert resp.status_code == 200
         body = resp.json()
-        # Status is "ok" (in some shape) — the exact key depends on the existing handler shape
-        # Accept either {"status": "ok"} or {"ok": True}
-        assert body.get("status") == "ok" or body.get("ok") is True
-        mock_fetch.assert_called_once()
+        assert body.get("status") == "ok" and body.get("ok") is True
+        assert provider.calls == ["test_connection", "list_filaments"]
+        assert catalog_service._pending_sync is original_pending       # nothing parked
     finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+        catalog_service._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client):
     """Three filaments share one stale profile name → single grouped entry with three affected_filament_ids."""
     # Catalog has "PLA New" but NOT "PLA Old" — so "PLA Old" is stale
-    catalog = {"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]}
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = catalog
-    lmod._pending_sync = None
-
-    # Three Spoolman filaments all reference "PLA Old" for the same printer preset
-    filaments_response = [
-        {"id": 9, "name": "Red PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
-        {"id": 14, "name": "Blue PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
-        {"id": 22, "name": "White PLA", "extra": {"orca_profiles": json.dumps(json.dumps({"Bambu X1C 0.4 nozzle": ["PLA Old"]}))}},
-    ]
+    original_pending = catalog_service._pending_sync
+    prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]})
+    catalog_service._pending_sync = None
+    stale = {"Bambu X1C 0.4 nozzle": ["PLA Old"]}
+    provider = FakeInventoryProvider(filaments=[
+        _bound(9, "Red PLA", stale), _bound(14, "Blue PLA", stale), _bound(22, "White PLA", stale),
+        _bound(30, "Fine PLA", {"Bambu X1C 0.4 nozzle": ["PLA New"]}),     # valid binding: not flagged
+    ])
 
     try:
-        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-            mock_test.return_value = {"version": "0.19.0"}
-            mock_fetch.return_value = filaments_response
-
+        with _patch_inventory(provider):
             resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
         assert resp.status_code == 200
@@ -240,34 +223,57 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
         entry = spool_entries[0]
         assert entry["printer_preset"] == "Bambu X1C 0.4 nozzle"
         assert entry["stale_name"] == "PLA Old"
-        assert set(entry["affected_filament_ids"]) == {9, 14, 22}
+        assert sorted(entry["affected_filament_ids"]) == [9, 14, 22]          # ints, as the frontend always got
+        assert entry["affected_filament_names"] == ["Red PLA", "Blue PLA", "White PLA"]
         assert body["pending"]["printers"] == []
         assert body["pending"]["jobs"] == []
-        assert lmod._pending_sync is not None
-        assert lmod._pending_sync["raw"] is None  # Spoolman-only
+        assert catalog_service._pending_sync is not None
+        assert catalog_service._pending_sync["raw"] is None  # Spoolman-only
     finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+        catalog_service._pending_sync = original_pending
 
 
 async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
-    """Cold cache → skip UUID check, return normal success."""
-    original_catalog = lmod._catalog_dict
-    original_pending = lmod._pending_sync
-    lmod._catalog_dict = None
+    """Cold cache → skip the name check, return normal success."""
+    prime_catalog(None)
+    provider = FakeInventoryProvider()
 
-    try:
-        with patch("app.services.spoolman_service.test_connection", new_callable=AsyncMock) as mock_test, \
-             patch("app.services.spoolman_service.fetch_filaments", new_callable=AsyncMock) as mock_fetch:
-            mock_test.return_value = {"version": "0.19.0"}
+    with _patch_inventory(provider):
+        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
 
-            resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+    assert resp.status_code == 200
+    assert provider.calls == ["test_connection"]        # no filaments fetched
 
-        mock_fetch.assert_not_called()
-        assert resp.status_code == 200
-    finally:
-        lmod._catalog_dict = original_catalog
-        lmod._pending_sync = original_pending
+
+async def test_spoolman_test_connection_skips_the_name_check_without_profile_bindings(client):
+    prime_catalog({"machine": [], "process": [], "filament": []})
+    provider = FakeInventoryProvider(filaments=[_bound(1, "x", {"P": ["gone"]})])
+    provider.PROFILE_BINDINGS = False
+
+    with _patch_inventory(provider):
+        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+
+    assert resp.json() == {"ok": True, "status": "ok", "version": "fake"}
+    assert provider.calls == ["test_connection"]
+
+
+async def test_spoolman_test_connection_reports_a_failed_connection_and_survives_a_failed_filament_fetch(client):
+    prime_catalog({"machine": [], "process": [], "filament": []})
+    down = FakeInventoryProvider()
+    down.fail_with = InventoryProviderError("Connection refused", code="ConnectError")
+    with _patch_inventory(down):
+        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+    assert resp.json() == {"ok": False, "message": "Connection refused"}
+
+    flaky = FakeInventoryProvider()
+
+    async def list_filaments():
+        raise InventoryProviderError("boom")
+
+    flaky.list_filaments = list_filaments
+    with _patch_inventory(flaky):
+        resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
+    assert resp.json()["ok"] is True and resp.json()["status"] == "ok"      # best-effort: connection still ok
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +489,21 @@ async def test_notifications_test_email_missing_field(client: AsyncClient):
     body = resp.json()
     assert body["ok"] is False
     assert "message" in body
+
+
+async def test_slice_cache_stale_policy_defaults_on_and_round_trips(client: AsyncClient, session_factory):
+    """BIZ-191: 'always use latest slicer settings' is on by default; turning it off persists and leaves the other
+    queue settings alone."""
+    from app.models import QueueConfig
+    assert (await client.get("/api/v1/settings/queue")).json()["slice_cache_use_latest_settings"] is True
+
+    resp = await client.put("/api/v1/settings/queue", json={"slice_cache_use_latest_settings": False})
+
+    assert resp.status_code == 200
+    assert resp.json()["slice_cache_use_latest_settings"] is False
+    async with session_factory() as s:
+        row = await s.get(QueueConfig, 1)
+        assert row.slice_cache_use_latest_settings is False
+        assert row.check_interval_minutes == 5
+    resp = await client.put("/api/v1/settings/queue", json={"operator_name": "x"})
+    assert resp.json()["slice_cache_use_latest_settings"] is False   # omitted ⇒ unchanged

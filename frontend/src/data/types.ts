@@ -19,6 +19,9 @@ export interface Printer {
   timeElapsed: number;
   layer: { now: number; total: number } | null;
   nozzleTemp: number;
+  nozzleTempTarget?: number;
+  /** Per-tool temperatures for tool-changer printers (Snapmaker U1: T0..T3); absent for single-nozzle printers. */
+  nozzles?: { index: number; temp: number; target: number }[];
   bedTemp: number;
   chamberTemp: number | null;
   material: Material;
@@ -162,6 +165,24 @@ export interface LibraryFile {
   tags: { id: number; name: string; color: string; category: string }[];
   thumbnail_url: string | null;
   plate_thumbnails: { plate_number: number; thumbnail_url: string }[];
+  /** 3mf / stl = sliceable model; gcode / gcode_3mf = pre-sliced (BIZ-190). */
+  kind: 'stl' | '3mf' | 'gcode' | 'gcode_3mf';
+  /** Slicing cache: how many cached versions this model has (BIZ-196). */
+  sliced_version_count: number;
+  /** Slicing cache: set when this file IS a cached version of a model. */
+  sliced_version: SlicedVersionSummary | null;
+}
+
+export interface SlicedVersionSummary {
+  id: number;
+  source_file_id: number | null;
+  source_filename: string | null;
+  plate_number: number;
+  machine_preset: string;
+  process_preset: string;
+  filament_presets: string[];
+  filament_type: string;
+  filament_color: string;
 }
 
 export interface FolderNode {

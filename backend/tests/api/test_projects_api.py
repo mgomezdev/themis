@@ -1,4 +1,5 @@
 import io
+from tests.fake_providers import fake_packer
 import zipfile
 import pytest
 from pathlib import Path
@@ -140,11 +141,10 @@ async def test_generate_stores_3mf_in_job_pack_folder(client, tmp_path):
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -179,11 +179,10 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -214,11 +213,10 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -252,12 +250,11 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -286,12 +283,11 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -340,12 +336,11 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_laminus_sidecar_url", return_value="http://fake-sidecar"),
-        patch("app.api.routes.projects.LaminusSidecarClient") as mock_cls,
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
-        mock_cls.return_value.pack_stls.return_value = fake_3mf
+        mock_get.return_value = fake_packer(fake_3mf)
 
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
@@ -529,3 +524,87 @@ async def test_delete_part(client):
 
     detail = (await client.get(f"/api/v1/projects/{proj_id}")).json()
     assert detail["parts"] == []
+
+
+async def test_generate_with_machine_profile_creates_model_targets_and_configs(
+        client, tmp_path, create_printer, session_factory):
+    """eligible_machine_profiles -> a model target per job, materialized onto matching printers only."""
+    from sqlalchemy import select
+    from app.models import JobModelTarget, JobPrinterConfig
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    p1s = await create_printer(name="A")  # default preset: Bambu Lab P1S 0.4
+    await create_printer(name="B", current_orca_printer_profile="Other 0.4", orca_printer_profiles=["Other 0.4"])
+    lib = tmp_path / "library"
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+    ):
+        mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
+        resp = await client.post(
+            f"/api/v1/projects/{project_id}/generate",
+            json={"eligible_machine_profiles": ["Bambu Lab P1S 0.4"], "process_preset": "0.20mm"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    job_id = resp.json()["jobs"][0]["id"]
+    async with session_factory() as s:
+        targets = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
+        assert [(t.machine_profile, t.print_profile) for t in targets] == [("Bambu Lab P1S 0.4", "0.20mm")]
+        cfgs = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
+        assert [c.printer_id for c in cfgs] == [p1s]
+
+
+async def _generate_with(client, tmp_path, provider, project_id):
+    lib = tmp_path / "library"
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+    ):
+        return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
+
+
+async def test_generate_maps_provider_pack_failures_to_502_and_timeouts_to_504(client, tmp_path):
+    from app.services.providers.slicing import SlicingProviderError
+    from tests.fake_providers import FakeSlicingProvider
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    failing = FakeSlicingProvider()
+    failing.fail_on["pack_models"] = SlicingProviderError("pack returned 500: boom")
+    resp = await _generate_with(client, tmp_path, failing, project_id)
+    assert (resp.status_code, resp.json()["detail"]) == (502, "Orca sidecar error during generation: pack returned 500: boom")
+
+    failing.fail_on["pack_models"] = SlicingProviderError("arrange timed out on sidecar")
+    resp = await _generate_with(client, tmp_path, failing, project_id)
+    assert (resp.status_code, resp.json()["detail"]) == (504, "Generation timed out — try fewer parts or reduce quantities")
+
+
+async def test_generate_422_without_a_provider_or_without_the_pack_capability(client, tmp_path):
+    from tests.fake_providers import FakeSlicingProvider
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    none = await _generate_with(client, tmp_path, None, project_id)
+    assert (none.status_code, none.json()["detail"]) == (
+        422, "LAMINUS_SIDECAR_URL is not configured — Laminus sidecar required for generation")
+
+    incapable = FakeSlicingProvider()
+    incapable.PACK_MODELS = False
+    resp = await _generate_with(client, tmp_path, incapable, project_id)
+    assert resp.status_code == 422 and "cannot pack models" in resp.json()["detail"]
+    assert incapable.calls == []
+
+
+async def test_generate_packs_by_bed_size_when_the_project_has_no_presets(client, tmp_path):
+    from tests.fake_providers import fake_packer
+
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    provider = fake_packer(_make_3mf_bytes(plate_count=1))
+    resp = await _generate_with(client, tmp_path, provider, project_id)
+    assert resp.status_code == 200, resp.text
+    (call,) = provider.pack_models.call_args_list
+    assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}   # no eligible printers → default bed, Laminus default z

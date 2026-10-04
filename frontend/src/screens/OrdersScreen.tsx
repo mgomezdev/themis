@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { matColor, fmtTime } from '../data/helpers';
 import { StatusPill, Progress, MaterialChip, Empty } from '../components/ui';
 import { Icons } from '../components/icons';
@@ -201,6 +201,10 @@ export function OrdersScreen() {
 
   return (
     <div className="col gap-4" style={{ maxWidth: 1200 }}>
+      <div className="tiny muted" data-testid="orders-banner">
+        Orders now group internal jobs only. Customer sales and payments are recorded on{' '}
+        <Link to="/projects">projects</Link>; earlier customer orders were converted to projects.
+      </div>
       <div className="row gap-2">
         {([['open', 'Open'], ['all', 'All'], ['customer', 'Customer'], ['internal', 'Internal']] as const).map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}

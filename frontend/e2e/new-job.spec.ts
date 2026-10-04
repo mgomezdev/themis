@@ -18,6 +18,10 @@ import { mockApi } from './mock-api';
  *   4. Click the printer card for `printerName`
  *   5. Wait for print-profile-select to be visible
  */
+// The printer's own card, not the "Any <model>" button for its model (whose label also contains the model name).
+const printerCard = (page: import('@playwright/test').Page, name: string) =>
+  page.getByRole('button', { name: new RegExp(name, 'i') }).filter({ hasNotText: /Any / });
+
 async function driveToPerPrinter(page: import('@playwright/test').Page, printerName: string) {
   // Step 1: switch to library source
   await page.getByRole('button', { name: /Pick from library/i }).click();
@@ -29,8 +33,8 @@ async function driveToPerPrinter(page: import('@playwright/test').Page, printerN
   await page.waitForLoadState('networkidle');
 
   // Step 4: click the printer card
-  await expect(page.getByRole('button', { name: new RegExp(printerName, 'i') })).toBeVisible({ timeout: 5000 });
-  await page.getByRole('button', { name: new RegExp(printerName, 'i') }).first().click();
+  await expect(printerCard(page, printerName)).toBeVisible({ timeout: 5000 });
+  await printerCard(page, printerName).first().click();
 
   // Step 5: wait for PerPrinterConfig to render
   await expect(page.getByTestId('print-profile-select')).toBeVisible({ timeout: 5000 });
@@ -55,10 +59,10 @@ test.describe('New Job — filament/tool', () => {
     await page.waitForLoadState('networkidle');
 
     // Wait for printer picker to appear (plates + model-filaments loaded)
-    await expect(page.getByRole('button', { name: /U1/i })).toBeVisible({ timeout: 5000 });
+    await expect(printerCard(page, 'U1')).toBeVisible({ timeout: 5000 });
 
     // Select the U1 printer (multi-tool, 4 slots, 2 model filaments → mapping rows)
-    await page.getByRole('button', { name: /U1/i }).first().click();
+    await printerCard(page, 'U1').first().click();
 
     // PerPrinterConfig should render with mapping rows (f.index is 1-based)
     await expect(page.getByTestId('map-tool-1')).toBeVisible({ timeout: 5000 });
@@ -83,7 +87,7 @@ test.describe('New Job — filament/tool', () => {
       await plate2Tab.click();
 
       // Select U1 for plate 2 as well
-      await page.getByRole('button', { name: /U1/i }).first().click();
+      await printerCard(page, 'U1').first().click();
       await expect(page.getByTestId('print-profile-select')).toBeVisible({ timeout: 5000 });
       await page.getByTestId('print-profile-select').selectOption({ index: 1 });
 

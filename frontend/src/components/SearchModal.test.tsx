@@ -20,7 +20,7 @@ const JOBS: ApiJob[] = [
     actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null, deduction_skipped: null,
     estimate_status: null, estimate_seconds: null, estimate_filament_grams: null, estimate_filament_breakdown: null,
     estimate_preset_label: null, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-    materials: [], eligible_printers: [], low_stock_warning: null, filament_cost: null, not_before: null,
+    materials: [], eligible_printers: [], model_targets: [], low_stock_warning: null, filament_cost: null, not_before: null, save_slice: false, save_slice_name: null, allow_cached_slice: false, sliced_version_id: null, slice_cache_info: null,
   },
 ];
 
@@ -42,7 +42,8 @@ beforeEach(() => {
     }
     if (url.includes('/api/v1/files')) {
       return new Response(JSON.stringify([
-        { id: 1, original_filename: 'bracket_v2.3mf', relative_path: 'bracket_v2.3mf', folder: '/', size_bytes: 100, plate_count: 1, uploaded_at: '', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [] },
+        { id: 1, original_filename: 'bracket_v2.3mf', relative_path: 'bracket_v2.3mf', folder: '/', size_bytes: 100, plate_count: 1, uploaded_at: '', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [], kind: '3mf' },
+        { id: 2, original_filename: 'clip PETG.gcode.3mf', relative_path: 'Prints/clip PETG.gcode.3mf', folder: '/Prints', size_bytes: 100, plate_count: 1, uploaded_at: '', missing: false, tags: [], thumbnail_url: null, plate_thumbnails: [], kind: 'gcode_3mf' },
       ]), { status: 200 });
     }
     return new Response('[]', { status: 200 });
@@ -94,6 +95,14 @@ describe('SearchModal', () => {
     // uploaded_file_id) and once as the Files result itself.
     await waitFor(() => expect(screen.getAllByText('bracket_v2.3mf').length).toBe(2));
     expect(screen.getByText('Files')).toBeTruthy();
+  });
+
+  it('labels a sliced gcode file as such (BIZ-196)', async () => {
+    const user = userEvent.setup();
+    renderModal(true);
+    await user.type(screen.getByPlaceholderText(/search jobs/i), 'clip');
+    await waitFor(() => expect(screen.getByText('clip PETG.gcode.3mf')).toBeInTheDocument());
+    expect(screen.getByText('/Prints · sliced gcode')).toBeTruthy();
   });
 
   it('matches an order by customer name', async () => {

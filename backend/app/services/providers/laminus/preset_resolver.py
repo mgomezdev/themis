@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..config import get_orca_config_dir
+from ....config import get_orca_config_dir
 
 CATEGORIES = ("machine", "process", "filament")
 

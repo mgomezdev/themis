@@ -13,6 +13,8 @@ class + one registry entry; everything downstream (fleet, queue, slicing dispatc
 + ctor kwargs the factory passes), `get_capabilities()` (`PrinterCapabilities` flags drive UI controls),
 `is_idle`/`is_printing` (props), `file_upload_supported`, `upload_file(data, filename)`,
 `orca_export_args(file_base)` (slicing artifact — `[]` = raw `.gcode`; Bambu = `["--export-3mf", f"{base}.gcode.3mf"]`),
+`raw_gcode_supported` / `sliced_archive_supported` (which pre-sliced library files the vendor prints as-is — `.gcode` /
+`.gcode.3mf`; Bambu = False / True, others True / False),
 `get_loaded_filaments()` (AMS), `camera_rtsp_url`/`camera_mjpeg_url`, `home`/`jog_z`/`set_bed_temp`/`list_files`/`delete_file`/`download_file` (capabilities `file_browser`/`file_delete`/`file_download`; Bambu = FTPS `LIST`/`DELE`/`RETR` over root + `/cache`, Snapmaker = Moonraker `/server/files/directory?extended=true` + `/server/files/gcodes/<path>` with inline metadata, Elegoo = SDCP list + delete only; ids are vendor paths — `PrinterFile.id` — handed back verbatim; verified against virtual printers in CI and real ones via `backend/protocol_verification`)/`jog`/`home_axes`/`set_nozzle_temp`/`set_chamber_temp` (console capabilities `axis_jog`/`home_axes`/`nozzle_temp`/`chamber_temp`/`direct_upload`; Bambu + Snapmaker via G-code, Elegoo only `direct_upload` until its SDCP axis/setpoint commands are verified on hardware)/
 `set_fan_speeds`/`set_chamber_light`, `printer_type` (ClassVar registry key).
 
@@ -47,8 +49,8 @@ not the serializer.
 production slicing.** `SlicerService.slice(SliceRequest)` resolves `machine_preset`/`process_preset`/
 `filament_presets` names to UUIDs against the sidecar's cached profile catalog, then delegates the
 whole slice — 3MF assembly, profile resolution, gcode generation — to a separate Laminus process over
-HTTP (`laminus_sidecar_client.LaminusSidecarClient.slice_start` → `poll_status` → `download`). The
-pre-sidecar local pipeline (`preset_resolver.py`, `profile_index.py`, `project_config_builder.py`, and
+HTTP (`SlicingProvider.slice` → Laminus adapter: `slice_start` → `poll_status` → `download`). The
+pre-sidecar local pipeline (`providers/laminus/preset_resolver.py`, `providers/laminus/profile_index.py`, `project_config_builder.py`, and
 most of `mesh_3mf_builder.py`) has no remaining callers — see `backend.md` § Services for what's dead.
 
 **`SliceRequest.prepare_hook`** (opaque `Callable[[Path], None]`, bound by

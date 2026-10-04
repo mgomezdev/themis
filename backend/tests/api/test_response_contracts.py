@@ -180,3 +180,11 @@ async def test_the_customer_portal_project_and_quote_carry_their_keys(client):
 def test_the_contract_helper_reports_missing_keys():
     with pytest.raises(AssertionError, match="missing keys the frontend reads: \\['name'\\]"):
         assert_carries("project_part", {k: 1 for k in CONTRACT["project_part"] if k != "name"})
+
+
+async def test_sliced_versions_items_carry_their_keys(client, upload_3mf, session_factory, tmp_path, monkeypatch):
+    from tests.api.test_slice_cache_api import _version_for
+    monkeypatch.setenv("THEMIS_LIBRARY_DIR", str(tmp_path / "library"))
+    model = await upload_3mf()
+    await _version_for(session_factory, tmp_path / "library", model)
+    assert_carries("sliced_version_item", (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()[0])

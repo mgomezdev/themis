@@ -4,12 +4,16 @@ import { fmtTime, fmtBytes } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import type { ApiPrinter } from '../api/printers';
-import { uploadFile, createJob, getFilePlates, getModelFilaments, getEmbeddedSettings, plateThumbnailUrl, type ApiPlate, type EmbeddedSetting, type ModelFilament } from '../api/queue';
-import { useFiles, getFiles } from '../api/files';
+import { uploadFile, createJob, useQueueConfig, getFilePlates, getModelFilaments, getEmbeddedSettings, plateThumbnailUrl, type ApiPlate, type EmbeddedSetting, type ModelFilament } from '../api/queue';
+import { useFiles, getFiles, getSlicedVersions, type SlicedVersion } from '../api/files';
 import { useOrders } from '../api/orders';
 import { apiFetch } from '../api/client';
 import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../components/PerPrinterConfig';
+import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey } from '../components/ModelTargets';
 import { OverridePanel } from '../components/OverridePanel';
+import { GcodeWarning } from '../components/GcodeWarning';
+import { fileKindOf, isPreslicedKind, type FileKind } from '../lib/fileKind';
+import { staleLabels } from '../components/SliceCache';
 
 // ============================================================
 // Types
@@ -38,7 +42,8 @@ interface PlateConfig {
 interface FileInfo {
   name: string;
   size: number;
-  type: 'stl' | '3mf';
+  type: FileKind;
+  folder?: string;
 }
 
 // ============================================================
@@ -184,10 +189,10 @@ function Dropzone({ dragOver, onDragEnter, onDragLeave, onDragOver, onDrop, onCl
         {React.cloneElement(Icons.upload as React.ReactElement<{ size?: number }>, { size: 22 })}
       </div>
       <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-1)' }}>
-        Drop a .3mf or .stl file
+        Drop a .3mf, .stl, .gcode or .gcode.3mf file
       </div>
       <div className="small muted" style={{ marginTop: 4 }}>
-        Or click to browse · multi-plate 3MFs supported
+        Or click to browse · multi-plate 3MFs supported · .gcode / .gcode.3mf skip slicing
       </div>
     </div>
   );
@@ -295,7 +300,8 @@ function OrdersPicker({ selectedOrderId, onChange }: {
 }) {
   const navigate = useNavigate();
   const { orders } = useOrders();
-  const open = orders.filter(o => o.status !== 'complete');
+  // Customer work is recorded as a project; orders only group internal jobs.
+  const open = orders.filter(o => o.status !== 'complete' && o.order_type === 'internal');
 
   return (
     <div className="col gap-2">
@@ -437,10 +443,11 @@ function PlateThumbnail({
 // PlateConfigPanel
 // ============================================================
 
-function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
+function PlateConfigPanel({ plate, config, isMultiPlate, gcode, printers, modelFilaments, embeddedSettings, onSetField, onTogglePrinter, onSetPerPrinter, onSetOrder, onToggleQueued, onSetOverrides }: {
   plate: Plate;
   config: PlateConfig;
   isMultiPlate: boolean;
+  gcode: boolean;
   printers: ApiPrinter[];
   modelFilaments: ModelFilament[];
   embeddedSettings: EmbeddedSetting[];
@@ -492,27 +499,37 @@ function PlateConfigPanel({ plate, config, isMultiPlate, printers, modelFilament
                   Eligible printers
                 </div>
                 <div className="tiny muted" style={{ marginTop: 2, marginLeft: 30 }}>
-                  Choose which printers may claim this plate. Configure preset + filament for each.
+                  {gcode
+                    ? 'Choose the printers (or printer models) this gcode was sliced for. Set the filament ask for each.'
+                    : 'Choose which printers may claim this plate. Configure preset + filament for each.'}
                 </div>
               </div>
             </div>
+            {gcode && <div style={{ marginBottom: 10 }}><GcodeWarning /></div>}
             <PrinterPicker
               printers={printers}
               selectedPrinters={config.selectedPrinters}
               onToggle={onTogglePrinter}
             />
+            <ModelPicker printers={printers} selected={config.selectedPrinters} onToggle={onTogglePrinter} />
             {config.selectedPrinters.length > 0 && (
               <div className="col gap-3" style={{ marginTop: 14 }}>
-                {config.selectedPrinters.map(pid => (
-                  <PerPrinterConfig
-                    key={pid}
-                    printerId={pid}
-                    printers={printers}
-                    config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
-                    onChange={patch => onSetPerPrinter(pid, patch)}
-                    modelFilaments={modelFilaments}
-                  />
-                ))}
+                {config.selectedPrinters.map(pid => {
+                  // A make/model target is configured through a representative printer of that model.
+                  const src = isModelKey(pid) ? modelConfigSource(pid, printers) : { printerId: pid, printers };
+                  if (!src) return null;
+                  return (
+                    <PerPrinterConfig
+                      key={pid}
+                      printerId={src.printerId}
+                      printers={src.printers}
+                      config={config.perPrinter[pid] ?? defaultPerPrinterCfg()}
+                      onChange={patch => onSetPerPrinter(pid, patch)}
+                      modelFilaments={isModelKey(pid) ? undefined : modelFilaments}
+                      gcode={gcode}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>
@@ -692,6 +709,61 @@ function platesToLocal(apiPlates: ApiPlate[], fileId: number): Plate[] {
   }));
 }
 
+function fmtDuration(seconds: number | null): string | null {
+  if (seconds == null) return null;
+  const m = Math.round(seconds / 60);
+  return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
+}
+
+/** "This model has cached gcode for this plate — use it, or reslice?" (BIZ-194). */
+function CachedVersionPrompt({ plate, multiPlate, versions, useLatest, onUse, onReslice }: {
+  plate: number; multiPlate: boolean; versions: SlicedVersion[]; useLatest: boolean;
+  onUse: (v: SlicedVersion) => void; onReslice: () => void;
+}) {
+  return (
+    <section className="card col gap-2" aria-label="Cached sliced versions" style={{ padding: '12px 14px' }}>
+      <div className="row between" style={{ alignItems: 'center' }}>
+        <span style={{ fontWeight: 600 }}>Cached gcode for plate {plate}</span>
+        <button className="btn ghost sm" onClick={onReslice}>Reslice</button>
+      </div>
+      <span className="tiny muted">This model was sliced before. Print a saved version instead of slicing again?</span>
+      {multiPlate && (
+        <span className="tiny muted">Using one queues just that plate&apos;s gcode — the other plates of this model aren&apos;t queued.</span>
+      )}
+      {versions.map(v => {
+        const chips = [
+          ...(v.source_changed ? ['Model changed since slicing'] : []),
+          ...(v.stale ? staleLabels(v.stale_reasons) : []),
+          ...(!v.printable_now ? ['No matching printer'] : []),
+        ];
+        return (
+          <div key={v.id} className="row between" data-testid="cached-version" style={{ gap: 12, padding: '6px 0', borderTop: '1px solid var(--border-1)' }}>
+            <div className="col" style={{ minWidth: 0, gap: 2 }}>
+              <span className="small" style={{ fontWeight: 500, wordBreak: 'break-word' }}>{v.name}</span>
+              <span className="tiny muted">
+                {v.machine_preset} · {v.process_preset} · {v.filament_type}
+                {v.filament_color && v.filament_color !== 'any' && (
+                  <span title={v.filament_color} style={{ display: 'inline-block', width: 9, height: 9, marginLeft: 4, background: v.filament_color, border: '1px solid var(--border-2)', verticalAlign: 'middle' }} />
+                )}
+                {fmtDuration(v.estimated_seconds) && ` · ${fmtDuration(v.estimated_seconds)}`}
+                {v.filament_grams != null && ` · ${v.filament_grams.toFixed(1)} g`}
+                {` · ${new Date(v.created_at).toLocaleDateString()}`}
+              </span>
+              {chips.length > 0 && (
+                <span className="row gap-1" style={{ flexWrap: 'wrap' }}>
+                  {chips.map(c => <span key={c} className="pill" style={{ color: 'var(--warn)', border: '1px solid currentColor', background: 'transparent', fontSize: 10.5 }}>{c}</span>)}
+                </span>
+              )}
+              {v.stale && useLatest && <span className="tiny muted">Automatic reuse would reslice this.</span>}
+            </div>
+            <button className="btn sm" onClick={() => onUse(v)}>Use this version</button>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 function defaultConfigForPlate(plate: Plate): PlateConfig {
   return {
     selected: true,
@@ -727,6 +799,14 @@ export function NewJobScreen() {
   const { files: libraryFiles } = useFiles({});
   const [saveFolder, setSaveFolder] = useState('/Job Uploads');
 
+  // Slicing cache (BIZ-194): keep the slice in the library, or print a cached version instead of slicing.
+  const [saveSlice, setSaveSlice] = useState(false);
+  const [saveSliceName, setSaveSliceName] = useState('');
+  const [cachedFrom, setCachedFrom] = useState<{ modelId: number; model: FileInfo; version: SlicedVersion } | null>(null);
+  const [versionPrompt, setVersionPrompt] = useState<{ fileId: number; plate: number; versions: SlicedVersion[] } | null>(null);
+  const [dismissedPrompts, setDismissedPrompts] = useState<Set<string>>(new Set());
+  const { config: queueConfig } = useQueueConfig();
+
   useEffect(() => {
     if (!successMsg) return;
     const t = setTimeout(() => setSuccessMsg(null), 4000);
@@ -745,6 +825,64 @@ export function NewJobScreen() {
     }
   }, [plates, activePlateId]);
 
+  // Cached versions of this model for the plate being configured: offer them before the user sets up a reslice.
+  const activePlateIndex = plates.find(p => p.id === activePlateId)?.index ?? null;
+  useEffect(() => {
+    if (uploadedFileId == null || activePlateIndex == null || !file || isPreslicedKind(file.type) || cachedFrom) {
+      setVersionPrompt(null);
+      return;
+    }
+    setVersionPrompt(null);   // never leave the previous file/plate's versions on screen while these load
+    if (dismissedPrompts.has(`${uploadedFileId}:${activePlateIndex}`)) return;
+    let alive = true;
+    getSlicedVersions(uploadedFileId, activePlateIndex)
+      .then(v => { if (alive) setVersionPrompt(v.length ? { fileId: uploadedFileId, plate: activePlateIndex, versions: v } : null); })
+      .catch(() => { if (alive) setVersionPrompt(null); });
+    return () => { alive = false; };
+  }, [uploadedFileId, activePlateIndex, file, cachedFrom, dismissedPrompts]);
+
+  function dismissPrompt() {
+    if (versionPrompt) setDismissedPrompts(prev => new Set(prev).add(`${versionPrompt.fileId}:${versionPrompt.plate}`));
+    setVersionPrompt(null);
+  }
+
+  async function useCachedVersion(version: SlicedVersion) {
+    if (uploadedFileId == null || !file || versionPrompt?.fileId !== uploadedFileId) return;
+    const model = { id: uploadedFileId, info: file };
+    setUploading(true);
+    setError(null);
+    try {
+      await loadFileIntoState(version.file_id, { name: version.name, size: 0, type: version.kind, folder: file.folder });
+      setCachedFrom({ modelId: model.id, model: model.info, version });
+      // Eligibility: any printer of the make/model it was sliced for, asking for the filament it was sliced with.
+      const key = modelKey(version.machine_preset);
+      setPlateConfigs(prev => {
+        const next = { ...prev };
+        for (const [id, cfg] of Object.entries(next)) {
+          next[id] = {
+            ...cfg, selectedPrinters: [key],
+            perPrinter: { [key]: { ...defaultPerPrinterCfg(), filamentType: version.filament_type, filamentColor: version.filament_color } },
+          };
+        }
+        return next;
+      });
+    } catch (err) {
+      setError(`Failed to load the cached version: ${err instanceof Error ? err.message : String(err)}`);
+      setCachedFrom(null);
+      await loadFileIntoState(model.id, model.info).catch(() => undefined);   // back to the model, not half-switched
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function resliceInstead() {
+    const from = cachedFrom;
+    if (!from) return;
+    setDismissedPrompts(prev => new Set(prev).add(`${from.modelId}:${from.version.plate_number}`));
+    setCachedFrom(null);
+    await loadFileIntoState(from.modelId, from.model);
+  }
+
   // ---- file actions ----
 
   // Shared path for both upload and library-pick: the /upload response no longer
@@ -752,10 +890,11 @@ export function NewJobScreen() {
   async function loadFileIntoState(fileId: number, fileInfo: FileInfo) {
     setUploadedFileId(fileId);
     setFile(fileInfo);
+    const isGcode = isPreslicedKind(fileInfo.type);   // nothing to slice: no filament slots or embedded settings to read
     const [apiPlates, filaments, settings] = await Promise.all([
       getFilePlates(fileId),
-      getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
-      getEmbeddedSettings(fileId).catch(() => [] as EmbeddedSetting[]),
+      isGcode ? Promise.resolve([] as ModelFilament[]) : getModelFilaments(fileId).catch(() => [] as ModelFilament[]),
+      isGcode ? Promise.resolve([] as EmbeddedSetting[]) : getEmbeddedSettings(fileId).catch(() => [] as EmbeddedSetting[]),
     ]);
     setModelFilaments(filaments);
     setEmbeddedSettings(settings);
@@ -767,25 +906,23 @@ export function NewJobScreen() {
     setActivePlateId(detected[0]?.id ?? null);
   }
 
-  function fileTypeOf(name: string): 'stl' | '3mf' {
-    return name.toLowerCase().endsWith('.stl') ? 'stl' : '3mf';
-  }
-
   async function handleFile(rawFile: File | null | undefined) {
     if (!rawFile) return;
     const nameLower = rawFile.name.toLowerCase();
-    if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl')) {
-      setError('Only .3mf and .stl files are supported.');
+    if (!nameLower.endsWith('.3mf') && !nameLower.endsWith('.stl') && !nameLower.endsWith('.gcode')) {
+      setError('Only .3mf, .stl, .gcode and .gcode.3mf files are supported.');
       return;
     }
     setUploading(true);
     setError(null);
     try {
       const uploaded = await uploadFile(rawFile, saveFolder || undefined);
+      setCachedFrom(null);
       await loadFileIntoState(uploaded.id, {
         name: uploaded.original_filename,
         size: rawFile.size,
-        type: fileTypeOf(uploaded.original_filename),
+        type: fileKindOf(uploaded.original_filename),
+        folder: uploaded.folder ?? (saveFolder || '/Job Uploads'),
       });
     } catch (err) {
       setError(`Upload failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -809,10 +946,12 @@ export function NewJobScreen() {
         setError('That library file could not be found.');
         return;
       }
+      setCachedFrom(null);
       await loadFileIntoState(lib.id, {
         name: lib.original_filename,
         size: lib.size_bytes,
-        type: fileTypeOf(lib.original_filename),
+        type: fileKindOf(lib.original_filename),
+        folder: lib.folder,
       });
     } catch (err) {
       setError(`Failed to load file: ${err instanceof Error ? err.message : String(err)}`);
@@ -838,6 +977,7 @@ export function NewJobScreen() {
   function clearFile() {
     setFile(null); setUploadedFileId(null); setPlates([]);
     setPlateConfigs({}); setActivePlateId(null); setError(null); setModelFilaments([]); setEmbeddedSettings([]);
+    setCachedFrom(null); setVersionPrompt(null); setSaveSlice(false); setSaveSliceName('');
   }
 
   // ---- plate config mutators ----
@@ -906,7 +1046,8 @@ export function NewJobScreen() {
     if (cfg.selectedPrinters.length === 0) return false;
     return cfg.selectedPrinters.every(pid => {
       const pp = cfg.perPrinter[pid];
-      return !!(pp && pp.printProfile);
+      // A pre-sliced gcode job has no print profile — naming the printer(s) or model(s) is enough.
+      return !!pp && (isPreslicedKind(file?.type) || !!pp.printProfile);
     });
   };
 
@@ -926,18 +1067,10 @@ export function NewJobScreen() {
           uploaded_file_id: uploadedFileId,
           plate_number: plate.index,
           order_id: cfg.orderId,
-          printer_configs: cfg.selectedPrinters.map(pid => ({
-            printer_id: Number(pid),
-            print_profile: cfg.perPrinter[pid].printProfile!,
-            filament_profile: cfg.perPrinter[pid].filamentProfile ?? null,
-            filament_id: cfg.perPrinter[pid].filamentId ?? null,
-            // "any" is the wire form of "no preference" — the backend rejects null/blank here.
-            filament_type: cfg.perPrinter[pid].filamentType ?? 'any',
-            filament_color: cfg.perPrinter[pid].filamentColor ?? 'any',
-            tool_index: cfg.perPrinter[pid].toolIndex ?? null,
-            filament_map: cfg.perPrinter[pid].filamentMap ?? null,
-          })),
+          ...buildEligibility(cfg.selectedPrinters, cfg.perPrinter),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
+          ...(saveSlice && !isPreslicedKind(file?.type)
+            ? { save_slice: true, save_slice_name: saveSliceName.trim() || null } : {}),
         });
         created.push(id);
       }
@@ -994,7 +1127,7 @@ export function NewJobScreen() {
           <div className="card" style={{ padding: 20 }}>
             <SectionHeader
               title={<span><StepNum n={1} done={!!file} /> Source file</span>}
-              sub="Upload a new .3mf/.stl or pick one from your library."
+              sub="Upload a new .3mf/.stl/.gcode/.gcode.3mf or pick one from your library."
             />
 
             {!file && !uploading && (
@@ -1068,11 +1201,49 @@ export function NewJobScreen() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".3mf,.stl"
+              accept=".3mf,.stl,.gcode"
               style={{ display: 'none' }}
               onChange={e => handleFile(e.target.files?.[0])}
             />
           </div>
+
+          {cachedFrom && (
+            <div className="card row between" data-testid="using-cached" style={{ padding: '10px 14px', alignItems: 'center', gap: 12 }}>
+              <span className="small">
+                Printing cached gcode <b>{cachedFrom.version.name}</b> (sliced from {cachedFrom.model.name}).
+                {cachedFrom.version.stale && <> {staleLabels(cachedFrom.version.stale_reasons).join(', ')}.</>}
+              </span>
+              <button className="btn ghost sm" onClick={resliceInstead}>Reslice instead</button>
+            </div>
+          )}
+
+          {versionPrompt && versionPrompt.fileId === uploadedFileId && versionPrompt.plate === activePlateIndex && (
+            <CachedVersionPrompt
+              multiPlate={plates.length > 1}
+              plate={versionPrompt.plate}
+              versions={versionPrompt.versions}
+              useLatest={queueConfig?.slice_cache_use_latest_settings ?? true}
+              onUse={useCachedVersion}
+              onReslice={dismissPrompt}
+            />
+          )}
+
+          {file && !isPreslicedKind(file.type) && (
+            <div className="card col gap-2" style={{ padding: '12px 14px' }}>
+              <label className="row gap-2 small" style={{ alignItems: 'center', cursor: 'pointer' }}>
+                <input type="checkbox" checked={saveSlice} onChange={e => setSaveSlice(e.target.checked)} />
+                Save sliced gcode to library
+              </label>
+              {saveSlice && (
+                <>
+                  <input className="input" aria-label="Saved gcode name" value={saveSliceName}
+                         onChange={e => setSaveSliceName(e.target.value)}
+                         placeholder={`${file.name.replace(/\.(3mf|stl)$/i, '')} - <filament> - <process> - <printer model>`} />
+                  <span className="tiny muted">Saved next to {file.name}{file.folder ? ` in ${file.folder}` : ''} — reuse it next time instead of slicing again.</span>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Step 2: per-plate config */}
           {plates.length > 0 && activePlateId && (
@@ -1131,6 +1302,7 @@ export function NewJobScreen() {
                   plate={plates.find(p => p.id === activePlateId)!}
                   config={plateConfigs[activePlateId]}
                   isMultiPlate={plates.length > 1}
+                  gcode={isPreslicedKind(file?.type)}
                   printers={printers}
                   modelFilaments={modelFilaments}
                   embeddedSettings={embeddedSettings}

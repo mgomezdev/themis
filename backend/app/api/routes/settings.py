@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, SpoolmanConfig, WebhookConfig
-from ...services import spoolman_service
+from ...services import catalog_service
+from ...services.providers.filament_inventory import make_inventory_provider
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import REGISTRY, create_client
 from ...services.printer_manager import printer_manager
@@ -29,6 +30,8 @@ class QueueConfigOut(BaseModel):
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
+    # Slicing cache (BIZ-191): reslice a cached version whose presets/slicer changed (True) or still print it (False).
+    slice_cache_use_latest_settings: bool
 
 
 class QueueConfigIn(BaseModel):
@@ -36,6 +39,7 @@ class QueueConfigIn(BaseModel):
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
+    slice_cache_use_latest_settings: bool | None = None
 
 
 class CostConfigModel(BaseModel):
@@ -69,7 +73,8 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False)
+        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False,
+                          slice_cache_use_latest_settings=True)
         session.add(row)
         await session.flush()
     return row
@@ -78,7 +83,8 @@ async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
 @router.get("/queue", response_model=QueueConfigOut, summary="Get queue config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_queue_config(session: AsyncSession = Depends(get_session)):
-    """Queue engine settings: poll interval, operator name, and snapshot interval."""
+    """Queue engine settings: poll interval, operator name, snapshot interval, background estimates, and the slicing
+    cache's stale-version policy."""
     return await _get_or_create_queue(session)
 
 
@@ -103,6 +109,8 @@ async def update_queue_config(
             await session.execute(
                 _text("UPDATE jobs SET estimate_status=NULL WHERE estimate_status='pending'")
             )
+    if body.slice_cache_use_latest_settings is not None:
+        row.slice_cache_use_latest_settings = body.slice_cache_use_latest_settings
     await session.commit()
     await session.refresh(row)
     return row
@@ -188,52 +196,29 @@ async def test_spoolman_connection(
             api_key = row.api_key
     if not url:
         return {"ok": False, "message": "No URL configured"}
+    inventory = make_inventory_provider(url, api_key)
     try:
-        info = await spoolman_service.test_connection(url, api_key)
+        info = await inventory.test_connection()
     except Exception as e:
         return {"ok": False, "message": str(e)}
 
     # --- Spoolman profile-name sanity check (best-effort) ---
-    # Check that profile name strings in each filament's orca_profiles exist in the catalog.
-    import app.api.routes.laminus as _lam_mod
-    from ...services.catalog_utils import catalog_name_sets
+    # Check that profile name strings bound to each filament exist in the catalog.
+    from ...services.catalog_utils import catalog_name_sets, stale_binding_groups
 
-    _catalog = _lam_mod._catalog_dict
-    if _catalog is not None:
+    _catalog = catalog_service.cached_catalog()
+    if _catalog is not None and inventory.PROFILE_BINDINGS:
         try:
             _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
-            spool_filaments = await spoolman_service.fetch_filaments(url, api_key)
-            spoolman_groups: dict[tuple[str, str], dict] = {}
-            for fil in spool_filaments:
-                raw_extra = (fil.get("extra") or {}).get("orca_profiles")
-                if not raw_extra:
-                    continue
-                try:
-                    profiles: dict = json.loads(json.loads(raw_extra))
-                except Exception:
-                    continue
-                for printer_preset, names in profiles.items():
-                    if not isinstance(names, list):
-                        continue
-                    for name in names:
-                        if name not in catalog_filaments:
-                            key = (printer_preset, name)
-                            g = spoolman_groups.setdefault(key, {
-                                "printer_preset": printer_preset,
-                                "stale_name": name,
-                                "required": False,
-                                "affected_filament_ids": [],
-                                "affected_filament_names": [],
-                            })
-                            g["affected_filament_ids"].append(fil["id"])
-                            g["affected_filament_names"].append(fil.get("name", str(fil["id"])))
+            spoolman_groups = stale_binding_groups(
+                await inventory.list_filaments(), lambda name: name not in catalog_filaments)
 
             if spoolman_groups:
                 import uuid as _uuid
                 import time as _time
                 sync_id = str(_uuid.uuid4())
                 pending_entries = list(spoolman_groups.values())
-                _lam_mod._pending_sync = {
+                catalog_service.set_pending_sync({
                     "sync_id": sync_id,
                     "raw": None,
                     "catalog": None,
@@ -243,7 +228,7 @@ async def test_spoolman_connection(
                         "spoolman_filaments": pending_entries,
                     },
                     "created_at": _time.time(),
-                }
+                })
                 return {
                     "status": "pending_remaps",
                     "ok": True,
@@ -602,16 +587,15 @@ async def fleet_import(
         raise HTTPException(400, f"Unsupported backup version: {version}")
 
     # Fetch catalog once for profile-name validation (best-effort)
-    from .laminus import get_cached_catalog
-    cat: dict | None = None
+    cat = None
     try:
-        cat = await get_cached_catalog()
+        cat = await catalog_service.get_cached_catalog()
     except Exception:
         pass
 
     machine_names: set[str] = set()
     filament_names: set[str] = set()
-    if cat:
+    if cat is not None:
         from ...services.catalog_utils import catalog_name_sets
         machine_names, _, filament_names, _ = catalog_name_sets(cat)
 

@@ -8,7 +8,7 @@ import { mockApi } from './mock-api';
 const est = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null, deduction_skipped: null,
   estimate_status: null, estimate_seconds: null, estimate_filament_grams: null, estimate_filament_breakdown: null,
-  estimate_preset_label: null, materials: [], eligible_printers: [], low_stock_warning: null, filament_cost: null,
+  estimate_preset_label: null, materials: [], eligible_printers: [], model_targets: [], low_stock_warning: null, filament_cost: null,
 };
 const NEW_JOB = {
   id: 501, uploaded_file_id: 1, plate_number: 1, order_id: null, assigned_printer_id: null, queue_position: 1,

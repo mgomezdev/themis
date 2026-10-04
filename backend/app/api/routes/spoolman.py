@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -8,7 +7,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import SpoolmanConfig
-from ...services import spoolman_service
+from ...services.providers.filament_inventory import (
+    FilamentInventoryProvider,
+    InventoryProviderError,
+    get_inventory_provider,
+)
 from ...services.spoolman_sync import record_sync
 
 router = APIRouter(prefix="/api/v1/spoolman", tags=["spoolman"])
@@ -21,6 +24,13 @@ async def _config_or_503(session: AsyncSession) -> SpoolmanConfig:
     return row
 
 
+async def _provider_or_503(session: AsyncSession) -> FilamentInventoryProvider:
+    provider = await get_inventory_provider(session)
+    if provider is None:
+        raise HTTPException(status_code=503, detail="Spoolman not configured or disabled")
+    return provider
+
+
 @router.get(
     "/filaments",
     summary="List Spoolman filaments",
@@ -31,9 +41,9 @@ async def _config_or_503(session: AsyncSession) -> SpoolmanConfig:
 )
 async def get_filaments(session: AsyncSession = Depends(get_session)):
     """Fetch all filament definitions from the configured Spoolman instance."""
-    row = await _config_or_503(session)
+    provider = await _provider_or_503(session)
     try:
-        return await spoolman_service.fetch_filaments(row.url, row.api_key)
+        return [f.raw for f in await provider.list_filaments()]
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -48,9 +58,9 @@ async def get_filaments(session: AsyncSession = Depends(get_session)):
 )
 async def get_spools(session: AsyncSession = Depends(get_session)):
     """Fetch all spool inventory from the configured Spoolman instance."""
-    row = await _config_or_503(session)
+    provider = await _provider_or_503(session)
     try:
-        return await spoolman_service.fetch_spools(row.url, row.api_key)
+        return [sp.raw for sp in await provider.list_spools()]
     except Exception as e:
         raise HTTPException(status_code=503, detail=str(e))
 
@@ -133,13 +143,13 @@ async def patch_filament(
     session: AsyncSession = Depends(get_session),
 ):
     """Write OrcaSlicer profile assignments back to a Spoolman filament's extra fields."""
-    row = await _config_or_503(session)
+    provider = await _provider_or_503(session)
+    if not provider.PROFILE_BINDINGS:
+        raise HTTPException(status_code=501, detail="The inventory provider does not support profile bindings")
     try:
-        return await spoolman_service.patch_filament(
-            row.url, row.api_key, filament_id, body.orca_profiles
-        )
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=exc.response.status_code, detail=str(exc))
+        return (await provider.set_profile_bindings(str(filament_id), body.orca_profiles)).raw
+    except InventoryProviderError as exc:
+        raise HTTPException(status_code=exc.status or 503, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

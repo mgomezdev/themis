@@ -37,6 +37,26 @@ export interface PrinterConfigInput {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
 }
 
+/** Eligible on any printer whose active machine preset equals `machine_profile` (a make/model). */
+export interface ModelTargetInput {
+  machine_profile: string;
+  print_profile: string;
+  filament_profile?: string | null;
+  filament_id?: number | null;
+  filament_type?: string | null;
+  filament_color?: string | null;
+}
+
+export interface ApiModelTarget {
+  machine_profile: string;
+  print_profile: string;
+  filament_profile: string | null;
+  filament_id: number | null;
+  filament_type: string;
+  filament_color: string;
+  filament_map: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+}
+
 export interface ApiJob {
   id: number;
   uploaded_file_id: number;
@@ -62,9 +82,44 @@ export interface ApiJob {
   updated_at: string;
   materials: string[];
   eligible_printers: Array<{ id: number; name: string }>;
+  model_targets: ApiModelTarget[];
   low_stock_warning: LowStockWarning | null;
   filament_cost: number | null;
   not_before: string | null;   // UTC ISO: the queue won't start this job before then
+  // Slicing cache (BIZ-189)
+  save_slice: boolean;               // keep this job's slice in the library as a cached version
+  save_slice_name: string | null;
+  allow_cached_slice: boolean;       // print a matching cached version instead of slicing when claimed
+  sliced_version_id: number | null;  // the cached version this job prints / printed
+  slice_cache_info: SliceCacheInfo | null;
+}
+
+/** The latest slicing-cache decision for a job (+ the outcome of saving its slice), for the job-details debug view. */
+export interface SliceCacheInfo {
+  decision?: 'hit' | 'miss';
+  reason?: string | null;
+  at?: string;
+  cache_key?: string | null;
+  source_content_hash?: string | null;
+  sliced_version_id?: number | null;
+  cached_file_id?: number | null;
+  cached_file_hash?: string | null;
+  preset_content_hash_stored?: string | null;
+  preset_content_hash_current?: string | null;
+  slicer_version_stored?: string | null;
+  slicer_version_current?: string | null;
+  stale?: boolean | null;
+  stale_reasons?: string[];
+  gate?: 'laminus_down' | null;   // claimed on this version while Laminus was down
+  policy?: 'use_latest' | 'pin_cached' | null;
+  save?: {
+    outcome: 'saved' | 'duplicate' | 'failed';
+    sliced_version_id: number | null;
+    cache_key: string | null;
+    file_id: number | null;
+    error: string | null;
+    at: string;
+  };
 }
 
 export interface LowStockWarning {
@@ -95,6 +150,7 @@ export interface ApiJobPrinterConfig {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
   slice_failed: boolean;
   slice_error: string | null;
+  from_model_target: boolean;   // materialized from a make/model target rather than picked explicitly
   low_stock_warning: LowStockWarning | null;
 }
 
@@ -164,13 +220,25 @@ export async function createJob(body: {
   uploaded_file_id: number;
   plate_number: number;
   printer_configs: PrinterConfigInput[];
+  model_targets?: ModelTargetInput[];
   order_id?: number | null;
   overrides?: Record<string, string> | null;
+  save_slice?: boolean;
+  save_slice_name?: string | null;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+/** Flag a job to keep its slice in the library (saved right away if it's already sliced), or stop a pending save. */
+export async function setJobSaveSlice(jobId: number, saveSlice: boolean, name?: string | null): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/save-slice`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ save_slice: saveSlice, name: name || null }),
   });
 }
 
@@ -196,7 +264,12 @@ export async function checkOverrides(body: {
   });
 }
 
-export interface QueueConfig { check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number; estimates_enabled: boolean; }
+export interface QueueConfig {
+  check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
+  estimates_enabled: boolean;
+  /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
+  slice_cache_use_latest_settings: boolean;
+}
 
 export async function getQueueConfig(): Promise<QueueConfig> {
   return request('/api/v1/settings/queue');
@@ -254,11 +327,12 @@ export async function updateJobConfigs(
   jobId: number,
   configs: PrinterConfigInput[],
   overrides?: Record<string, string> | null,
+  modelTargets: ModelTargetInput[] = [],
 ): Promise<ApiJob> {
   return request(`/api/v1/jobs/${jobId}/configs`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ printer_configs: configs, overrides: overrides ?? null }),
+    body: JSON.stringify({ printer_configs: configs, model_targets: modelTargets, overrides: overrides ?? null }),
   });
 }
 

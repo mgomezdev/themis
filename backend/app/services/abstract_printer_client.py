@@ -189,6 +189,13 @@ class AbstractPrinterClient(ABC):
 
     # --- Slicing output contract (overridable per vendor) ---
 
+    # Whether the printer can be handed a plain .gcode file (pre-sliced job, BIZ-188). Vendors that only ingest a
+    # sliced archive (Bambu: .gcode.3mf) set this False until a raw-gcode start has been verified on hardware.
+    raw_gcode_supported: bool = True
+    # Whether the printer can be handed a pre-sliced archive (.gcode.3mf, BIZ-190). Only vendors whose own slicer
+    # output is that archive (see orca_export_args) set this True.
+    sliced_archive_supported: bool = False
+
     def orca_export_args(self, file_base: str) -> list[str]:
         """Extra OrcaSlicer CLI args declaring this printer's print artifact.
 

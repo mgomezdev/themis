@@ -18,6 +18,19 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   tracked in a `schema_migrations` table). A new table can ride on `create_all`, but a new column on an
   *existing* table needs its own migration file (see `data-model.md` § Migrations) — there is no
   `_migrate()` guard function; that pattern was retired.
+- **Pre-sliced jobs (BIZ-188, BIZ-190)**: a job whose `UploadedFile` is a `.gcode` or a `.gcode.3mf` sliced archive
+  (`library_scanner.is_presliced_file`; `file_kind()` checks `.gcode.3mf` *before* `.3mf` — same suffix) is never sliced. The claim skips the Laminus health check; `_run_slice_and_print` stages a *copy* into
+  `<data>/gcode/<job_id>/` (`_stage_gcode`) and goes straight to upload+print — finished jobs delete their
+  `GcodeFile` path, so it must never be the library's own file. `print_profile` is `""`, overrides are dropped on
+  create/PATCH, the estimate is parsed from the header at create (no background test-slice) and `verify-slice` 422s.
+  A missing library file blocks (not fails) the job. Themis can't verify gcode against a printer: the UI warns
+  (`GcodeWarning`, dismissal remembered in localStorage) and the user owns the match — a job still needs explicit
+  printers or a make/model target (BIZ-187). Vendors that only ingest a sliced archive set
+  `raw_gcode_supported = False` (Bambu — raw-gcode start unverified); a `.gcode.3mf` needs `sliced_archive_supported = True`
+  (Bambu only). `model_targets.accepts_file(printer_type, filename)` is the one check: a job on a file a printer can't
+  take is 422'd for that explicit printer/model and never materialized onto it, and a config that slipped through
+  blocks (never fails) at claim. A staged copy, and `LibraryScanner.unique_path`'s "name (2)" collision rename, keep the
+  full `.gcode.3mf` suffix. A job on an archive must name a plate the archive has (422 otherwise).
 - **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
   for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
   `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy

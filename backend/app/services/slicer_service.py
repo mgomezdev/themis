@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import get_data_dir
+from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,61 @@ class SliceRequest:
     extra_config: dict = field(default_factory=dict)
 
 
+def resolve_preset_uuids(
+    machine_preset: str, process_preset: str, filament_presets: list[str], provider: SlicingProvider,
+) -> "tuple[str, str, list[str]]":
+    """Look up preset refs (Laminus: profile UUIDs) from the provider's catalog by name.
+
+    Returns (machine_uuid, process_uuid, [filament_uuid, ...]). Raises SliceError
+    naming the specific preset(s) and kind that didn't resolve, so the user knows
+    exactly what to fix instead of re-checking three presets at once.
+    """
+    # Prefer the Themis-side catalog cache (populated at boot) over a fresh
+    # sidecar call. Falls back to a direct fetch only if not yet warmed.
+    from . import catalog_service
+    catalog = catalog_service.cached_catalog()
+    if catalog is None:
+        try:
+            catalog = provider.get_catalog()
+            catalog_service.remember_catalog(catalog)
+        except Exception as exc:
+            logger.warning("Could not fetch sidecar catalog: %s", exc)
+            raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
+    machine_uuid = catalog.ref_for("machine", machine_preset)
+    process_uuid = catalog.ref_for("process", process_preset)
+
+    # Name every unresolved preset and its kind — not just "something didn't match".
+    missing: list[str] = []
+    if not machine_uuid:
+        missing.append(f"machine preset {machine_preset!r}")
+    if not process_uuid:
+        missing.append(f"process preset {process_preset!r}")
+
+    filament_uuids = []
+    missing_filaments: list[str] = []
+    for name in filament_presets:
+        fid = catalog.ref_for("filament", name)
+        if fid:
+            filament_uuids.append(fid)
+        else:
+            missing_filaments.append(name)
+    if not filament_presets:
+        missing.append("no filament preset was supplied")
+    elif missing_filaments:
+        missing.append(f"filament preset(s) {missing_filaments!r}")
+
+    if missing:
+        detail = "; ".join(missing)
+        logger.warning("Sidecar UUID miss — %s", detail)
+        raise SliceError(
+            f"{detail} — not found in Laminus sidecar catalog. Refresh the profile "
+            f"sync from Laminus so the picker offers valid choices, then re-select "
+            f"the affected preset(s)."
+        )
+
+    return machine_uuid, process_uuid, filament_uuids
+
+
 class SlicerService:
     def __init__(self, data_dir: str | None = None) -> None:
         self._data_dir = Path(data_dir) if data_dir else get_data_dir()
@@ -62,80 +118,25 @@ class SlicerService:
         (``<data_dir>/gcode/<job_id>``). Callers can use this to isolate estimate
         gcode from production gcode. The directory is created if it does not exist.
         """
-        from ..config import get_laminus_sidecar_url
-        sidecar_url = get_laminus_sidecar_url()
-        if not sidecar_url:
+        provider = get_slicing_provider()
+        if provider is None:
             raise SliceError("LAMINUS_SIDECAR_URL is not configured — Laminus sidecar is required for slicing")
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        machine_uuid, process_uuid, filament_uuids = self._resolve_uuids(req, sidecar_url)
+        machine_uuid, process_uuid, filament_uuids = self._resolve_uuids(req, provider)
         return self._execute_slice_by_ids(
-            req, machine_uuid, process_uuid, filament_uuids, out_dir, sidecar_url
+            req, machine_uuid, process_uuid, filament_uuids, out_dir, provider
         )
 
     # ── internals ─────────────────────────────────────────────────────────────
     def _resolve_uuids(
         self,
         req: SliceRequest,
-        sidecar_url: str,
+        provider: SlicingProvider,
     ) -> "tuple[str, str, list[str]]":
-        """Look up profile UUIDs from the sidecar catalog by name.
-
-        Returns (machine_uuid, process_uuid, [filament_uuid, ...]). Raises SliceError
-        naming the specific preset(s) and kind that didn't resolve, so the user knows
-        exactly what to fix instead of re-checking three presets at once.
-        """
-        # Prefer the Themis-side catalog cache (populated at boot) over a fresh
-        # sidecar call. Falls back to a direct fetch only if not yet warmed.
-        from ..api.routes import laminus as _laminus_module
-        catalog = _laminus_module._catalog_dict
-        if catalog is None:
-            try:
-                from .laminus_sidecar_client import LaminusSidecarClient
-                catalog = LaminusSidecarClient(sidecar_url).get_catalog()
-                _laminus_module._catalog_dict = catalog
-            except Exception as exc:
-                logger.warning("Could not fetch sidecar catalog: %s", exc)
-                raise SliceError(f"Laminus sidecar unreachable — cannot resolve profiles: {exc}") from exc
-        machine_map = {m["name"]: m["uuid"] for m in catalog.get("machine", [])}
-        process_map = {p["name"]: p["uuid"] for p in catalog.get("process", [])}
-        filament_map = {f["name"]: f["uuid"] for f in catalog.get("filament", [])}
-
-        machine_uuid = machine_map.get(req.machine_preset)
-        process_uuid = process_map.get(req.process_preset)
-
-        # Name every unresolved preset and its kind — not just "something didn't match".
-        missing: list[str] = []
-        if not machine_uuid:
-            missing.append(f"machine preset {req.machine_preset!r}")
-        if not process_uuid:
-            missing.append(f"process preset {req.process_preset!r}")
-
-        filament_uuids = []
-        missing_filaments: list[str] = []
-        for name in req.filament_presets:
-            fid = filament_map.get(name)
-            if fid:
-                filament_uuids.append(fid)
-            else:
-                missing_filaments.append(name)
-        if not req.filament_presets:
-            missing.append("no filament preset was supplied")
-        elif missing_filaments:
-            missing.append(f"filament preset(s) {missing_filaments!r}")
-
-        if missing:
-            detail = "; ".join(missing)
-            logger.warning("Sidecar UUID miss — %s", detail)
-            raise SliceError(
-                f"{detail} — not found in Laminus sidecar catalog. Refresh the profile "
-                f"sync from Laminus so the picker offers valid choices, then re-select "
-                f"the affected preset(s)."
-            )
-
-        return machine_uuid, process_uuid, filament_uuids
+        return resolve_preset_uuids(req.machine_preset, req.process_preset, req.filament_presets, provider)
 
     def _execute_slice_by_ids(
         self,
@@ -144,16 +145,14 @@ class SlicerService:
         process_uuid: str,
         filament_uuids: list[str],
         out_dir: Path,
-        sidecar_url: str,
+        provider: SlicingProvider,
     ) -> str:
-        """Delegate the full slice to the sidecar using stable profile UUIDs.
+        """Delegate the full slice to the slicing provider using stable preset refs.
 
         The sidecar resolves inheritance, builds the 3MF with extra_config merged
         on top, slices, and streams the artifact back. The only local file access
         is the job-scoped copy-and-remap for ``req.prepare_hook``, if set.
         """
-        from .laminus_sidecar_client import LaminusSidecarClient, SidecarError
-        client = LaminusSidecarClient(sidecar_url)
         export_3mf = _export_3mf_name(req.export_args) is not None
         source = Path(req.source_3mf)
         for stale in (*out_dir.glob("*.gcode"), *out_dir.glob("*.gcode.3mf")):
@@ -170,15 +169,11 @@ class SlicerService:
             source = prepared
 
         try:
-            job_id = client.slice_start(
-                source, machine_uuid, process_uuid, filament_uuids,
-                req.plate_number, export_3mf=export_3mf,
-                extra_config=req.extra_config or None,
-            )
-            status = client.poll_status(job_id)
-            dest = out_dir / status["sliced_file"]
-            result = str(client.download(job_id, dest))
-        except SidecarError as e:
+            result = provider.slice(SliceSpec(
+                source_file=source, plate=req.plate_number, machine_ref=machine_uuid, process_ref=process_uuid,
+                filament_refs=filament_uuids, export_3mf=export_3mf, extra_config=req.extra_config or {},
+            ), out_dir)
+        except SlicingProviderError as e:
             raise SliceError(str(e)) from e
 
         if not export_3mf and source.suffix.lower() == ".3mf":

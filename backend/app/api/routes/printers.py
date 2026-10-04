@@ -17,19 +17,20 @@ import shutil
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobPrinterConfig, Printer
-from ...services import camera_hub
+from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
+from ...services.library_scanner import is_presliced_name
+from ...services import camera_hub, catalog_service
+from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
-async def _fetch_sidecar_catalog() -> dict | None:
-    """Return the Themis-side catalog cache (never calls Laminus directly)."""
-    from .laminus import get_cached_catalog
+async def _fetch_sidecar_catalog() -> Catalog | None:
+    """Return the Themis-side catalog cache (never calls the slicing provider directly)."""
     try:
-        return await get_cached_catalog()
+        return await catalog_service.get_cached_catalog()
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning("Could not get catalog: %s", e)
@@ -274,7 +275,7 @@ async def list_orca_printer_presets() -> list[str]:
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return []
-    return sorted({m["name"] for m in cat.get("machine", []) if m.get("name")})
+    return sorted(cat.names("machine"))
 
 
 @router.get("/orca-machine-catalog", summary="OrcaSlicer machine catalog",
@@ -288,15 +289,15 @@ async def orca_machine_catalog() -> list[dict]:
     return sorted(
         [
             {
-                "name": m["name"],
-                "vendor": m.get("manufacturer") or "",
-                "printer_model": m.get("model") or "",
-                "nozzle": m.get("nozzle") or "",
+                "name": m.name,
+                "vendor": m.raw.get("manufacturer") or "",
+                "printer_model": m.raw.get("model") or "",
+                "nozzle": m.raw.get("nozzle") or "",
                 "source": "system",
-                "uuid": m.get("uuid") or "",
+                "uuid": m.ref,
             }
-            for m in cat.get("machine", [])
-            if m.get("name") and m.get("model") and m.get("nozzle")
+            for m in cat.machines
+            if m.name and m.raw.get("model") and m.raw.get("nozzle")
         ],
         key=lambda m: (m["vendor"], m["printer_model"], m["nozzle"], m["name"]),
     )
@@ -312,12 +313,14 @@ async def orca_machine_catalog() -> list[dict]:
 )
 async def rescan_profiles(session: AsyncSession = Depends(get_session)) -> dict:
     """Trigger a catalog refresh from Orca and report the machine preset count."""
-    from .laminus import refresh_catalog as _laminus_refresh
-    await _laminus_refresh(session)
+    try:
+        await catalog_service.refresh(session)
+    except catalog_service.CatalogUnavailable as exc:
+        raise HTTPException(exc.status, exc.detail) from exc
     cat = await _fetch_sidecar_catalog()
     if cat is None:
         return {"machine_presets": 0}
-    count = sum(1 for m in cat.get("machine", []) if m.get("model") and m.get("nozzle"))
+    count = sum(1 for m in cat.machines if m.raw.get("model") and m.raw.get("nozzle"))
     return {"machine_presets": count}
 
 
@@ -467,14 +470,9 @@ async def get_profiles(
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
 
-    processes = sorted(
-        p["name"] for p in cat.get("process", [])
-        if machine_name in (p.get("compatible_printers") or [])
-    )
-    filaments = sorted(
-        f["name"] for f in cat.get("filament", [])
-        if machine_name in (f.get("compatible_printers") or [])
-    )
+    slicer = get_format_provider()
+    processes = sorted(p.name for p in slicer.compatible_presets(cat, machine_name, "process"))
+    filaments = sorted(f.name for f in slicer.compatible_presets(cat, machine_name, "filament"))
     return {"print_profiles": processes, "filament_profiles": filaments}
 
 
@@ -600,7 +598,11 @@ async def delete_printer(
         remaining = set((await session.execute(
             select(JobPrinterConfig.job_id).where(JobPrinterConfig.job_id.in_(affected_job_ids)).distinct()
         )).scalars().all())
-        orphaned_ids = [jid for jid in affected_job_ids if jid not in remaining]
+        # A job with a make/model target isn't orphaned: another (or a future) printer of that model can take it.
+        targeted = set((await session.execute(
+            select(JobModelTarget.job_id).where(JobModelTarget.job_id.in_(affected_job_ids)).distinct()
+        )).scalars().all())
+        orphaned_ids = [jid for jid in affected_job_ids if jid not in remaining and jid not in targeted]
         if orphaned_ids:
             await session.execute(
                 update(Job)
@@ -1127,13 +1129,13 @@ async def copy_stored_file_to_library(
     printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
-    deduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused."""
+    deduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models."""
     await _get_or_404(printer_id, session)
     client = _get_connected_client(printer_id)
     _require_capability(client, "file_download", "downloading files")
     name = os.path.basename(body.file_id)
-    if not name.lower().endswith((".3mf", ".stl")):
-        raise HTTPException(422, "Only .3mf and .stl files can be added to the library")
+    if not name.lower().endswith((".3mf", ".stl")) or is_presliced_name(name):
+        raise HTTPException(422, "Only .3mf and .stl models can be added to the library (not sliced gcode)")
     from ...services.abstract_printer_client import FileTooLargeError
     try:
         data = await asyncio.to_thread(client.download_file, body.file_id, _MAX_DIRECT_UPLOAD_BYTES)

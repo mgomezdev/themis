@@ -1073,14 +1073,7 @@
             }
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       }
@@ -1176,14 +1169,7 @@
             "description": "Order not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "Customer work is recorded as a project, not an order"
           }
         }
       },
@@ -2749,7 +2735,7 @@
           "printers"
         ],
         "summary": "Copy a file from the printer into the file library",
-        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Plain .gcode can't be sliced, so it is refused.",
+        "description": "Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,\ndeduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models.",
         "operationId": "copy_stored_file_to_library_api_v1_printers__printer_id__files_to_library_post",
         "parameters": [
           {
@@ -3000,7 +2986,7 @@
           "files"
         ],
         "summary": "List files",
-        "description": "All files in the library. Optional filters: `folder` (prefix match),\n`tags` (all supplied tags must be present), `search` (filename substring).\n`sort` accepts `updated` (default), `name`, or `size`.",
+        "description": "All files in the library. Optional filters: `folder` (prefix match),\n`tags` (all supplied tags must be present), `search` (filename substring),\n`kind` (`models` = sliceable .3mf/.stl, `sliced` = pre-sliced .gcode/.gcode.3mf, `all` default).\n`sort` accepts `updated` (default), `name`, or `size`.",
         "operationId": "list_files_api_v1_files_get",
         "parameters": [
           {
@@ -3062,6 +3048,21 @@
               "type": "string",
               "default": "updated",
               "title": "Sort"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "models",
+                "sliced"
+              ],
+              "type": "string",
+              "default": "all",
+              "title": "Kind"
             }
           }
         ],
@@ -3148,7 +3149,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf or .stl file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for .3mf files.",
+        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
@@ -3174,7 +3175,7 @@
             }
           },
           "422": {
-            "description": "Unsupported file type (only .3mf and .stl accepted)"
+            "description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"
           }
         }
       }
@@ -3343,6 +3344,7 @@
           "files"
         ],
         "summary": "Delete file",
+        "description": "Delete a library file. A model with cached sliced versions needs `versions`: `delete` removes them too,\n`keep` leaves them as standalone gcode (no longer linked to a model). Without it the answer is 409 listing them.",
         "operationId": "delete_file_api_v1_files__file_id__delete",
         "parameters": [
           {
@@ -3352,6 +3354,26 @@
             "schema": {
               "type": "integer",
               "title": "File Id"
+            }
+          },
+          {
+            "name": "versions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "delete",
+                    "keep"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Versions"
             }
           }
         ],
@@ -3372,7 +3394,7 @@
             "description": "File not found"
           },
           "409": {
-            "description": "File is referenced by an active job or a project item"
+            "description": "File (or a cached version being deleted with it) is referenced by an active job or a project item, or the model has cached versions and `versions` wasn't given"
           },
           "422": {
             "description": "Validation Error",
@@ -3516,6 +3538,73 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Rescan Api V1 Files Rescan Post"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/sliced-versions": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "List a model's cached sliced versions",
+        "description": "The cached slices of this model (BIZ-193), newest first, optionally for one `plate`; versions whose file is\nmissing are left out. Each carries the settings it was sliced with and three flags: `source_changed` (the model\nchanged since), `stale` (`true`/`false`/`null` = unknown \u2014 presets or OrcaSlicer changed since, with\n`stale_reasons`), and `printable_now` (an enabled printer of that make/model can take the file).",
+        "operationId": "list_sliced_versions_api_v1_files__file_id__sliced_versions_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          },
+          {
+            "name": "plate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Plate"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Sliced Versions Api V1 Files  File Id  Sliced Versions Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -3801,7 +3890,7 @@
           "jobs"
         ],
         "summary": "Create job",
-        "description": "Queue a new print job for a specific file plate. At least one printer config is required.\nThe job is added at the end of the queue and the engine is woken immediately.",
+        "description": "Queue a new print job for a specific file plate. At least one printer config or make/model target\n(`model_targets`) is required. The job is added at the end of the queue and the engine is woken immediately.",
         "operationId": "create_job_api_v1_jobs_post",
         "requestBody": {
           "content": {
@@ -3830,7 +3919,7 @@
             "description": "File, printer, or order not found"
           },
           "422": {
-            "description": "printer_configs is empty"
+            "description": "Neither printer_configs nor model_targets given, a bad or duplicate target/printer, a gcode file on a printer that can't take raw gcode, or a customer order"
           }
         }
       }
@@ -4139,7 +4228,7 @@
             "description": "Job or printer not found"
           },
           "422": {
-            "description": "Job is not in an editable status or printer_configs is empty"
+            "description": "Job is not in an editable status, or no printer_configs/model_targets given"
           }
         }
       }
@@ -4343,7 +4432,7 @@
             "description": "Job is terminal, or already being manually completed"
           },
           "422": {
-            "description": "No OrcaSlicer machine preset on the printer, or the slice failed"
+            "description": "No OrcaSlicer machine preset on the printer, the job prints pre-sliced gcode, or the slice failed"
           }
         }
       }
@@ -4456,6 +4545,60 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}/save-slice": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Save (or stop saving) a job's slice to the library",
+        "description": "Flag any unfinished job to keep its production slice as a cached library version (BIZ-192), optionally under\n`name`. If the job is already sliced, its slice is saved right away; otherwise it is saved when slicing finishes.\nRe-sending `save_slice: true` after a failed save retries it. Turning the flag off cancels a pending save but never\ndeletes a version already saved.",
+        "operationId": "set_job_save_slice_api_v1_jobs__job_id__save_slice_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobSaveSlicePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Save Slice Api V1 Jobs  Job Id  Save Slice Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "409": {
+            "description": "Job already finished (its slice is gone)"
+          },
+          "422": {
+            "description": "Job prints a pre-sliced file or a cached version \u2014 there is no new slice to save"
           }
         }
       }
@@ -6038,14 +6181,7 @@
             "description": "Project or file not found"
           },
           "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+            "description": "The file is pre-sliced (.gcode / .gcode.3mf) \u2014 only models can be packed"
           }
         }
       }
@@ -7136,7 +7272,7 @@
           "settings"
         ],
         "summary": "Get queue config",
-        "description": "Queue engine settings: poll interval, operator name, and snapshot interval.",
+        "description": "Queue engine settings: poll interval, operator name, snapshot interval, background estimates, and the slicing\ncache's stale-version policy.",
         "operationId": "get_queue_config_api_v1_settings_queue_get",
         "responses": {
           "200": {
@@ -8637,6 +8773,24 @@
               }
             ],
             "title": "Process Preset"
+          },
+          "eligible_machine_profiles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eligible Machine Profiles",
+            "default": []
+          },
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice",
+            "default": false
+          },
+          "allow_cached": {
+            "type": "boolean",
+            "title": "Allow Cached",
+            "default": true
           }
         },
         "type": "object",
@@ -8679,7 +8833,16 @@
               "$ref": "#/components/schemas/PrinterConfigInput"
             },
             "type": "array",
-            "title": "Printer Configs"
+            "title": "Printer Configs",
+            "default": []
+          },
+          "model_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ModelTargetInput"
+            },
+            "type": "array",
+            "title": "Model Targets",
+            "default": []
           },
           "overrides": {
             "anyOf": [
@@ -8695,9 +8858,6 @@
           }
         },
         "type": "object",
-        "required": [
-          "printer_configs"
-        ],
         "title": "JobConfigsUpdate"
       },
       "JobCostPatch": {
@@ -8744,7 +8904,16 @@
               "$ref": "#/components/schemas/PrinterConfigInput"
             },
             "type": "array",
-            "title": "Printer Configs"
+            "title": "Printer Configs",
+            "default": []
+          },
+          "model_targets": {
+            "items": {
+              "$ref": "#/components/schemas/ModelTargetInput"
+            },
+            "type": "array",
+            "title": "Model Targets",
+            "default": []
           },
           "overrides": {
             "anyOf": [
@@ -8768,14 +8937,55 @@
               }
             ],
             "title": "Not Before"
+          },
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice",
+            "default": false
+          },
+          "save_slice_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Save Slice Name"
           }
         },
         "type": "object",
         "required": [
-          "uploaded_file_id",
-          "printer_configs"
+          "uploaded_file_id"
         ],
         "title": "JobCreate"
+      },
+      "JobSaveSlicePatch": {
+        "properties": {
+          "save_slice": {
+            "type": "boolean",
+            "title": "Save Slice"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "save_slice"
+        ],
+        "title": "JobSaveSlicePatch"
       },
       "JobSchedulePatch": {
         "properties": {
@@ -9075,6 +9285,72 @@
         },
         "type": "object",
         "title": "MaintenanceItemPatch"
+      },
+      "ModelTargetInput": {
+        "properties": {
+          "machine_profile": {
+            "type": "string",
+            "title": "Machine Profile"
+          },
+          "print_profile": {
+            "type": "string",
+            "title": "Print Profile",
+            "default": ""
+          },
+          "filament_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Profile"
+          },
+          "filament_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Id"
+          },
+          "filament_type": {
+            "type": "string",
+            "title": "Filament Type",
+            "default": "any"
+          },
+          "filament_color": {
+            "type": "string",
+            "title": "Filament Color",
+            "default": "any"
+          },
+          "filament_map": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Map"
+          }
+        },
+        "type": "object",
+        "required": [
+          "machine_profile"
+        ],
+        "title": "ModelTargetInput",
+        "description": "Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
       },
       "NotificationConfigIn": {
         "properties": {
@@ -9689,7 +9965,8 @@
           },
           "print_profile": {
             "type": "string",
-            "title": "Print Profile"
+            "title": "Print Profile",
+            "default": ""
           },
           "filament_profile": {
             "anyOf": [
@@ -9751,7 +10028,6 @@
         "type": "object",
         "required": [
           "printer_id",
-          "print_profile",
           "filament_type",
           "filament_color"
         ],
@@ -10659,6 +10935,17 @@
               }
             ],
             "title": "Estimates Enabled"
+          },
+          "slice_cache_use_latest_settings": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slice Cache Use Latest Settings"
           }
         },
         "type": "object",
@@ -10688,6 +10975,10 @@
           "estimates_enabled": {
             "type": "boolean",
             "title": "Estimates Enabled"
+          },
+          "slice_cache_use_latest_settings": {
+            "type": "boolean",
+            "title": "Slice Cache Use Latest Settings"
           }
         },
         "type": "object",
@@ -10695,7 +10986,8 @@
           "check_interval_minutes",
           "operator_name",
           "snapshot_interval_seconds",
-          "estimates_enabled"
+          "estimates_enabled",
+          "slice_cache_use_latest_settings"
         ],
         "title": "QueueConfigOut"
       },

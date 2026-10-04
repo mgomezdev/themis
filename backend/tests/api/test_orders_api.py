@@ -3,7 +3,7 @@
 
 async def _create_order(client, **over):
     body = {
-        "order_type": "customer", "customer": "Vela Robotics",
+        "order_type": "internal", "customer": "Vela Robotics",
         "title": "Brackets", "due_date": "2026-06-01", "notes": "match black",
         "parts": [{"name": "Arm L", "qty": 8, "material": "PA-CF", "est_minutes": 78}],
     }
@@ -127,3 +127,73 @@ async def test_filament_cost_total_zero_is_not_null(client, create_job):
     await client.patch(f"/api/v1/jobs/{job_id}/cost", json={"filament_cost": 0})
     data = (await client.get(f"/api/v1/orders/{oid}")).json()
     assert data["filament_cost_total"] == 0.0
+
+
+async def test_customer_orders_can_no_longer_be_created(client):
+    resp = await _create_order(client, order_type="customer")
+    assert resp.status_code == 422
+    assert "project" in resp.json()["detail"]
+    assert (await client.get("/api/v1/orders")).json() == []
+
+
+async def test_an_order_cannot_be_turned_into_a_customer_order(client):
+    order_id = (await _create_order(client)).json()["id"]
+
+    resp = await client.patch(f"/api/v1/orders/{order_id}", json={"order_type": "customer"})
+
+    assert resp.status_code == 422
+    assert (await client.get(f"/api/v1/orders/{order_id}")).json()["order_type"] == "internal"
+
+
+async def test_a_legacy_customer_order_can_still_be_edited(client, session_factory):
+    from app.models import Order
+    async with session_factory() as s:
+        o = Order(order_type="customer", customer="Old Co", title="Legacy", created_at="2026-01-01T00:00:00+00:00",
+                  updated_at="2026-01-01T00:00:00+00:00")
+        s.add(o)
+        await s.commit()
+        order_id = o.id
+
+    resp = await client.patch(f"/api/v1/orders/{order_id}", json={"order_type": "customer", "title": "Renamed"})
+
+    assert resp.status_code == 200
+    assert resp.json()["title"] == "Renamed"
+
+
+async def test_new_jobs_cannot_be_linked_to_a_customer_order(client, session_factory, upload_3mf, create_printer):
+    from unittest.mock import patch
+    from app.models import Order
+    async with session_factory() as s:
+        o = Order(order_type="customer", customer="Old Co", title="Legacy", created_at="2026-01-01T00:00:00+00:00",
+                  updated_at="2026-01-01T00:00:00+00:00")
+        s.add(o)
+        await s.commit()
+        order_id = o.id
+
+    with patch("app.api.routes.jobs.queue_engine"):
+        resp = await client.post("/api/v1/jobs", json={
+            "uploaded_file_id": await upload_3mf(), "order_id": order_id,
+            "printer_configs": [{"printer_id": await create_printer(), "print_profile": "0.20mm",
+                                 "filament_type": "any", "filament_color": "any"}],
+        })
+
+    assert resp.status_code == 422
+
+
+async def test_deleting_an_order_a_project_points_at_detaches_the_project(client, session_factory):
+    """Regression: v032 links converted projects to their order; deleting it must not hit the foreign key."""
+    from app.models import Order, Project
+    async with session_factory() as s:
+        o = Order(order_type="internal", customer="x", title="t", created_at="2026-01-01", updated_at="2026-01-01")
+        s.add(o)
+        await s.flush()
+        p = Project(name="P", order_id=o.id, created_at="2026-01-01", updated_at="2026-01-01")
+        s.add(p)
+        await s.commit()
+        order_id, project_id = o.id, p.id
+
+    resp = await client.delete(f"/api/v1/orders/{order_id}")
+
+    assert resp.status_code == 204
+    async with session_factory() as s:
+        assert (await s.get(Project, project_id)).order_id is None

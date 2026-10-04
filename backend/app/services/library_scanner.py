@@ -1,4 +1,7 @@
 from __future__ import annotations
+import base64
+import binascii
+import re
 
 import hashlib
 from datetime import datetime, timezone
@@ -8,9 +11,39 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import UploadedFile, Job
-from .three_mf_parser import parse_three_mf, PlateInfo
+from .providers.slicing import get_format_provider
+from .three_mf_parser import parse_sliced_archive, parse_three_mf, PlateInfo
 
-MODEL_EXTS = {".3mf", ".stl"}
+MODEL_EXTS = {".3mf", ".stl", ".gcode"}
+SLICED_ARCHIVE_SUFFIX = ".gcode.3mf"   # Bambu's sliced archive: ends in .3mf but is NOT a sliceable model (BIZ-190)
+
+
+def file_kind(name: str | None) -> str:
+    """`gcode_3mf` (sliced archive), `gcode`, `stl` or `3mf`. The sliced-archive check must come before the
+    plain `.3mf` one — it shares the suffix."""
+    lower = (name or "").lower()
+    if lower.endswith(SLICED_ARCHIVE_SUFFIX):
+        return "gcode_3mf"
+    if lower.endswith(".gcode"):
+        return "gcode"
+    if lower.endswith(".stl"):
+        return "stl"
+    return "3mf"
+
+
+def is_presliced_name(name: str | None) -> bool:
+    return file_kind(name) in ("gcode", "gcode_3mf")
+
+
+def presliced_suffix(name: str | None) -> str:
+    """The full extension of a pre-sliced file (`.gcode.3mf` or `.gcode`), for naming copies of it."""
+    return SLICED_ARCHIVE_SUFFIX if file_kind(name) == "gcode_3mf" else ".gcode"
+
+
+def is_presliced_file(uploaded_file) -> bool:
+    """A pre-sliced file (.gcode or a .gcode.3mf sliced archive): jobs on it skip slicing and are printed as-is
+    (BIZ-188, BIZ-190)."""
+    return bool(uploaded_file) and is_presliced_name(uploaded_file.original_filename)
 # Statuses where a job still needs its source file present.
 ACTIVE_JOB_STATUSES = {"queued", "slicing", "uploading", "printing", "paused", "blocked"}
 
@@ -23,6 +56,54 @@ def sha256_file(path: Path) -> str:
 def folder_of(relative_path: str) -> str:
     parent = Path(relative_path).parent.as_posix()
     return "/" if parent == "." else "/" + parent
+
+
+def fresh_content_hash(abs_path: Path, row_hash: str, row_size: int, row_mtime: float):
+    """`(hash, size, mtime)` of the file as it is on disk NOW — re-hashed only when its size/mtime differ from the
+    indexed row (the index is refreshed by rescans, not a watcher, so a file overwritten in place keeps a stale hash
+    until then). None if the file is gone. Blocking: call via asyncio.to_thread."""
+    try:
+        st = abs_path.stat()
+    except OSError:
+        return None
+    if row_hash and st.st_size == row_size and st.st_mtime == row_mtime:
+        return row_hash, row_size, row_mtime
+    return sha256_file(abs_path), st.st_size, st.st_mtime
+
+
+async def refresh_content_hash(row, library_dir: Path) -> bool:
+    """Bring `row`'s content_hash/size/mtime up to date with the file on disk (caller commits). True if it changed."""
+    import asyncio
+    fresh = await asyncio.to_thread(
+        fresh_content_hash, library_abs_path(library_dir, row.relative_path), row.content_hash, row.size_bytes,
+        row.mtime)
+    if fresh is None or fresh == (row.content_hash, row.size_bytes, row.mtime):
+        return False
+    row.content_hash, row.size_bytes, row.mtime = fresh
+    return True
+def extract_gcode_thumbnail(path: Path, dest: Path, head_bytes: int = 2_000_000) -> Path | None:
+    """The largest PNG preview OrcaSlicer/PrusaSlicer embed in a gcode header (`; thumbnail begin WxH LEN` … base64 …
+    `; thumbnail end`), written to `dest`; None if the file has none."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(head_bytes)
+    except OSError:
+        return None
+    best: tuple[int, bytes] | None = None
+    for m in re.finditer(rb"^; thumbnail begin (\d+)x(\d+) \d+\s*$(.*?)^; thumbnail end", head, re.M | re.S):
+        data = b"".join(line.lstrip(b"; ").strip() for line in m.group(3).splitlines())
+        try:
+            png = base64.b64decode(data, validate=False)
+        except (ValueError, binascii.Error):
+            continue
+        area = int(m.group(1)) * int(m.group(2))
+        if png.startswith(b"\x89PNG") and (best is None or area > best[0]):
+            best = (area, png)
+    if best is None:
+        return None
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(best[1])
+    return dest
 
 
 def library_abs_path(library_dir: Path, relative_path: str) -> Path:
@@ -46,7 +127,13 @@ class LibraryScanner:
         candidate = folder_abs / filename
         if not candidate.exists():
             return candidate
-        stem, suffix = Path(filename).stem, Path(filename).suffix
+        # A sliced archive's suffix is the whole `.gcode.3mf`: splitting at the last dot would give "x (2).3mf" —
+        # a name that reads back as a sliceable model (BIZ-190).
+        if file_kind(filename) == "gcode_3mf":
+            suffix = filename[-len(SLICED_ARCHIVE_SUFFIX):]
+            stem = filename[: -len(SLICED_ARCHIVE_SUFFIX)]
+        else:
+            stem, suffix = Path(filename).stem, Path(filename).suffix
         n = 2
         while True:
             candidate = folder_abs / f"{stem} ({n}){suffix}"
@@ -61,8 +148,16 @@ class LibraryScanner:
     def _parse_plates(self, abs_path: Path, file_id: int) -> list[dict]:
         thumb_dir = self.filecache_dir / str(file_id) / "thumbnails"
         thumb_dir.mkdir(parents=True, exist_ok=True)
-        if abs_path.suffix.lower() == ".3mf":
+        kind = file_kind(abs_path.name)
+        if kind == "gcode_3mf":
+            plates_raw = parse_sliced_archive(str(abs_path), thumbnail_dir=str(thumb_dir))
+        elif kind == "3mf":
             plates_raw = parse_three_mf(str(abs_path), thumbnail_dir=str(thumb_dir))
+        elif kind == "gcode":
+            grams, secs, _ = get_format_provider().parse_estimates(str(abs_path))
+            thumb = extract_gcode_thumbnail(abs_path, thumb_dir / "plate_1.png")
+            plates_raw = [PlateInfo(plate_number=1, thumbnail_path=str(thumb) if thumb else None,
+                                    estimated_time=secs or 0, filament_g=grams or 0.0)]
         else:
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=None, estimated_time=0, filament_g=0.0)]
         return [
@@ -70,6 +165,19 @@ class LibraryScanner:
              "estimated_time": p.estimated_time, "filament_g": p.filament_g}
             for p in plates_raw
         ]
+
+    async def _detach_edited_version(self, row, new_hash: str) -> None:
+        """A cached gcode edited on disk is no longer what was sliced: drop its link to the model (it stays a plain
+        library file) so it is never offered or reused as that model's version (BIZ-195)."""
+        from ..models import SlicedVersion   # local: keep the module's import surface small
+        from . import slice_cache
+        version = (await self.session.execute(
+            select(SlicedVersion).where(SlicedVersion.file_id == row.id))).scalar_one_or_none()
+        if version is not None and version.source_file_id is not None:
+            slice_cache.log_event("version_detached", sliced_version_id=version.id, cached_file_id=row.id,
+                                  source_file_id=version.source_file_id, cached_file_hash=row.content_hash,
+                                  new_file_hash=new_hash, reason="file_edited")
+            version.source_file_id = None
 
     # ---- the scan ----
     async def scan(self) -> dict:
@@ -90,7 +198,10 @@ class LibraryScanner:
             if row is not None:
                 # Known path. Re-hash + re-parse only if it changed on disk.
                 if row.mtime != stat.st_mtime or row.size_bytes != stat.st_size:
-                    row.content_hash = sha256_file(abs_path)
+                    new_hash = sha256_file(abs_path)
+                    if row.content_hash and new_hash != row.content_hash:
+                        await self._detach_edited_version(row, new_hash)
+                    row.content_hash = new_hash
                     row.size_bytes = stat.st_size
                     row.mtime = stat.st_mtime
                     row.plates = self._parse_plates(abs_path, row.id)
