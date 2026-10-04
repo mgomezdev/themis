@@ -303,3 +303,22 @@ describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
     expect(screen.queryByTestId('save-slice-control')).toBeNull();
   });
 });
+
+describe('JobDetailScreen — project link', () => {
+  it('shows the linked project name and unlinks it', async () => {
+    const { stubFetch } = await import('../test/fetchStub');
+    const api = stubFetch({
+      'GET /api/v1/projects/3': { id: 3, name: 'Bracket run', stage: 'queued' },
+      'PATCH /api/v1/jobs/5/project': { ...BASE_JOB, project_id: null },
+    });
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, project_id: 3 });
+
+    renderJobDetail();
+
+    expect(await screen.findByText('Bracket run')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect(await screen.findByText('Link to project…')).toBeTruthy();
+    expect(api.to('PATCH', '/api/v1/jobs/5/project')[0].body).toEqual({ project_id: null });
+    vi.unstubAllGlobals();
+  });
+});

@@ -18,12 +18,17 @@ vi.mock('../api/queue', () => ({
   plateThumbnailUrl: vi.fn(() => null),
 }));
 
+vi.mock('../api/projects', () => ({
+  useProjects: vi.fn(() => ({ projects: [], refetch: vi.fn() })),
+}));
+
 vi.mock('../api/fleet', () => ({
   useFleetData: vi.fn(() => [[], vi.fn()]),
 }));
 
 import * as queueApi from '../api/queue';
 import * as fleetApi from '../api/fleet';
+import * as projectsApi from '../api/projects';
 
 const nullEstimate = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
@@ -59,6 +64,13 @@ describe('QueueScreen', () => {
   beforeEach(() => {
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: mockJobs, refetch: vi.fn() });
     vi.mocked(queueApi.useFilePlates).mockReturnValue({ getPlate: () => null, getFileName: () => null });
+  });
+
+  it('shows the linked project name on a job card', () => {
+    vi.mocked(projectsApi.useProjects).mockReturnValue({ projects: [{ id: 4, name: 'Bracket run' }], refetch: vi.fn() } as never);
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4 }, mockJobs[0]], refetch: vi.fn() });
+    render(<QueueScreen />, { wrapper });
+    expect(screen.getAllByText('Bracket run')).toHaveLength(1);   // only the linked job's card
   });
 
   it('renders summary stats', () => {
