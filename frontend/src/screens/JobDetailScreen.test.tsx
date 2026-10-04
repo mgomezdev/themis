@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -305,6 +305,8 @@ describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
 });
 
 describe('JobDetailScreen — project link', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it('shows the linked project name and unlinks it', async () => {
     const { stubFetch } = await import('../test/fetchStub');
     const api = stubFetch({
@@ -319,6 +321,5 @@ describe('JobDetailScreen — project link', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
     expect(await screen.findByText('Link to project…')).toBeTruthy();
     expect(api.to('PATCH', '/api/v1/jobs/5/project')[0].body).toEqual({ project_id: null });
-    vi.unstubAllGlobals();
   });
 });

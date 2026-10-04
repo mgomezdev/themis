@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { setJobProject, type ApiJob } from '../api/queue';
 import { createProject, getProjects, type Project } from '../api/projects';
@@ -17,6 +17,7 @@ export function JobProjectControl({ jobId, projectId, projectName, onChanged }: 
   const [newName, setNewName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const created = useRef<{ name: string; id: number } | null>(null);   // survives a failed link so a retry doesn't duplicate
 
   async function run(action: () => Promise<ApiJob>) {
     setBusy(true);
@@ -37,16 +38,17 @@ export function JobProjectControl({ jobId, projectId, projectName, onChanged }: 
   function openPicker() {
     setPicking(true);
     setError('');
-    if (projects === null) {
-      getProjects()
-        .then(all => setProjects(all.filter(p => p.stage !== 'draft')))
-        .catch(e => setError(e instanceof Error ? e.message : 'Could not load projects'));
-    }
+    getProjects()
+      .then(all => setProjects(all.filter(p => p.stage !== 'draft')))
+      .catch(e => { setProjects([]); setError(e instanceof Error ? e.message : 'Could not load projects'); });
   }
 
   const createAndLink = () => run(async () => {
-    const p = await createProject({ name: newName.trim() });
-    return setJobProject(jobId, p.id);
+    const name = newName.trim();
+    if (created.current?.name !== name) created.current = { name, id: (await createProject({ name })).id };
+    const job = await setJobProject(jobId, created.current.id);
+    created.current = null;
+    return job;
   });
 
   return (

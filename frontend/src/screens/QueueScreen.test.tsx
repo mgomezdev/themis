@@ -15,6 +15,7 @@ vi.mock('../api/queue', () => ({
   getSliceFailures: vi.fn(() => Promise.resolve([])),
   getJobDetails: vi.fn(() => Promise.resolve({ printer_configs: [] })),
   verifySlice: vi.fn(),
+  setJobProject: vi.fn(),
   plateThumbnailUrl: vi.fn(() => null),
 }));
 
@@ -71,6 +72,21 @@ describe('QueueScreen', () => {
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4 }, mockJobs[0]], refetch: vi.fn() });
     render(<QueueScreen />, { wrapper });
     expect(screen.getAllByText('Bracket run')).toHaveLength(1);   // only the linked job's card
+  });
+
+  it('opens the job panel with a project control that refetches the queue after a change', async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    const refetchProjects = vi.fn();
+    vi.mocked(projectsApi.useProjects).mockReturnValue({ projects: [{ id: 4, name: 'Bracket run' }], refetch: refetchProjects } as never);
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4 }], refetch });
+    vi.mocked(queueApi.setJobProject).mockResolvedValue({ ...mockJobs[1], project_id: null });
+    render(<QueueScreen />, { wrapper });
+    await user.click(screen.getByText('Plate 2'));
+    await user.click(screen.getByRole('button', { name: 'Unlink' }));
+    await vi.waitFor(() => expect(refetch).toHaveBeenCalled());
+    expect(refetchProjects).toHaveBeenCalled();
+    expect(queueApi.setJobProject).toHaveBeenCalledWith(2, null);
   });
 
   it('renders summary stats', () => {
