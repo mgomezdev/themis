@@ -37,7 +37,7 @@ def _serialize_bambu(state, printer_id: int) -> dict:
 def _serialize_elegoo(state, printer_id: int) -> dict:
     total_ticks = getattr(state, "total_ticks", 0)
     current_ticks = getattr(state, "current_ticks", 0)
-    if total_ticks > 0 and current_ticks < total_ticks:
+    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
         remaining_time = int((total_ticks - current_ticks) / 60)
     else:
         remaining_time = getattr(state, "remaining_time", 0) or 0

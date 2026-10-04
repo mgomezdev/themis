@@ -133,7 +133,7 @@ class ElegooState:
 
     @property
     def remaining_time(self) -> int:
-        if self.total_ticks > 0 and self.current_ticks < self.total_ticks:
+        if self.print_state != "complete" and self.total_ticks > 0 and self.current_ticks < self.total_ticks:
             return int((self.total_ticks - self.current_ticks) / 60)
         return 0
 
@@ -457,7 +457,10 @@ class ElegooCentauriClient(AbstractPrinterClient):
             new.progress = min(new.current_ticks / new.total_ticks * 100.0, 100.0)
         else:
             new.progress = float(print_info.get("Progress", 0))
-        new.print_speed_pct = int(print_info.get("PrintSpeed", 100))
+        if new.print_state == "complete" and new.total_ticks > 0:
+            new.progress = 100.0  # hardware: a finished print reports CurrentTicks just short of TotalTicks (99.4%)
+        # Hardware key is PrintSpeedPct (verified on a Centauri Carbon); PrintSpeed kept as a fallback.
+        new.print_speed_pct = int(print_info.get("PrintSpeedPct", print_info.get("PrintSpeed", 100)))
 
         # Temperatures
         temps = {}

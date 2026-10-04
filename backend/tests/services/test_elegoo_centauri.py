@@ -702,3 +702,18 @@ def test_list_files_reads_size_and_time_from_the_printers_real_entry_shape():
     assert files[0].size == 4306903
     assert files[0].modified_at == "2026-10-01T10:58:21+00:00"
     assert (files[1].size, files[1].modified_at) == (0, None)
+
+
+def test_parse_status_reads_the_hardware_speed_key_and_reports_a_finished_print_as_done():
+    """Frame shape captured from a real Centauri Carbon at FINISH: PrintSpeedPct (not PrintSpeed), and
+    CurrentTicks stops just short of TotalTicks, which used to read as 99.4% with 2 minutes left."""
+    client = _make_client()
+    client._on_ws_message(None, json.dumps(_status_msg({
+        "CurrentStatus": [0],
+        "PrintInfo": {"Status": 9, "CurrentLayer": 794, "TotalLayer": 794, "CurrentTicks": 18523.9,
+                      "TotalTicks": 18644, "Filename": "", "TaskId": "", "PrintSpeedPct": 130, "Progress": 0},
+    })))
+    assert client.state.print_state == "complete"
+    assert client.state.print_speed_pct == 130
+    assert client.state.progress == 100.0
+    assert client.state.remaining_time == 0
