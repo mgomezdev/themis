@@ -7,7 +7,7 @@ import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { CustomerPicker } from '../components/CustomerPicker';
 import { useFiles } from '../api/files';
-import { useSpoolmanConfig, useFilaments } from '../api/spoolman';
+import { useInventory, useMaterials } from '../api/inventory';
 import type { LibraryFile, FolderNode } from '../data/types';
 import {
   getProject, createProject, patchProject,
@@ -101,6 +101,8 @@ interface LocalItem {
   filament_type: string;
   filament_color: string;
   filament_id: number | null;
+  material_provider: string | null;
+  material_ref: string | null;
   sort_order: number;
 }
 
@@ -162,10 +164,10 @@ export function ProjectBuilderScreen() {
   const projectId = id ? parseInt(id) : null;
   const navigate = useNavigate();
 
-  // Spoolman integration
-  const { config: spoolmanConfig } = useSpoolmanConfig();
-  const spoolmanEnabled = spoolmanConfig?.enabled ?? false;
-  const spoolmanFilaments = useFilaments(spoolmanEnabled);
+  // Inventory catalog (materials), when a provider is active
+  const inventory = useInventory();
+  const catalogEnabled = !!inventory.plugin;
+  const materials = useMaterials(catalogEnabled);
 
   // Project header fields
   const [name, setName] = useState('');
@@ -249,7 +251,7 @@ export function ProjectBuilderScreen() {
       onHold: oh, dueDate: dd, notes: no, price: pr,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
-        ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, so: i.sort_order,
+        ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, mr: i.material_ref, so: i.sort_order,
       })),
       links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
       parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
@@ -297,6 +299,8 @@ export function ProjectBuilderScreen() {
         filament_type: it.filament_type,
         filament_color: it.filament_color,
         filament_id: it.filament_id,
+        material_provider: it.material_provider ?? null,
+        material_ref: it.material_ref ?? null,
         sort_order: it.sort_order,
       }));
       const lks: LocalLink[] = (p.links ?? []).map(l => ({
@@ -341,6 +345,8 @@ export function ProjectBuilderScreen() {
           filament_type: 'any',
           filament_color: 'any',
           filament_id: null,
+          material_provider: null,
+          material_ref: null,
           sort_order: prev.length,
         },
       ];
@@ -384,6 +390,8 @@ export function ProjectBuilderScreen() {
       filament_type: req.filament_type,
       filament_color: req.filament_color,
       filament_id: req.filament_id,
+      material_provider: req.material_provider ?? null,
+      material_ref: req.material_ref ?? null,
     });
   }
 
@@ -393,6 +401,8 @@ export function ProjectBuilderScreen() {
       filament_type: req.filament_type,
       filament_color: req.filament_color,
       filament_id: req.filament_id,
+      material_provider: req.material_provider ?? null,
+      material_ref: req.material_ref ?? null,
     })));
   }
 
@@ -418,6 +428,8 @@ export function ProjectBuilderScreen() {
           filament_type: it.filament_type,
           filament_color: it.filament_color,
           filament_id: it.filament_id,
+          material_provider: it.material_provider ?? null,
+          material_ref: it.material_ref ?? null,
           sort_order: it.sort_order,
         });
       }
@@ -429,6 +441,8 @@ export function ProjectBuilderScreen() {
           filament_type: it.filament_type,
           filament_color: it.filament_color,
           filament_id: it.filament_id,
+          material_provider: it.material_provider ?? null,
+          material_ref: it.material_ref ?? null,
           sort_order: it.sort_order,
         });
       }
@@ -468,6 +482,8 @@ export function ProjectBuilderScreen() {
           filament_type: it.filament_type,
           filament_color: it.filament_color,
           filament_id: it.filament_id,
+          material_provider: it.material_provider ?? null,
+          material_ref: it.material_ref ?? null,
           sort_order: i,
         });
       }
@@ -855,10 +871,10 @@ export function ProjectBuilderScreen() {
 
                   {/* Filament requirement */}
                   <FilamentRequirementPicker
-                    value={{ filament_type: it.filament_type, filament_color: it.filament_color, filament_id: it.filament_id }}
+                    value={{ filament_type: it.filament_type, filament_color: it.filament_color, filament_id: it.filament_id, material_provider: it.material_provider, material_ref: it.material_ref }}
                     onChange={req => setItemFilament(it.localId, req)}
-                    spoolmanFilaments={spoolmanFilaments}
-                    spoolmanEnabled={spoolmanEnabled}
+                    materials={materials}
+                    catalogEnabled={catalogEnabled}
                   />
 
                   {/* Apply to all + Remove */}
@@ -870,6 +886,8 @@ export function ProjectBuilderScreen() {
                           filament_type: it.filament_type,
                           filament_color: it.filament_color,
                           filament_id: it.filament_id,
+                          material_provider: it.material_provider ?? null,
+                          material_ref: it.material_ref ?? null,
                         })}
                         title="Apply this filament to every part"
                       >

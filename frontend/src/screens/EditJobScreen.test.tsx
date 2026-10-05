@@ -5,20 +5,20 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { EditJobScreen } from './EditJobScreen';
 import * as queueApi from '../api/queue';
 
-// ── Spoolman mock ─────────────────────────────────────────────────────────────
+// ── Inventory mock ─────────────────────────────────────────────────────────────
 
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn(),
-  useFilaments: vi.fn(),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(),
+  useMaterials: vi.fn(),
 }));
 
-import * as spoolmanApi from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { noInventory } from '../test/inventoryFixtures';
 
 function mockSpoolmanDisconnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({ config: null, refetch: vi.fn() });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue([]);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
 }
 
 // ── Queue API mock ────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ describe('EditJobScreen — make/model targets', () => {
     ...JOB_WITH_TOOL2,
     model_targets: [{
       machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+      filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
     }],
     // The materialized row for the target must not come back as an explicit printer pick.
     printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], tool_index: null, from_model_target: true, slice_failed: false }],
@@ -252,7 +252,7 @@ describe('EditJobScreen — make/model targets', () => {
     expect(configs).toEqual([]);
     expect(targets).toEqual([{
       machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, filament_type: 'PLA', filament_color: 'any',
+      filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any',
     }]);
   });
 });

@@ -8591,6 +8591,58 @@
         }
       }
     },
+    "/api/v1/plugins/{plugin_id}/ui/{tab_id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "The schema a `schema` tab is rendered from",
+        "operationId": "get_tab_schema_api_v1_plugins__plugin_id__ui__tab_id__get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown plugin, or the tab is not a schema tab"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{plugin_id}/test": {
       "post": {
         "tags": [

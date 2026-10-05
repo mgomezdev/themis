@@ -12,6 +12,8 @@ export interface ApiOrderPart {
   material: string;
   est_minutes: number;
   filament_id: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   filament_color: string | null;
 }
 
@@ -53,6 +55,8 @@ export interface OrderPartInput {
   material: string;
   est_minutes: number;
   filament_id?: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   filament_color?: string | null;
 }
 

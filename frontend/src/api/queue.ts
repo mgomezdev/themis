@@ -31,6 +31,8 @@ export interface PrinterConfigInput {
   print_profile: string;
   filament_profile?: string | null;
   filament_id?: number | null;
+  material_provider?: string | null;      // the provider-namespaced material pick (preferred over filament_id)
+  material_ref?: string | null;
   filament_type?: string | null;
   filament_color?: string | null;
   tool_index?: number | null;
@@ -43,6 +45,8 @@ export interface ModelTargetInput {
   print_profile: string;
   filament_profile?: string | null;
   filament_id?: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   filament_type?: string | null;
   filament_color?: string | null;
 }
@@ -52,6 +56,8 @@ export interface ApiModelTarget {
   print_profile: string;
   filament_profile: string | null;
   filament_id: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   filament_type: string;
   filament_color: string;
   filament_map: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
@@ -73,6 +79,8 @@ export interface ApiJob {
   actual_seconds: number | null;
   actual_filament_breakdown: Array<{ extruder_index: number; filament_profile: string | null; grams: number }> | null;
   deduction_skipped: boolean | null;
+  /** Why filament usage was not recorded (spool tracking suspended / no starting weight); null otherwise. */
+  deduction_note?: string | null;
   // Estimate values
   estimate_status: 'pending' | 'done' | 'failed' | null;
   estimate_seconds: number | null;
@@ -145,6 +153,8 @@ export interface ApiJobPrinterConfig {
   print_profile: string;
   filament_profile: string | null;
   filament_id: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   filament_type: string | null;
   filament_color: string | null;
   tool_index: number | null;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchPrinters, type ApiPrinter } from '../api/printers';
 import { getPrinterProfiles } from '../api/queue';
-import { fetchFilaments, filamentDisplayName, parseOrcaProfiles, patchFilamentOrcaProfiles, useSpoolmanConfig, type ApiFilament } from '../api/spoolman';
+import { CAP, fetchMaterials, materialDisplayName, profileLinks, setProfileLinks, useInventory, type InvMaterial } from '../api/inventory';
 import { FilamentProfileMultiSelect } from '../components/FilamentProfileMultiSelect';
 
 // Map from machine preset name → one printer ID that uses it (for profile lookup)
@@ -15,16 +15,16 @@ function buildPresetPrinterMap(printers: ApiPrinter[]): Map<string, number> {
   return map;
 }
 
-function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExpanded, onRemove }: {
-  filament: ApiFilament;
+function MaterialCard({ material: filament, presetPrinterMap, presetProfiles, initiallyExpanded, onRemove }: {
+  material: InvMaterial;
   presetPrinterMap: Map<string, number>;
   presetProfiles: Map<string, string[]>;
   initiallyExpanded: boolean;
   onRemove: () => void;
 }) {
   const [expanded, setExpanded] = useState(initiallyExpanded);
-  const [draft, setDraft] = useState<Record<string, string[]>>(() => parseOrcaProfiles(filament));
-  const [saved, setSaved] = useState<Record<string, string[]>>(() => parseOrcaProfiles(filament));
+  const [draft, setDraft] = useState<Record<string, string[]>>(() => profileLinks(filament));
+  const [saved, setSaved] = useState<Record<string, string[]>>(() => profileLinks(filament));
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
@@ -44,7 +44,7 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
     setSaving(true);
     setSaveMsg(null);
     try {
-      await patchFilamentOrcaProfiles(filament.id, draft);
+      await setProfileLinks(filament.ref, draft);
       setSaved({ ...draft });
       setSaveMsg({ ok: true, text: 'Saved' });
       // If all presets cleared, trigger remove from page
@@ -56,7 +56,7 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
     }
   }
 
-  const color = filament.color_hex ? `#${filament.color_hex}` : '#888';
+  const color = filament.color_hex || '#888';
   const presets = Array.from(presetPrinterMap.keys());
 
   // Orphaned: presets in saved mapping not covered by any registered printer
@@ -71,7 +71,7 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
       >
         <div style={{ width: 12, height: 12, borderRadius: 3, flexShrink: 0, background: color, border: '1px solid var(--border-2)' }} />
         <div className="col" style={{ flex: 1, minWidth: 0 }}>
-          <div className="small" style={{ fontWeight: 500 }}>{filamentDisplayName(filament)}</div>
+          <div className="small" style={{ fontWeight: 500 }}>{materialDisplayName(filament)}</div>
           <div className="tiny muted">{filament.material}</div>
         </div>
         {Object.keys(saved).length > 0 && (
@@ -132,27 +132,29 @@ function FilamentCard({ filament, presetPrinterMap, presetProfiles, initiallyExp
   );
 }
 
-export function SpoolmanMappingsPage() {
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+/** Material → OrcaSlicer filament preset links per printer model (needs a provider that can store them). */
+export function MaterialMappingsPage() {
+  const inventory = useInventory();
+  const canMap = inventory.has(CAP.PROFILE_LINKS_WRITE);
 
-  const [filaments, setFilaments] = useState<ApiFilament[]>([]);
+  const [filaments, setFilaments] = useState<InvMaterial[]>([]);
   const [printers, setPrinters] = useState<ApiPrinter[]>([]);
   const [presetProfiles, setPresetProfiles] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Filaments actively being edited (added via search)
-  const [activeIds, setActiveIds] = useState<Set<number>>(new Set());
+  const [activeIds, setActiveIds] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
 
   const presetPrinterMap = useMemo(() => buildPresetPrinterMap(printers), [printers]);
 
   useEffect(() => {
+    if (!canMap) { setLoading(false); return; }
     let alive = true;
     setLoading(true);
-    Promise.all([fetchFilaments(), fetchPrinters()])
+    Promise.all([fetchMaterials(), fetchPrinters()])
       .then(async ([fils, prns]) => {
         if (!alive) return;
         setFilaments(fils);
@@ -160,7 +162,7 @@ export function SpoolmanMappingsPage() {
 
         // Seed activeIds from filaments that already have mappings
         const withMappings = new Set(
-          fils.filter(f => Object.keys(parseOrcaProfiles(f)).length > 0).map(f => f.id)
+          fils.filter(f => Object.keys(profileLinks(f)).length > 0).map(f => f.ref)
         );
         setActiveIds(withMappings);
 
@@ -182,10 +184,10 @@ export function SpoolmanMappingsPage() {
       .catch(e => { if (alive) setError(e instanceof Error ? e.message : 'Load failed'); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, []);
+  }, [canMap, inventory.id]);
 
   const activeFilaments = useMemo(
-    () => filaments.filter(f => activeIds.has(f.id)),
+    () => filaments.filter(f => activeIds.has(f.ref) && !f.archived),
     [filaments, activeIds]
   );
 
@@ -193,36 +195,36 @@ export function SpoolmanMappingsPage() {
     if (!searchQuery) return [];
     const q = searchQuery.toLowerCase();
     return filaments
-      .filter(f => !activeIds.has(f.id))
+      .filter(f => !activeIds.has(f.ref) && !f.archived)
       .filter(f =>
-        filamentDisplayName(f).toLowerCase().includes(q) ||
+        materialDisplayName(f).toLowerCase().includes(q) ||
         (f.material ?? '').toLowerCase().includes(q) ||
-        (f.vendor?.name ?? '').toLowerCase().includes(q)
+        (f.vendor ?? '').toLowerCase().includes(q)
       )
       .slice(0, 8);
   }, [filaments, activeIds, searchQuery]);
 
-  function addFilament(f: ApiFilament) {
-    setActiveIds(ids => new Set([...ids, f.id]));
+  function addFilament(f: InvMaterial) {
+    setActiveIds(ids => new Set([...ids, f.ref]));
     setSearchQuery('');
     setSearchOpen(false);
   }
 
-  function removeFilament(id: number) {
+  function removeFilament(id: string) {
     setActiveIds(ids => { const next = new Set(ids); next.delete(id); return next; });
   }
 
-  if (!spoolmanEnabled) {
+  if (!canMap) {
     return (
       <div className="card" style={{ padding: 28 }}>
         <div className="small muted">
-          Spoolman is not configured. Set up Spoolman under Settings → Integrations → Spoolman first.
+          The active inventory provider can't store preset links (or none is set up). Choose one under Settings → Filament inventory.
         </div>
       </div>
     );
   }
   if (loading) {
-    return <div className="small muted" style={{ padding: 24 }}>Loading filaments…</div>;
+    return <div className="small muted" style={{ padding: 24 }}>Loading materials…</div>;
   }
   if (error) {
     return (
@@ -247,7 +249,7 @@ export function SpoolmanMappingsPage() {
         <div style={{ marginBottom: 18 }}>
           <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>Filament Profile Mappings</h2>
           <div className="muted small" style={{ marginTop: 4 }}>
-            Map Spoolman filaments to OrcaSlicer filament presets per printer model. Saved to the filament's <code>orca_profiles</code> custom field in Spoolman.
+            Link materials to OrcaSlicer filament presets per printer model. The links are stored with the material in your inventory.
           </div>
         </div>
 
@@ -255,7 +257,7 @@ export function SpoolmanMappingsPage() {
         <div style={{ position: 'relative', marginBottom: 16 }}>
           <input
             className="input"
-            placeholder="Search filaments to configure…"
+            placeholder="Search materials to configure…"
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true); }}
             onFocus={() => setSearchOpen(true)}
@@ -270,13 +272,13 @@ export function SpoolmanMappingsPage() {
             }}>
               {searchResults.map(f => (
                 <div
-                  key={f.id}
+                  key={f.ref}
                   onMouseDown={() => addFilament(f)}
                   style={{ padding: '9px 14px', cursor: 'pointer', fontSize: 13, borderBottom: '1px solid var(--border-1)' }}
                   onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg-3)')}
                   onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                 >
-                  <span style={{ fontWeight: 500 }}>{filamentDisplayName(f)}</span>
+                  <span style={{ fontWeight: 500 }}>{materialDisplayName(f)}</span>
                   <span className="tiny muted" style={{ marginLeft: 8 }}>{f.material}</span>
                 </div>
               ))}
@@ -287,18 +289,18 @@ export function SpoolmanMappingsPage() {
         {/* Filament cards */}
         {activeFilaments.length === 0 ? (
           <div className="tiny muted">
-            No filaments configured yet. Search above to add one.
+            No materials configured yet. Search above to add one.
           </div>
         ) : (
           <div className="col gap-2">
             {activeFilaments.map(f => (
-              <FilamentCard
-                key={f.id}
-                filament={f}
+              <MaterialCard
+                key={f.ref}
+                material={f}
                 presetPrinterMap={presetPrinterMap}
                 presetProfiles={presetProfiles}
-                initiallyExpanded={Object.keys(parseOrcaProfiles(f)).length === 0}
-                onRemove={() => removeFilament(f.id)}
+                initiallyExpanded={Object.keys(profileLinks(f)).length === 0}
+                onRemove={() => removeFilament(f.ref)}
               />
             ))}
           </div>

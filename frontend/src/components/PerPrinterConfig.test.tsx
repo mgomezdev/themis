@@ -1,15 +1,14 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerPrinterConfig, defaultPerPrinterCfg } from './PerPrinterConfig';
-import * as spoolman from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
 
-// Mock spoolman hooks so they don't fire real HTTP requests
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn().mockReturnValue({ config: null, refetch: vi.fn() }),
-  useFilaments: vi.fn().mockReturnValue([]),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
-  parseOrcaProfiles: vi.fn(() => ({})),
+// Mock the inventory hooks so they don't fire real HTTP requests
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(() => ({ plugin: null, id: null, has: () => false })),
+  useMaterials: vi.fn(() => []),
 }));
 
 // Mock getPrinterProfiles so it doesn't fire real HTTP requests
@@ -49,7 +48,7 @@ const MODEL_FILAMENTS_3 = [
 describe('PerPrinterConfig', () => {
   it('defaultPerPrinterCfg is all-null (defer)', () => {
     expect(defaultPerPrinterCfg()).toEqual({
-      printProfile: null, filamentProfile: null, filamentId: null,
+      printProfile: null, filamentProfile: null, filamentId: null, materialProvider: null, materialRef: null,
       filamentType: null, filamentColor: null, toolIndex: null, filamentMap: null,
     });
   });
@@ -122,23 +121,19 @@ describe('PerPrinterConfig', () => {
 });
 
 const MOCK_FILAMENTS = [
-  { id: 7,  name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
-  { id: 19, name: 'White',    vendor: { id: 3, name: 'Sunlu'  }, material: 'PETG', color_hex: 'FFFFFF' },
+  mkMaterial({ ref: '7',  name: 'Sky Blue', vendor: 'ELEGOO', material: 'PLA',  color_hex: '#5B9BD5' }),
+  mkMaterial({ ref: '19', name: 'White',    vendor: 'Sunlu',  material: 'PETG', color_hex: '#FFFFFF' }),
 ];
 
 function mockSpoolman(enabled: boolean) {
-  vi.mocked(spoolman.useSpoolmanConfig).mockReturnValue(
-    enabled
-      ? { config: { enabled: true, url: 'http://artemis:7912', has_api_key: false, sync_interval_minutes: 15 }, refetch: vi.fn() }
-      : { config: null, refetch: vi.fn() },
-  );
-  vi.mocked(spoolman.useFilaments).mockReturnValue(enabled ? MOCK_FILAMENTS as never : []);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(enabled ? activeInventory() : noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue(enabled ? MOCK_FILAMENTS : []);
 }
 
 describe('PerPrinterConfig — multi-material unified dropdown', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('slot-only: renders optgroup "Slots" but no "Catalog" when spoolman off', async () => {
+  it('slot-only: renders optgroup "Slots" but no "Catalog" when no inventory is active', async () => {
     mockSpoolman(false);
     renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
     const sel1 = await screen.findByTestId('map-tool-1');
@@ -147,7 +142,7 @@ describe('PerPrinterConfig — multi-material unified dropdown', () => {
     expect(html).not.toContain('Catalog');
   });
 
-  it('renders "Catalog" optgroup when spoolman is on', async () => {
+  it('renders "Catalog" optgroup when an inventory is active', async () => {
     mockSpoolman(true);
     renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
     const sel1 = await screen.findByTestId('map-tool-1');

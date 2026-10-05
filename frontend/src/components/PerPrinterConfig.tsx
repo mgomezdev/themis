@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
 import { getPrinterProfiles, type ModelFilament } from '../api/queue';
-import { useSpoolmanConfig, useFilaments, filamentDisplayName, parseOrcaProfiles } from '../api/spoolman';
+import { askRef, materialDisplayName, profileLinks, useInventory, useMaterials } from '../api/inventory';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
 
 export interface PerPrinterCfg {
   printProfile: string | null;
   filamentProfile: string | null;
-  filamentId: number | null;
+  filamentId: number | null;               // legacy numeric id echoed from older rows; new picks use materialProvider/materialRef
+  materialProvider: string | null;
+  materialRef: string | null;
   filamentType: string | null;
   filamentColor: string | null;
   toolIndex: number | null;
@@ -16,11 +18,14 @@ export interface PerPrinterCfg {
 
 export function defaultPerPrinterCfg(): PerPrinterCfg {
   return {
-    printProfile: null, filamentProfile: null, filamentId: null,
+    printProfile: null, filamentProfile: null, filamentId: null, materialProvider: null, materialRef: null,
     filamentType: null, filamentColor: null, toolIndex: null,
     filamentMap: null,
   };
 }
+
+/** filament_map entries carry an integer marker for "a catalog material", so only numeric refs can be mapped per model filament. */
+const isNumericRef = (m: { ref: string }) => /^\d+$/.test(m.ref);
 
 const BADGE: Record<string, string> = {
   bambu: 'P1S', elegoo_centauri: 'ECC', snapmaker_extended: 'U1',
@@ -91,17 +96,19 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
   const pid = Number(printerId);
   const printer = printers.find(p => p.id === pid);
   const { printProfiles, filamentProfiles } = usePrinterProfiles(pid);
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const filaments = useFilaments(spoolmanActive);
+  const inventory = useInventory();
+  const catalogActive = !!inventory.plugin;          // "a material catalog is available"
+  const filaments = useMaterials(catalogActive);
+  const matRef = askRef({ filament_id: config.filamentId, material_ref: config.materialRef });
+  const NO_MATERIAL = { filamentId: null, materialProvider: null, materialRef: null } as const;
 
-  const selectedFilament = config.filamentId != null
-    ? filaments.find(f => f.id === config.filamentId) ?? null
+  const selectedFilament = matRef != null
+    ? filaments.find(f => f.ref === matRef) ?? null
     : null;
 
   const mappedProfiles: string[] | null = useMemo(() => {
     if (!selectedFilament || !printer?.current_orca_printer_profile) return null;
-    const orcaProfiles = parseOrcaProfiles(selectedFilament);
+    const orcaProfiles = profileLinks(selectedFilament);
     const list = orcaProfiles[printer.current_orca_printer_profile];
     return list && list.length > 0 ? list : null;
   }, [selectedFilament, printer]);
@@ -114,31 +121,31 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
 
   const [filamentConstraint, setFilamentConstraint] = useState<'defer' | 'type-only' | 'type-color'>(
     () => {
-      if (!config.filamentType && !config.filamentId) return 'defer';
+      if (!config.filamentType && matRef == null) return 'defer';
       if (config.filamentType && !config.filamentColor) return 'type-only';
       return 'type-color';
     },
   );
   const [manualMode, setManualMode] = useState(
-    () => !spoolmanActive || (config.filamentId === null && !!config.filamentType),
+    () => !catalogActive || (matRef == null && !!config.filamentType),
   );
 
   useEffect(() => {
-    if (filamentConstraint === 'type-color' && (!spoolmanActive || manualMode) && config.filamentColor === null) {
+    if (filamentConstraint === 'type-color' && (!catalogActive || manualMode) && config.filamentColor === null) {
       onChange({ filamentColor: '#888888' });
     }
-  }, [spoolmanActive, manualMode, filamentConstraint]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [catalogActive, manualMode, filamentConstraint]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!printer) return null;
   const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
   const slots = printer.loaded_filaments ?? [];
-  const catalogValue = config.filamentId != null
-    ? (filaments.find(f => f.id === config.filamentId) != null
-        ? filamentDisplayName(filaments.find(f => f.id === config.filamentId)!) : '')
+  const catalogValue = matRef != null
+    ? (filaments.find(f => f.ref === matRef) != null
+        ? materialDisplayName(filaments.find(f => f.ref === matRef)!) : '')
     : (config.filamentProfile ?? '');
 
   function clearAsk() {
-    onChange({ filamentProfile: null, filamentId: null, filamentType: null, filamentColor: null });
+    onChange({ filamentProfile: null, ...NO_MATERIAL, filamentType: null, filamentColor: null });
   }
 
   function _normColor(c: string | null | undefined): string {
@@ -230,15 +237,14 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                   if (val.startsWith('t:')) {
                     newMap.push({ model_filament: f.index, tool_index: Number(val.slice(2)), filament_id: null, filament_type: null, filament_color: null });
                   } else {
-                    const fid = Number(val.slice(2));
-                    const fil = filaments.find(fil => fil.id === fid);
+                    const fil = filaments.find(fil => fil.ref === val.slice(2));
                     if (!fil) return;
                     newMap.push({
                       model_filament: f.index,
                       tool_index: null,
-                      filament_id: fid,
+                      filament_id: Number(fil.ref),        // a marker: only materials with a numeric ref are offered here
                       filament_type: fil.material,
-                      filament_color: fil.color_hex ? `#${fil.color_hex}` : null,
+                      filament_color: fil.color_hex || null,
                     });
                   }
                   newMap.sort((a, b) => a.model_filament - b.model_filament);
@@ -271,10 +277,10 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                             <option key={i} value={`t:${i}`}>T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}</option>
                           ))}
                         </optgroup>
-                        {spoolmanActive && filaments.length > 0 && (
+                        {catalogActive && filaments.some(isNumericRef) && (
                           <optgroup label="Catalog">
-                            {filaments.map(fil => (
-                              <option key={fil.id} value={`f:${fil.id}`}>{filamentDisplayName(fil)} · {fil.material}</option>
+                            {filaments.filter(isNumericRef).map(fil => (
+                              <option key={fil.ref} value={`f:${fil.ref}`}>{materialDisplayName(fil)} · {fil.material}</option>
                             ))}
                           </optgroup>
                         )}
@@ -321,7 +327,7 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                       onChange({
                         toolIndex: ti,
                         filamentProfile: s?.filament_profile ?? null,
-                        filamentId: null,
+                        ...NO_MATERIAL,
                         filamentType: s?.type ?? null,
                         filamentColor: s?.color ?? null,
                       });
@@ -358,22 +364,22 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
 
             {filamentConstraint !== 'defer' && (
               <div style={{ marginTop: 8 }}>
-                {spoolmanActive && !manualMode ? (
+                {catalogActive && !manualMode ? (
                   <select data-testid="filament-catalog-select" className="select" value={catalogValue}
                           onChange={e => {
                             const v = e.target.value;
                             if (v === '__manual__') { setManualMode(true); clearAsk(); return; }
-                            const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
+                            const f = filaments.find(f => materialDisplayName(f) === v) ?? null;
                             onChange({
-                              filamentProfile: v || null, filamentId: f?.id ?? null,
+                              filamentProfile: v || null, ...(f ? { filamentId: null, materialProvider: inventory.id, materialRef: f.ref } : NO_MATERIAL),
                               filamentType: f?.material ?? null,
-                              filamentColor: f?.color_hex ? `#${f.color_hex}` : null,
+                              filamentColor: f?.color_hex || null,
                             });
                             setFilamentConstraint('type-color');
                           }}>
                     <option value="">— select filament —</option>
-                    {filaments.map(f => (
-                      <option key={f.id} value={filamentDisplayName(f)}>{filamentDisplayName(f)} · {f.material}</option>
+                    {filaments.filter(f => !f.archived).map(f => (
+                      <option key={f.ref} value={materialDisplayName(f)}>{materialDisplayName(f)} · {f.material}</option>
                     ))}
                     <option value="__manual__">Enter manually…</option>
                   </select>
@@ -382,9 +388,9 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                     <div className="row gap-2">
                       <input data-testid="filament-type-input" className="input" list="filament-types"
                              placeholder="Type (PLA, PETG, ABS…)" value={config.filamentType ?? ''}
-                             onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, filamentId: null })}
+                             onChange={e => onChange({ filamentType: e.target.value || null, filamentProfile: e.target.value || null, ...NO_MATERIAL })}
                              style={{ flex: 1 }} />
-                      {spoolmanActive && (
+                      {catalogActive && (
                         <button className="btn ghost sm" onClick={() => { setManualMode(false); clearAsk(); }}>↩ Catalog</button>
                       )}
                     </div>
@@ -439,13 +445,13 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
         )}
       </div>
 
-      {/* Filament profile section — appears when Spoolman filament is selected */}
-      {spoolmanActive && config.filamentId != null && (
+      {/* Filament profile section — appears when a catalog material is selected */}
+      {catalogActive && matRef != null && (
         <div style={{ marginTop: 12 }}>
           <label className="label">Filament profile</label>
           {mappedProfiles !== null && mappedProfiles.length === 1 && config.filamentProfile === mappedProfiles[0] ? (
             <div className="tiny" style={{ marginTop: 4, color: 'var(--text-2)' }}>
-              <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from Spoolman mapping)</>
+              <>Auto-set: <span className="mono">{mappedProfiles[0]}</span> (from the material's preset link)</>
             </div>
           ) : mappedProfiles !== null && mappedProfiles.length === 1 ? (
             <FilamentProfileSelect
@@ -465,8 +471,8 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
           {mappedProfiles !== null && (
             <div className="tiny muted" style={{ marginTop: 4 }}>
               {mappedProfiles.length === 1
-                ? 'Profile set from Spoolman mapping. Select another to override.'
-                : `Showing ${mappedProfiles.length} profiles from Spoolman mapping.`}
+                ? 'Profile set from the material\'s preset link. Select another to override.'
+                : `Showing ${mappedProfiles.length} profiles from the material\'s preset links.`}
             </div>
           )}
         </div>

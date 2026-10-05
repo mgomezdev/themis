@@ -12,7 +12,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
     if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-    if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+    if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
     return new Response('{}', { status: 200 });
   }));
 });
@@ -22,7 +22,9 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen />, { wrapper });
     expect(screen.getAllByText('Tags').length).toBeGreaterThan(0);
     expect(screen.getByText('Print defaults')).toBeTruthy();
-    expect(screen.getByText('Spoolman')).toBeTruthy();
+    expect(screen.getByText('Filament inventory')).toBeTruthy();
+    expect(screen.getByText('Plugins')).toBeTruthy();
+    expect(screen.queryByText('Spoolman')).toBeNull();
     expect(screen.getByText('About')).toBeTruthy();
     expect(screen.queryByText('General')).toBeNull();
     expect(screen.queryByText('Data & backup')).toBeNull();
@@ -40,7 +42,7 @@ describe('SettingsScreen', () => {
     const putBodies: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/settings/queue') && init?.method === 'PUT') {
         putBodies.push(JSON.parse(init.body as string));
         return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
@@ -78,7 +80,7 @@ describe('SettingsScreen', () => {
       }
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       return new Response('{}', { status: 200 });
     }));
     render(<SettingsScreen />, { wrapper });
@@ -103,7 +105,7 @@ describe('SettingsScreen', () => {
     const user = userEvent.setup();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({
         check_interval_minutes: 5,
         operator_name: null,
@@ -129,7 +131,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys') && url.includes('revoke')) {
         revokeCalled = true;
         return new Response('{}', { status: 200 });
@@ -167,7 +169,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
     }));
@@ -202,7 +204,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
@@ -228,7 +230,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys')) return new Response('[]', { status: 200 });
       return new Response('{}', { status: 200 });
@@ -257,7 +259,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         createCalled = true;
@@ -304,7 +306,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({
@@ -354,7 +356,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({
@@ -399,7 +401,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys') && url.includes('revoke') && init?.method === 'POST') {
         revokeCalled = true;
         return new Response('{}', { status: 200 });
@@ -443,7 +445,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/api/v1/api-keys/scopes')) return new Response(JSON.stringify(allScopes), { status: 200 });
       if (url.includes('/api/v1/api-keys') && init?.method === 'POST') {
         return new Response(JSON.stringify({ detail: 'Duplicate key name' }), { status: 400 });
@@ -468,40 +470,6 @@ describe('SettingsScreen', () => {
     await waitFor(() => expect(screen.getByText(/Duplicate key name/i)).toBeInTheDocument());
   });
 
-  it('SpoolmanPage: Test connection omits api_key when the field was not touched, letting the backend reuse the saved key', async () => {
-    const user = userEvent.setup();
-    const testBodies: unknown[] = [];
-
-    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
-      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman/test')) {
-        testBodies.push(JSON.parse(String(init?.body ?? '{}')));
-        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-      }
-      if (url.includes('/settings/spoolman')) {
-        if (init?.method === 'PUT') {
-          const body = JSON.parse(String(init.body ?? '{}'));
-          expect(body).not.toHaveProperty('api_key');
-          return new Response(JSON.stringify({ enabled: true, url: body.url, has_api_key: true }), { status: 200 });
-        }
-        return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', has_api_key: true }), { status: 200 });
-      }
-      if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
-      return new Response(JSON.stringify({}), { status: 200 });
-    }));
-
-    render(<SettingsScreen />, { wrapper });
-    await user.click(screen.getByRole('button', { name: /spoolman/i }));
-    // The saved config already has enabled+url, so mounting the page fires one
-    // automatic connectivity check on its own before the explicit click below.
-    await waitFor(() => expect(testBodies.length).toBe(1));
-    await user.click(screen.getByRole('button', { name: /test connection/i }));
-
-    await waitFor(() => expect(testBodies.length).toBe(2));
-    for (const body of testBodies) expect(body).not.toHaveProperty('api_key');
-  });
-
   it('WebhookPage: saving without touching the secret field leaves the saved secret unchanged', async () => {
     const user = userEvent.setup();
     let putBody: Record<string, unknown> | null = null;
@@ -509,7 +477,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/settings/webhook')) {
         if (init?.method === 'PUT') {
           putBody = JSON.parse(String(init.body ?? '{}'));
@@ -537,7 +505,7 @@ describe('SettingsScreen', () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
       if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: false, url: null, has_api_key: false }), { status: 200 });
+      if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins: [], slots: {} }), { status: 200 });
       if (url.includes('/settings/webhook')) {
         if (init?.method === 'PUT') {
           putBody = JSON.parse(String(init.body ?? '{}'));
@@ -559,81 +527,5 @@ describe('SettingsScreen', () => {
 
     await waitFor(() => expect(putBody).not.toBeNull());
     expect(putBody!.secret).toBe('');
-  });
-
-  it('SpoolmanPage: Sync now button calls sync-now endpoint and shows success message', async () => {
-    const user = userEvent.setup();
-    let syncCalled = false;
-
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/api/v1/spoolman/sync-now')) {
-        syncCalled = true;
-        return new Response(JSON.stringify({ filament_count: 5, spool_count: 12 }), { status: 200 });
-      }
-      if (url.includes('/settings/spoolman/test')) {
-        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-      }
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', has_api_key: false }), { status: 200 });
-      if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
-      return new Response(JSON.stringify({}), { status: 200 });
-    }));
-
-    render(<SettingsScreen />, { wrapper });
-    await user.click(screen.getByRole('button', { name: /spoolman/i }));
-
-    // Test connection to mark as connected
-    const testButton = screen.getByRole('button', { name: /test connection/i });
-    await user.click(testButton);
-
-    // Wait for sync button to appear (only visible when connected)
-    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument());
-
-    syncCalled = false;
-    // Click Sync now
-    const syncButton = screen.getByRole('button', { name: /sync now/i });
-    await user.click(syncButton);
-
-    // Check that sync-now endpoint was called
-    expect(syncCalled).toBe(true);
-
-    // Check for success message
-    await waitFor(() => expect(screen.getByText(/Synced — 5 filaments, 12 spools/i)).toBeInTheDocument());
-  });
-
-  it('SpoolmanPage: Sync now button shows error message on failure', async () => {
-    const user = userEvent.setup();
-
-    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-      if (url.includes('/api/v1/tags')) return new Response('[]', { status: 200 });
-      if (url.includes('/settings/queue')) return new Response(JSON.stringify({ check_interval_minutes: 5, operator_name: null }), { status: 200 });
-      if (url.includes('/api/v1/spoolman/sync-now')) {
-        return new Response(JSON.stringify({ detail: 'Connection refused' }), { status: 503 });
-      }
-      if (url.includes('/settings/spoolman/test')) {
-        return new Response(JSON.stringify({ status: 'ok' }), { status: 200 });
-      }
-      if (url.includes('/settings/spoolman')) return new Response(JSON.stringify({ enabled: true, url: 'http://spoolman.test', has_api_key: false }), { status: 200 });
-      if (url.includes('/api/v1/spoolman/spools')) return new Response(JSON.stringify([]), { status: 200 });
-      return new Response(JSON.stringify({}), { status: 200 });
-    }));
-
-    render(<SettingsScreen />, { wrapper });
-    await user.click(screen.getByRole('button', { name: /spoolman/i }));
-
-    // Test connection to mark as connected
-    const testButton = screen.getByRole('button', { name: /test connection/i });
-    await user.click(testButton);
-
-    // Wait for sync button to appear
-    await waitFor(() => expect(screen.getByRole('button', { name: /sync now/i })).toBeInTheDocument());
-
-    // Click Sync now
-    const syncButton = screen.getByRole('button', { name: /sync now/i });
-    await user.click(syncButton);
-
-    // Check for error message
-    await waitFor(() => expect(screen.getByText(/Sync failed.*503/i)).toBeInTheDocument());
   });
 });

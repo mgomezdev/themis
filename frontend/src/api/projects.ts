@@ -25,7 +25,9 @@ export interface ProjectItem {
   quantity_failed: number;
   filament_type: string;    // "any" | "PLA" | "PETG" | ...
   filament_color: string;   // "any" | "#RRGGBB"
-  filament_id: number | null; // Spoolman filament ID, or null
+  filament_id: number | null; // legacy numeric material id (mirrors material_ref for providers with numeric refs), or null
+  material_provider?: string | null;   // the inventory provider the material belongs to
+  material_ref?: string | null;        // the material's ref in that provider
   sort_order: number;
 }
 
@@ -146,6 +148,8 @@ export interface ProjectItemCreate {
   filament_type: string;
   filament_color: string;
   filament_id?: number | null;
+  material_provider?: string | null;
+  material_ref?: string | null;
   sort_order?: number;
 }
 

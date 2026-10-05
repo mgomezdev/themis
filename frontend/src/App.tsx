@@ -11,6 +11,9 @@ import { AuthGate } from './auth/AuthGate';
 import { apiFetch } from './api/client';
 import { getSession, type Role } from './auth/session';
 import { CustomerPortal } from './screens/CustomerPortal';
+import { PluginPage } from './screens/PluginPage';
+import { InventoryBanner } from './components/InventoryBanner';
+import { LEGACY_REDIRECTS } from './plugins/registry';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -200,6 +203,8 @@ function AppShell() {
   const segments = location.pathname.split('/').filter(Boolean);
   const path = segments[0] === 'settings'
     ? '/settings'                       // every settings sub-page shares one top-bar config
+    : segments[0] === 'plugins'
+    ? '/settings'                       // plugin pages are settings pages too
     : segments[0] === 'orders' && segments[2] === 'edit'
     ? '/orders/edit'
     : segments[0] === 'jobs' && segments[2] === 'edit'
@@ -230,6 +235,7 @@ function AppShell() {
       <BottomNav queueCounts={queueCounts} />
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">
+          <InventoryBanner />
           <TopbarOverrideContext.Provider value={setTopbarOverride}>
           <Routes>
             <Route path="/"             element={<Navigate to="/queue" replace />} />
@@ -254,6 +260,9 @@ function AppShell() {
             <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/analytics"      element={<AnalyticsScreen />} />
+            {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={to} replace />} />)}
+            <Route path="/plugins/:id"      element={<PluginPage />} />
+            <Route path="/plugins/:id/:tab" element={<PluginPage />} />
             {/* Customers used to live under Settings. */}
             <Route path="/settings/customers" element={<Navigate to="/customers" replace />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />

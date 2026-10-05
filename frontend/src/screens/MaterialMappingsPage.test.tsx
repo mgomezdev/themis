@@ -1,16 +1,15 @@
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
-import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MaterialMappingsPage } from './MaterialMappingsPage';
 import { Reply, stubFetch } from '../test/fetchStub';
-
-const orca = (profiles: Record<string, string[]>) => ({ orca_profiles: JSON.stringify(JSON.stringify(profiles)) }); // double-encoded, like Spoolman
-const SPOOLMAN_ON = { enabled: true, url: 'http://spoolman.test', has_api_key: false, sync_interval_minutes: 15 };
+import { ALL_CAPS, inventoryRoutes, mkMaterial, mkPlugin } from '../test/inventoryFixtures';
+import { resetPluginStore } from '../api/plugins';
 
 const FILAMENTS = [
-  { id: 1, name: 'PLA Red', vendor: { id: 1, name: 'Elegoo' }, material: 'PLA', color_hex: 'FF0000', extra: orca({ 'Machine A': ['Generic PLA @A'] }) },
-  { id: 2, name: 'PETG Black', vendor: { id: 1, name: 'Elegoo' }, material: 'PETG', color_hex: '000000', extra: {} },
-  { id: 3, name: 'Silk Gold', material: 'PLA', extra: orca({ 'Retired Machine': ['Old Silk'] }) },
+  mkMaterial({ ref: '1', name: 'PLA Red', vendor: 'Elegoo', material: 'PLA', color_hex: '#FF0000', profile_links: { 'Machine A': ['Generic PLA @A'] } }),
+  mkMaterial({ ref: '2', name: 'PETG Black', vendor: 'Elegoo', material: 'PETG', color_hex: '#000000' }),
+  mkMaterial({ ref: '3', name: 'Silk Gold', material: 'PLA', profile_links: { 'Retired Machine': ['Old Silk'] } }),
 ];
 const PRINTERS = [
   { id: 10, name: 'Forge', current_orca_printer_profile: 'Machine A' },
@@ -21,8 +20,7 @@ const PRINTERS = [
 
 function routes(over: Record<string, unknown> = {}) {
   return {
-    'GET /api/v1/settings/spoolman': SPOOLMAN_ON,
-    'GET /api/v1/spoolman/filaments': FILAMENTS,
+    ...inventoryRoutes({ materials: FILAMENTS }),
     'GET /api/v1/printers': PRINTERS,
     'GET /api/v1/printers/10/profiles': { print_profiles: [], filament_profiles: ['Generic PLA @A', 'Generic PETG @A', 'Silk PLA @A'] },
     'GET /api/v1/printers/12/profiles': { print_profiles: [], filament_profiles: ['Generic PETG @B'] },
@@ -30,52 +28,39 @@ function routes(over: Record<string, unknown> = {}) {
   };
 }
 
-/** The page renders its "not configured" notice before the settings request even returns, so a notice
- *  assertion only means something once the config, filaments, printers and profiles have all loaded. */
-async function loaded(api: ReturnType<typeof stubFetch>) {
-  await waitFor(() => expect(api.to('GET', '/api/v1/printers/10/profiles')).toHaveLength(1));
-  await act(async () => {});
-}
-
 const card = (name: string) => within(screen.getByText(name).closest('div[style*="border-radius: 10px"]') as HTMLElement);
 
-describe('SpoolmanMappingsPage', () => {
-  it('asks the operator to configure Spoolman first instead of showing mappings', async () => {
-    // (the page still fires its filament/printer fetches while disabled; the notice wins over what they return)
-    const api = stubFetch(routes({ 'GET /api/v1/settings/spoolman': { ...SPOOLMAN_ON, enabled: false } }));
-    render(<SpoolmanMappingsPage />);
-    await loaded(api);
+describe('MaterialMappingsPage', () => {
+  afterEach(() => { resetPluginStore(); vi.unstubAllGlobals(); });
 
-    expect(screen.getByText(/Spoolman is not configured/)).toBeTruthy();
-    expect(screen.queryByText('Filament Profile Mappings')).toBeNull();
-  });
-
-  it('treats Spoolman as not configured when it is enabled but has no URL', async () => {
-    const api = stubFetch(routes({ 'GET /api/v1/settings/spoolman': { ...SPOOLMAN_ON, url: '' } }));
-    render(<SpoolmanMappingsPage />);
-    await loaded(api);
-
-    expect(screen.getByText(/Spoolman is not configured/)).toBeTruthy();
+  it.each([
+    ['no inventory provider is active', inventoryRoutes({ plugin: null })['GET /api/v1/plugins']],
+    ['the provider cannot store preset links', { plugins: [mkPlugin({ id: 'p', capabilities: ALL_CAPS.filter(c => c !== 'PROFILE_LINKS_WRITE') })], slots: { filament_inventory: 'p' } }],
+  ])('says so instead of showing mappings when %s', async (_why, plugins) => {
+    const api = stubFetch(routes({ 'GET /api/v1/plugins': plugins }));
+    render(<MaterialMappingsPage />);
+    expect(await screen.findByText(/can't store preset links/)).toBeTruthy();
+    expect(api.to('GET', '/api/v1/inventory/materials')).toEqual([]);      // nothing is even fetched
     expect(screen.queryByText('Filament Profile Mappings')).toBeNull();
   });
 
   it('explains what is missing when no printer has an Orca machine preset', async () => {
     stubFetch(routes({ 'GET /api/v1/printers': [{ id: 13, name: 'No preset', current_orca_printer_profile: null }] }));
-    render(<SpoolmanMappingsPage />);
+    render(<MaterialMappingsPage />);
 
     expect(await screen.findByText(/No printers with an OrcaSlicer machine preset configured/)).toBeTruthy();
   });
 
   it('shows the load error instead of an empty page', async () => {
-    stubFetch(routes({ 'GET /api/v1/spoolman/filaments': new Reply(502, 'spoolman down') }));
-    render(<SpoolmanMappingsPage />);
+    stubFetch(routes({ 'GET /api/v1/inventory/materials': new Reply(502, 'provider down') }));
+    render(<MaterialMappingsPage />);
 
-    expect(await screen.findByText('502 spoolman down')).toBeTruthy();
+    expect(await screen.findByText('502 provider down')).toBeTruthy();
   });
 
   it('starts with the filaments that already have mappings, collapsed, and fetches each machine preset once', async () => {
     const api = stubFetch(routes());
-    render(<SpoolmanMappingsPage />);
+    render(<MaterialMappingsPage />);
 
     expect(await screen.findByText('Elegoo PLA Red')).toBeTruthy();
     expect(screen.getByText('Silk Gold')).toBeTruthy();
@@ -88,11 +73,11 @@ describe('SpoolmanMappingsPage', () => {
     expect(api.to('GET', '/api/v1/printers/13/profiles')).toEqual([]);   // no preset, nothing to look up
   });
 
-  it('adds an unmapped filament through search, expanded, and stops offering it', async () => {
+  it('adds an unmapped material through search, expanded, and stops offering it', async () => {
     stubFetch(routes());
-    render(<SpoolmanMappingsPage />);
+    render(<MaterialMappingsPage />);
     await screen.findByText('Elegoo PLA Red');
-    const search = screen.getByPlaceholderText('Search filaments to configure…');
+    const search = screen.getByPlaceholderText('Search materials to configure…');
 
     await userEvent.type(search, 'petg');
     expect(screen.getByText('Elegoo PETG Black')).toBeTruthy();
@@ -111,10 +96,10 @@ describe('SpoolmanMappingsPage', () => {
 
   it('matches search on the display name (which includes the vendor) and on the material', async () => {
     // "Matte" is only findable by its material; a plain name/vendor search must not surface it
-    stubFetch(routes({ 'GET /api/v1/spoolman/filaments': [...FILAMENTS, { id: 4, name: 'Matte', material: 'ASA', extra: {} }] }));
-    render(<SpoolmanMappingsPage />);
+    stubFetch(routes({ ...inventoryRoutes({ materials: [...FILAMENTS, mkMaterial({ ref: '4', name: 'Matte', material: 'ASA' })] }) }));
+    render(<MaterialMappingsPage />);
     await screen.findByText('Elegoo PLA Red');
-    const search = screen.getByPlaceholderText('Search filaments to configure…');
+    const search = screen.getByPlaceholderText('Search materials to configure…');
     const offered = (name: string) => screen.queryByText(name, { selector: 'span' });
 
     await userEvent.type(search, 'elegoo');                 // vendor, via the display name
@@ -130,21 +115,21 @@ describe('SpoolmanMappingsPage', () => {
   });
 
   it('offers at most 8 search results', async () => {
-    const bulk = Array.from({ length: 10 }, (_, i) => ({ id: 100 + i, name: `Bulk ${i}`, material: 'PLA', extra: {} }));
-    stubFetch(routes({ 'GET /api/v1/spoolman/filaments': [...FILAMENTS, ...bulk] }));
-    render(<SpoolmanMappingsPage />);
+    const bulk = Array.from({ length: 10 }, (_, i) => mkMaterial({ ref: String(100 + i), name: `Bulk ${i}`, material: 'PLA' }));
+    stubFetch(routes(inventoryRoutes({ materials: [...FILAMENTS, ...bulk] })));
+    render(<MaterialMappingsPage />);
     await screen.findByText('Elegoo PLA Red');
 
-    await userEvent.type(screen.getByPlaceholderText('Search filaments to configure…'), 'bulk');
+    await userEvent.type(screen.getByPlaceholderText('Search materials to configure…'), 'bulk');
 
     expect(screen.getAllByText(/^Bulk \d$/, { selector: 'span' })).toHaveLength(8);
   });
 
   it('saves a new mapping with the exact PATCH body, then disables Save until the next edit', async () => {
-    const api = stubFetch(routes({ 'PATCH /api/v1/spoolman/filaments/2': { id: 2 } }));
-    render(<SpoolmanMappingsPage />);
+    const api = stubFetch(routes({ 'PATCH /api/v1/inventory/materials/2/profile-links': { ref: '2' } }));
+    render(<MaterialMappingsPage />);
     await screen.findByText('Elegoo PLA Red');
-    await userEvent.type(screen.getByPlaceholderText('Search filaments to configure…'), 'petg');
+    await userEvent.type(screen.getByPlaceholderText('Search materials to configure…'), 'petg');
     await userEvent.click(screen.getByText('Elegoo PETG Black'));
     const petg = card('Elegoo PETG Black');
     const [machineAField] = petg.getAllByPlaceholderText('Search profiles…');
@@ -155,14 +140,14 @@ describe('SpoolmanMappingsPage', () => {
     await userEvent.click(petg.getByRole('button', { name: 'Save' }));
 
     expect(await petg.findByText('Saved')).toBeTruthy();
-    expect(api.to('PATCH', '/api/v1/spoolman/filaments/2')[0].body).toEqual({ orca_profiles: { 'Machine A': ['Generic PETG @A'] } });
+    expect(api.to('PATCH', '/api/v1/inventory/materials/2/profile-links')[0].body).toEqual({ links: { 'Machine A': ['Generic PETG @A'] } });
     expect(petg.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(true);
     expect(petg.getByText('1 preset mapped')).toBeTruthy();
   });
 
   it('removing a chip makes the card dirty and saving sends the reduced mapping', async () => {
-    const api = stubFetch(routes({ 'PATCH /api/v1/spoolman/filaments/1': { id: 1 } }));
-    render(<SpoolmanMappingsPage />);
+    const api = stubFetch(routes({ 'PATCH /api/v1/inventory/materials/1/profile-links': { ref: '1' } }));
+    render(<MaterialMappingsPage />);
     await userEvent.click(await screen.findByText('Elegoo PLA Red'));
     const red = card('Elegoo PLA Red');
     const save = () => red.getByRole('button', { name: 'Save' });
@@ -174,26 +159,26 @@ describe('SpoolmanMappingsPage', () => {
 
     // emptying the last preset removes the filament from the page after a successful save
     await waitFor(() => expect(screen.queryByText('Elegoo PLA Red')).toBeNull());
-    expect(api.to('PATCH', '/api/v1/spoolman/filaments/1')[0].body).toEqual({ orca_profiles: {} });
+    expect(api.to('PATCH', '/api/v1/inventory/materials/1/profile-links')[0].body).toEqual({ links: {} });
   });
 
   it('a failed save shows the reason and leaves the edit unsaved', async () => {
-    stubFetch(routes({ 'PATCH /api/v1/spoolman/filaments/1': new Reply(503, 'Spoolman unreachable') }));
-    render(<SpoolmanMappingsPage />);
+    stubFetch(routes({ 'PATCH /api/v1/inventory/materials/1/profile-links': new Reply(503, { detail: 'provider unreachable' }) }));
+    render(<MaterialMappingsPage />);
     await userEvent.click(await screen.findByText('Elegoo PLA Red'));
     const red = card('Elegoo PLA Red');
     await userEvent.click(red.getByTitle('Remove Generic PLA @A'));
 
     await userEvent.click(red.getByRole('button', { name: 'Save' }));
 
-    expect(await red.findByText('503 Spoolman unreachable')).toBeTruthy();
+    expect(await red.findByText('provider unreachable')).toBeTruthy();
     expect(red.getByRole('button', { name: 'Save' }).hasAttribute('disabled')).toBe(false);   // still dirty: can retry
     expect(screen.getByText('Elegoo PLA Red')).toBeTruthy();                                    // and not removed
   });
 
   it('flags a saved mapping for a machine preset no printer uses any more', async () => {
     stubFetch(routes());
-    render(<SpoolmanMappingsPage />);
+    render(<MaterialMappingsPage />);
     await userEvent.click(await screen.findByText('Silk Gold'));
 
     const gold = card('Silk Gold');
@@ -203,9 +188,9 @@ describe('SpoolmanMappingsPage', () => {
 
   it('falls back to an empty profile list when one printer\'s profiles cannot be loaded', async () => {
     stubFetch(routes({ 'GET /api/v1/printers/12/profiles': new Reply(500, 'nope') }));
-    render(<SpoolmanMappingsPage />);
+    render(<MaterialMappingsPage />);
     await screen.findByText('Elegoo PLA Red');
-    await userEvent.type(screen.getByPlaceholderText('Search filaments to configure…'), 'petg');
+    await userEvent.type(screen.getByPlaceholderText('Search materials to configure…'), 'petg');
     await userEvent.click(screen.getByText('Elegoo PETG Black'));
     const petg = card('Elegoo PETG Black');
     const fields = petg.getAllByPlaceholderText('Search profiles…');

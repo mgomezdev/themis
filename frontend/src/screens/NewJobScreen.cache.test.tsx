@@ -110,7 +110,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     expect(jobPosts(api)).toEqual([{
       uploaded_file_id: 77, plate_number: 1, project_id: null, overrides: null, printer_configs: [],
       model_targets: [{
-        machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null,
+        machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
         filament_type: 'PETG', filament_color: '#112233',
       }],
     }]);

@@ -79,6 +79,7 @@
     "actual_seconds",
     "actual_filament_breakdown",
     "deduction_skipped",
+    "deduction_note",
     "estimate_status",
     "estimate_seconds",
     "estimate_filament_grams",
@@ -145,6 +146,8 @@
     "filament_type",
     "filament_color",
     "filament_id",
+    "material_provider",
+    "material_ref",
     "sort_order"
   ],
   "project_link": [

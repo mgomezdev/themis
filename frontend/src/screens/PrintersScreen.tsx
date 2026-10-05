@@ -18,7 +18,7 @@ import {
 } from '../api/printers';
 import { MachinePicker } from '../components/MachinePicker';
 import { getPrinterProfiles } from '../api/queue';
-import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
+import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
 
@@ -85,10 +85,8 @@ export function EditForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const spools = useSpools(spoolmanEnabled);
-  const filaments = useFilaments(spoolmanEnabled);
+  const inventory = useInventory();
+  const spools = useSpools(!!inventory.plugin);
 
   useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
   useEffect(() => {
@@ -193,8 +191,8 @@ export function EditForm({
                 <SlotSpoolPicker
                   slot={s}
                   printerPreset={preset || null}
+                  provider={inventory.id ?? ''}
                   spools={spools}
-                  filaments={filaments}
                   filamentProfiles={filamentProfiles}
                   onChange={patch => updateSlot(i, patch)}
                 />

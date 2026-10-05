@@ -133,3 +133,55 @@ async def test_a_candidate_secret_is_masked_in_a_failed_connection_test(client, 
 
     for resp in (new_route, legacy):
         assert resp.json()["ok"] is False and candidate not in resp.text
+
+
+# ---- schema tabs (the generic renderer's data source) -------------------------------------------------------------------
+
+def _schema_plugin(ui_schema):
+    from pydantic import BaseModel
+    from app import plugins
+    from app.plugins.manifest import HOST_API, PluginManifest, UiContribution, UiTab
+
+    class _S(BaseModel):
+        pass
+
+    manifest = PluginManifest(
+        id="schema_demo", name="Schema demo", kind="filament_inventory", version="1", host_api=HOST_API, settings_model=_S,
+        factory=lambda _s: FakeInventoryProvider(), ui=UiContribution(mode="page", tabs=(
+            UiTab("library", "Library", "schema"), UiTab("conn", "Connection", "default"))), ui_schema=ui_schema)
+    plugins.register_plugin(manifest)
+    return manifest
+
+
+async def test_a_schema_tab_serves_the_schema_its_plugin_provides(client):
+    doc = {"title": "Library", "blocks": [{"type": "table", "data": "materials", "columns": [{"key": "name", "label": "Name"}]}]}
+    _schema_plugin(lambda tab: doc if tab == "library" else None)
+
+    resp = await client.get("/api/v1/plugins/schema_demo/ui/library")
+
+    assert resp.status_code == 200 and resp.json() == doc
+    (demo,) = [p for p in (await client.get("/api/v1/plugins")).json()["plugins"] if p["id"] == "schema_demo"]
+    assert [t["renderer"] for t in demo["ui"]["tabs"]] == ["schema", "default"]
+
+
+@pytest.mark.parametrize("path", ["/api/v1/plugins/schema_demo/ui/conn",          # a default tab has no schema
+                                  "/api/v1/plugins/schema_demo/ui/missing",         # not a tab at all
+                                  "/api/v1/plugins/spoolman/ui/mappings",           # a component tab
+                                  "/api/v1/plugins/nope_nope/ui/library"])           # unknown plugin
+async def test_only_schema_tabs_have_a_schema(client, path):
+    _schema_plugin(lambda tab: {"blocks": []})
+    assert (await client.get(path)).status_code == 404
+
+
+def test_a_schema_tab_without_a_schema_provider_is_rejected_at_registration():
+    from app.plugins.manifest import PluginError
+    with pytest.raises(PluginError, match="needs a ui_schema provider"):
+        _schema_plugin(None)
+
+
+async def test_a_schema_tab_needs_the_settings_read_scope(client, session_factory):
+    from tests.api.test_inventory_api import _client_with
+    _schema_plugin(lambda tab: {"blocks": []})
+    narrow = await _client_with(session_factory, ["inventory:read"])
+    async with narrow:
+        assert (await narrow.get("/api/v1/plugins/schema_demo/ui/library")).status_code == 403

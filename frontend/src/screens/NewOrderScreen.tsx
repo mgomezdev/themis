@@ -4,7 +4,7 @@ import { matColor, fmtTime } from '../data/helpers';
 import { Icons } from '../components/icons';
 import { SectionHeader } from '../components/ui';
 import { createOrder, updateOrder, getOrder, type OrderType, type OrderPartInput, type PaymentStatus } from '../api/orders';
-import { useSpoolmanConfig, useFilaments, filamentDisplayName, type ApiFilament } from '../api/spoolman';
+import { askRef, materialAsk, materialDisplayName, useInventory, useMaterials, type InvMaterial } from '../api/inventory';
 
 interface PartRow {
   id?: string;
@@ -12,43 +12,47 @@ interface PartRow {
   material: string;
   qty: number;
   est_minutes: number;
-  filament_id: number | null;
+  filament_id: number | null;           // legacy numeric id echoed from older rows
+  material_provider: string | null;
+  material_ref: string | null;
   filament_color: string | null;
 }
 
 function emptyRow(): PartRow {
-  return { name: '', material: 'PLA', qty: 1, est_minutes: 30, filament_id: null, filament_color: null };
+  return { name: '', material: 'PLA', qty: 1, est_minutes: 30, filament_id: null, material_provider: null, material_ref: null, filament_color: null };
 }
 
 // ---- FilamentCell ----
 // Mirrors the PerPrinterConfig filament picker from NewJobScreen:
-// Spoolman catalog dropdown when available, manual type+color otherwise.
-function FilamentCell({ part, spoolmanActive, filaments, onChange }: {
+// Inventory material dropdown when a provider is active, manual type+color otherwise.
+function FilamentCell({ part, catalogActive, filaments, providerId, onChange }: {
   part: PartRow;
-  spoolmanActive: boolean;
-  filaments: ApiFilament[];
+  catalogActive: boolean;
+  filaments: InvMaterial[];
+  providerId: string | null;
   onChange: (patch: Partial<PartRow>) => void;
 }) {
   // Start in manual mode if the part was previously entered manually
-  // (has a color but no Spoolman ID, with Spoolman now active).
+  // (has a color but no material ref, with an inventory now active).
+  const ref = askRef(part);
   const [manualMode, setManualMode] = useState(
-    () => spoolmanActive && part.filament_id === null && part.filament_color !== null,
+    () => catalogActive && ref === null && part.filament_color !== null,
   );
 
   // Default to neutral grey when manual inputs first appear — color picker can't be empty.
   useEffect(() => {
-    if ((!spoolmanActive || manualMode) && part.filament_color === null) {
+    if ((!catalogActive || manualMode) && part.filament_color === null) {
       onChange({ filament_color: '#888888' });
     }
-  }, [spoolmanActive, manualMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [catalogActive, manualMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const catalogValue = part.filament_id != null
-    ? (filaments.find(f => f.id === part.filament_id) != null
-        ? filamentDisplayName(filaments.find(f => f.id === part.filament_id)!)
+  const catalogValue = ref != null
+    ? (filaments.find(f => f.ref === ref) != null
+        ? materialDisplayName(filaments.find(f => f.ref === ref)!)
         : '')
     : (part.material && !manualMode ? part.material : '');
 
-  if (spoolmanActive && !manualMode) {
+  if (catalogActive && !manualMode) {
     return (
       <div className="col gap-1">
         <select
@@ -58,26 +62,26 @@ function FilamentCell({ part, spoolmanActive, filaments, onChange }: {
             const v = e.target.value;
             if (v === '__manual__') {
               setManualMode(true);
-              onChange({ filament_id: null, filament_color: null });
+              onChange({ filament_id: null, material_provider: null, material_ref: null, filament_color: null });
               return;
             }
-            const f = filaments.find(f => filamentDisplayName(f) === v) ?? null;
+            const f = filaments.find(f => materialDisplayName(f) === v) ?? null;
             onChange({
               material: f?.material ?? v,
-              filament_id: f?.id ?? null,
-              filament_color: f?.color_hex ? `#${f.color_hex}` : null,
+              ...(f ? materialAsk(f, providerId) : { filament_id: null, material_provider: null, material_ref: null }),
+              filament_color: f?.color_hex || null,
             });
           }}>
           <option value="">— select filament —</option>
-          {filaments.map(f => (
-            <option key={f.id} value={filamentDisplayName(f)}>
-              {filamentDisplayName(f)} · {f.material}
+          {filaments.filter(f => !f.archived).map(f => (
+            <option key={f.ref} value={materialDisplayName(f)}>
+              {materialDisplayName(f)} · {f.material}
             </option>
           ))}
           <option value="__manual__">Enter manually…</option>
         </select>
         {filaments.length === 0 && (
-          <div className="tiny muted">No filaments in Spoolman</div>
+          <div className="tiny muted">No materials in the inventory</div>
         )}
       </div>
     );
@@ -91,13 +95,13 @@ function FilamentCell({ part, spoolmanActive, filaments, onChange }: {
           list="order-filament-types"
           placeholder="Type (PLA, PETG…)"
           value={part.material}
-          onChange={e => onChange({ material: e.target.value, filament_id: null })}
+          onChange={e => onChange({ material: e.target.value, filament_id: null, material_provider: null, material_ref: null })}
           style={{ flex: 1 }}
         />
-        {spoolmanActive && (
+        {catalogActive && (
           <button className="btn ghost sm" onClick={() => {
             setManualMode(false);
-            onChange({ filament_id: null, filament_color: null });
+            onChange({ filament_id: null, material_provider: null, material_ref: null, filament_color: null });
           }}>↩ Catalog</button>
         )}
       </div>
@@ -135,9 +139,9 @@ export function NewOrderScreen() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanActive = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
-  const filaments = useFilaments(spoolmanActive);
+  const inventory = useInventory();
+  const catalogActive = !!inventory.plugin;
+  const filaments = useMaterials(catalogActive);
 
   useEffect(() => {
     if (editingId == null) return;
@@ -155,6 +159,8 @@ export function NewOrderScreen() {
         id: p.id, name: p.name, material: p.material, qty: p.qty,
         est_minutes: p.est_minutes,
         filament_id: p.filament_id ?? null,
+        material_provider: p.material_provider ?? null,
+        material_ref: p.material_ref ?? null,
         filament_color: p.filament_color ?? null,
       })) : [emptyRow()]);
     }).catch(e => { if (alive) setError(String(e)); });
@@ -179,6 +185,8 @@ export function NewOrderScreen() {
         id: p.id, name: p.name, material: p.material,
         qty: Number(p.qty) || 1, est_minutes: Number(p.est_minutes) || 0,
         filament_id: p.filament_id,
+        material_provider: p.material_provider,
+        material_ref: p.material_ref,
         filament_color: p.filament_color,
       }));
     const body = {
@@ -303,7 +311,8 @@ export function NewOrderScreen() {
                       <td style={{ verticalAlign: 'top', paddingTop: 10 }}>
                         <FilamentCell
                           part={p}
-                          spoolmanActive={spoolmanActive}
+                          catalogActive={catalogActive}
+                          providerId={inventory.id}
                           filaments={filaments}
                           onChange={patch => updPart(i, patch)}
                         />
