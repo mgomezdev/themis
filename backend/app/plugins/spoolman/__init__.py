@@ -4,6 +4,7 @@ from __future__ import annotations
 from ..kinds.filament_inventory import KIND
 from ..manifest import HOST_API, PluginManifest, UiContribution, UiTab
 from .provider import SpoolmanProvider
+from .routes import router as alias_router, settings_router as alias_settings_router
 from .settings import SpoolmanSettings
 
 MANIFEST = PluginManifest(
@@ -16,6 +17,7 @@ MANIFEST = PluginManifest(
     secret_fields=frozenset({"api_key"}),
     factory=SpoolmanProvider,
     capabilities=SpoolmanProvider.capabilities,
+    alias_routers=(alias_router, alias_settings_router),
     ui=UiContribution(mode="page", nav_label="Spoolman", nav_placement="settings",
                       tabs=(UiTab("connection", "Connection", "default"),
                             UiTab("mappings", "Filament mappings", "component"))),

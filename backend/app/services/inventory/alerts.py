@@ -109,7 +109,9 @@ def _deliver(webhook: WebhookConfig | None, notif: NotificationConfig | None, lo
     if webhook and webhook.url and (not webhook.events or EVENT in webhook.events):
         webhook_service.schedule(webhook.url, webhook.secret, EVENT, None, {
             "spool_id": low.spool_id, "filament_id": low.filament_id, "name": low.name,
-            "remaining_g": low.remaining_g, "threshold_g": low.threshold_g, "location": low.location})
+            "remaining_g": low.remaining_g, "threshold_g": low.threshold_g, "location": low.location,
+            # provider-namespaced refs (additive; `spool_id`/`filament_id` stay for existing consumers)
+            "provider": low.provider, "spool_ref": low.spool_ref, "material_ref": low.material_ref})
     if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
         title, message = message_for(low)
         asyncio.create_task(notification_service.dispatch(notif, EVENT, None, title, message))

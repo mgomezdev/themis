@@ -4389,7 +4389,7 @@
           "jobs"
         ],
         "summary": "Manually complete a job without printing it",
-        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts Spoolman\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
+        "description": "Slice the job for the chosen printer - a real slice, in an isolated directory,\nnever the job's production gcode path - and mark it complete without ever\nprinting it or sending anything to the printer. For work that was already done\nphysically: printed before Themis tracked it, printed manually, or a job\nThemis's own tracking is stuck on but which really did finish. Deducts inventory\nfilament on success. Fires no webhooks or notifications either way - this is an\nout-of-band admin action, not a real completion or a real failure as far as\nintegrations are concerned.",
         "operationId": "complete_job_manually_api_v1_jobs__job_id__complete_manually_post",
         "parameters": [
           {
@@ -7389,108 +7389,6 @@
         }
       }
     },
-    "/api/v1/settings/spoolman": {
-      "get": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Get Spoolman config",
-        "description": "Spoolman integration settings: enabled flag, base URL, and whether an API key is set.\nThe key itself never round-trips - omit `api_key` on PUT to leave it unchanged.",
-        "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpoolmanConfigOut"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Update Spoolman config",
-        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it. Enabling Spoolman makes it the active inventory provider.",
-        "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SpoolmanConfigIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SpoolmanConfigOut"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/settings/spoolman/test": {
-      "post": {
-        "tags": [
-          "settings"
-        ],
-        "summary": "Test Spoolman connection",
-        "description": "Verify connectivity to Spoolman. Uses the supplied URL/key if provided,\nfalling back to the saved config. Returns `{ok, version}` or `{ok, message}`.\nIf the catalog is warm and stale UUIDs are detected in Spoolman filaments,\nreturns `{status: \"pending_remaps\", ...}` instead.",
-        "operationId": "test_spoolman_connection_api_v1_settings_spoolman_test_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SpoolmanConfigIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/settings/webhook": {
       "get": {
         "tags": [
@@ -7728,212 +7626,6 @@
           },
           "400": {
             "description": "Invalid or unsupported backup file"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/filaments": {
-      "get": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "List Spoolman filaments",
-        "description": "Fetch all filament definitions from the configured Spoolman instance.",
-        "operationId": "get_filaments_api_v1_spoolman_filaments_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "503": {
-            "description": "Spoolman not configured, disabled, or unreachable"
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/spools": {
-      "get": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "List Spoolman spools",
-        "description": "Fetch all spool inventory from the configured Spoolman instance.",
-        "operationId": "get_spools_api_v1_spoolman_spools_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "503": {
-            "description": "Spoolman not configured, disabled, or unreachable"
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/sync-now": {
-      "post": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "Manually sync filaments and spools from Spoolman",
-        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.\nRecords the outcome (success clears any previously shown error) so the\nstatus indicator and Spoolman settings page reflect this attempt too.",
-        "operationId": "sync_now_api_v1_spoolman_sync_now_post",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "503": {
-            "description": "Spoolman not configured, disabled, or unreachable"
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/sync-status": {
-      "get": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "Spoolman sync health for the status indicator and settings page",
-        "description": "Never 503s, even when Spoolman is disabled/unconfigured \u2014 callers use\n`enabled` to decide whether to show anything at all.",
-        "operationId": "get_sync_status_api_v1_spoolman_sync_status_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SyncStatusResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/filaments/{filament_id}": {
-      "patch": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "Update filament OrcaSlicer profiles",
-        "description": "Write OrcaSlicer profile assignments back to a Spoolman filament's extra fields.",
-        "operationId": "patch_filament_api_v1_spoolman_filaments__filament_id__patch",
-        "parameters": [
-          {
-            "name": "filament_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Filament Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/FilamentPatchBody"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "503": {
-            "description": "Spoolman not configured, disabled, or unreachable"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/spoolman/low-stock": {
-      "get": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "Low-inventory alert thresholds",
-        "operationId": "get_low_stock_api_v1_spoolman_low_stock_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LowStockConfig"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "spoolman"
-        ],
-        "summary": "Set low-inventory alert thresholds",
-        "description": "Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one\nre-arms spools that are no longer below it.",
-        "operationId": "put_low_stock_api_v1_spoolman_low_stock_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LowStockConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LowStockConfig"
-                }
-              }
-            }
           },
           "422": {
             "description": "Validation Error",
@@ -8758,6 +8450,314 @@
               }
             }
           }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/filaments": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "List Spoolman filaments",
+        "description": "Fetch all filament definitions from the configured Spoolman instance.",
+        "operationId": "get_filaments_api_v1_spoolman_filaments_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/spools": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "List Spoolman spools",
+        "description": "Fetch all spool inventory from the configured Spoolman instance.",
+        "operationId": "get_spools_api_v1_spoolman_spools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/sync-now": {
+      "post": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Manually sync filaments and spools from Spoolman",
+        "description": "Re-fetch filaments and spools from Spoolman, confirming the connection.\nRecords the outcome (success clears any previously shown error) so the\nstatus indicator and Spoolman settings page reflect this attempt too.",
+        "operationId": "sync_now_api_v1_spoolman_sync_now_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/sync-status": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Spoolman sync health for the status indicator and settings page",
+        "description": "Never 503s, even when Spoolman is disabled/unconfigured \u2014 callers use\n`enabled` to decide whether to show anything at all.",
+        "operationId": "get_sync_status_api_v1_spoolman_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/filaments/{filament_id}": {
+      "patch": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Update filament OrcaSlicer profiles",
+        "description": "Write OrcaSlicer profile assignments back to a Spoolman filament's extra fields.",
+        "operationId": "patch_filament_api_v1_spoolman_filaments__filament_id__patch",
+        "parameters": [
+          {
+            "name": "filament_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Filament Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FilamentPatchBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "503": {
+            "description": "Spoolman not configured, disabled, or unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Low-inventory alert thresholds",
+        "operationId": "get_low_stock_api_v1_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "spoolman"
+        ],
+        "summary": "Set low-inventory alert thresholds",
+        "description": "Takes effect at the next Spoolman sync. Raising a threshold alerts spools now below it; lowering one\nre-arms spools that are no longer below it.",
+        "operationId": "put_low_stock_api_v1_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStockConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStockConfig"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Get Spoolman config",
+        "description": "Spoolman integration settings: enabled flag, base URL, and whether an API key is set.\nThe key itself never round-trips - omit `api_key` on PUT to leave it unchanged.",
+        "operationId": "get_spoolman_config_api_v1_settings_spoolman_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Update Spoolman config",
+        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it. Enabling Spoolman makes it the active inventory provider.",
+        "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpoolmanConfigOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/settings/spoolman/test": {
+      "post": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Test Spoolman connection",
+        "description": "Verify connectivity to Spoolman. Uses the supplied URL/key if provided,\nfalling back to the saved config. Returns `{ok, version}` or `{ok, message}`.\nIf the catalog is warm and stale UUIDs are detected in Spoolman filaments,\nreturns `{status: \"pending_remaps\", ...}` instead.",
+        "operationId": "test_spoolman_connection_api_v1_settings_spoolman_test_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolmanConfigIn"
+              }
+            }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -10470,6 +10470,28 @@
             ],
             "title": "Filament Id"
           },
+          "material_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Provider"
+          },
+          "material_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Ref"
+          },
           "filament_type": {
             "type": "string",
             "title": "Filament Type",
@@ -10761,6 +10783,28 @@
               }
             ],
             "title": "Filament Id"
+          },
+          "material_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Provider"
+          },
+          "material_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Ref"
           },
           "filament_color": {
             "anyOf": [
@@ -11215,6 +11259,28 @@
               }
             ],
             "title": "Filament Id"
+          },
+          "material_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Provider"
+          },
+          "material_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Ref"
           },
           "filament_type": {
             "type": "string",
@@ -11678,6 +11744,28 @@
             ],
             "title": "Filament Id"
           },
+          "material_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Provider"
+          },
+          "material_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Ref"
+          },
           "sort_order": {
             "type": "integer",
             "title": "Sort Order",
@@ -11735,6 +11823,28 @@
               }
             ],
             "title": "Filament Id"
+          },
+          "material_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Provider"
+          },
+          "material_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material Ref"
           },
           "sort_order": {
             "anyOf": [

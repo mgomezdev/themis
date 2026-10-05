@@ -120,7 +120,8 @@ async def test_delivery_fires_the_webhook_and_notification_channels_for_spool_lo
     (url, secret, event, job_id, extra), _ = schedule.call_args
     assert (url, secret, event, job_id) == ("http://hook.test", "s", "spool.low", None)
     assert extra == {"spool_id": 1, "filament_id": 1, "name": "Elegoo PLA 1", "remaining_g": 80.0,
-                     "threshold_g": 100.0, "location": "Shelf B"}
+                     "threshold_g": 100.0, "location": "Shelf B",
+                     "provider": "spoolman", "spool_ref": "1", "material_ref": "1"}
     (_cfg, event, job_id, title, message), _ = dispatch.call_args
     assert (event, job_id, title) == ("spool.low", None, "Themis: spool running low")
     assert message == "Elegoo PLA 1 (Shelf B) has 80 g left (alert below 100 g)."

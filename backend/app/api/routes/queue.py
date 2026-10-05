@@ -101,7 +101,7 @@ async def _enrich(
 
 async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
     """Fetch all active-status jobs and enrich each with materials, eligible
-    printers, and a low_stock_warning — batching the Spoolman lookup into a
+    printers, and a low_stock_warning — batching the inventory lookup into a
     single fetch_spools() call across every job/config in the list rather than
     one per job (this endpoint is polled frequently by the frontend)."""
     result = await session.execute(
@@ -112,7 +112,7 @@ async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
     jobs = result.scalars().all()
 
     # First pass: resolve each config's loaded-filament slot so we know whether
-    # a Spoolman lookup is needed at all, and collect the distinct spool ids.
+    # an inventory lookup is needed at all, and collect the distinct spool ids.
     spool_ids_needed: set[str] = set()
     for j in jobs:
         cfg_result = await session.execute(

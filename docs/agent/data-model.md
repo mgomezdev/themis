@@ -244,6 +244,17 @@ the Spoolman integration onto the plugin host: `spoolman_config` → `plugin_con
 `spoolman:` namespace, and `inventory:read/write` granted to every key holding the matching `spoolman:*`/`settings:*` scope. **`spoolman_config`
 is kept but no longer read or written** (dropped in a later cleanup release).
 
+### Provider-namespaced inventory refs  (v036 — BIZ-217)
+
+`printers.loaded_filaments[].inventory = {"provider": "<plugin id>", "spool_ref": "<ref>"}` (never `filament_id`: that is a Bambu AMS tray code);
+`material_provider` + `material_ref` (TEXT, NULL) on `job_printer_configs`, `job_model_targets`, `project_items`, and the same pair inside every
+`orders.parts[]` entry. **Dual-write for one release:** the legacy `spoolman_spool_id` / `filament_id` are still written (mirrored while the provider
+is Spoolman; `filament_id` stays NULL for any other provider) because old frontends, API clients and AMS reports keep writing the old keys, so
+every writer goes through `services/inventory/refs.py` (`PATCH /printers`, printer create, fleet import, `printer_manager.on_ams_change` — which
+now preserves *all* Themis-owned slot keys —, job configs/targets, project items + generation grouping, order parts). Conflicts resolve by what
+changed vs the stored slot (an edited `inventory` wins; otherwise an edited legacy key wins). Material asks resolve the same way: an old client's echo of the stored `material_ref` never undoes its `filament_id` edit. **A new client must send `inventory: null` to unbind** (omitting the key leaves the stored binding); the legacy key is kept an int when numeric. A ref whose provider is not active is *unresolved*
+(never applied to another provider). Backfill: `('spoolman', CAST(filament_id AS TEXT))`.
+
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline

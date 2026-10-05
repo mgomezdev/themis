@@ -1,6 +1,10 @@
-"""Deprecated `/api/v1/spoolman/*` aliases (BIZ-202 §3.9): same paths and response shapes as ever, now relayed through
-the inventory provider. They only apply while Spoolman is the active provider (409 when another one is; 503 when
-Spoolman itself is not configured/enabled). They move into the Spoolman plugin's own router in a later phase."""
+"""The Spoolman plugin's deprecated alias routes (BIZ-202 §3.9, D9): `/api/v1/spoolman/*` and `/api/v1/settings/spoolman*`.
+
+Same paths, scopes and response shapes as before the extraction (byte-for-byte goldens in `tests/golden/`), relayed through the
+inventory provider. They only apply while Spoolman is the active provider (503 until it is configured/enabled, 409 when another
+provider is active). When to remove them is this plugin's own versioning decision, not a core compat window. Mounted by the host
+from `PluginManifest.alias_routers` (absolute prefixes); the neutral API is `/api/v1/inventory`."""
+
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,11 +14,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import InventoryConfig
-from ...plugins.kinds.filament_inventory import PROFILE_LINKS_WRITE, InventoryProviderError
-from ...services.inventory import config as inventory_config, provider as inventory_provider, read as inventory_read
+from ...services import catalog_service
+from ...services.inventory import config as inventory_config, provider as inventory_provider
 from ...services.inventory import sync as inventory_sync
+from ..host import plugin_host
+from ..manifest import PluginError
+from ..kinds.filament_inventory import KIND, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, InventoryProviderError
 
 router = APIRouter(prefix="/api/v1/spoolman", tags=["spoolman"])
+settings_router = APIRouter(prefix="/api/v1/settings/spoolman", tags=["settings"])
 
 PLUGIN_ID = "spoolman"
 
@@ -168,3 +176,125 @@ async def put_low_stock(body: LowStockConfig, session: AsyncSession = Depends(ge
     row.low_stock_overrides = inventory_config.merge_overrides(row, PLUGIN_ID, body.overrides)
     await session.commit()
     return _low_stock_out(row)
+
+
+# --- /api/v1/settings/spoolman ----------------------------------------------------------------------------------------------
+
+class SpoolmanConfigOut(BaseModel):
+    enabled: bool
+    url: str | None
+    has_api_key: bool
+    sync_interval_minutes: int
+
+
+class SpoolmanConfigIn(BaseModel):
+    enabled: bool | None = None
+    url: str | None = None
+    api_key: str | None = None
+    sync_interval_minutes: int | None = None
+
+
+def _spoolman_out() -> SpoolmanConfigOut:
+    cfg = plugin_host.settings(PLUGIN_ID)
+    return SpoolmanConfigOut(
+        enabled=plugin_host.is_enabled(PLUGIN_ID), url=cfg.get("url") or None,
+        has_api_key=plugin_host.has_secret(PLUGIN_ID, "api_key"),
+        sync_interval_minutes=int(cfg.get("sync_interval_minutes") or 15),
+    )
+
+
+@settings_router.get("", response_model=SpoolmanConfigOut, summary="Get Spoolman config",
+           dependencies=[Depends(require_scope("settings:read"))])
+async def get_spoolman_config():
+    """Spoolman integration settings: enabled flag, base URL, and whether an API key is set.
+    The key itself never round-trips - omit `api_key` on PUT to leave it unchanged."""
+    return _spoolman_out()
+
+
+@settings_router.put("", response_model=SpoolmanConfigOut, summary="Update Spoolman config",
+           dependencies=[Depends(require_scope("settings:write"))])
+async def update_spoolman_config(body: SpoolmanConfigIn):
+    """Update Spoolman integration settings. Omitted fields (including `api_key`) are left
+    unchanged; an empty string for `api_key` clears it. Enabling Spoolman makes it the active inventory provider."""
+    settings: dict = {}
+    if body.url is not None:
+        settings["url"] = body.url or None
+    if body.sync_interval_minutes is not None:
+        settings["sync_interval_minutes"] = max(1, body.sync_interval_minutes)
+    try:
+        await plugin_host.update_config(
+            PLUGIN_ID, enabled=body.enabled, settings=settings or None,
+            secrets={"api_key": body.api_key} if body.api_key is not None else None)
+        if body.enabled and plugin_host.slot(KIND) != PLUGIN_ID:
+            await plugin_host.set_slot(KIND, PLUGIN_ID)
+    except PluginError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return _spoolman_out()
+
+
+@settings_router.post("/test", summary="Test Spoolman connection",
+            dependencies=[Depends(require_scope("settings:write"))])
+async def test_spoolman_connection(body: SpoolmanConfigIn):
+    """Verify connectivity to Spoolman. Uses the supplied URL/key if provided,
+    falling back to the saved config. Returns `{ok, version}` or `{ok, message}`.
+    If the catalog is warm and stale UUIDs are detected in Spoolman filaments,
+    returns `{status: "pending_remaps", ...}` instead."""
+    saved_url = plugin_host.settings(PLUGIN_ID).get("url")
+    if not (body.url or saved_url):
+        return {"ok": False, "message": "No URL configured"}
+    try:
+        inventory = plugin_host.build_candidate(
+            PLUGIN_ID, settings={"url": body.url} if body.url else None,
+            secrets={"api_key": body.api_key} if body.api_key is not None else None)
+        info = await inventory.test_connection()
+    except Exception as e:
+        return {"ok": False, "message": plugin_host.redact(PLUGIN_ID, str(e), (body.api_key or "",))}
+
+    # --- Spoolman profile-name sanity check (best-effort) ---
+    # Check that profile name strings bound to each filament exist in the catalog.
+    from ...services.catalog_utils import catalog_name_sets, stale_binding_groups
+
+    _catalog = catalog_service.cached_catalog()
+    if _catalog is not None and PROFILE_LINKS_READ in inventory.capabilities:
+        try:
+            _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
+            spoolman_groups = stale_binding_groups(
+                await inventory.list_materials(), lambda name: name not in catalog_filaments)
+
+            if spoolman_groups:
+                import uuid as _uuid
+                import time as _time
+                sync_id = str(_uuid.uuid4())
+                pending_entries = list(spoolman_groups.values())
+                catalog_service.set_pending_sync({
+                    "sync_id": sync_id,
+                    "raw": None,
+                    "catalog": None,
+                    "pending": {
+                        "printers": [],
+                        "jobs": [],
+                        "spoolman_filaments": pending_entries,
+                    },
+                    "created_at": _time.time(),
+                })
+                return {
+                    "status": "pending_remaps",
+                    "ok": True,
+                    "sync_id": sync_id,
+                    "pending": {
+                        "printers": [],
+                        "jobs": [],
+                        "spoolman_filaments": pending_entries,
+                    },
+                    "options": {
+                        "machine": [],
+                        "process": [],
+                        "filament": sorted(catalog_filaments),
+                    },
+                    "spoolman_error": None,
+                }
+        except Exception:
+            # Best-effort: if fetch_filaments fails, fall through to normal success
+            pass
+
+    return {"ok": True, "status": "ok", "version": info.get("version", "unknown")}

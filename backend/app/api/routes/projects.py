@@ -17,6 +17,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ._materials import material_columns, stored
+from ...services.inventory import refs as inventory_refs
 from ...auth import require_scope
 from ...config import get_library_dir
 from ...database import get_session
@@ -116,7 +118,9 @@ class ProjectItemCreate(BaseModel):
     quantity: int = 1
     filament_type: str = "any"
     filament_color: str = "any"
-    filament_id: Optional[int] = None
+    filament_id: Optional[int] = None       # legacy filament id; or material_ref (+ material_provider)
+    material_provider: Optional[str] = None
+    material_ref: Optional[str] = None
     sort_order: int = 0
 
     @field_validator("quantity")
@@ -132,6 +136,8 @@ class ProjectItemUpdate(BaseModel):
     filament_type: Optional[str] = None
     filament_color: Optional[str] = None
     filament_id: Optional[int] = None
+    material_provider: Optional[str] = None
+    material_ref: Optional[str] = None
     sort_order: Optional[int] = None
 
     @field_validator("quantity")
@@ -221,6 +227,8 @@ def _item_dict(item: ProjectItem, file_name: str) -> dict:
         "filament_type": item.filament_type,
         "filament_color": item.filament_color,
         "filament_id": item.filament_id,
+        "material_provider": item.material_provider,
+        "material_ref": item.material_ref,
         "sort_order": item.sort_order,
     }
 
@@ -733,7 +741,7 @@ async def add_item(
         quantity=body.quantity,
         filament_type=body.filament_type,
         filament_color=body.filament_color,
-        filament_id=body.filament_id,
+        **material_columns(body.filament_id, body.material_provider, body.material_ref),
         sort_order=body.sort_order,
     )
     session.add(item)
@@ -803,8 +811,10 @@ async def update_item(
         item.filament_type = body.filament_type
     if body.filament_color is not None:
         item.filament_color = body.filament_color
-    if body.filament_id is not None:
-        item.filament_id = body.filament_id
+    if body.filament_id is not None or body.material_ref is not None:
+        # a lone material_provider means nothing without a ref; an old client's echo of the stored ref must not undo its filament_id edit
+        for column, value in material_columns(body.filament_id, body.material_provider, body.material_ref, stored(item)).items():
+            setattr(item, column, value)
     if body.sort_order is not None:
         item.sort_order = body.sort_order
     await session.commit()
@@ -1080,10 +1090,21 @@ async def _reusable_pack(session: AsyncSession, library_dir: Path, recipe_hash: 
     return None
 
 
-def _filament_label(fil_type: str, fil_color: str, fil_id: int | None) -> str:
+def _item_material(item: ProjectItem) -> tuple[str, str] | None:
+    """The item's specific-material ask as (provider, ref); a pre-migration row only has the legacy filament_id."""
+    if item.material_ref:
+        return (item.material_provider or inventory_refs.LEGACY_PROVIDER, item.material_ref)
+    return (inventory_refs.LEGACY_PROVIDER, str(item.filament_id)) if item.filament_id is not None else None
+
+
+def _material_cols(mat: tuple[str, str] | None) -> dict:
+    return material_columns(None, *mat) if mat else {"filament_id": None, "material_provider": None, "material_ref": None}
+
+
+def _filament_label(fil_type: str, fil_color: str, mat: tuple[str, str] | None) -> str:
     """Short string for use in generated 3MF filenames."""
-    if fil_id is not None:
-        return f"f{fil_id}"
+    if mat is not None:
+        return f"f{mat[1]}" if mat[0] == inventory_refs.LEGACY_PROVIDER else f"{mat[0]}-{mat[1]}"
     parts = []
     if fil_type != "any":
         parts.append(fil_type.lower())
@@ -1154,17 +1175,17 @@ async def generate_project(
     if not item_rows:
         raise HTTPException(422, "Project has no items — add STL files before generating")
 
-    # Group items by filament requirement (type, color, specific spoolman id)
-    groups: dict[tuple[str, str, int | None], list[ProjectItem]] = {}
+    # Group items by filament requirement (type, color, specific material (provider, ref))
+    groups: dict[tuple[str, str, tuple[str, str] | None], list[ProjectItem]] = {}
     for item in item_rows:
-        key = (item.filament_type, item.filament_color, item.filament_id)
+        key = (item.filament_type, item.filament_color, _item_material(item))
         groups.setdefault(key, []).append(item)
 
     library_dir = get_library_dir()
 
     # Resolve STL paths per group (+ what each group packs from, for pack reuse)
-    group_paths: dict[tuple[str, str, int | None], list[Path]] = {}
-    group_recipe: dict[tuple[str, str, int | None], list[tuple[str, int]]] = {}
+    group_paths: dict[tuple[str, str, tuple[str, str] | None], list[Path]] = {}
+    group_recipe: dict[tuple[str, str, tuple[str, str] | None], list[tuple[str, int]]] = {}
     for key, group_items in groups.items():
         paths: list[Path] = []
         group_recipe[key] = []
@@ -1217,11 +1238,11 @@ async def generate_project(
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
-    for (fil_type, fil_color, fil_id), stl_paths in group_paths.items():
-        group_items = groups[(fil_type, fil_color, fil_id)]
+    for (fil_type, fil_color, mat), stl_paths in group_paths.items():
+        group_items = groups[(fil_type, fil_color, mat)]
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
-        recipe_hash = slice_cache.sha256_of({"items": group_recipe[(fil_type, fil_color, fil_id)], "pack": pack_mode})
+        recipe_hash = slice_cache.sha256_of({"items": group_recipe[(fil_type, fil_color, mat)], "pack": pack_mode})
         reused = await _reusable_pack(session, library_dir, recipe_hash) if body.allow_cached else None
         now = _now_iso()
 
@@ -1249,7 +1270,7 @@ async def generate_project(
                     raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
                 raise HTTPException(502, f"Orca sidecar error during generation: {exc}") from exc
 
-            label = _filament_label(fil_type, fil_color, fil_id)
+            label = _filament_label(fil_type, fil_color, mat)
             out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
             # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
             tmp_subdir = job_pack_dir / f"_tmp_{_uuid.uuid4().hex[:10]}"
@@ -1357,7 +1378,7 @@ async def generate_project(
                     print_profile=body.process_preset or "",
                     filament_type=fil_type,
                     filament_color=fil_color,
-                    filament_id=fil_id,
+                    **_material_cols(mat),
                 ))
             for machine_profile in dict.fromkeys(body.eligible_machine_profiles):
                 session.add(JobModelTarget(
@@ -1367,7 +1388,7 @@ async def generate_project(
                     filament_profile=None,   # the loaded slot supplies the preset on each matching printer
                     filament_type=fil_type,
                     filament_color=fil_color,
-                    filament_id=fil_id,
+                    **_material_cols(mat),
                 ))
             await session.flush()
             await model_targets.materialize_job(session, j.id)

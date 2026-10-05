@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ._materials import material_columns, stored
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Order, Project
@@ -37,7 +38,9 @@ class OrderPartIn(BaseModel):
     qty: int = 1
     material: str = ""
     est_minutes: int = 0
-    filament_id: int | None = None
+    filament_id: int | None = None          # legacy filament id; or material_ref (+ material_provider)
+    material_provider: str | None = None
+    material_ref: str | None = None
     filament_color: str | None = None
 
 
@@ -74,7 +77,8 @@ class OrderPatch(BaseModel):
         return _validate_payment_status(v)
 
 
-def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
+def _normalize_parts(parts: list[OrderPartIn], previous: list[dict] | None = None) -> list[dict]:
+    prev_by_id = {q.get("id"): q for q in (previous or []) if isinstance(q, dict)}
     out = []
     for p in parts:
         out.append({
@@ -83,7 +87,7 @@ def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
             "qty": p.qty,
             "material": p.material,
             "est_minutes": p.est_minutes,
-            "filament_id": p.filament_id,
+            **material_columns(p.filament_id, p.material_provider, p.material_ref, stored(prev_by_id.get(p.id))),
             "filament_color": p.filament_color,
         })
     return out
@@ -219,7 +223,7 @@ async def patch_order(order_id: int, body: OrderPatch,
         _no_new_customer_orders(body.order_type)
     fields = body.model_dump(exclude_unset=True)
     if "parts" in fields and fields["parts"] is not None:
-        order.parts = _normalize_parts([OrderPartIn(**p) for p in fields.pop("parts")])
+        order.parts = _normalize_parts([OrderPartIn(**p) for p in fields.pop("parts")], order.parts)
     else:
         fields.pop("parts", None)
     for k, v in fields.items():

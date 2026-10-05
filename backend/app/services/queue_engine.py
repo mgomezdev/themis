@@ -1461,7 +1461,7 @@ class QueueEngine:
             # completion callback and _reconcile_printing_jobs can both observe
             # status=="printing" for the same job (several awaits separate this read
             # from the commit below); without this guard both would proceed and
-            # double the Spoolman deduction, lifetime counters, and job.complete
+            # double the inventory deduction, lifetime counters, and job.complete
             # webhook. Only the caller that flips the row wins.
             claim = await session.execute(
                 update(Job)
@@ -1472,13 +1472,13 @@ class QueueEngine:
                 return  # already claimed by a concurrent completion path
 
             # Accrue lifetime wear counters for maintenance tracking — every
-            # successfully completed job, regardless of Spoolman config.
+            # successfully completed job, regardless of inventory config.
             printer = await session.get(Printer, printer_id)
             if printer is not None:
                 printer.lifetime_job_count += 1
                 printer.lifetime_print_seconds += job.actual_seconds or 0
 
-            # Collect Spoolman deduction data before session closes
+            # Collect inventory deduction data before session closes
             actual_grams = job.actual_filament_grams
             if actual_grams is not None and inventory_deduction.can_deduct() \
                     and await inventory_config.deduct_enabled(session):
@@ -1501,7 +1501,7 @@ class QueueEngine:
                                 job.deduction_skipped = False
                             except (TypeError, ValueError):
                                 logger.warning(
-                                    "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                                    "Invalid slot spool ref %r for job %s — deduction skipped",
                                     raw_spool_id, job_id,
                                 )
 

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
+from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
 
 logger = logging.getLogger(__name__)
@@ -215,7 +216,7 @@ class PrinterManager:
     async def on_ams_change(self, printer_id: int, trays: list) -> None:
         """AMS filament change → persist the printer's `loaded_filaments` from the
         auto-detected trays. User-set per-slot mappings (`filament_profile`,
-        `spoolman_spool_id`) are preserved by slot across AMS reports; slots no
+        `inventory`, legacy binding key) are preserved by slot across AMS reports; slots no
         longer reported drop with their mappings."""
         if self._session_factory:
             async with self._session_factory() as session:
@@ -229,11 +230,9 @@ class PrinterManager:
                     for tray in trays:
                         prev = prev_by_slot.get(tray.get("slot"))
                         if prev is not None:
-                            tray = {
-                                **tray,
-                                "filament_profile": prev.get("filament_profile"),
-                                "spoolman_spool_id": prev.get("spoolman_spool_id"),
-                            }
+                            # Keep EVERY Themis-owned key (profile, spool binding, inventory ref), not just two named ones:
+                            # a vendor AMS report only carries hardware facts and must never wipe a link.
+                            tray = inventory_refs.preserve_slot_keys(prev, tray)
                         merged.append(tray)
                     printer.loaded_filaments = merged
                     await session.commit()
