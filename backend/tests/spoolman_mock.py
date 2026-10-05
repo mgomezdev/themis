@@ -144,7 +144,7 @@ async def patch_spool(spool_id: int, body: dict):
     if "remaining_weight" in body:
         if initial is None:
             raise HTTPException(400, "remaining_weight can only be used if the filament has a weight set.")
-        remaining = max(0.0, float(body["remaining_weight"]))
+        remaining = min(max(0.0, float(body["remaining_weight"])), float(initial))
         s["remaining_weight"], s["used_weight"] = remaining, max(0.0, initial - remaining)
     elif "used_weight" in body:
         used = max(0.0, float(body["used_weight"]))
