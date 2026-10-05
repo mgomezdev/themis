@@ -68,7 +68,7 @@ async def list_spools():
 
 @router.post("/sync-now", summary="Refresh from the provider now",
              responses={409: {"description": "No provider, or it is not a remote one"}, 503: {"description": "Provider unreachable"}},
-             dependencies=[Depends(require_scope("inventory:read"))])
+             dependencies=[Depends(require_scope("inventory:write"))])         # it records sync state and can fire alerts
 async def sync_now(session: AsyncSession = Depends(get_session)):
     inventory_provider.require(REMOTE)
     try:

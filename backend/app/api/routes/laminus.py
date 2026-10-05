@@ -223,17 +223,20 @@ async def confirm_remap(
     applied_spoolman = 0
     if pending.get("spoolman_filaments"):
         if inventory_provider.has(PROFILE_LINKS_READ) and inventory_provider.has(PROFILE_LINKS_WRITE):
+            # One read for the whole remap (not one per filament); the local copy follows our own writes, so several
+            # entries touching the same material see each other's changes.
+            fetched = await inventory_provider.call("list_materials")
+            materials = {m.ref: m for m in fetched.value} if fetched.ok else {}
+            load_error = None if fetched.ok else inventory_provider.describe_failure(fetched)[1]
             for entry in pending["spoolman_filaments"]:
                 printer_preset = entry["printer_preset"]
                 stale_name = entry["stale_name"]
                 new_name = spoolman_res_map.get((printer_preset, stale_name))
                 for fil_id in entry["affected_filament_ids"]:
                     try:
-                        # Re-read this material's links through the provider so only the stale name is rewritten.
-                        fetched = await inventory_provider.call("list_materials")
-                        if not fetched.ok:
-                            raise RuntimeError(inventory_provider.describe_failure(fetched)[1])
-                        material = next((m for m in fetched.value if m.ref == str(fil_id)), None)
+                        if load_error:
+                            raise RuntimeError(load_error)
+                        material = materials.get(str(fil_id))
                         if material is None:
                             raise RuntimeError("material not found")
                         bindings = {k: list(v) for k, v in (material.profile_links or {}).items()}
@@ -247,6 +250,7 @@ async def confirm_remap(
                         written = await inventory_provider.call("set_profile_links", str(fil_id), bindings)
                         if not written.ok:
                             raise RuntimeError(inventory_provider.describe_failure(written)[1])
+                        materials[str(fil_id)] = written.value
                         applied_spoolman += 1
                     except Exception as exc:
                         spoolman_failures.append(f"filament {fil_id}: {exc}")

@@ -189,7 +189,7 @@ async def test_spoolman_connection(body: SpoolmanConfigIn):
             secrets={"api_key": body.api_key} if body.api_key is not None else None)
         info = await inventory.test_connection()
     except Exception as e:
-        return {"ok": False, "message": str(e)}
+        return {"ok": False, "message": plugin_host.redact(_SPOOLMAN, str(e), (body.api_key or "",))}
 
     # --- Spoolman profile-name sanity check (best-effort) ---
     # Check that profile name strings bound to each filament exist in the catalog.

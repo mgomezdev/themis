@@ -93,9 +93,9 @@ async def test_plugin(plugin_id: str, body: PluginTest):
         instance = plugin_host.build_candidate(plugin_id, body.settings, body.secrets)
         info = await instance.test_connection()
     except PluginError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values())))
     except Exception as e:
-        return {"ok": False, "message": plugin_host.redact(plugin_id, str(e))}
+        return {"ok": False, "message": plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values()))}
     return {"ok": True, **({"version": info.get("version")} if isinstance(info, dict) else {})}
 
 

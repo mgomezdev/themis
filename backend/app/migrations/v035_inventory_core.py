@@ -7,7 +7,8 @@
   (the admin session and browser device keys carry scope *snapshots*, so they are covered too; precedent: v021).
 
 `spoolman_config` is kept (read by nothing from here on; dropped in a later cleanup release). Idempotent: existing
-plugin/slot/inventory rows are never overwritten."""
+plugin/slot/inventory rows are never overwritten. `down()` copies the plugin config and thresholds back into
+`spoolman_config` first, so edits made after the upgrade survive a rollback."""
 from __future__ import annotations
 
 import json
@@ -22,12 +23,12 @@ _WRITE_FROM = {"spoolman:write", "settings:write"}
 
 
 def _loads(raw, default):
-    if raw is None:
-        return default
+    """Parse a JSON column; anything unusable (NULL, the text 'null', malformed, or the wrong type) is `default`."""
     try:
-        return json.loads(raw) if isinstance(raw, (str, bytes)) else raw
+        value = json.loads(raw) if isinstance(raw, (str, bytes)) else raw
     except Exception:
         return default
+    return value if isinstance(value, type(default)) else default
 
 
 async def _has_table(conn, table: str) -> bool:
@@ -81,12 +82,30 @@ async def up(conn) -> None:
 
 
 async def down(conn) -> None:
-    """Remove what `up` created. `spoolman_config` was never modified, so the old integration works again as-is."""
+    """Remove what `up` created, first writing the (possibly edited) Spoolman config + thresholds back into
+    `spoolman_config` so the old integration works again with the user's current settings."""
+    if await _has_table(conn, "spoolman_config"):
+        plugin = (await conn.execute(text("SELECT * FROM plugin_configs WHERE plugin_id = 'spoolman'"))).mappings().first()
+        if plugin is not None:
+            settings, secrets = _loads(plugin["settings"], {}), _loads(plugin["secrets"], {})
+            await conn.execute(text("INSERT OR IGNORE INTO spoolman_config (id, enabled) VALUES (1, 0)"))
+            await conn.execute(text(
+                "UPDATE spoolman_config SET enabled = :e, url = :u, api_key = :k, sync_interval_minutes = :i WHERE id = 1"),
+                {"e": 1 if plugin["enabled"] else 0, "u": settings.get("url"), "k": secrets.get("api_key"),
+                 "i": int(settings.get("sync_interval_minutes") or 15)})
+        if await _has_table(conn, "inventory_config"):
+            inv = (await conn.execute(text("SELECT * FROM inventory_config WHERE id = 1"))).mappings().first()
+            if inv is not None:
+                overrides = {k.split(":", 1)[1]: v for k, v in _loads(inv["low_stock_overrides"], {}).items() if k.startswith("spoolman:")}
+                alerted = [int(k.split(":", 1)[1]) for k in _loads(inv["low_stock_alerted"], []) if k.startswith("spoolman:") and k.split(":", 1)[1].isdigit()]
+                await conn.execute(text(
+                    "UPDATE spoolman_config SET low_stock_default_g = :d, low_stock_overrides = :o, low_stock_alerted = :a WHERE id = 1"),
+                    {"d": inv["low_stock_default_g"], "o": json.dumps(overrides), "a": json.dumps(alerted)})
     await conn.execute(text("DELETE FROM extension_slots WHERE kind = 'filament_inventory' AND plugin_id = 'spoolman'"))
     await conn.execute(text("DELETE FROM plugin_configs WHERE plugin_id = 'spoolman'"))
     await conn.execute(text("DROP TABLE IF EXISTS inventory_config"))
     for key_id, scopes_raw in (await conn.execute(text("SELECT id, scopes FROM api_keys"))).fetchall():
         scopes = _loads(scopes_raw, [])
-        if isinstance(scopes, list) and {"inventory:read", "inventory:write"} & set(scopes):
+        if {"inventory:read", "inventory:write"} & set(scopes):
             await conn.execute(text("UPDATE api_keys SET scopes = :s WHERE id = :i"),
                                {"s": json.dumps([x for x in scopes if not x.startswith("inventory:")]), "i": key_id})

@@ -61,7 +61,7 @@ async def test_sync_status_and_settings_never_fail_without_a_provider(client):
 # --- reads -------------------------------------------------------------------------------------------------------------
 
 async def test_materials_and_spools_use_the_neutral_shape_and_never_expose_raw(client):
-    await use_provider(_fake())
+    await use_provider(_fake(), plugin_id="fake_inventory")
 
     materials = (await client.get("/api/v1/inventory/materials")).json()
     spools = (await client.get("/api/v1/inventory/spools")).json()
@@ -211,6 +211,7 @@ async def test_inventory_routes_need_the_inventory_scopes_not_the_spoolman_ones(
         assert (await legacy_only.get("/api/v1/inventory/materials")).status_code == 403
         assert (await reader.get("/api/v1/inventory/materials")).status_code == 200
         assert (await reader.put("/api/v1/inventory/settings", json={"deduct_on_complete": False})).status_code == 403
+        assert (await reader.post("/api/v1/inventory/sync-now")).status_code == 403          # it records state and can alert
         assert (await reader.patch("/api/v1/inventory/materials/1/profile-links", json={"links": {}})).status_code == 403
 
 

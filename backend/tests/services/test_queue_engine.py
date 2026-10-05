@@ -1138,6 +1138,7 @@ async def test_completion_sets_the_spool_weight_through_the_inventory_provider(d
 @pytest.mark.asyncio
 @pytest.mark.parametrize("caps", [None, frozenset({"TRACKS_WEIGHT"}), frozenset({"WRITE_WEIGHT"})])   # None: no provider at all
 async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabilities_or_is_absent(db, caps):
+    from unittest.mock import AsyncMock, patch
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
 
@@ -1146,14 +1147,16 @@ async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabil
     if caps is not None:
         fake = FakeInventoryProvider(spools=[spool("42", 500.0)], capabilities=caps)
         await use_provider(fake)
-    await engine.handle_print_complete(printer_id)
-    await asyncio.sleep(0.05)
+    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
+        await engine.handle_print_complete(printer_id)
+    deduct.assert_not_called()
     if fake is not None:
         assert fake.calls == [] and fake.writes == []
 
 
 @pytest.mark.asyncio
 async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
+    from unittest.mock import AsyncMock, patch
     from app.models import InventoryConfig
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
@@ -1165,10 +1168,27 @@ async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
         session.add(InventoryConfig(id=1, deduct_on_complete=False, low_stock_overrides={}, low_stock_alerted=[]))
         await session.commit()
 
-    await engine.handle_print_complete(printer_id)
-    await asyncio.sleep(0.05)
+    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
+        await engine.handle_print_complete(printer_id)
 
+    deduct.assert_not_called()
     assert fake.calls == [] and fake.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provider_is_active(db):
+    """The slot's `spoolman_spool_id` is a Spoolman id: applying it to a different provider would hit an unrelated spool."""
+    from unittest.mock import AsyncMock, patch
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    engine, printer_id, _ = await _seed_completing_job(db)
+    other = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(other, plugin_id="other_inventory")
+    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
+        await engine.handle_print_complete(printer_id)
+    deduct.assert_not_called()
+    assert other.calls == [] and other.writes == []
 
 
 @pytest.mark.asyncio

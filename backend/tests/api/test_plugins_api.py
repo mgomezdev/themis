@@ -122,3 +122,14 @@ async def test_enabling_spoolman_via_the_legacy_put_replaces_another_active_prov
     await use_provider(FakeInventoryProvider(), plugin_id="other_inventory")
     await client.put("/api/v1/settings/spoolman", json={"enabled": True, "url": "http://sm.test"})
     assert (await client.get("/api/v1/plugins")).json()["slots"]["filament_inventory"] == "spoolman"
+
+
+async def test_a_candidate_secret_is_masked_in_a_failed_connection_test(client, spoolman_upstream):
+    candidate = "candidate-key-123"
+    spoolman_upstream.handler = lambda request: httpx.Response(401, text=f"bad key {candidate}")
+
+    new_route = await client.post("/api/v1/plugins/spoolman/test", json={"settings": {"url": "http://c.test"}, "secrets": {"api_key": candidate}})
+    legacy = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://c.test", "api_key": candidate})
+
+    for resp in (new_route, legacy):
+        assert resp.json()["ok"] is False and candidate not in resp.text

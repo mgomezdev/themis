@@ -24,7 +24,7 @@ SPOOLMAN_ALLOWLIST = {
     # the per-slot / per-job refs and the legacy slot key (`spoolman_spool_id`, `filament_id`): BIZ-217 / cleanup
     "api/routes/jobs.py", "api/routes/laminus.py", "api/routes/projects.py", "api/routes/queue.py",
     "services/catalog_service.py", "services/catalog_utils.py", "services/job_costs.py", "services/printer_manager.py",
-    "services/queue_engine.py", "services/providers/__init__.py",
+    "services/queue_engine.py", "services/providers/__init__.py", "services/inventory/refs.py",
     # permanent (spec §6): scopes, migrations, the legacy table's model, the bundled-plugin list
     "auth.py", "main.py", "models.py", "plugins/__init__.py",
     "migrations/runner.py", "migrations/v020_spoolman_sync_status.py", "migrations/v026_spool_low_stock.py",

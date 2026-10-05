@@ -148,3 +148,14 @@ async def test_queue_preflight_is_skipped_without_a_weight_tracking_provider_and
     resp = await client.get("/api/v1/queue")
     assert resp.status_code == 200 and next(j for j in resp.json() if j["id"] == job_id)["low_stock_warning"] is None
     assert "list_spools" in failing.calls
+
+
+async def test_queue_preflight_ignores_a_spoolman_bound_slot_while_another_provider_is_active(client, session_factory):
+    job_id, _ = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=340.0)
+    other = FakeInventoryProvider(spools=[spool("99", 220.0, name="x", material="PLA")])
+    await use_provider(other, plugin_id="other_inventory")
+
+    resp = await client.get("/api/v1/queue")
+
+    assert next(j for j in resp.json() if j["id"] == job_id)["low_stock_warning"] is None
+    assert other.calls == []                                   # the Spoolman id was not applied to the other provider

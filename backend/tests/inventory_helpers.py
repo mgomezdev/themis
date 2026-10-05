@@ -19,7 +19,7 @@ class _NoSettings(BaseModel):
     pass
 
 
-async def use_provider(provider, plugin_id: str = "fake_inventory") -> None:
+async def use_provider(provider, plugin_id: str = "spoolman") -> None:
     """Make `provider` (e.g. a FakeInventoryProvider) the active inventory provider."""
     manifest = PluginManifest(id=plugin_id, name="Fake inventory", kind=KIND, version="0", host_api=HOST_API,
                               settings_model=_NoSettings, factory=lambda _s: provider, capabilities=frozenset(provider.capabilities))

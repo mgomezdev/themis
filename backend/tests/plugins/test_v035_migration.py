@@ -58,7 +58,7 @@ async def test_inventory_scopes_are_granted_to_spoolman_and_settings_keys_includ
     assert scopes["Read-only key"] == ["jobs:read"]                                      # unrelated keys are untouched
 
 
-async def test_the_legacy_spoolman_config_row_is_kept_untouched(migrated):
+async def test_up_leaves_the_legacy_spoolman_config_row_untouched(migrated):
     row = await _one(migrated, "SELECT * FROM spoolman_config WHERE id=1")
     want = FIXTURE_FACTS["spoolman"]
     assert (row["url"], row["api_key"], row["low_stock_default_g"]) == (want["url"], want["api_key"], want["low_stock_default_g"])
@@ -84,6 +84,7 @@ async def test_down_removes_what_up_created_and_restores_the_scopes_but_keeps_sp
     assert (await migrated.execute(text("SELECT count(*) FROM extension_slots"))).scalar_one() == 0
     assert (await _scopes(migrated))["Staff integration"] == FIXTURE_FACTS["api_keys"]["Staff integration"]
     assert (await _one(migrated, "SELECT url FROM spoolman_config"))["url"] == FIXTURE_FACTS["spoolman"]["url"]
+    assert (await _one(migrated, "SELECT low_stock_default_g FROM spoolman_config"))["low_stock_default_g"] == FIXTURE_FACTS["spoolman"]["low_stock_default_g"]
     await v035_inventory_core.up(migrated)                                                  # and it re-applies after a downgrade
     assert (await _one(migrated, "SELECT plugin_id FROM extension_slots"))["plugin_id"] == "spoolman"
 
@@ -125,3 +126,31 @@ async def test_an_install_that_never_set_up_a_spoolman_url_gets_a_disabled_plugi
     finally:
         await conn.close()
         await engine.dispose()
+
+
+async def test_json_nulls_in_the_legacy_config_do_not_abort_the_migration(tmp_path):
+    engine, conn = await _fresh_conn(tmp_path)
+    try:
+        await conn.execute(text("INSERT INTO spoolman_config (id, enabled, url, sync_interval_minutes, low_stock_overrides, low_stock_alerted) "
+                                "VALUES (1, 1, 'http://sm.test', 15, 'null', 'null')"))
+        await v035_inventory_core.up(conn)
+        row = await _one(conn, "SELECT * FROM inventory_config")
+        assert json.loads(row["low_stock_overrides"]) == {} and json.loads(row["low_stock_alerted"]) == []
+    finally:
+        await conn.close()
+        await engine.dispose()
+
+
+async def test_down_writes_post_upgrade_edits_back_to_the_legacy_config(migrated):
+    await migrated.execute(text("UPDATE plugin_configs SET enabled = 0, settings = :s, secrets = :k WHERE plugin_id='spoolman'"),
+                           {"s": json.dumps({"url": "http://edited.test", "sync_interval_minutes": 3}), "k": json.dumps({"api_key": "new-key"})})
+    await migrated.execute(text("UPDATE inventory_config SET low_stock_default_g = 77, low_stock_overrides = :o, low_stock_alerted = :a"),
+                           {"o": json.dumps({"spoolman:9": 12.5, "other:1": 3.0}), "a": json.dumps(["spoolman:4", "other:2"])})
+
+    await v035_inventory_core.down(migrated)
+
+    row = await _one(migrated, "SELECT * FROM spoolman_config WHERE id=1")
+    assert (row["enabled"], row["url"], row["api_key"], row["sync_interval_minutes"]) == (0, "http://edited.test", "new-key", 3)
+    assert row["low_stock_default_g"] == 77
+    assert json.loads(row["low_stock_overrides"]) == {"9": 12.5}                    # de-namespaced; other providers' state is dropped
+    assert json.loads(row["low_stock_alerted"]) == [4]

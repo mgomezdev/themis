@@ -633,3 +633,21 @@ async def test_catalog_status_memoizes_provider_health_for_thirty_seconds(client
         catalog_service._health_memo_at -= catalog_service._HEALTH_MEMO_TTL + 1
         await client.get("/api/v1/laminus/catalog/status")
     assert [c[0] for c in fake.calls].count("catalog_health") == 2
+
+
+async def test_confirm_remap_reads_the_inventory_once_and_sees_its_own_writes_across_entries(client):
+    """One `list_materials` for the whole remap (not one per filament), and two entries touching the same material
+    compose: the second rewrite starts from the first one's result."""
+    preset = "Bambu X1C 0.4 nozzle"
+    inventory = FakeInventoryProvider(materials=[_bound(5, {preset: ["Old A", "Old B"]}), _bound(6, {preset: ["Old A"]})])
+    await use_provider(inventory)
+    sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, stale="Old A"), _spoolman_entry(5, stale="Old B")]))
+
+    resp = await _confirm(client, sync, spoolman=[
+        {"printer_preset": preset, "stale_name": "Old A", "new_name": "New A"},
+        {"printer_preset": preset, "stale_name": "Old B", "new_name": "New B"}])
+
+    assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 3
+    assert inventory.calls.count("list_materials") == 1
+    assert _links(inventory, 5) == {preset: ["New A", "New B"]}
+    assert _links(inventory, 6) == {preset: ["New A"]}

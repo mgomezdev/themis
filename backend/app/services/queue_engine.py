@@ -31,7 +31,7 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .inventory import config as inventory_config, deduction as inventory_deduction
+from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
@@ -1493,7 +1493,7 @@ class QueueEngine:
                 if config is not None:
                     slot = _slot_for_config(config, loaded)
                     if slot is not None:
-                        raw_spool_id = slot.get("spoolman_spool_id")
+                        raw_spool_id = inventory_refs.slot_spool_ref(slot)
                         if raw_spool_id is not None:
                             try:
                                 spool_id = int(raw_spool_id)

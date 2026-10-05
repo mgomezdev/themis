@@ -199,9 +199,10 @@ class PluginHost:
     def slot(self, kind: str) -> str | None:
         return self._slots.get(kind)
 
-    def redact(self, plugin_id: str, text: str) -> str:
-        """`text` with the plugin's secret values masked (for messages built from a CallResult.exception)."""
-        return self._redact(plugin_id, text)
+    def redact(self, plugin_id: str, text: str, extra: tuple[str, ...] = ()) -> str:
+        """`text` with the plugin's secret values (and any `extra` candidate secrets the caller is trying) masked — for
+        messages built from a CallResult.exception or a failed connection test."""
+        return self._redact(plugin_id, text, tuple(x for x in extra if x))
 
     def build_candidate(self, plugin_id: str, settings: dict | None = None, secrets: dict | None = None) -> Any:
         """A throw-away provider instance for `plugin_id` built from the saved config overlaid with the given values
