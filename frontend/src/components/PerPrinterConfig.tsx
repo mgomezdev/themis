@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
 import { getPrinterProfiles, type ModelFilament } from '../api/queue';
+import { LEGACY_PROVIDER } from '../api/printers';
 import { askRef, materialDisplayName, profileLinks, useInventory, useMaterials } from '../api/inventory';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
 
@@ -99,7 +100,9 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
   const inventory = useInventory();
   const catalogActive = !!inventory.plugin;          // "a material catalog is available"
   const filaments = useMaterials(catalogActive);
-  const matRef = askRef({ filament_id: config.filamentId, material_ref: config.materialRef });
+  const matRef = askRef({ filament_id: config.filamentId, material_provider: config.materialProvider, material_ref: config.materialRef }, inventory.id);
+  // filament_map entries carry a bare numeric id (a legacy-provider filament id): only that provider's materials can be mapped per model filament
+  const mapCatalog = catalogActive && inventory.id === LEGACY_PROVIDER;
   const NO_MATERIAL = { filamentId: null, materialProvider: null, materialRef: null } as const;
 
   const selectedFilament = matRef != null
@@ -277,7 +280,7 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
                             <option key={i} value={`t:${i}`}>T{i} · {s.type || '—'}{s.name ? ` (${s.name})` : ''}</option>
                           ))}
                         </optgroup>
-                        {catalogActive && filaments.some(isNumericRef) && (
+                        {mapCatalog && filaments.some(isNumericRef) && (
                           <optgroup label="Catalog">
                             {filaments.filter(isNumericRef).map(fil => (
                               <option key={fil.ref} value={`f:${fil.ref}`}>{materialDisplayName(fil)} · {fil.material}</option>

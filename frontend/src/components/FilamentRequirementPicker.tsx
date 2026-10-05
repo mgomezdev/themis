@@ -25,7 +25,7 @@ export function FilamentRequirementPicker({ value, onChange, materials, catalogE
   const [showCatalog, setShowCatalog] = useState(false);
   const providerId = useInventory().id;
 
-  const ref = askRef(value);
+  const ref = askRef(value, providerId);
   const selectedFilament = ref != null ? materials.find(f => f.ref === ref) : null;
 
   // A specific catalog material is selected — show compact pill

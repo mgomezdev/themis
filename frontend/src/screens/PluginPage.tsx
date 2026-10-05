@@ -20,11 +20,17 @@ export function PluginPage() {
     );
   }
 
-  const tabs = plugin.ui.tabs.length > 0 ? plugin.ui.tabs : [{ id: 'default', label: 'Settings', renderer: 'default' as const }];
+  const declared = plugin.ui.tabs.length > 0 ? plugin.ui.tabs : [{ id: 'default', label: 'Settings', renderer: 'default' as const }];
+  // A component tab that needs a capability the plugin lacks does not exist (e.g. mappings without preset links).
+  const tabs = declared.filter(t => {
+    const needs = t.renderer === 'component' ? COMPONENT_TABS[`${plugin.id}/${t.id}`]?.requires : undefined;
+    return !needs || plugin.capabilities.includes(needs);
+  });
+  if (tabs.length === 0) return <div className="card" style={{ padding: 24 }}><div className="small muted">{plugin.name} has no pages available.</div></div>;
   const active = tabs.find(t => t.id === tab);
   if (!active) return <Navigate to={`/plugins/${plugin.id}/${tabs[0].id}`} replace />;
 
-  const Component = active.renderer === 'component' ? COMPONENT_TABS[`${plugin.id}/${active.id}`] : undefined;
+  const Component = active.renderer === 'component' ? COMPONENT_TABS[`${plugin.id}/${active.id}`]?.Component : undefined;
   return (
     <div>
       {tabs.length > 1 && (

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './client';
 import { useActivePlugin, type PluginSummary } from './plugins';
-import { slotBinding, type LoadedFilament } from './printers';
+import { askBinding, slotBinding, type LoadedFilament } from './printers';
 
 export const INVENTORY_KIND = 'filament_inventory';
 
@@ -173,10 +173,10 @@ export function materialAsk(m: Pick<InvMaterial, 'ref'> | null, provider: string
   return { filament_id: null, material_provider: m && provider ? provider : null, material_ref: m ? m.ref : null };
 }
 
-/** The material ref a stored ask names: the new pair, else the legacy numeric id. */
-export function askRef(ask: { filament_id?: number | null; material_ref?: string | null }): string | null {
-  if (ask.material_ref) return ask.material_ref;
-  return ask.filament_id != null ? String(ask.filament_id) : null;
+/** The material ref a stored ask names, only when it belongs to the active provider (a ref means nothing to another one). */
+export function askRef(ask: Parameters<typeof askBinding>[0], provider: string | null): string | null {
+  const b = askBinding(ask);
+  return b && (provider === null || b.provider === provider) ? b.ref : null;
 }
 
 export type SyncTone = 'success' | 'stale' | 'fail' | 'disconnected';

@@ -125,8 +125,8 @@ const MOCK_FILAMENTS = [
   mkMaterial({ ref: '19', name: 'White',    vendor: 'Sunlu',  material: 'PETG', color_hex: '#FFFFFF' }),
 ];
 
-function mockSpoolman(enabled: boolean) {
-  vi.mocked(inventoryApi.useInventory).mockReturnValue(enabled ? activeInventory() : noInventory());
+function mockSpoolman(enabled: boolean, id = 'spoolman') {
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(enabled ? activeInventory(id) : noInventory());
   vi.mocked(inventoryApi.useMaterials).mockReturnValue(enabled ? MOCK_FILAMENTS : []);
 }
 
@@ -210,5 +210,42 @@ describe('PerPrinterConfig — multi-material unified dropdown', () => {
     renderCfg(MULTI, cfgNoMatch as any, MODEL_FILAMENTS_3);
     const badge = await screen.findByText(/will block at slice/i);
     expect(badge).toBeTruthy();
+  });
+});
+
+describe('PerPrinterConfig — material asks belong to their provider', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const stored = (provider: string | null, ref: string) => ({
+    ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentColor: '#5B9BD5', materialProvider: provider, materialRef: ref,
+  });
+
+  it('shows a stored pick of the active provider as selected, and re-saving it emits nothing', async () => {
+    mockSpoolman(true);
+    const onChange = renderCfg(SINGLE, stored('spoolman', '7'));
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-catalog-select') as HTMLSelectElement).value).toBe('ELEGOO Sky Blue');
+    expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ materialRef: expect.anything() }));
+  });
+
+  it('does not treat another provider\'s material 7 as this provider\'s material 7', async () => {
+    mockSpoolman(true, 'local_inv');                                  // local_inv also has a material with ref "7"
+    renderCfg(SINGLE, stored('spoolman', '7'));
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-type-input') as HTMLInputElement).value).toBe('PLA');   // not a catalog pick here: it falls back to the manual type
+    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
+  });
+
+  it('a bare legacy numeric id is a legacy-provider material, so it is not matched under another provider', async () => {
+    mockSpoolman(true, 'local_inv');
+    renderCfg(SINGLE, { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentId: 7 });
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-type-input') as HTMLInputElement).value).toBe('PLA');   // not a catalog pick here: it falls back to the manual type
+    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
+  });
+
+  it('the per-model-filament Catalog group only exists for the provider whose ids the map stores', async () => {
+    mockSpoolman(true, 'local_inv');
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    expect((await screen.findByTestId('map-tool-1')).innerHTML).not.toContain('Catalog');
   });
 });

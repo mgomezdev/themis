@@ -59,9 +59,18 @@ describe('naming and asks', () => {
   it('a material ask is the provider-namespaced pair with no legacy id, and null when cleared', () => {
     expect(materialAsk({ ref: '3' }, 'local')).toEqual({ filament_id: null, material_provider: 'local', material_ref: '3' });
     expect(materialAsk(null, 'local')).toEqual({ filament_id: null, material_provider: null, material_ref: null });
-    expect(askRef({ material_ref: 'm-1', filament_id: 5 })).toBe('m-1');
-    expect(askRef({ filament_id: 5 })).toBe('5');
-    expect(askRef({})).toBeNull();
+    expect(askRef({ material_provider: 'local', material_ref: 'm-1', filament_id: 5 }, 'local')).toBe('m-1');
+    expect(askRef({ filament_id: 5 }, 'spoolman')).toBe('5');          // a bare legacy id belongs to the legacy provider
+    expect(askRef({}, 'local')).toBeNull();
+  });
+});
+
+describe('a stored ask only means something to its own provider', () => {
+  it('ignores an ask issued by another provider, including a bare legacy id under a different active provider', () => {
+    expect(askRef({ material_provider: 'spoolman', material_ref: '5' }, 'local')).toBeNull();
+    expect(askRef({ filament_id: 5 }, 'local')).toBeNull();
+    expect(askRef({ material_ref: '5' }, 'spoolman')).toBe('5');       // no provider recorded: the legacy one
+    expect(askRef({ material_provider: 'local', material_ref: '5' }, null)).toBe('5');   // no active provider: nothing to contradict
   });
 });
 

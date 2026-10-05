@@ -73,6 +73,22 @@ describe('PluginPage', () => {
     expect(screen.getByTestId('where').textContent).toBe('/plugins/demo/default');
   });
 
+  it.each([
+    ['without preset-link support the mappings tab does not exist', ['TRACKS_WEIGHT'], false],
+    ['with preset-link support the mappings tab is offered', ['PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE'], true],
+  ])('%s', async (_name, capabilities, shown) => {
+    withPlugin(mkPlugin({ id: 'spoolman', capabilities, ui: tabs(['connection', 'Connection', 'default'], ['mappings', 'Filament mappings', 'component']) }));
+    show('/plugins/spoolman/connection');
+    await screen.findByTestId('plugin-page');
+    expect(!!screen.queryByRole('link', { name: 'Filament mappings' })).toBe(shown);
+  });
+
+  it('a plugin whose every tab is unavailable says so instead of crashing', async () => {
+    withPlugin(mkPlugin({ id: 'spoolman', capabilities: [], ui: tabs(['mappings', 'Filament mappings', 'component']) }));
+    show('/plugins/spoolman');
+    expect(await screen.findByText(/has no pages available/)).toBeTruthy();
+  });
+
   it('a disabled plugin has no pages, and an unknown one says so', async () => {
     withPlugin(mkPlugin({ id: 'demo', enabled: false, active: false }));
     show('/plugins/demo');

@@ -34,7 +34,7 @@ function FilamentCell({ part, catalogActive, filaments, providerId, onChange }: 
 }) {
   // Start in manual mode if the part was previously entered manually
   // (has a color but no material ref, with an inventory now active).
-  const ref = askRef(part);
+  const ref = askRef(part, providerId);
   const [manualMode, setManualMode] = useState(
     () => catalogActive && ref === null && part.filament_color !== null,
   );
