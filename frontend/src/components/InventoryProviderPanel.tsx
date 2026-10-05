@@ -19,8 +19,8 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
   const [grams, setGrams] = useState<Record<string, string>>({});
 
   const reload = useCallback(() => {
-    if (remote) listPendingWrites().then(r => setWrites(r.items)).catch(() => setWrites([]));
-    if (tracksWeight) listSuspended().then(r => setSuspended(r.items)).catch(() => setSuspended([]));
+    if (remote) listPendingWrites().then(r => setWrites(Array.isArray(r.items) ? r.items : [])).catch(() => setWrites([]));
+    if (tracksWeight) listSuspended().then(r => setSuspended(Array.isArray(r.items) ? r.items : [])).catch(() => setSuspended([]));
   }, [remote, tracksWeight]);
   useEffect(reload, [reload]);
 

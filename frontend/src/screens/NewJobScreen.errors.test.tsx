@@ -21,7 +21,7 @@ function open(plates = [plate(1)], over: Record<string, unknown> = {}, entry = '
     'GET /api/v1/printers': [PRINTER],
     'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
-    'GET /api/v1/settings/spoolman': { enabled: false, url: '', has_api_key: false, sync_interval_minutes: 15 },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'POST /api/v1/files/upload': { id: 42, original_filename: 'model.3mf' },
     'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates },
     'GET /api/v1/files/42/model-filaments': [],

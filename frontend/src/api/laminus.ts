@@ -75,6 +75,9 @@ export interface ConfirmResult {
   spoolman_failures: string[];
 }
 
+/** How many references a confirmed remap rewrote, whatever they were (printers, jobs, inventory materials). */
+export const appliedRemapTotal = (r: ConfirmResult): number => r.applied.printers + r.applied.jobs + r.applied.spoolman_filaments;
+
 export async function refreshCatalog(): Promise<SyncResponse> {
   const r = await apiFetch('/api/v1/laminus/catalog/refresh', { method: 'POST' });
   if (!r.ok) throw new Error(`${r.status}`);

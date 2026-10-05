@@ -163,7 +163,7 @@ export function slotPatchForSpool(
 }
 
 /** What a slot is bound to, only when that is the active provider's spool (a binding to another provider means nothing here). */
-export function activeSlotRef(slot: Pick<LoadedFilament, 'inventory' | 'spoolman_spool_id'>, provider: string | null): string | null {
+export function activeSlotRef(slot: Parameters<typeof slotBinding>[0], provider: string | null): string | null {
   const b = slotBinding(slot);
   return b && (provider === null || b.provider === provider) ? b.ref : null;
 }

@@ -39,8 +39,7 @@ function boot(path: string, over: Record<string, unknown> = {}) {
     'GET /api/v1/queue': [],
     'GET /api/v1/settings/queue': { operator_name: null },
     'GET /api/v1/fleet': [],
-    'GET /api/v1/settings/spoolman': { enabled: false, url: '' },
-    'GET /api/v1/spoolman/sync-status': { enabled: false },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'GET /api/v1/laminus/catalog/status': { laminus_configured: false, laminus: null },
     'GET /api/v1/orders': [],
     'GET /api/v1/files': [],
@@ -269,7 +268,8 @@ describe('App - navigation chrome', () => {
 
     expect(await screen.findByRole('link', { name: 'API Keys' })).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Tags' })).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Filament Mappings' })).toBeNull();   // only once Spoolman is on
+    expect(screen.getByRole('link', { name: 'Filament inventory' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Plugins' })).toBeTruthy();
   });
 
   it('opening settings re-expands a collapsed sidebar so its pages are reachable', async () => {
@@ -343,7 +343,7 @@ describe('App - service health', () => {
       await screenText();
       const seen = () => api.to('GET', '/api/v1/laminus/catalog/status').length;
       await waitFor(() => expect(seen()).toBeGreaterThan(0));
-      // (the Spoolman sync-status poll also ticks every 30 s, so fire every such callback and count Laminus requests)
+      // (the inventory sync-status poll also ticks every 30 s when a provider is active, so fire every such callback and count Laminus requests)
       const polls = setIntervalSpy.mock.calls.filter(([, ms]) => ms === 30_000).map(([fn]) => fn as () => void);
       expect(polls.length).toBeGreaterThan(0);
       const before = seen();

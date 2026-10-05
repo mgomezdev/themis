@@ -38,6 +38,8 @@ export async function mockApi(page: Page, over: Partial<{
   platesByFile: Record<number, any[]>;
   /** GET /queue body (a function so a test can make it change as the journey progresses). */
   queue: () => any[];
+  /** GET /plugins body (default: no plugin active). */
+  plugins: any;
   /** Answer a mutating request (already recorded in `captured`); return undefined for the default `{id, status}` reply. */
   respond: (method: string, path: string, body: any) => any;
 }> = {}): Promise<Mocks> {
@@ -98,8 +100,12 @@ export async function mockApi(page: Page, over: Partial<{
     }
     if ((m = path.match(/^\/files\/(\d+)\/model-filaments$/))) return ok(route, modelFilaments);
     if ((m = path.match(/^\/files\/(\d+)\/sliced-versions$/))) return ok(route, over.slicedVersions?.[+m[1]] ?? []);
-    if (path === '/settings/spoolman') return ok(route, { enabled: false });
-    if (path === '/spoolman/filaments' || path === '/spoolman/spools') return ok(route, []);
+    // Inventory: no provider is active by default (so no spool pickers, scan button or status chip)
+    if (path === '/plugins') return ok(route, over.plugins ?? { plugins: [], slots: { filament_inventory: null } });
+    if (path === '/inventory/spools' || path === '/inventory/materials')
+      return ok(route, { provider: 'none', stale: false, as_of: '2026-01-01T00:00:00Z', items: [] });
+    if (path === '/inventory/pending-writes' || path === '/inventory/tracking') return ok(route, { provider: null, items: [] });
+    if (path === '/inventory/sync-status') return ok(route, { provider: null, capabilities: [], enabled: false });
     if ((m = path.match(/^\/jobs\/(\d+)\/details$/)) || (m = path.match(/^\/jobs\/(\d+)$/)))
       return over.jobDetails ? ok(route, over.jobDetails) : ok(route, {});
     if (path === '/queue/config' || path === '/settings/queue') return ok(route, { check_interval_minutes: 5, slice_cache_use_latest_settings: true });

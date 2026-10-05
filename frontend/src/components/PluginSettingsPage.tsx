@@ -43,15 +43,15 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   const fields = useMemo(() => {
     if (!plugin) return [];
-    const props = plugin.settings_schema.properties ?? {};
-    return Object.entries(props).filter(([k]) => !plugin.secret_fields.includes(k));
+    const props = plugin.settings_schema?.properties ?? {};
+    return Object.entries(props).filter(([k]) => !(plugin.secret_fields ?? []).includes(k));
   }, [plugin]);
 
   if (loadError) return <div role="alert" style={{ color: 'var(--err)' }}>{loadError}</div>;
   if (!plugin) return <div className="muted small">Loading…</div>;
   const pluginId_ = plugin.id; const kind = plugin.kind;
 
-  const required = new Set(plugin.settings_schema.required ?? []);
+  const required = new Set(plugin.settings_schema?.required ?? []);
   const isSelected = slots[plugin.kind] === plugin.id;
   const health: { tone: string; label: string } = plugin.error ? { tone: 'err', label: 'Problem' }
     : !plugin.enabled ? { tone: 'idle', label: 'Disabled' }
@@ -126,10 +126,10 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
         );
       })}
 
-      {plugin.secret_fields.map(key => {
-        const prop = plugin.settings_schema.properties?.[key] ?? {};
+      {(plugin.secret_fields ?? []).map(key => {
+        const prop = plugin.settings_schema?.properties?.[key] ?? {};
         const label = prop.title ?? humanize(key);
-        const stored = plugin.secrets[key];
+        const stored = plugin.secrets?.[key];
         const touched = key in secretDraft;
         return (
           <FieldRow key={key} label={label} hint={prop.description}>

@@ -31,7 +31,7 @@ function Where() { return <div data-testid="where">{useLocation().pathname}</div
 function open(path: string, over: Record<string, unknown> = {}) {
   const api = stubFetch({
     'GET /api/v1/files': FILES,
-    'GET /api/v1/settings/spoolman': { enabled: false },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'GET /api/v1/printers': PRINTERS,
     'GET /api/v1/printers/1/profiles': { print_profiles: ['0.20mm Standard', '0.12mm Fine'], filament_profiles: [] },
     'GET /api/v1/printers/2/profiles': { print_profiles: ['0.20mm Standard', '0.28mm Draft'], filament_profiles: [] },

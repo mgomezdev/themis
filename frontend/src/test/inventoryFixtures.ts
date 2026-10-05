@@ -25,7 +25,7 @@ export const ALL_CAPS = ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'PROFILE_LINKS_READ', 
 export const mkPlugin = (over: Partial<PluginSummary> & { id: string } = { id: 'spoolman' }): PluginSummary => ({
   name: over.id, kind: 'filament_inventory', version: '1', description: '', docs_url: null, source: 'bundled',
   capabilities: ALL_CAPS, enabled: true, active: true, error: null,
-  ui: { mode: 'page', nav_label: over.id, nav_placement: 'settings', nav_icon: null, tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }] },
+  ui: { mode: 'page', nav_label: over.name ?? over.id, nav_placement: 'settings', nav_icon: null, tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }] },
   ...over,
 });
 

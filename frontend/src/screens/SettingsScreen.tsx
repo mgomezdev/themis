@@ -5,7 +5,7 @@ import { getQueueConfig, saveQueueConfig, type QueueConfig } from '../api/queue'
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { getOrcaCatalogStatus, type OrcaCatalogStatus } from '../api/orca';
-import { refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
+import { appliedRemapTotal, refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
 import { RemapModal } from '../components/RemapModal';
 import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
 import {
@@ -43,7 +43,7 @@ const SettingsIcons = {
   tag:      <Icon paths={["M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 12.9V3h9.9l7.7 7.7a2 2 0 0 1 0 2.7z","M7 7h.01"]} />,
   backup:   <Icon paths={["M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6","M21 12a9 9 0 0 0-15.36-6.36L3 8","M3 4v4h4","M12 8v8","M9 13l3 3 3-3"]} />,
   info:     <Icon paths={["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z","M12 16v-4","M12 8h.01"]} />,
-  spoolman: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
+  inventory: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
   webhook:  <Icon paths={["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6","M15 3h6v6","M10 14L21 3"]} />,
   maintenance: <Icon paths={["M14.7 6.3a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L13.1 3.3a1 1 0 0 0 0 1.4z","M9.6 11.4 4 17a2 2 0 0 0-.6 1.4V21h2.6a2 2 0 0 0 1.4-.6l5.6-5.6"]} />,
   apikey: <Icon d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />,
@@ -624,7 +624,7 @@ function PrintDefaultsPage() {
         payload={pendingRemap}
         onDone={(result: ConfirmResult) => {
           setPendingRemap(null);
-          const total = result.applied.printers + result.applied.jobs + result.applied.spoolman_filaments;
+          const total = appliedRemapTotal(result);
           setCatalogMsg(`Remapping applied — ${total} reference${total !== 1 ? 's' : ''} updated.`);
           doLoadCatalogStatus();
         }}
@@ -1731,7 +1731,7 @@ export function SettingsScreen() {
     {
       label: 'Integrations',
       items: [
-        { id: 'inventory' as PageId, label: 'Filament inventory', icon: SettingsIcons.spoolman, sub: 'Provider, deduction & low-stock alerts' },
+        { id: 'inventory' as PageId, label: 'Filament inventory', icon: SettingsIcons.inventory, sub: 'Provider, deduction & low-stock alerts' },
         { id: 'plugins' as PageId,   label: 'Plugins',            icon: Icons.layers,           sub: 'Installed plugins & their settings' },
         { id: 'webhook' as PageId, label: 'Webhooks',          icon: SettingsIcons.webhook,  sub: 'Job state notifications' },
         { id: 'notifications' as PageId, label: 'Notifications', icon: Icons.bell, sub: 'ntfy, Discord & email alerts' },
