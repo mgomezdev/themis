@@ -19,8 +19,8 @@ from ...plugins.kinds.filament_inventory import (
 )
 from ...models import InventoryPendingWrite
 from ...services.inventory import (
-    config as inventory_config, deduction as inventory_deduction, outbox as inventory_outbox,
-    provider as inventory_provider, sync as inventory_sync,
+    cache as inventory_cache, config as inventory_config, deduction as inventory_deduction, outbox as inventory_outbox,
+    provider as inventory_provider, read as inventory_read, sync as inventory_sync,
 )
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
@@ -49,32 +49,44 @@ def _ref_order(item) -> tuple[int, str]:
     return (len(item.ref), item.ref)
 
 
-def _envelope(pid: str, items: list) -> dict:
-    # `stale`/`as_of` become meaningful with the last-known cache (offline behaviour); live reads are never stale.
-    return {"provider": pid, "stale": False, "as_of": datetime.now(timezone.utc).isoformat(), "items": items}
+def _envelope(pid: str, items: list, reading: "inventory_read.Reading") -> dict:
+    """`stale`/`as_of`: a REMOTE provider that is unreachable is answered from the last-known cache (stale, as of when it was
+    fetched); a live read is never stale."""
+    return {"provider": pid, "stale": reading.stale, "as_of": reading.as_of, "items": items}
 
 
-@router.get("/materials", summary="List materials of the active inventory provider",
-            responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable"}},
+def _serve(reading: "inventory_read.Reading | None"):
+    if reading is None:
+        raise inventory_provider.CapabilityUnavailable()
+    if not reading.ok:
+        raise HTTPException(status_code=503, detail=reading.error)
+    return reading
+
+
+@router.get("/materials", summary="List materials of the active inventory provider (last-known data when it is unreachable)",
+            responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable and nothing cached"}},
             dependencies=[Depends(require_scope("inventory:read"))])
 async def list_materials(include_archived: bool = False):
     pid = inventory_provider.require()
-    result = await inventory_provider.call("list_materials")
-    if not result.ok:
-        raise _unavailable(result)
-    return _envelope(pid, [material_out(m) for m in sorted(result.value, key=_ref_order) if include_archived or not m.archived])
+    reading = _serve(await inventory_read.materials_reading())
+    return _envelope(pid, [material_out(m) for m in sorted(reading.items, key=_ref_order) if include_archived or not m.archived], reading)
 
 
-@router.get("/spools", summary="List spools of the active inventory provider",
-            responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable"}},
+@router.get("/spools", summary="List spools of the active inventory provider (last-known data when it is unreachable)",
+            description="`remaining_g` is the *effective* weight: the newest queued (unsynced) write replaces what the provider "
+                        "reported, and `unsynced` says so.",
+            responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable and nothing cached"}},
             dependencies=[Depends(require_scope("inventory:read"))])
 async def list_spools(include_archived: bool = False):
     pid = inventory_provider.require()
-    result = await inventory_provider.call("list_spools")
-    if not result.ok:
-        raise _unavailable(result)
+    reading = _serve(await inventory_read.spools_reading())
+    pending = await inventory_read.pending_targets(pid)
     provider = inventory_provider.active_provider()
-    return _envelope(pid, [spool_out(s, provider.spool_url(s.ref)) for s in sorted(result.value, key=_ref_order) if include_archived or not s.archived])
+    items = []
+    for s in sorted(inventory_read.effective(reading.items, pending), key=_ref_order):
+        if include_archived or not s.archived:
+            items.append({**spool_out(s, provider.spool_url(s.ref)), "unsynced": s.ref in pending})
+    return _envelope(pid, items, reading)
 
 
 @router.post("/sync-now", summary="Refresh from the provider now",
@@ -90,11 +102,13 @@ async def sync_now(session: AsyncSession = Depends(get_session)):
 
 @router.get("/sync-status", summary="Provider health and sync status (never fails)",
             dependencies=[Depends(require_scope("inventory:read"))])
-async def sync_status():
+async def sync_status(session: AsyncSession = Depends(get_session)):
     pid = inventory_provider.provider_id()
     provider = inventory_provider.active_provider()
     caps = sorted(provider.capabilities) if provider else []
-    return {"provider": pid, "capabilities": caps, **inventory_sync.status(pid)}
+    cached = await inventory_cache.load(pid, inventory_cache.SPOOLS) if pid and inventory_cache.cacheable() else None
+    return {"provider": pid, "capabilities": caps, **inventory_sync.status(pid),
+            "pending_count": await inventory_sync.pending_count(session, pid), "cache_as_of": cached[1] if cached else None}
 
 
 # --- library management (capability-gated: only providers that own their library) -----------------------------------------

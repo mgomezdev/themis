@@ -13,7 +13,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...models import InventoryPendingWrite
-from . import provider, tasks
+from . import cache, provider, tasks
 
 logger = logging.getLogger("app")
 
@@ -73,6 +73,7 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
             newest_id, target = items[-1]
             older = [i for i, _ in items[:-1]]
             result = await provider.call("set_remaining", ref, target)
+            patch_cache = False
             async with factory() as session:
                 if result.ok:
                     await session.execute(update(InventoryPendingWrite).where(
@@ -83,6 +84,7 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
                             InventoryPendingWrite.id.in_(older), InventoryPendingWrite.status == "pending")
                             .values(status="superseded"))
                     applied += 1
+                    patch_cache = True
                 else:
                     msg = provider.describe_failure(result)[1]
                     row = await session.get(InventoryPendingWrite, newest_id)
@@ -92,6 +94,8 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
                         row.last_error = msg
                     logger.warning("Inventory write for spool %s not applied (will retry): %s", ref, msg)
                 await session.commit()
+            if patch_cache:                                      # after the commit: one writer at a time on SQLite
+                await cache.patch_spool_weight(pid, ref, target)
         await _prune(factory)
         return applied
 

@@ -664,3 +664,13 @@ class InventorySpoolStatus(Base):
     reason: Mapped[str] = mapped_column(Text)
     since: Mapped[str] = mapped_column(String(32))
     job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+
+class InventoryCache(Base):
+    """Last-known list of a REMOTE provider's `spools` / `materials` (so reads survive an outage and a restart)."""
+    __tablename__ = "inventory_cache"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)          # spools | materials
+    payload: Mapped[list] = mapped_column(JSON)
+    fetched_at: Mapped[str] = mapped_column(String(32))

@@ -261,6 +261,10 @@ changed vs the stored slot (an edited `inventory` wins; otherwise an edited lega
 `inventory_pending_writes{provider, spool_ref, target_g, job_id?, printer_id?, source queue|manual_complete, created_at, attempts, last_attempt_at, last_error, status pending|applied|superseded|discarded}` — the outbox (absolute targets only; applied/superseded/discarded rows pruned after 30 days).
 `inventory_spool_status{provider, spool_ref PK, tracking suspended, reason, since, job_id?}`. `jobs.deduction_note TEXT?` says why `deduction_skipped` is true. Events `inventory.tracking_unavailable` / `inventory.tracking_restored` (webhook + notification channels, like `spool.low`).
 
+### inventory_cache  (v038 — BIZ-219)
+
+`inventory_cache{provider, kind spools|materials, payload JSON, fetched_at}` PK(provider, kind): the last successful list of a `REMOTE` provider (DTO fields without `raw`), written after every live list/sync (skipped when unchanged) and served stale when the provider is unreachable, across restarts. A successfully applied outbox write patches the cached spool's weight. Never written for non-REMOTE providers. Outage state lives in `plugin_configs.state`: `disconnected_since`, `disconnect_alerted_at` (cleared on the next successful sync). Events `inventory.disconnected {provider, since, pending_count}` (once per outage, after the plugin's `max_disconnect_minutes`) and `inventory.reconnected {provider, since, flushed, pending_count}`.
+
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline

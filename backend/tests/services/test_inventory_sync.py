@@ -81,7 +81,8 @@ async def test_the_sync_error_never_contains_the_api_key(session_factory, spoolm
 
 def test_status_defaults_when_nothing_is_configured():
     assert status() == {"enabled": False, "interval_minutes": 15, "last_sync_at": None, "last_attempt_at": None,
-                        "last_error": None, "last_error_code": None}
+                        "last_error": None, "last_error_code": None, "disconnected_since": None,
+                        "max_disconnect_minutes": None, "disconnect_alerted": False}
 
 
 # --- the periodic loop ----------------------------------------------------------------------------------------------------

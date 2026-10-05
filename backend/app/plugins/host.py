@@ -72,6 +72,10 @@ class PluginHost:
 
     # --- lifecycle -------------------------------------------------------------------------------------------
 
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession] | None:
+        return self._session_factory
+
     def configure(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
         self._session_factory = session_factory
 

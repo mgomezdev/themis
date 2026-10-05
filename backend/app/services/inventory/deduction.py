@@ -12,15 +12,14 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ...models import InventorySpoolStatus, Job, NotificationConfig, WebhookConfig
+from ...models import InventorySpoolStatus, Job
 from ...plugins.kinds.filament_inventory import TRACKS_WEIGHT, WRITE_WEIGHT
-from .. import notification_service, webhook_service
-from . import outbox, provider, snapshots, tasks
+from . import events, outbox, provider, snapshots, tasks
 
 logger = logging.getLogger("app")
 
-EVENT_UNAVAILABLE = "inventory.tracking_unavailable"
-EVENT_RESTORED = "inventory.tracking_restored"
+EVENT_UNAVAILABLE = events.TRACKING_UNAVAILABLE
+EVENT_RESTORED = events.TRACKING_RESTORED
 NOTE_SUSPENDED = "Spool tracking is suspended — correct its weight to resume"
 NOTE_NO_WEIGHT = "No starting weight was available for this spool"
 
@@ -142,15 +141,6 @@ async def suspended(session: AsyncSession, provider_id: str | None = None) -> li
 
 
 async def _emit(session: AsyncSession, event: str, provider_id: str, spool_ref: str, reason: str, job_id: int | None) -> None:
-    try:
-        webhook = await session.get(WebhookConfig, 1)
-        notif = await session.get(NotificationConfig, 1)
-        payload = {"provider": provider_id, "spool_ref": spool_ref, "reason": reason, "job_id": job_id}
-        if webhook and webhook.url and (not webhook.events or event in webhook.events):
-            webhook_service.schedule(webhook.url, webhook.secret, event, job_id, payload)
-        if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
-            title = ("Themis: spool tracking unavailable" if event == EVENT_UNAVAILABLE
-                     else "Themis: spool tracking restored")
-            tasks.spawn(notification_service.dispatch(notif, event, job_id, title, f"Spool {spool_ref}: {reason}"))
-    except Exception:
-        logger.exception("Could not send %s for spool %s", event, spool_ref)
+    title = ("Themis: spool tracking unavailable" if event == EVENT_UNAVAILABLE else "Themis: spool tracking restored")
+    await events.emit(session, event, {"provider": provider_id, "spool_ref": spool_ref, "reason": reason, "job_id": job_id},
+                      title, f"Spool {spool_ref}: {reason}", job_id)

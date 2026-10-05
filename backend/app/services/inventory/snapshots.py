@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...models import InventoryPendingWrite, JobSpoolSnapshot
-from . import provider
+from . import cache, provider
 
 logger = logging.getLogger("app")
 
@@ -42,6 +42,10 @@ async def read_pre_weight(factory: async_sessionmaker[AsyncSession], provider_id
     spool = read.value if read.ok else None
     if spool is not None and spool.remaining_g is not None:
         return float(spool.remaining_g), "live"
+    if not read.ok:                                      # unreachable (not "unknown spool"): fall back to the last-known weight
+        cached = await cache.cached_weight(provider_id, spool_ref)
+        if cached is not None:
+            return cached, "cached"
     return None, "missing"
 
 

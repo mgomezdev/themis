@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...plugins.host import plugin_host
 from ...plugins.kinds.filament_inventory import KIND, REMOTE, TRACKS_WEIGHT, InventoryProviderError
-from . import alerts, outbox, provider
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from ...models import InventoryPendingWrite
+from . import alerts, cache, events, outbox, provider, read
 
 logger = logging.getLogger("app")
 
@@ -32,7 +36,55 @@ def status(plugin_id: str | None = None) -> dict:
         "last_attempt_at": state.get("last_attempt_at"),
         "last_error": state.get("sync_error"),
         "last_error_code": state.get("sync_error_code"),
+        # Outage tracking (REMOTE providers): when the provider was first seen unreachable, the user's alert limit, and
+        # whether `inventory.disconnected` already fired for this outage.
+        "disconnected_since": state.get("disconnected_since"),
+        "max_disconnect_minutes": cfg_settings.get("max_disconnect_minutes"),
+        "disconnect_alerted": bool(state.get("disconnect_alerted_at")),
     }
+
+
+async def pending_count(session: AsyncSession, provider_id: str | None) -> int:
+    if provider_id is None:
+        return 0
+    return int((await session.execute(select(func.count()).select_from(InventoryPendingWrite).where(
+        InventoryPendingWrite.provider == provider_id, InventoryPendingWrite.status == "pending"))).scalar_one())
+
+
+async def _check_disconnect(session: AsyncSession, pid: str, now: datetime) -> None:
+    """On a failed sync: start the outage clock, and raise `inventory.disconnected` once when it exceeds the user's limit."""
+    state = plugin_host.state(pid)
+    since = state.get("disconnected_since") or now.isoformat()
+    if since != state.get("disconnected_since"):
+        await plugin_host.record_state(pid, disconnected_since=since)
+    limit = plugin_host.settings(pid).get("max_disconnect_minutes")
+    if not limit or state.get("disconnect_alerted_at"):
+        return
+    if (now - datetime.fromisoformat(since)).total_seconds() < int(limit) * 60:
+        return
+    n = await pending_count(session, pid)
+    delivered = await events.emit(
+        session, events.DISCONNECTED, {"provider": pid, "since": since, "pending_count": n},
+        "Themis: inventory unreachable",
+        f"{pid} has been unreachable since {since}" + (f"; {n} weight update(s) are queued" if n else ""))
+    if delivered:
+        await plugin_host.record_state(pid, disconnect_alerted_at=now.isoformat())
+
+
+async def _recovered(session: AsyncSession, pid: str) -> None:
+    """After every successful sync: flush any queued weight writes (the provider is reachable), and if this ends an outage
+    announce it (only when `inventory.disconnected` fired for it) and reset the outage state."""
+    state = plugin_host.state(pid)
+    since, alerted = state.get("disconnected_since"), state.get("disconnect_alerted_at")
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    applied = await outbox.flush(factory)
+    if not since:
+        return
+    if alerted:
+        await events.emit(session, events.RECONNECTED,
+                          {"provider": pid, "since": since, "flushed": applied, "pending_count": await pending_count(session, pid)},
+                          "Themis: inventory reconnected", f"{pid} is reachable again; {applied} queued weight update(s) applied")
+    await plugin_host.record_state(pid, disconnected_since=None, disconnect_alerted_at=None)
 
 
 async def record_sync(session: AsyncSession) -> dict:
@@ -47,13 +99,17 @@ async def record_sync(session: AsyncSession) -> dict:
     if not (materials.ok and spools.ok):
         code, message = provider.describe_failure(spools)
         await plugin_host.record_state(pid, last_attempt_at=now, sync_error=message, sync_error_code=code)
+        await _check_disconnect(session, pid, datetime.fromisoformat(now))
         raise InventoryProviderError(message, code=code, status=getattr(spools.exception, "status", None))
     await plugin_host.record_state(pid, last_attempt_at=now, last_sync_at=now, sync_error=None, sync_error_code=None)
+    await cache.store(pid, cache.MATERIALS, materials.value)
+    await cache.store(pid, cache.SPOOLS, spools.value)
+    await _recovered(session, pid)
     if provider.has(TRACKS_WEIGHT):
         try:
             # A savepoint, so a problem while alerting (even a DB error) can't poison the sync's own commit.
             async with session.begin_nested():
-                await alerts.process(session, pid, spools.value)
+                await alerts.process(session, pid, read.effective(spools.value, await read.pending_targets(pid)))
         except Exception:
             logger.exception("Low-stock alerting failed; the sync itself succeeded")
     await session.commit()
@@ -98,7 +154,7 @@ class InventorySyncLoop:
         if not provider.has(REMOTE):
             return
         st = status(provider.provider_id())
-        if st["last_attempt_at"]:
+        if st["last_attempt_at"] and not st["disconnected_since"]:       # while unreachable, probe every poll
             elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(st["last_attempt_at"])).total_seconds()
             if elapsed < max(1, st["interval_minutes"]) * 60:
                 return

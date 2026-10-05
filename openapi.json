@@ -7645,7 +7645,7 @@
         "tags": [
           "inventory"
         ],
-        "summary": "List materials of the active inventory provider",
+        "summary": "List materials of the active inventory provider (last-known data when it is unreachable)",
         "operationId": "list_materials_api_v1_inventory_materials_get",
         "parameters": [
           {
@@ -7672,7 +7672,7 @@
             "description": "No inventory provider is active"
           },
           "503": {
-            "description": "Provider unreachable"
+            "description": "Provider unreachable and nothing cached"
           },
           "422": {
             "description": "Validation Error",
@@ -7728,7 +7728,8 @@
         "tags": [
           "inventory"
         ],
-        "summary": "List spools of the active inventory provider",
+        "summary": "List spools of the active inventory provider (last-known data when it is unreachable)",
+        "description": "`remaining_g` is the *effective* weight: the newest queued (unsynced) write replaces what the provider reported, and `unsynced` says so.",
         "operationId": "list_spools_api_v1_inventory_spools_get",
         "parameters": [
           {
@@ -7755,7 +7756,7 @@
             "description": "No inventory provider is active"
           },
           "503": {
-            "description": "Provider unreachable"
+            "description": "Provider unreachable and nothing cached"
           },
           "422": {
             "description": "Validation Error",

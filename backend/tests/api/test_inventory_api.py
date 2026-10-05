@@ -53,7 +53,8 @@ async def test_routes_that_need_a_provider_answer_409_when_none_is_active(client
 async def test_sync_status_and_settings_never_fail_without_a_provider(client):
     st = (await client.get("/api/v1/inventory/sync-status")).json()
     assert st == {"provider": None, "capabilities": [], "enabled": False, "interval_minutes": 15, "last_sync_at": None,
-                  "last_attempt_at": None, "last_error": None, "last_error_code": None}
+                  "last_attempt_at": None, "last_error": None, "last_error_code": None, "disconnected_since": None,
+                  "max_disconnect_minutes": None, "disconnect_alerted": False, "pending_count": 0, "cache_as_of": None}
     assert (await client.get("/api/v1/inventory/settings")).json() == {
         "provider": None, "deduct_on_complete": True, "low_stock": {"default_g": None, "overrides": {}}}
 

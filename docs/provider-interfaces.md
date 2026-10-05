@@ -70,6 +70,13 @@ host task at completion. A spool with no obtainable starting weight is **suspend
 the job gets `deduction_skipped` + `deduction_note`, one `inventory.tracking_unavailable` event fires, later prints on it are skipped
 and flagged, until a user corrects the weight (`resume-tracking` / `PUT …/remaining`) → `inventory.tracking_restored`.
 
+**Offline behaviour (REMOTE providers, BIZ-219).** `read.py` persists each successful list to `inventory_cache` and answers an unreachable
+provider from it (`stale`, `as_of`); effective remaining = newest pending outbox target, else the live/cached weight (preflight, low-stock
+alerts, pickers). While unreachable the sync loop probes every poll; `state.disconnected_since` marks the start and, past the plugin's
+`max_disconnect_minutes` (blank = never), one `inventory.disconnected` fires per outage; the next successful sync flushes the outbox and (if
+alerted) emits `inventory.reconnected`. The print-start snapshot falls back to the cached weight when the provider is unreachable. Providers
+that are not `REMOTE` have none of this.
+
 Errors: `InventoryProviderError(message, code, status)` — `code` is the HTTP status string or the transport exception class name.
 
 **Core access** is `app/services/inventory/`: `provider.py` (`active_provider()`, `has(cap)`, `require(cap)` → raises
