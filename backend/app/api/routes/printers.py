@@ -20,6 +20,7 @@ from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
 from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
+from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
@@ -250,7 +251,7 @@ async def create_printer(
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
-        loaded_filaments=body.loaded_filaments,
+        loaded_filaments=inventory_refs.normalize_slots(body.loaded_filaments),
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
         bed_x_mm=body.bed_x_mm,
@@ -522,7 +523,8 @@ async def update_printer(
     if body.queue_on is not None:
         printer.queue_on = body.queue_on
     if body.loaded_filaments is not None:
-        printer.loaded_filaments = body.loaded_filaments
+        # whole-list replace from the client: resolve each slot against what is stored (dual-write, see inventory/refs.py)
+        printer.loaded_filaments = inventory_refs.normalize_slots(body.loaded_filaments, printer.loaded_filaments)
     if "build_plate_type" in body.model_fields_set:
         printer.build_plate_type = body.build_plate_type
     if body.no_snapshots_while_idle is not None:

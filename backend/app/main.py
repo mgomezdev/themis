@@ -39,7 +39,6 @@ from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
 from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
-from .api.routes.spoolman import router as spoolman_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
 from .api.routes.tags import router as tags_router
@@ -197,7 +196,6 @@ app.include_router(payments_router)
 app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
-app.include_router(spoolman_router)
 app.include_router(inventory_router)
 app.include_router(plugins_router)
 
@@ -209,6 +207,8 @@ load_bundled()
 for _manifest in registered_plugins():
     for _router in _manifest.routers:
         app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
+    for _router in _manifest.alias_routers:                  # deprecated aliases keep their historical absolute paths
+        app.include_router(_router)
 
 
 @app.exception_handler(CapabilityUnavailable)

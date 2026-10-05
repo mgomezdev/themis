@@ -52,6 +52,7 @@ class PluginManifest:
     secret_fields: frozenset[str] = frozenset()   # write-only; never returned by any API
     ui: UiContribution = field(default_factory=UiContribution)
     routers: tuple[APIRouter, ...] = ()       # mounted under /api/v1/plugins/{id}/...
+    alias_routers: tuple[APIRouter, ...] = () # deprecated aliases that keep their historical ABSOLUTE paths (mounted as-is)
     migrations: tuple[ModuleType, ...] = ()   # plugin-owned tables, see plugins/migrations.py
     table_prefix: str | None = None           # plugin-owned tables must start with this (default "<id>_")
     description: str = ""

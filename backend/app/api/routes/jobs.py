@@ -26,6 +26,7 @@ from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
 from ...plugins.kinds.filament_inventory import InvSpool
+from ._materials import material_columns
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.slicing import get_format_provider
@@ -61,7 +62,9 @@ class PrinterConfigInput(BaseModel):
     printer_id: int
     print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced (.gcode / .gcode.3mf) jobs
     filament_profile: str | None = None
-    filament_id: int | None = None
+    filament_id: int | None = None          # legacy filament id; or send material_ref (+ material_provider)
+    material_provider: str | None = None
+    material_ref: str | None = None
     filament_type: str
     filament_color: str
     tool_index: int | None = None
@@ -93,6 +96,8 @@ class ModelTargetInput(BaseModel):
     print_profile: str = ""
     filament_profile: str | None = None
     filament_id: int | None = None
+    material_provider: str | None = None
+    material_ref: str | None = None
     filament_type: str = "any"
     filament_color: str = "any"
     filament_map: list[dict] | None = None
@@ -212,7 +217,7 @@ def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetIn
             # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
             # each printer's loaded slot supplies the preset.
             filament_profile=t.filament_profile or None,
-            filament_id=t.filament_id,
+            **material_columns(t.filament_id, t.material_provider, t.material_ref),
             filament_type=t.filament_type,
             filament_color=t.filament_color,
             filament_map=t.filament_map,
@@ -420,7 +425,7 @@ async def create_job(
             printer_id=cfg.printer_id,
             print_profile=cfg.print_profile,
             filament_profile=cfg.filament_profile,
-            filament_id=cfg.filament_id,
+            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref),
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
             tool_index=cfg.tool_index,
@@ -644,7 +649,7 @@ async def get_job_details(
     configs = result.scalars().all()
 
     # Resolve each config's loaded-filament slot up front so we know whether a
-    # Spoolman lookup is needed at all, and so we only ever fetch spools once.
+    # inventory lookup is needed at all, and so we only ever fetch spools once.
     resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None]] = []
     spool_ids_needed: set[str] = set()
     for cfg in configs:
@@ -672,6 +677,8 @@ async def get_job_details(
             "print_profile": cfg.print_profile,
             "filament_profile": cfg.filament_profile,
             "filament_id": cfg.filament_id,
+            "material_provider": cfg.material_provider,
+            "material_ref": cfg.material_ref,
             "filament_type": cfg.filament_type,
             "filament_color": cfg.filament_color,
             "tool_index": cfg.tool_index,
@@ -822,7 +829,7 @@ async def update_job_configs(
             # Mirror the New Job convention: manual filaments store the type as the
             # profile name. Never null — legacy DBs have a NOT NULL constraint here.
             filament_profile=cfg.filament_profile or cfg.filament_type or "",
-            filament_id=cfg.filament_id,
+            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref),
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
             tool_index=cfg.tool_index,
@@ -1111,7 +1118,7 @@ async def complete_job_manually(
     never the job's production gcode path - and mark it complete without ever
     printing it or sending anything to the printer. For work that was already done
     physically: printed before Themis tracked it, printed manually, or a job
-    Themis's own tracking is stuck on but which really did finish. Deducts Spoolman
+    Themis's own tracking is stuck on but which really did finish. Deducts inventory
     filament on success. Fires no webhooks or notifications either way - this is an
     out-of-band admin action, not a real completion or a real failure as far as
     integrations are concerned."""
@@ -1146,7 +1153,7 @@ async def complete_job_manually(
     # No status/assigned_printer_id change before the slice: the job may genuinely be
     # printing/uploading, and clobbering either would orphan the live print from
     # _reconcile_printing_jobs. The in-flight set stops a double-click/second tab from
-    # completing (and double-counting counters + Spoolman) the same job twice.
+    # completing (and double-counting counters + inventory) the same job twice.
     if job_id in _manual_complete_in_flight:
         raise HTTPException(409, f"Job {job_id} is already being manually completed")
     _manual_complete_in_flight.add(job_id)
@@ -1211,7 +1218,7 @@ async def complete_job_manually(
                     job.deduction_skipped = False
                 except (TypeError, ValueError):
                     logger.warning(
-                        "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                        "Invalid slot spool ref %r for job %s — deduction skipped",
                         raw_spool_id, job_id,
                     )
 

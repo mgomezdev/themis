@@ -19,16 +19,14 @@ LOCAL_INVENTORY = re.compile(r"local[_-]?inv(entory)?", re.IGNORECASE)
 # Paths relative to app/. Entries for migrations, models, auth scopes and printer_manager's preserved keys are
 # permanent (spec §6); the rest are removed as phase 1c/2d move them behind the plugin.
 SPOOLMAN_ALLOWLIST = {
-    # still wired through core: the deprecated alias routes + settings alias (move into the plugin's router in BIZ-217)
-    "api/routes/spoolman.py", "api/routes/settings.py",
-    # the per-slot / per-job refs and the legacy slot key (`spoolman_spool_id`, `filament_id`): BIZ-217 / cleanup
-    "api/routes/jobs.py", "api/routes/laminus.py", "api/routes/projects.py", "api/routes/queue.py",
-    "services/catalog_service.py", "services/catalog_utils.py", "services/job_costs.py", "services/printer_manager.py",
-    "services/queue_engine.py", "services/providers/__init__.py", "services/inventory/refs.py",
+    # response-contract keys the frontend reads (`spoolman_filaments`, `spoolman_error`): renamed with the frontend cutover
+    "api/routes/laminus.py", "services/catalog_service.py", "services/catalog_utils.py",
+    # the legacy slot/ask key names + provider constant (the dual-write normalizer): removed by the cleanup release (BIZ-221)
+    "services/inventory/refs.py",
     # permanent (spec §6): scopes, migrations, the legacy table's model, the bundled-plugin list
-    "auth.py", "main.py", "models.py", "plugins/__init__.py",
+    "auth.py", "models.py", "plugins/__init__.py",
     "migrations/runner.py", "migrations/v020_spoolman_sync_status.py", "migrations/v026_spool_low_stock.py",
-    "migrations/v035_inventory_core.py",
+    "migrations/v035_inventory_core.py", "migrations/v036_inventory_refs.py",
 }
 PLUGIN_HOMES = {"spoolman": "plugins/spoolman/", "local_inventory": "plugins/local_inventory/"}
 

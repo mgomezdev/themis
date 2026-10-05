@@ -3,7 +3,7 @@
 Rates are applied **live** from the current settings (not snapshotted when a job printed), so changing a rate in
 Settings re-prices every past job consistently. Definitions:
 
-- filament: the manually entered `jobs.filament_cost` (unchanged; never computed from Spoolman pricing).
+- filament: the manually entered `jobs.filament_cost` (unchanged; never computed from inventory pricing).
 - machine: for each *completed* job, `actual_seconds` (the slicer's figure, not a measurement) × the rate of the
   printer it ran on (that printer's own rate if set, else the shop rate). Failed/cancelled jobs cost nothing here.
   A job's printer is `assigned_printer_id`, which deleting the printer clears — so completed jobs of a deleted

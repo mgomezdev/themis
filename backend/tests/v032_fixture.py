@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v033_slice_cache
+from app.migrations import v033_slice_cache, v036_inventory_refs
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
 # Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).
@@ -87,6 +87,7 @@ async def _build(path: Path) -> None:
             # v001 builds the *current* models (tables added by later phases too): drop what post-v032 migrations own.
             await v033_slice_cache.down(conn)
             await conn.execute(text("DELETE FROM schema_migrations WHERE version = 33"))
+            await v036_inventory_refs.down(conn)                       # drops the material_* columns create_all added
             for table in _POST_V032_TABLES:
                 await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
             await _seed(conn)

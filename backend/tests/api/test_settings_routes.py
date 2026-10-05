@@ -176,7 +176,7 @@ def _bound(ref, name, bindings):
 
 
 def _patch_inventory(provider):
-    return patch("app.api.routes.settings.plugin_host.build_candidate", return_value=provider)
+    return patch("app.plugins.host.plugin_host.build_candidate", return_value=provider)
 
 
 async def test_spoolman_test_connection_all_names_valid_returns_ok(client):

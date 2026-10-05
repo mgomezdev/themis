@@ -7,6 +7,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ._materials import material_columns
 from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, Order, Project
@@ -37,7 +38,9 @@ class OrderPartIn(BaseModel):
     qty: int = 1
     material: str = ""
     est_minutes: int = 0
-    filament_id: int | None = None
+    filament_id: int | None = None          # legacy filament id; or material_ref (+ material_provider)
+    material_provider: str | None = None
+    material_ref: str | None = None
     filament_color: str | None = None
 
 
@@ -83,7 +86,7 @@ def _normalize_parts(parts: list[OrderPartIn]) -> list[dict]:
             "qty": p.qty,
             "material": p.material,
             "est_minutes": p.est_minutes,
-            "filament_id": p.filament_id,
+            **material_columns(p.filament_id, p.material_provider, p.material_ref),
             "filament_color": p.filament_color,
         })
     return out

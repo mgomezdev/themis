@@ -12,7 +12,7 @@ def _spool_label(spool: InvSpool) -> str:
 
 def check_spool_sufficiency(needed_g: float | None, spool: InvSpool) -> dict | None:
     """None when there's nothing to warn about (needed_g unknown, spool weight untracked, or enough left). Otherwise
-    `{spool_id, spool_label, remaining_g, needed_g, message}` (`spool_id` stays the integer id the frontend always got)."""
+    `{spool_id, spool_ref, spool_label, remaining_g, needed_g, message}` (`spool_id` stays the integer id the frontend always got; `spool_ref` is the provider-namespaced string ref)."""
     if needed_g is None:
         return None
     remaining_g = spool.remaining_g
@@ -24,6 +24,7 @@ def check_spool_sufficiency(needed_g: float | None, spool: InvSpool) -> dict | N
     ask = f"~{needed_g:.0f}g {material}" if material else f"~{needed_g:.0f}g"
     return {
         "spool_id": int(spool.ref) if spool.ref.isdigit() else spool.ref,
+        "spool_ref": spool.ref,
         "spool_label": spool_label,
         "remaining_g": remaining_g,
         "needed_g": needed_g,
