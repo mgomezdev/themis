@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
+from .provider import is_ref
 
 router = APIRouter(tags=["local_inventory"])
 
@@ -16,9 +17,9 @@ router = APIRouter(tags=["local_inventory"])
             dependencies=[Depends(require_scope("inventory:read"))])
 async def weight_log(spool_ref: str | None = None, limit: int = Query(default=100, ge=1, le=1000),
                      session: AsyncSession = Depends(get_session)):
-    where = "WHERE spool_id = :s" if spool_ref is not None and spool_ref.isdigit() else ""
-    if spool_ref is not None and not spool_ref.isdigit():
+    if spool_ref is not None and not is_ref(spool_ref):
         return []
+    where = "WHERE spool_id = :s" if spool_ref is not None else ""
     rows = (await session.execute(text(
         f"SELECT id, spool_id, old_g, new_g, source, at FROM local_inv_weight_log {where} ORDER BY id DESC LIMIT :n"),
         {"n": limit, **({"s": int(spool_ref)} if where else {})})).mappings().all()

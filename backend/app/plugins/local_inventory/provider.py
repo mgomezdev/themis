@@ -5,6 +5,7 @@ the spool and appends an audit row. Refs are the integer row ids as strings."""
 from __future__ import annotations
 
 import json
+import math
 import re
 from datetime import datetime, timezone
 
@@ -19,7 +20,20 @@ from ..kinds.filament_inventory import (
 )
 from .settings import LocalInventorySettings
 
-_LABEL = re.compile(r"^(?:themis:)?s-(\d+)$|^(\d+)$", re.IGNORECASE)
+_LABEL = re.compile(r"^(?:themis:)?s-([0-9]{1,18})$|^([0-9]{1,18})$", re.IGNORECASE)
+_MAX_REF_DIGITS = 18                                   # comfortably inside SQLite's int64
+
+
+def is_ref(ref) -> bool:
+    """A well-formed local ref: ASCII digits only (no Unicode digits, no int64 overflow)."""
+    return isinstance(ref, str) and ref.isascii() and ref.isdecimal() and len(ref) <= _MAX_REF_DIGITS
+
+
+def _weight(value, what: str) -> float:
+    """A finite, non-negative weight, or a 422."""
+    if value is None or not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
+        raise _err(f"{what} must be a finite, non-negative number of grams", 422)
+    return float(value)
 
 
 def _now() -> str:
@@ -60,7 +74,7 @@ class LocalInventoryProvider(FilamentInventoryProvider):
 
     @staticmethod
     def _id(ref: str, what: str) -> int:
-        if not str(ref).isdigit():
+        if not is_ref(str(ref)):
             raise _err(f"{what} {ref} not found", 404)
         return int(ref)
 
@@ -104,7 +118,7 @@ class LocalInventoryProvider(FilamentInventoryProvider):
             return await self._spools(session)
 
     async def get_spool(self, spool_ref: str) -> InvSpool | None:
-        if not str(spool_ref).isdigit():
+        if not is_ref(str(spool_ref)):
             return None
         async with self._factory()() as session:
             found = await self._spools(session, "WHERE id = :i", i=int(spool_ref))
@@ -113,8 +127,7 @@ class LocalInventoryProvider(FilamentInventoryProvider):
     # -- weight ---------------------------------------------------------------------------------------------------
 
     async def set_remaining(self, spool_ref: str, remaining_g: float) -> None:
-        if remaining_g < 0:
-            raise _err("remaining_g cannot be negative", 422)
+        remaining_g = _weight(remaining_g, "remaining_g")
         sid = self._id(spool_ref, "Spool")
         async with self._factory()() as session:
             row = (await session.execute(text("SELECT remaining_g FROM local_inv_spools WHERE id = :i"), {"i": sid})).first()
@@ -182,8 +195,8 @@ class LocalInventoryProvider(FilamentInventoryProvider):
             material = await self._one_material(session, draft.material_ref)
             if material.archived:
                 raise _err("cannot add a spool to an archived material", 422)
-            initial = draft.initial_g
-            remaining = draft.remaining_g
+            initial = None if draft.initial_g is None else _weight(draft.initial_g, "initial_g")
+            remaining = None if draft.remaining_g is None else _weight(draft.remaining_g, "remaining_g")
             if initial is None and remaining is None:
                 initial = remaining = self._default_initial_g
             elif remaining is None:

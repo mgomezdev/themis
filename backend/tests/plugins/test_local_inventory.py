@@ -238,3 +238,31 @@ async def test_switching_away_removes_the_provider_but_keeps_its_data(client, se
     assert (await client.get(f"{BASE}/materials")).status_code == 409
     assert len(await _rows(session_factory, "SELECT * FROM local_inv_materials")) == 1          # data stays for next time
     assert plugin_host.active(KIND) is None and m.ref == "1"
+
+
+@pytest.mark.parametrize("ref", ["²", "٣", "9" * 30, "-1", "1.5", " 1", ""])
+async def test_malformed_refs_are_unknown_never_an_uncontained_error(local, client, ref):
+    assert await local.get_spool(ref) is None
+    for call in (local.set_remaining(ref, 1.0), local.update_spool(ref, {"location": "x"}), local.archive_spool(ref)):
+        with pytest.raises(InventoryProviderError) as e:
+            await call
+        assert e.value.status == 404
+    assert (await client.get(f"{PLUGIN}/weight-log", params={"spool_ref": ref})).json() == []
+
+
+@pytest.mark.parametrize("label", ["s-²", "themis:s-" + "9" * 30, "٣"])
+def test_labels_with_unicode_digits_or_overflowing_ids_are_not_labels(label):
+    assert LocalInventoryProvider(LocalInventorySettings()).parse_label(label) is None
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf"), -0.5])
+async def test_weights_must_be_finite_and_non_negative(local, session_factory, bad):
+    m = await local.create_material(MaterialDraft(name="PLA"))
+    s = await local.create_spool(SpoolDraft(material_ref=m.ref, initial_g=500.0))
+    for call in (local.set_remaining(s.ref, bad), local.create_spool(SpoolDraft(material_ref=m.ref, initial_g=bad)),
+                 local.create_spool(SpoolDraft(material_ref=m.ref, initial_g=500.0, remaining_g=bad))):
+        with pytest.raises(InventoryProviderError) as e:
+            await call
+        assert e.value.status == 422
+    assert (await local.get_spool(s.ref)).remaining_g == 500.0                       # nothing stored, nothing logged
+    assert len(await _rows(session_factory, "SELECT * FROM local_inv_weight_log")) == 1
