@@ -1,7 +1,6 @@
 import asyncio
 
 import pytest
-from pydantic import ValidationError
 from sqlalchemy import select
 
 from app import plugins
@@ -114,7 +113,7 @@ async def test_secrets_are_write_only_omit_keeps_empty_clears_and_non_secrets_ar
 
 async def test_an_invalid_settings_change_is_rejected_and_changes_nothing(host, session_factory):
     await host.set_slot(KIND, "dummy_one")
-    with pytest.raises(ValidationError):
+    with pytest.raises(PluginError, match="url"):
         await host.update_config("dummy_one", settings={"url": ["not", "a", "string"]})
     async with session_factory() as s:
         assert (await s.get(PluginConfig, "dummy_one")).settings == {}
@@ -202,3 +201,144 @@ async def test_a_healthy_poll_does_not_rewrite_the_state_row_every_time(host, se
     monkeypatch.setattr(host_module, "_now", lambda: "2026-01-01T00:05:00")
     await host.call(KIND, "ping")                             # still healthy: nothing to persist
     assert (await _state(session_factory))["last_ok_at"] == "2026-01-01T00:00:00"
+
+
+# --- review hardening (BIZ-205) ---------------------------------------------------------------------------------
+
+async def test_settings_may_not_carry_a_secret_field(host):
+    await host.set_slot(KIND, "dummy_one")
+    with pytest.raises(PluginError, match="secret"):
+        await host.update_config("dummy_one", settings={"token": "plaintext"})
+
+
+async def test_a_secret_never_reaches_persisted_state_or_the_error_a_caller_sees(host, session_factory):
+    from tests.plugins.dummy_plugin import DummyProvider
+    await host.set_slot(KIND, "dummy_one")
+    await host.update_config("dummy_one", secrets={"token": "hunter2-token"})
+
+    async def leaky(self, value="x"):
+        raise RuntimeError("401 for https://x.test/?key=hunter2-token")
+    DummyProvider.ping, original = leaky, DummyProvider.ping
+    try:
+        r = await host.call(KIND, "ping")
+    finally:
+        DummyProvider.ping = original
+    assert "hunter2-token" not in r.error and "***" in r.error
+    assert "hunter2-token" not in str(await _state(session_factory))
+
+
+async def test_a_validation_error_does_not_echo_the_offending_value(host):
+    await host.set_slot(KIND, "dummy_one")
+    with pytest.raises(PluginError) as e:
+        await host.update_config("dummy_one", settings={"url": {"password": "topsecret-value"}})
+    assert "topsecret-value" not in str(e.value)
+
+
+async def test_overlapping_config_changes_leave_exactly_one_live_instance_and_close_the_rest(host):
+    await host.set_slot(KIND, "dummy_one")
+    await asyncio.gather(*(host.update_config("dummy_one", settings={"url": f"http://u{i}.test"}) for i in range(5)))
+
+    live = [i for i in DummyProvider.instances if not i.closed]
+    assert live == [host.active(KIND).instance]                   # nothing leaked, nothing active is closed
+    async with host._session_factory() as s:                      # and the instance reflects the config that won
+        stored = (await s.get(PluginConfig, "dummy_one")).settings["url"]
+    assert host.active(KIND).instance.settings.url == stored
+
+
+async def test_changing_one_plugin_does_not_rebuild_another(host):
+    plugins.register_plugin(make_manifest("other_kind_plugin", kind="other_kind"))
+    await host.set_slot(KIND, "dummy_one")
+    await host.set_slot("other_kind", "other_kind_plugin")
+    other = host.active("other_kind").instance
+
+    await host.update_config("dummy_one", settings={"url": "http://changed.test"})
+
+    assert host.active("other_kind").instance is other and not other.closed
+
+
+async def test_a_reload_without_changes_keeps_the_instances(host):
+    await host.set_slot(KIND, "dummy_one")
+    inst = host.active(KIND).instance
+    await host.reload()
+    assert host.active(KIND).instance is inst
+
+
+async def test_a_call_that_straddles_a_reload_does_not_blame_the_new_instance(host, session_factory):
+    await host.set_slot(KIND, "dummy_one")
+    await host.update_config("dummy_one", settings={"mode": "hang"})
+    pending = asyncio.create_task(host.call(KIND, "ping", timeout=0.2))
+    await asyncio.sleep(0)                                         # the call is now awaiting the old instance
+    await host.update_config("dummy_one", settings={"mode": "ok"})
+    r = await pending
+
+    assert r.reason == "timeout"
+    assert (await _state(session_factory)).get("last_error") is None   # the replaced instance's failure was not recorded
+
+
+async def test_a_successful_rebuild_clears_a_build_error_from_the_state(host, session_factory):
+    await host.set_slot(KIND, "dummy_one")
+    await host.update_config("dummy_one", settings={"mode": "bad-config"})
+    assert (await _state(session_factory))["last_error"]
+    await host.update_config("dummy_one", settings={"mode": "ok"})
+    assert (await _state(session_factory))["last_error"] is None
+
+
+async def test_a_failed_state_write_leaves_memory_unchanged_so_the_next_change_retries(host, session_factory):
+    await host.set_slot(KIND, "dummy_one")
+    good_factory = host._session_factory
+
+    def broken():
+        raise RuntimeError("db down")
+    host._session_factory = broken
+    await host._record("dummy_one", last_error="boom")
+    assert host.state("dummy_one").get("last_error") is None       # not remembered as persisted
+
+    host._session_factory = good_factory
+    await host._record("dummy_one", last_error="boom")
+    assert (await _state(session_factory))["last_error"] == "boom"
+
+
+async def test_a_plugin_whose_migration_failed_is_never_built(host, session_factory):
+    from app.plugins import migrations as plugin_migrations
+    await host.set_slot(KIND, "dummy_one")
+    plugin_migrations.failed["dummy_one"] = "migration v1 (m) failed: no such table"
+    try:
+        await host.reload()
+        assert host.active(KIND) is None and "migration v1" in host.build_error("dummy_one")
+    finally:
+        plugin_migrations.failed.clear()
+    await host.reload()
+    assert host.active(KIND) is not None
+
+
+async def test_a_plugin_raising_cancellation_internally_is_a_failure_not_a_cancel_of_the_caller(host):
+    from tests.plugins.dummy_plugin import DummyProvider
+
+    async def cancels(self, value="x"):
+        raise asyncio.CancelledError()
+    DummyProvider.ping, original = cancels, DummyProvider.ping
+    await host.set_slot(KIND, "dummy_one")
+    try:
+        r = await host.call(KIND, "ping")
+    finally:
+        DummyProvider.ping = original
+    assert (r.ok, r.reason) == (False, "error")
+
+
+async def test_reloads_never_run_their_rebuild_phases_concurrently(host, monkeypatch):
+    """Serialisation, observed directly: instance closes (which await) from overlapping reloads must not interleave."""
+    running, peak = 0, 0
+
+    async def slow_close(self):
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0.02)
+        running -= 1
+        self.closed = True
+    monkeypatch.setattr(DummyProvider, "aclose", slow_close)
+    await host.set_slot(KIND, "dummy_one")
+
+    await asyncio.gather(*(host.update_config("dummy_one", settings={"url": f"http://n{i}.test"}) for i in range(4)))
+
+    assert peak == 1

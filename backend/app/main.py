@@ -118,7 +118,10 @@ async def lifespan(app: FastAPI):
 
     from .plugins.host import plugin_host
     plugin_host.configure(SessionLocal)
-    await plugin_host.start()
+    try:
+        await plugin_host.start()
+    except Exception:
+        logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
 
     spoolman_sync_loop.configure(SessionLocal)
     await spoolman_sync_loop.start()

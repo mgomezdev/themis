@@ -31,6 +31,19 @@ async def _versions(conn, plugin_id="dummy_one") -> list[int]:
     return [r[0] for r in rows.fetchall()]
 
 
+def _two_step_failure(table: str):
+    """A migration that creates `table` and THEN fails — only a real rollback leaves no trace of it."""
+    import types
+    mod = types.ModuleType("two_step")
+    mod.version, mod.name = 1, "two_step"
+
+    async def up(conn):
+        await conn.execute(text(f"CREATE TABLE {table} (id INTEGER)"))
+        await conn.execute(text("SELECT * FROM nope"))
+    mod.up, mod.down = up, (lambda conn: None)
+    return mod
+
+
 async def test_pending_migrations_run_in_version_order_and_are_recorded(conn):
     m = make_manifest(migrations=(migration(2, ADD_COL, "select 1"), migration(1, CREATE_ITEMS, DROP_ITEMS)))   # listed out of order
     assert await run_plugin_migrations(conn, [m]) == {}
@@ -63,7 +76,7 @@ async def test_down_undoes_the_newest_migration_and_forgets_it(conn):
 
 
 async def test_a_failing_migration_is_rolled_back_reported_and_does_not_block_other_plugins(conn):
-    bad = make_manifest("bad_plugin", migrations=(migration(1, "CREATE TABLE bad_plugin_t (id INTEGER); SELECT * FROM nope", "select 1"),))
+    bad = make_manifest("bad_plugin", migrations=(_two_step_failure("bad_plugin_t"),))
     good = make_manifest("good_plugin", migrations=(migration(1, "CREATE TABLE good_plugin_t (id INTEGER)", "select 1"),))
 
     errors = await run_plugin_migrations(conn, [bad, good])
@@ -88,7 +101,7 @@ async def test_a_custom_table_prefix_is_honoured(conn):
 
 
 async def test_a_failure_stops_that_plugins_later_versions(conn):
-    m = make_manifest(migrations=(migration(1, "SELECT * FROM nope", "select 1"), migration(2, CREATE_ITEMS, DROP_ITEMS)))
+    m = make_manifest(migrations=(_two_step_failure("dummy_one_half"), migration(2, CREATE_ITEMS, DROP_ITEMS)))
     assert "dummy_one" in await run_plugin_migrations(conn, [m])
     assert "dummy_one_items" not in await _tables(conn)
 
@@ -119,3 +132,39 @@ async def test_the_models_and_the_migration_agree_on_columns(conn):
     await v034_plugin_host.up(conn)
     from_migration = {t: [r[1] for r in (await conn.execute(text(f"PRAGMA table_info({t})"))).fetchall()] for t in HOST_TABLES}
     assert from_models == from_migration
+
+
+async def test_a_failed_run_is_published_for_the_host_and_cleared_by_the_next_good_run(conn):
+    from app.plugins import migrations as plugin_migrations
+    bad = make_manifest(migrations=(_two_step_failure("dummy_one_half"),))
+    await run_plugin_migrations(conn, [bad])
+    assert "dummy_one" in plugin_migrations.failed
+    await run_plugin_migrations(conn, [make_manifest(migrations=(migration(1, CREATE_ITEMS, DROP_ITEMS),))])
+    assert plugin_migrations.failed == {}
+
+
+async def test_a_plugin_whose_migration_list_is_broken_is_reported_without_raising(conn):
+    broken = make_manifest("broken_plugin")
+    object.__setattr__(broken, "migrations", None)                 # sorted(None) blows up
+    good = make_manifest("good_plugin", migrations=(migration(1, "CREATE TABLE good_plugin_t (id INTEGER)", "select 1"),))
+    errors = await run_plugin_migrations(conn, [broken, good])
+    assert list(errors) == ["broken_plugin"] and "good_plugin_t" in await _tables(conn)
+
+
+async def test_a_failing_down_is_rolled_back_and_leaves_the_version_recorded(conn):
+    import types
+    mod = types.ModuleType("badown")
+    mod.version, mod.name = 1, "badown"
+
+    async def up(conn):
+        await conn.execute(text(CREATE_ITEMS))
+
+    async def down(conn):
+        await conn.execute(text(DROP_ITEMS))
+        raise RuntimeError("down failed halfway")
+    mod.up, mod.down = up, down
+    m = make_manifest(migrations=(mod,))
+    await run_plugin_migrations(conn, [m])
+    with pytest.raises(RuntimeError):
+        await rollback_plugin_migration(conn, m)
+    assert "dummy_one_items" in await _tables(conn) and await _versions(conn) == [1]
