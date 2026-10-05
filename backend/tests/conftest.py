@@ -260,6 +260,19 @@ def spoolman_upstream():
 
 
 @pytest.fixture(autouse=True)
+def _restore_spoolman_mock_state():
+    """tests/spoolman_mock.py keeps module-level state that write endpoints mutate; no test may leak it to the next one."""
+    import copy
+    from tests import spoolman_mock
+    state = {k: v for k, v in vars(spoolman_mock).items() if k.startswith("_") and not k.startswith("__") and isinstance(v, (list, dict))}
+    saved = {k: copy.deepcopy(v) for k, v in state.items()}
+    yield
+    for k, v in state.items():                      # every module-level list/dict, so a new global cannot leak either
+        v.clear()
+        v.update(saved[k]) if isinstance(v, dict) else v.extend(saved[k])
+
+
+@pytest.fixture(autouse=True)
 def _reset_slice_cache_fingerprints():
     """slice_cache memoises sidecar fingerprints in a module dict; never let one test's answer leak into another."""
     from app.services import slice_cache

@@ -7955,6 +7955,18 @@
         ],
         "summary": "List materials of the active inventory provider",
         "operationId": "list_materials_api_v1_inventory_materials_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7969,6 +7981,52 @@
           },
           "503": {
             "description": "Provider unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Create a material",
+        "operationId": "create_material_api_v1_inventory_materials_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
           }
         }
       }
@@ -7980,6 +8038,18 @@
         ],
         "summary": "List spools of the active inventory provider",
         "operationId": "list_spools_api_v1_inventory_spools_get",
+        "parameters": [
+          {
+            "name": "include_archived",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Archived"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7994,6 +8064,52 @@
           },
           "503": {
             "description": "Provider unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Create a spool",
+        "operationId": "create_spool_api_v1_inventory_spools_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
           }
         }
       }
@@ -8038,6 +8154,265 @@
                 "schema": {}
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update a material",
+        "operationId": "update_material_api_v1_inventory_materials__ref__patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}/archive": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Archive (or restore) a material",
+        "operationId": "archive_material_api_v1_inventory_materials__ref__archive_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ArchiveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update a spool's label / storage location",
+        "operationId": "update_spool_api_v1_inventory_spools__ref__patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpoolPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}/archive": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Archive (or restore) a spool",
+        "operationId": "archive_spool_api_v1_inventory_spools__ref__archive_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ArchiveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools/{ref}/remaining": {
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set a spool's remaining weight (absolute grams)",
+        "operationId": "set_remaining_api_v1_inventory_spools__ref__remaining_put",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemainingBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "422": {
+            "description": "Invalid input"
           }
         }
       }
@@ -8684,6 +9059,17 @@
           "name"
         ],
         "title": "ApiKeyCreate"
+      },
+      "ArchiveBody": {
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "ArchiveBody"
       },
       "BedTempBody": {
         "properties": {
@@ -9892,6 +10278,164 @@
         },
         "type": "object",
         "title": "MaintenanceItemPatch"
+      },
+      "MaterialIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
+          },
+          "color_hex": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#?[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Hex"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density"
+          },
+          "diameter": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diameter"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "MaterialIn"
+      },
+      "MaterialPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "material": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Material"
+          },
+          "color_hex": {
+            "anyOf": [
+              {
+                "type": "string",
+                "pattern": "^#?[0-9A-Fa-f]{6}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color Hex"
+          },
+          "vendor": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vendor"
+          },
+          "density": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Density"
+          },
+          "diameter": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Diameter"
+          }
+        },
+        "type": "object",
+        "title": "MaterialPatch",
+        "description": "Partial update: only the fields sent change; `null` clears an optional one."
       },
       "ModelTargetInput": {
         "properties": {
@@ -11691,6 +12235,21 @@
         ],
         "title": "RecoverConfirm"
       },
+      "RemainingBody": {
+        "properties": {
+          "remaining_g": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "required": [
+          "remaining_g"
+        ],
+        "title": "RemainingBody"
+      },
       "RemapResolutionEntry": {
         "properties": {
           "field": {
@@ -11840,6 +12399,100 @@
         },
         "type": "object",
         "title": "SlotBody"
+      },
+      "SpoolIn": {
+        "properties": {
+          "material_ref": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Material Ref"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          },
+          "initial_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Initial G"
+          },
+          "remaining_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "required": [
+          "material_ref"
+        ],
+        "title": "SpoolIn"
+      },
+      "SpoolPatch": {
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Location"
+          }
+        },
+        "type": "object",
+        "title": "SpoolPatch"
       },
       "SpoolmanConfigIn": {
         "properties": {

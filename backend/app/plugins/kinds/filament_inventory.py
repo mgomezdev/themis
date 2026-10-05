@@ -20,7 +20,13 @@ PROFILE_LINKS_READ = "PROFILE_LINKS_READ"  # materials carry {orca printer prese
 PROFILE_LINKS_WRITE = "PROFILE_LINKS_WRITE"
 LABEL_SCAN = "LABEL_SCAN"                  # parse_label() understands the provider's QR/label text
 REMOTE = "REMOTE"                          # lives elsewhere and can be unreachable (cache, outbox, disconnect alert)
-ALL_CAPABILITIES = frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, LABEL_SCAN, REMOTE})
+MANAGE_MATERIALS = "MANAGE_MATERIALS"      # create/update/archive materials (a provider that owns its own library)
+MANAGE_SPOOLS = "MANAGE_SPOOLS"            # create/update/archive spools
+ALL_CAPABILITIES = frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, LABEL_SCAN, REMOTE,
+                              MANAGE_MATERIALS, MANAGE_SPOOLS})
+
+MATERIAL_FIELDS = ("name", "material", "color_hex", "vendor", "density", "diameter")     # what create/update_material accept
+SPOOL_FIELDS = ("label", "location")                                                    # what update_spool accepts (weight: set_remaining)
 
 
 class InventoryProviderError(Exception):
@@ -51,6 +57,7 @@ class InvMaterial:
     density: float | None = None
     diameter: float | None = None
     profile_links: dict[str, list[str]] | None = None   # None = the provider has none / lacks PROFILE_LINKS_READ
+    archived: bool = False
     raw: dict = field(default_factory=dict, repr=False, compare=False)
 
 
@@ -60,10 +67,32 @@ class InvSpool:
     material_ref: str | None = None
     material: InvMaterial | None = None
     remaining_g: float | None = None         # None = the provider doesn't track weight
+    initial_g: float | None = None           # weight when new (percent remaining = remaining_g / initial_g); None = unknown
     location: str | None = None
     label: str = ""
     archived: bool = False
     raw: dict = field(default_factory=dict, repr=False, compare=False)
+
+
+@dataclass
+class MaterialDraft:
+    """What `create_material` needs (`name` is the only required field)."""
+    name: str
+    material: str | None = None
+    color_hex: str | None = None
+    vendor: str | None = None
+    density: float | None = None
+    diameter: float | None = None
+
+
+@dataclass
+class SpoolDraft:
+    """What `create_spool` needs. Weights are grams; `remaining_g` defaults to `initial_g` when only that is given."""
+    material_ref: str
+    label: str | None = None
+    location: str | None = None
+    initial_g: float | None = None
+    remaining_g: float | None = None
 
 
 class FilamentInventoryProvider(ABC):
@@ -89,6 +118,37 @@ class FilamentInventoryProvider(ABC):
 
     async def set_profile_links(self, material_ref: str, links: dict[str, list[str]]) -> InvMaterial:   # PROFILE_LINKS_WRITE
         raise NotSupported(PROFILE_LINKS_WRITE)
+
+    # Library management — only for providers that own their library (capability-gated, never by plugin id). A provider
+    # without these (its library lives in the external system) is still a valid provider. Failures use
+    # InventoryProviderError (status 404 unknown ref, 422 invalid input).
+    #
+    # Semantics every provider follows (the UI relies on them):
+    #  * A patch value of None CLEARS an optional field (vendor, material, color_hex, density, diameter, location); `name`
+    #    and a spool `label` can never be cleared (422). Keys absent from the patch are untouched.
+    #  * Archiving is reversible and never cascades: archiving a material leaves its spools as they are, and archived
+    #    materials/spools are still returned by list_*/get_spool (flagged `archived`; core hides them by default).
+    #    Archived items can still be edited and weighed. create_spool on an ARCHIVED material is a 422.
+    #  * create_spool: `remaining_g` defaults to `initial_g`; `remaining_g > initial_g` is a 422. `initial_g` is create-only
+    #    input that surfaces as InvSpool.initial_g.
+    #  * list_* return a stable order (creation order); core re-sorts by ref so the API order is deterministic.
+    async def create_material(self, draft: MaterialDraft) -> InvMaterial:                   # MANAGE_MATERIALS
+        raise NotSupported(MANAGE_MATERIALS)
+
+    async def update_material(self, ref: str, patch: dict) -> InvMaterial:                  # MANAGE_MATERIALS; keys in MATERIAL_FIELDS
+        raise NotSupported(MANAGE_MATERIALS)
+
+    async def archive_material(self, ref: str, archived: bool = True) -> InvMaterial:       # MANAGE_MATERIALS
+        raise NotSupported(MANAGE_MATERIALS)
+
+    async def create_spool(self, draft: SpoolDraft) -> InvSpool:                            # MANAGE_SPOOLS
+        raise NotSupported(MANAGE_SPOOLS)
+
+    async def update_spool(self, ref: str, patch: dict) -> InvSpool:                        # MANAGE_SPOOLS; keys in SPOOL_FIELDS
+        raise NotSupported(MANAGE_SPOOLS)
+
+    async def archive_spool(self, ref: str, archived: bool = True) -> InvSpool:             # MANAGE_SPOOLS
+        raise NotSupported(MANAGE_SPOOLS)
 
     def parse_label(self, text: str) -> str | None:                                         # LABEL_SCAN -> spool ref
         raise NotSupported(LABEL_SCAN)

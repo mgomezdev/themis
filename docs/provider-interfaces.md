@@ -50,10 +50,12 @@ see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 | `get_spool(ref)` | `InvSpool \| None` | `None` = not found (404). Used by the interim deduction (and, later, the pre-print snapshot). |
 | `set_remaining(ref, grams)` | `None` | `WRITE_WEIGHT`. **Absolute**, never a delta (D6): re-sending is harmless. Spoolman: `PATCH /spool/{id} {remaining_weight}` (`protocol_verification/test_spoolman_weight.py`). |
 | `set_profile_links(material_ref, links)` | `InvMaterial` | `PROFILE_LINKS_WRITE`. `{orca printer preset: [orca filament presets]}`. |
+| `create_material(MaterialDraft)` / `update_material(ref, patch)` / `archive_material(ref, archived=True)` | `InvMaterial` | `MANAGE_MATERIALS`. Patch keys ⊆ `MATERIAL_FIELDS` (name, material, color_hex, vendor, density, diameter). Archive is reversible; `list_materials` still returns archived ones (`archived=True`), core hides them unless `include_archived`. |
+| `create_spool(SpoolDraft)` / `update_spool(ref, patch)` / `archive_spool(ref, archived=True)` | `InvSpool` | `MANAGE_SPOOLS`. Patch keys ⊆ `SPOOL_FIELDS` (label, location); weight has its own absolute `set_remaining`. `remaining_g` defaults to `initial_g`. Errors: `InventoryProviderError` status 404 (unknown ref) / 422 (invalid). |
 | `parse_label(text)` / `spool_url(ref)` | `ref \| None` / `url \| None` | `LABEL_SCAN` / optional deep link. |
 
 Capabilities (`frozenset` class attr; the manifest declares the same set): `TRACKS_WEIGHT`, `WRITE_WEIGHT`,
-`PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (can be unreachable → sync loop, health, later the offline cache).
+`PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (can be unreachable → sync loop, health, later the offline cache), `MANAGE_MATERIALS`, `MANAGE_SPOOLS` (the provider owns its library; a provider without them is still valid — its library is managed in the external system).
 Optional methods raise `NotSupported(capability)` by default; callers check `provider.has(cap)` first.
 
 DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
@@ -71,7 +73,7 @@ loop + health in `plugin_configs.state`), `deduction.py` (interim read→set; BI
 (double-JSON-encoded). Only the Spoolman plugin encodes/decodes it; core reads `InvMaterial.profile_links` and writes via
 `set_profile_links` (drift repair in `laminus.py` confirm-remap; the catalog drift check needs `PROFILE_LINKS_READ`).
 
-Neutral API: `/api/v1/inventory/{materials,spools,sync-now,sync-status,resolve-label,settings}` and `PATCH …/materials/{ref}/profile-links`
+Neutral API: `/api/v1/inventory/{materials,spools,sync-now,sync-status,resolve-label,settings}`, `PATCH …/materials/{ref}/profile-links`, and library management (`POST/PATCH /materials[/{ref}]`, `POST /materials/{ref}/archive`, `POST/PATCH /spools[/{ref}]`, `POST /spools/{ref}/archive`, `PUT /spools/{ref}/remaining`; 409 `capability_unavailable` without `MANAGE_*`/`WRITE_WEIGHT`)
 (scopes `inventory:read/write`); plugin management `/api/v1/plugins…` and `PUT /api/v1/extension-slots/{kind}` (scopes `settings:*`).
 
 ## `SlicingProvider` — sync

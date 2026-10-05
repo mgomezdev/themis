@@ -97,3 +97,44 @@ def test_planted_local_inventory_reference_in_core_is_caught_and_the_plugin_pack
 def test_a_stale_allowlist_entry_is_caught(tree):
     (tree / "services" / "clean.py").write_text("x = 1\n")
     assert stale_allowlist(tree, {"services/clean.py"}) == ["services/clean.py"]
+
+
+# --- the neutral inventory/library surface (BIZ-233) ----------------------------------------------------------------------
+# Stricter than the ratchet above: these files must NEVER name or import a specific provider, with no allowlist. Library
+# management is reached through capabilities (MANAGE_MATERIALS / MANAGE_SPOOLS), not plugin ids.
+
+NEUTRAL_SURFACE = ("api/routes/inventory.py", "api/routes/plugins.py", "plugins/host.py", "plugins/manifest.py",
+                   "plugins/migrations.py", "plugins/kinds/", "services/inventory/")
+TRANSITIONAL = {"services/inventory/refs.py"}        # the legacy slot key; BIZ-217 removes it
+
+
+def neutral_violations(root: Path) -> list[str]:
+    out = []
+    for path, rel in _files(root):
+        if rel in TRANSITIONAL or not rel.startswith(NEUTRAL_SURFACE):
+            continue
+        text = path.read_text(encoding="utf-8")
+        if SPOOLMAN.search(text) or LOCAL_INVENTORY.search(text):
+            out.append(f"{rel}: names a specific inventory provider")
+    return out
+
+
+def test_the_neutral_library_surface_never_names_a_provider():
+    assert neutral_violations(APP) == []
+
+
+def test_the_neutral_surface_checker_can_fail(tmp_path):
+    (tmp_path / "services" / "inventory").mkdir(parents=True)
+    (tmp_path / "plugins" / "kinds").mkdir(parents=True)
+    (tmp_path / "services" / "inventory" / "x.py").write_text("from app.plugins.local_inventory import Provider\n")
+    (tmp_path / "plugins" / "kinds" / "y.py").write_text("PROVIDER = 'spoolman'\n")
+    (tmp_path / "services" / "inventory" / "refs.py").write_text("LEGACY = 'spoolman'\n")          # transitional: exempt
+    assert neutral_violations(tmp_path) == ["plugins/kinds/y.py: names a specific inventory provider",
+                                            "services/inventory/x.py: names a specific inventory provider"]
+
+
+def test_the_neutral_surface_lists_files_that_exist():
+    existing = {rel for _, rel in _files(APP)}
+    for entry in NEUTRAL_SURFACE:
+        assert any(r == entry or r.startswith(entry) for r in existing), f"{entry} no longer exists - update NEUTRAL_SURFACE"
+    assert TRANSITIONAL <= existing

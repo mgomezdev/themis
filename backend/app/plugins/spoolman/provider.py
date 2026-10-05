@@ -58,6 +58,7 @@ def to_spool(raw: dict) -> InvSpool:
     return InvSpool(
         ref=ref, material_ref=material.ref if material else None, material=material,
         remaining_g=raw.get("remaining_weight"), location=raw.get("location"),
+        initial_g=raw.get("initial_weight") or fil.get("weight"),
         label=label or f"spool {ref}", archived=bool(raw.get("archived")), raw=raw,
     )
 

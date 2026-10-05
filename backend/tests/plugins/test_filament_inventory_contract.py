@@ -11,14 +11,14 @@ import httpx
 import pytest
 
 from app.plugins.kinds.filament_inventory import (
-    ALL_CAPABILITIES, LABEL_SCAN, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT, WRITE_WEIGHT,
-    FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, NotSupported,
+    ALL_CAPABILITIES, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
+    WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft, NotSupported, SpoolDraft,
 )
 from app.plugins.spoolman import MANIFEST as SPOOLMAN_MANIFEST
 from app.plugins.spoolman.provider import SpoolmanProvider
 from app.plugins.spoolman.settings import SpoolmanSettings
 from tests import spoolman_mock
-from tests.fake_providers import FakeInventoryProvider
+from tests.fake_providers import FakeInventoryProvider, FakeLibraryProvider
 
 
 @pytest.fixture(autouse=True)
@@ -38,13 +38,18 @@ def _fake() -> FakeInventoryProvider:
                 InvSpool(ref="2", material_ref="2", material=black, remaining_g=500.0, label="Elegoo PLA Black")])
 
 
+def _fake_library() -> FakeLibraryProvider:
+    base = _fake()
+    return FakeLibraryProvider(materials=list(base.materials.values()), spools=list(base.spools.values()))
+
+
 def _spoolman() -> SpoolmanProvider:
     return SpoolmanProvider(SpoolmanSettings(url="http://spoolman.test", api_key="key"))
 
 
-@pytest.fixture(params=["fake", "spoolman"])
+@pytest.fixture(params=["fake", "fake_library", "spoolman"])
 def provider(request, spoolman_upstream) -> FilamentInventoryProvider:
-    return _fake() if request.param == "fake" else _spoolman()
+    return {"fake": _fake, "fake_library": _fake_library, "spoolman": _spoolman}[request.param]()
 
 
 # --- declaration ---------------------------------------------------------------------------------------------------
@@ -137,6 +142,106 @@ async def test_spool_url_is_a_string_or_none(provider):
     assert provider.spool_url("1") is None or isinstance(provider.spool_url("1"), str)
 
 
+# --- library management: works with MANAGE_*, refused without it ---------------------------------------------------------
+
+async def test_materials_can_be_created_updated_and_archived_or_every_call_is_refused(provider):
+    if MANAGE_MATERIALS not in provider.capabilities:
+        with pytest.raises(NotSupported) as e:
+            await provider.create_material(MaterialDraft(name="X"))
+        assert e.value.capability == MANAGE_MATERIALS
+        with pytest.raises(NotSupported):
+            await provider.update_material("1", {"name": "Y"})
+        with pytest.raises(NotSupported):
+            await provider.archive_material("1")
+        return
+    created = await provider.create_material(MaterialDraft(name="PETG Blue", material="PETG", color_hex="#0000FF", vendor="Acme", diameter=1.75))
+    assert isinstance(created.ref, str) and (created.name, created.material, created.color_hex, created.vendor) == ("PETG Blue", "PETG", "#0000FF", "Acme")
+    assert created.ref in {m.ref for m in await provider.list_materials()}
+    updated = await provider.update_material(created.ref, {"name": "PETG Navy", "vendor": None})
+    assert (updated.name, updated.vendor, updated.material) == ("PETG Navy", None, "PETG")          # only the sent fields changed
+    archived = await provider.archive_material(created.ref)
+    assert archived.archived is True and next(m for m in await provider.list_materials() if m.ref == created.ref).archived is True
+    assert (await provider.archive_material(created.ref, archived=False)).archived is False       # restorable
+    with pytest.raises(InventoryProviderError) as bad:
+        await provider.update_material("999", {"name": "x"})
+    assert bad.value.status == 404
+    with pytest.raises(InventoryProviderError) as invalid:
+        await provider.create_material(MaterialDraft(name="  "))
+    assert invalid.value.status == 422
+
+
+async def test_spools_can_be_created_updated_weighed_and_archived_or_every_call_is_refused(provider):
+    if MANAGE_SPOOLS not in provider.capabilities:
+        with pytest.raises(NotSupported) as e:
+            await provider.create_spool(SpoolDraft(material_ref="1"))
+        assert e.value.capability == MANAGE_SPOOLS
+        with pytest.raises(NotSupported):
+            await provider.update_spool("1", {"location": "Shelf"})
+        with pytest.raises(NotSupported):
+            await provider.archive_spool("1")
+        return
+    created = await provider.create_spool(SpoolDraft(material_ref="1", location="Shelf B", initial_g=1000.0))
+    assert isinstance(created.ref, str) and created.material_ref == "1" and created.location == "Shelf B" and created.label
+    assert created.remaining_g == 1000.0                                      # remaining defaults to the initial weight
+    moved = await provider.update_spool(created.ref, {"location": "Drawer 2", "label": "Blue #2"})
+    assert (moved.location, moved.label) == ("Drawer 2", "Blue #2")
+    if WRITE_WEIGHT in provider.capabilities:
+        await provider.set_remaining(created.ref, 640.0)
+        assert (await provider.get_spool(created.ref)).remaining_g == 640.0     # change remaining weight
+    assert (await provider.archive_spool(created.ref)).archived is True
+    assert next(s for s in await provider.list_spools() if s.ref == created.ref).archived is True
+    with pytest.raises(InventoryProviderError) as no_material:
+        await provider.create_spool(SpoolDraft(material_ref="999"))
+    assert no_material.value.status == 404
+    with pytest.raises(InventoryProviderError) as bad_field:
+        await provider.update_spool(created.ref, {"remaining_g": 1.0})            # weight has its own (absolute) call
+    assert bad_field.value.status == 422
+
+
+async def test_library_semantics_every_provider_follows(provider):
+    """Documented on the ABC: None clears optional fields, name/label cannot be cleared, archiving never cascades and is
+    editable, create_spool rejects an archived material and remaining > initial, remaining defaults to initial."""
+    if MANAGE_MATERIALS not in provider.capabilities or MANAGE_SPOOLS not in provider.capabilities:
+        pytest.skip("provider does not manage its library")
+    m = await provider.create_material(MaterialDraft(name="ASA", vendor="Acme", material="ASA", diameter=1.75))
+    cleared = await provider.update_material(m.ref, {"vendor": None, "diameter": None})
+    assert (cleared.vendor, cleared.diameter, cleared.name, cleared.material) == (None, None, "ASA", "ASA")      # None clears; others stay
+    with pytest.raises(InventoryProviderError) as no_name:
+        await provider.update_material(m.ref, {"name": ""})
+    assert no_name.value.status == 422
+
+    s = await provider.create_spool(SpoolDraft(material_ref=m.ref, initial_g=800.0))
+    assert (s.initial_g, s.remaining_g) == (800.0, 800.0)
+    assert (await provider.update_spool(s.ref, {"location": "Drawer"})).location == "Drawer"
+    assert (await provider.update_spool(s.ref, {"location": None})).location is None                            # None clears
+    with pytest.raises(InventoryProviderError) as no_label:
+        await provider.update_spool(s.ref, {"label": ""})
+    assert no_label.value.status == 422
+    with pytest.raises(InventoryProviderError) as too_much:
+        await provider.create_spool(SpoolDraft(material_ref=m.ref, initial_g=100.0, remaining_g=200.0))
+    assert too_much.value.status == 422
+
+    await provider.archive_material(m.ref)                                                                       # no cascade
+    assert next(x for x in await provider.list_spools() if x.ref == s.ref).archived is False
+    with pytest.raises(InventoryProviderError) as archived_parent:
+        await provider.create_spool(SpoolDraft(material_ref=m.ref))
+    assert archived_parent.value.status == 422
+    await provider.archive_spool(s.ref)
+    assert (await provider.get_spool(s.ref)).archived is True                                                    # still readable
+    assert (await provider.update_spool(s.ref, {"location": "Box"})).location == "Box"                           # and editable
+    if WRITE_WEIGHT in provider.capabilities:
+        await provider.set_remaining(s.ref, 100.0)
+        assert (await provider.get_spool(s.ref)).remaining_g == 100.0                                            # and weighable
+
+
+async def test_spools_report_their_initial_weight_when_the_provider_knows_it(provider):
+    s1 = next(s for s in await provider.list_spools() if s.ref == "1")
+    if isinstance(provider, SpoolmanProvider):
+        assert s1.initial_g == 1000.0                                  # the filament's weight
+    else:
+        assert s1.initial_g is None or isinstance(s1.initial_g, float)
+
+
 # --- a provider with no optional capabilities is still a valid provider -------------------------------------------------
 
 async def test_a_minimal_provider_gets_not_supported_from_every_optional_method():
@@ -155,6 +260,10 @@ async def test_a_minimal_provider_gets_not_supported_from_every_optional_method(
     with pytest.raises(NotSupported) as e3:
         p.parse_label("x")
     assert (e1.value.capability, e2.value.capability, e3.value.capability) == (WRITE_WEIGHT, PROFILE_LINKS_WRITE, LABEL_SCAN)
+    for call in (p.create_material(MaterialDraft(name="x")), p.update_material("1", {}), p.archive_material("1"),
+                 p.create_spool(SpoolDraft(material_ref="1")), p.update_spool("1", {}), p.archive_spool("1")):
+        with pytest.raises(NotSupported):
+            await call
     assert p.spool_url("1") is None
 
 
