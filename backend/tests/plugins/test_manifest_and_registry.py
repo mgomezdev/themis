@@ -54,3 +54,10 @@ def test_load_bundled_skips_a_plugin_that_fails_to_import_and_reports_it(monkeyp
 
 def test_settings_model_is_what_the_manifest_validates_with():
     assert make_manifest().settings_model is DummySettings
+
+
+def test_bundled_plugins_are_discovered_by_directory_and_the_kind_contracts_are_not_one():
+    discovered = plugins._discover_bundled()
+    assert "app.plugins.kinds" not in discovered and not any(m.rsplit(".", 1)[-1].startswith("_") for m in discovered)
+    assert {"app.plugins.spoolman", "app.plugins.local_inventory"} <= set(discovered)
+    assert plugins.load_bundled() == []                              # every discovered package really exports a MANIFEST
