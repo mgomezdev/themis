@@ -264,10 +264,12 @@ def _restore_spoolman_mock_state():
     """tests/spoolman_mock.py keeps module-level state that write endpoints mutate; no test may leak it to the next one."""
     import copy
     from tests import spoolman_mock
-    saved = (copy.deepcopy(spoolman_mock._FILAMENTS), copy.deepcopy(spoolman_mock._SPOOLS))
+    state = {k: v for k, v in vars(spoolman_mock).items() if k.startswith("_") and not k.startswith("__") and isinstance(v, (list, dict))}
+    saved = {k: copy.deepcopy(v) for k, v in state.items()}
     yield
-    spoolman_mock._FILAMENTS[:] = saved[0]
-    spoolman_mock._SPOOLS[:] = saved[1]
+    for k, v in state.items():                      # every module-level list/dict, so a new global cannot leak either
+        v.clear()
+        v.update(saved[k]) if isinstance(v, dict) else v.extend(saved[k])
 
 
 @pytest.fixture(autouse=True)

@@ -7,7 +7,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -39,6 +39,11 @@ def _unavailable(result) -> HTTPException:
     return HTTPException(status_code=503, detail=inventory_provider.describe_failure(result)[1])
 
 
+def _ref_order(item) -> tuple[int, str]:
+    """Natural ref order (numeric refs 2 < 10): the API order is deterministic whatever order a provider lists in."""
+    return (len(item.ref), item.ref)
+
+
 def _envelope(pid: str, items: list) -> dict:
     # `stale`/`as_of` become meaningful with the last-known cache (offline behaviour); live reads are never stale.
     return {"provider": pid, "stale": False, "as_of": datetime.now(timezone.utc).isoformat(), "items": items}
@@ -52,7 +57,7 @@ async def list_materials(include_archived: bool = False):
     result = await inventory_provider.call("list_materials")
     if not result.ok:
         raise _unavailable(result)
-    return _envelope(pid, [material_out(m) for m in result.value if include_archived or not m.archived])
+    return _envelope(pid, [material_out(m) for m in sorted(result.value, key=_ref_order) if include_archived or not m.archived])
 
 
 @router.get("/spools", summary="List spools of the active inventory provider",
@@ -64,7 +69,7 @@ async def list_spools(include_archived: bool = False):
     if not result.ok:
         raise _unavailable(result)
     provider = inventory_provider.active_provider()
-    return _envelope(pid, [spool_out(s, provider.spool_url(s.ref)) for s in result.value if include_archived or not s.archived])
+    return _envelope(pid, [spool_out(s, provider.spool_url(s.ref)) for s in sorted(result.value, key=_ref_order) if include_archived or not s.archived])
 
 
 @router.post("/sync-now", summary="Refresh from the provider now",
@@ -92,8 +97,20 @@ async def sync_status():
 _HEX = r"^#?[0-9A-Fa-f]{6}$"
 
 
-class MaterialIn(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
+class _Clean(BaseModel):
+    """Every provider sees the same input: strings are stripped and an empty one means "not set" (None)."""
+
+    @field_validator("*", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        if isinstance(v, str):
+            v = v.strip()
+            return v or None
+        return v
+
+
+class MaterialIn(_Clean):
+    name: str = Field(max_length=200)                        # blank -> None -> rejected: a material needs a name
     material: str | None = Field(default=None, max_length=50)
     color_hex: str | None = Field(default=None, pattern=_HEX)
     vendor: str | None = Field(default=None, max_length=200)
@@ -101,7 +118,7 @@ class MaterialIn(BaseModel):
     diameter: float | None = Field(default=None, gt=0, le=100)
 
 
-class MaterialPatch(BaseModel):
+class MaterialPatch(_Clean):
     """Partial update: only the fields sent change; `null` clears an optional one."""
     name: str | None = Field(default=None, min_length=1, max_length=200)
     material: str | None = Field(default=None, max_length=50)
@@ -111,15 +128,21 @@ class MaterialPatch(BaseModel):
     diameter: float | None = Field(default=None, gt=0, le=100)
 
 
-class SpoolIn(BaseModel):
-    material_ref: str = Field(min_length=1, max_length=64)
+class SpoolIn(_Clean):
+    material_ref: str = Field(max_length=64)
     label: str | None = Field(default=None, max_length=200)
     location: str | None = Field(default=None, max_length=200)
     initial_g: float | None = Field(default=None, ge=0, le=100_000)
     remaining_g: float | None = Field(default=None, ge=0, le=100_000)
 
+    @model_validator(mode="after")
+    def _remaining_within_initial(self):
+        if self.initial_g is not None and self.remaining_g is not None and self.remaining_g > self.initial_g:
+            raise ValueError("remaining_g cannot exceed initial_g")
+        return self
 
-class SpoolPatch(BaseModel):
+
+class SpoolPatch(_Clean):
     label: str | None = Field(default=None, max_length=200)
     location: str | None = Field(default=None, max_length=200)
 
@@ -144,6 +167,8 @@ def _patch(body: BaseModel) -> dict:
         raise HTTPException(status_code=422, detail="Nothing to change")
     if "name" in changes and changes["name"] is None:
         raise HTTPException(status_code=422, detail="A material needs a name")
+    if "label" in changes and changes["label"] is None:
+        raise HTTPException(status_code=422, detail="A spool needs a label")
     return changes
 
 
@@ -155,11 +180,14 @@ async def _write(method: str, *args):
     exc = result.exception
     if isinstance(exc, NotSupported):
         raise inventory_provider.CapabilityUnavailable(exc.capability)
-    if isinstance(exc, InventoryProviderError) and exc.status:
+    if isinstance(exc, InventoryProviderError) and exc.status in _PASSTHROUGH:
+        # 404 unknown ref / 422 invalid input / 409 conflict (body is `{"detail": ...}`, unlike capability_unavailable's
+        # `{"error": ...}`); any other upstream status (401, 5xx...) is "provider unavailable".
         raise HTTPException(status_code=exc.status, detail=inventory_provider.describe_failure(result)[1])
     raise _unavailable(result)
 
 
+_PASSTHROUGH = {404, 409, 422}
 _LIBRARY_RESPONSES = {409: {"description": "The provider does not manage its own library"},
                       404: {"description": "Unknown ref"}, 422: {"description": "Invalid input"}}
 
@@ -212,9 +240,9 @@ async def archive_spool(ref: str, body: ArchiveBody | None = None):
 async def set_remaining(ref: str, body: RemainingBody):
     inventory_provider.require(WRITE_WEIGHT)
     await _write("set_remaining", ref, body.remaining_g)
-    spool = await _write("get_spool", ref)
-    if spool is None:
-        raise HTTPException(status_code=404, detail=f"Spool {ref} not found")
+    # Write then read back (two calls, not atomic). If only the read-back fails the weight IS set: answer with what we wrote.
+    read = await inventory_provider.call("get_spool", ref)
+    spool = read.value if read.ok and read.value is not None else InvSpool(ref=ref, remaining_g=body.remaining_g, label=f"spool {ref}")
     return spool_out(spool)
 
 

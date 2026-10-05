@@ -251,6 +251,8 @@ class FakeLibraryProvider(FakeInventoryProvider):
             raise NotSupported(MANAGE_MATERIALS)
         self._enter("update_material")
         self._check(patch, MATERIAL_FIELDS)
+        if "name" in patch and not (patch["name"] or "").strip():
+            raise InventoryProviderError("a material needs a name", code="422", status=422)
         m = self._material(ref)
         for k, v in patch.items():
             setattr(m, k, v)
@@ -274,10 +276,13 @@ class FakeLibraryProvider(FakeInventoryProvider):
         if MANAGE_SPOOLS not in self.capabilities:
             raise NotSupported(MANAGE_SPOOLS)
         self._enter("create_spool")
-        self._material(draft.material_ref)
+        if self._material(draft.material_ref).archived:
+            raise InventoryProviderError("cannot add a spool to an archived material", code="422", status=422)
         remaining = draft.remaining_g if draft.remaining_g is not None else draft.initial_g
+        if remaining is not None and draft.initial_g is not None and remaining > draft.initial_g:
+            raise InventoryProviderError("remaining_g cannot exceed initial_g", code="422", status=422)
         s = self._own(InvSpool(ref=self._new_ref(), material_ref=draft.material_ref, remaining_g=remaining,
-                               location=draft.location, label=draft.label or ""))
+                               initial_g=draft.initial_g, location=draft.location, label=draft.label or ""))
         self.spools[s.ref] = s
         return s
 
@@ -286,6 +291,8 @@ class FakeLibraryProvider(FakeInventoryProvider):
             raise NotSupported(MANAGE_SPOOLS)
         self._enter("update_spool")
         self._check(patch, SPOOL_FIELDS)
+        if "label" in patch and not (patch["label"] or "").strip():
+            raise InventoryProviderError("a spool needs a label", code="422", status=422)
         s = self._spool(ref)
         for k, v in patch.items():
             setattr(s, k, v)

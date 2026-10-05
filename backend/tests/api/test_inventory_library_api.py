@@ -102,9 +102,12 @@ async def test_invalid_materials_are_422(client, lib, body):
     assert lib.materials == {}
 
 
-@pytest.mark.parametrize("body", [{}, {"material_ref": ""}, {"material_ref": "1", "initial_g": -1}, {"material_ref": "1", "remaining_g": 1e9}])
-async def test_invalid_spools_are_422(client, lib, body):
+@pytest.mark.parametrize("body", [{}, {"material_ref": ""}, {"material_ref": "1", "initial_g": -1}, {"material_ref": "1", "remaining_g": 1e9},
+                                  {"material_ref": "1", "initial_g": 100, "remaining_g": 200}])
+async def test_invalid_spools_are_422_and_create_nothing(client, lib, body):
+    before = set(lib.spools)
     assert (await client.post(f"{BASE}/spools", json=body)).status_code == 422
+    assert set(lib.spools) == before
 
 
 async def test_empty_patches_and_nulling_a_name_are_422_and_change_nothing(client, lib):
@@ -126,10 +129,85 @@ async def test_the_providers_not_found_status_passes_through(client, lib):
     assert (await client.put(f"{BASE}/spools/999/remaining", json={"remaining_g": 1})).status_code == 404
 
 
-async def test_a_failing_provider_is_a_503_never_a_500(client, lib):
+@pytest.mark.parametrize("method, path, body", [
+    ("POST", "/materials", {"name": "x"}), ("PATCH", "/materials/1", {"name": "x"}), ("POST", "/materials/1/archive", None),
+    ("POST", "/spools", {"material_ref": "1"}), ("PATCH", "/spools/1", {"location": "x"}), ("POST", "/spools/1/archive", None),
+    ("PUT", "/spools/1/remaining", {"remaining_g": 1}),
+])
+async def test_a_failing_provider_is_a_503_never_a_500_on_every_write_path(client, lib, method, path, body):
     lib.fail_with = RuntimeError("provider exploded")
-    resp = await client.post(f"{BASE}/materials", json={"name": "x"})
+    resp = await client.request(method, BASE + path, json=body)
     assert resp.status_code == 503 and "provider exploded" in resp.json()["detail"]
+
+
+async def test_provider_statuses_pass_through_only_for_404_409_422_everything_else_is_503(client, lib):
+    from app.plugins.kinds.filament_inventory import InventoryProviderError
+    for status, expected in [(422, 422), (404, 404), (409, 409), (401, 503), (403, 503), (500, 503), (502, 503)]:
+        lib.fail_with = InventoryProviderError(f"upstream said {status}", code=str(status), status=status)
+        resp = await client.post(f"{BASE}/materials", json={"name": "x"})
+        assert resp.status_code == expected, status
+        assert "upstream said" in resp.json()["detail"]
+    lib.fail_with = InventoryProviderError("conflict", code="409", status=409)
+    body = (await client.post(f"{BASE}/materials", json={"name": "x"})).json()
+    assert "error" not in body                                    # a provider 409 is distinguishable from capability_unavailable
+
+
+async def test_a_provider_that_advertises_a_capability_but_refuses_the_call_is_a_409_capability_error(client, lib):
+    from app.plugins.kinds.filament_inventory import NotSupported
+    lib.fail_with = NotSupported(MANAGE_MATERIALS)
+    resp = await client.post(f"{BASE}/materials", json={"name": "x"})
+    assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory",
+                                                       "capability": MANAGE_MATERIALS}
+
+
+async def test_setting_the_weight_survives_a_failed_read_back(client, lib):
+    m = (await client.post(f"{BASE}/materials", json={"name": "PLA"})).json()
+    s = (await client.post(f"{BASE}/spools", json={"material_ref": m["ref"], "initial_g": 900})).json()
+
+    async def broken_read(ref):
+        raise RuntimeError("read failed")
+    lib.get_spool = broken_read
+    resp = await client.put(f"{BASE}/spools/{s['ref']}/remaining", json={"remaining_g": 333})
+
+    assert resp.status_code == 200 and resp.json()["remaining_g"] == 333.0       # the write happened; we answer with what we wrote
+    assert lib.spools[s["ref"]].remaining_g == 333.0
+
+
+async def test_input_is_normalised_before_it_reaches_the_provider(client, lib):
+    blank = await client.post(f"{BASE}/materials", json={"name": "   "})
+    assert blank.status_code == 422 and lib.materials == {}
+    m = (await client.post(f"{BASE}/materials", json={"name": "  PETG  ", "vendor": "   ", "material": ""})).json()
+    assert (m["name"], m["vendor"], m["material"]) == ("PETG", None, None)       # stripped; empty means "not set"
+    s = (await client.post(f"{BASE}/spools", json={"material_ref": m["ref"], "location": "  "})).json()
+    assert s["location"] is None
+    assert (await client.patch(f"{BASE}/spools/{s['ref']}", json={"label": "  "})).status_code == 422    # a label cannot be cleared
+    assert (await client.patch(f"{BASE}/spools/{s['ref']}", json={"label": None})).status_code == 422
+    assert (await client.patch(f"{BASE}/spools/{s['ref']}", json={"location": "Shelf"})).json()["location"] == "Shelf"
+    assert (await client.patch(f"{BASE}/spools/{s['ref']}", json={"location": None})).json()["location"] is None   # null clears
+
+
+async def test_lists_are_in_natural_ref_order_whatever_the_provider_returns(client, lib):
+    from tests.inventory_helpers import spool
+    lib.spools = {r: spool(r, 1.0, name=f"s{r}") for r in ("10", "2", "33", "9")}
+    refs = [i["ref"] for i in (await client.get(f"{BASE}/spools")).json()["items"]]
+    assert refs == ["2", "9", "10", "33"]
+
+
+async def test_archived_items_are_hidden_by_default_but_stay_editable_and_weighable(client, lib):
+    m = (await client.post(f"{BASE}/materials", json={"name": "PLA"})).json()
+    s = (await client.post(f"{BASE}/spools", json={"material_ref": m["ref"], "initial_g": 500})).json()
+    await client.post(f"{BASE}/spools/{s['ref']}/archive")
+    assert (await client.patch(f"{BASE}/spools/{s['ref']}", json={"location": "Box"})).status_code == 200
+    assert (await client.put(f"{BASE}/spools/{s['ref']}/remaining", json={"remaining_g": 50})).status_code == 200
+    await client.post(f"{BASE}/materials/{m['ref']}/archive")
+    assert (await client.post(f"{BASE}/spools", json={"material_ref": m["ref"]})).status_code == 422      # no spool on an archived material
+    assert s["ref"] not in {i["ref"] for i in (await client.get(f"{BASE}/spools")).json()["items"]}
+
+
+async def test_spools_expose_their_initial_weight(client, lib):
+    m = (await client.post(f"{BASE}/materials", json={"name": "PLA"})).json()
+    s = (await client.post(f"{BASE}/spools", json={"material_ref": m["ref"], "initial_g": 750})).json()
+    assert (s["initial_g"], s["remaining_g"]) == (750.0, 750.0)
 
 
 async def test_library_writes_need_the_inventory_write_scope(client, session_factory, lib):

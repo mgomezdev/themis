@@ -198,6 +198,50 @@ async def test_spools_can_be_created_updated_weighed_and_archived_or_every_call_
     assert bad_field.value.status == 422
 
 
+async def test_library_semantics_every_provider_follows(provider):
+    """Documented on the ABC: None clears optional fields, name/label cannot be cleared, archiving never cascades and is
+    editable, create_spool rejects an archived material and remaining > initial, remaining defaults to initial."""
+    if MANAGE_MATERIALS not in provider.capabilities or MANAGE_SPOOLS not in provider.capabilities:
+        pytest.skip("provider does not manage its library")
+    m = await provider.create_material(MaterialDraft(name="ASA", vendor="Acme", material="ASA", diameter=1.75))
+    cleared = await provider.update_material(m.ref, {"vendor": None, "diameter": None})
+    assert (cleared.vendor, cleared.diameter, cleared.name, cleared.material) == (None, None, "ASA", "ASA")      # None clears; others stay
+    with pytest.raises(InventoryProviderError) as no_name:
+        await provider.update_material(m.ref, {"name": ""})
+    assert no_name.value.status == 422
+
+    s = await provider.create_spool(SpoolDraft(material_ref=m.ref, initial_g=800.0))
+    assert (s.initial_g, s.remaining_g) == (800.0, 800.0)
+    assert (await provider.update_spool(s.ref, {"location": "Drawer"})).location == "Drawer"
+    assert (await provider.update_spool(s.ref, {"location": None})).location is None                            # None clears
+    with pytest.raises(InventoryProviderError) as no_label:
+        await provider.update_spool(s.ref, {"label": ""})
+    assert no_label.value.status == 422
+    with pytest.raises(InventoryProviderError) as too_much:
+        await provider.create_spool(SpoolDraft(material_ref=m.ref, initial_g=100.0, remaining_g=200.0))
+    assert too_much.value.status == 422
+
+    await provider.archive_material(m.ref)                                                                       # no cascade
+    assert next(x for x in await provider.list_spools() if x.ref == s.ref).archived is False
+    with pytest.raises(InventoryProviderError) as archived_parent:
+        await provider.create_spool(SpoolDraft(material_ref=m.ref))
+    assert archived_parent.value.status == 422
+    await provider.archive_spool(s.ref)
+    assert (await provider.get_spool(s.ref)).archived is True                                                    # still readable
+    assert (await provider.update_spool(s.ref, {"location": "Box"})).location == "Box"                           # and editable
+    if WRITE_WEIGHT in provider.capabilities:
+        await provider.set_remaining(s.ref, 100.0)
+        assert (await provider.get_spool(s.ref)).remaining_g == 100.0                                            # and weighable
+
+
+async def test_spools_report_their_initial_weight_when_the_provider_knows_it(provider):
+    s1 = next(s for s in await provider.list_spools() if s.ref == "1")
+    if isinstance(provider, SpoolmanProvider):
+        assert s1.initial_g == 1000.0                                  # the filament's weight
+    else:
+        assert s1.initial_g is None or isinstance(s1.initial_g, float)
+
+
 # --- a provider with no optional capabilities is still a valid provider -------------------------------------------------
 
 async def test_a_minimal_provider_gets_not_supported_from_every_optional_method():

@@ -67,6 +67,7 @@ class InvSpool:
     material_ref: str | None = None
     material: InvMaterial | None = None
     remaining_g: float | None = None         # None = the provider doesn't track weight
+    initial_g: float | None = None           # weight when new (percent remaining = remaining_g / initial_g); None = unknown
     location: str | None = None
     label: str = ""
     archived: bool = False
@@ -121,6 +122,16 @@ class FilamentInventoryProvider(ABC):
     # Library management — only for providers that own their library (capability-gated, never by plugin id). A provider
     # without these (its library lives in the external system) is still a valid provider. Failures use
     # InventoryProviderError (status 404 unknown ref, 422 invalid input).
+    #
+    # Semantics every provider follows (the UI relies on them):
+    #  * A patch value of None CLEARS an optional field (vendor, material, color_hex, density, diameter, location); `name`
+    #    and a spool `label` can never be cleared (422). Keys absent from the patch are untouched.
+    #  * Archiving is reversible and never cascades: archiving a material leaves its spools as they are, and archived
+    #    materials/spools are still returned by list_*/get_spool (flagged `archived`; core hides them by default).
+    #    Archived items can still be edited and weighed. create_spool on an ARCHIVED material is a 422.
+    #  * create_spool: `remaining_g` defaults to `initial_g`; `remaining_g > initial_g` is a 422. `initial_g` is create-only
+    #    input that surfaces as InvSpool.initial_g.
+    #  * list_* return a stable order (creation order); core re-sorts by ref so the API order is deterministic.
     async def create_material(self, draft: MaterialDraft) -> InvMaterial:                   # MANAGE_MATERIALS
         raise NotSupported(MANAGE_MATERIALS)
 
