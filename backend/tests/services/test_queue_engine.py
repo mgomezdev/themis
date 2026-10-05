@@ -6,7 +6,7 @@ from tests.fake_providers import FakeSlicingProvider
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import select, text
 
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
@@ -1050,47 +1050,25 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
 
 
 @pytest.mark.asyncio
-async def test_handle_print_complete_fires_spoolman_deduction(db):
-    """On completion, deducts actual_filament_grams from Spoolman using slot's spool_id."""
-    from unittest.mock import patch, AsyncMock, MagicMock
-    from app.models import Job, GcodeFile
-    from app.services.queue_engine import QueueEngine
-    from app.services.slicer_service import SlicerService
-
-    printer_id = 1
-    job_id = await _seed_job(db, printer_id, status="printing")
-
-    async with db() as session:
-        printer = await session.get(Printer, printer_id)
-        printer.loaded_filaments = [{"type": "PLA", "color": "", "filament_profile": "PLA",
-                                      "spoolman_spool_id": 42}]
-        job = await session.get(Job, job_id)
-        job.status = "printing"
-        job.assigned_printer_id = printer_id
-        job.actual_filament_grams = 17.5
-        session.add(GcodeFile(job_id=job_id, printer_id=printer_id, path="/fake.gcode"))
-        await session.commit()
-
-    mgr = _make_mock_printer_manager([printer_id])
-    slicer = MagicMock(spec=SlicerService)
-    slicer._data_dir = Path("/tmp")
-    engine = QueueEngine(db, mgr, slicer)
-
+async def test_handle_print_complete_writes_the_snapshot_minus_grams_not_the_live_weight(db):
+    """The absolute target is `start-of-print weight - spent`, taken from the job's snapshot (the live reading, 500, is
+    deliberately different so a read-then-subtract regression fails)."""
+    from app.services.inventory import tasks as inventory_tasks
     from tests.fake_providers import FakeInventoryProvider
-    from tests.inventory_helpers import use_provider
-    await use_provider(FakeInventoryProvider())
+    from tests.inventory_helpers import spool, use_provider
 
-    deduction_calls = []
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+    await _snapshot(db, job_id, 300.0)
 
-    async def fake_deduct(spool_ref, grams):
-        deduction_calls.append({"spool_id": spool_ref, "grams": grams})
+    await engine.handle_print_complete(printer_id)
+    await inventory_tasks.drain()
 
-    with patch("app.services.inventory.deduction.deduct", fake_deduct):
-        await engine.handle_print_complete(printer_id)
-
-    assert len(deduction_calls) == 1
-    assert deduction_calls[0]["spool_id"] == "42"
-    assert deduction_calls[0]["grams"] == pytest.approx(17.5)
+    assert fake.writes == [("42", pytest.approx(282.5))]
+    assert "get_spool" not in fake.calls
+    rows = await _outbox_rows(db)
+    assert [(r.spool_ref, r.status) for r in rows] == [("42", "applied")]
 
 
 async def _seed_completing_job(db, grams=17.5):
@@ -1115,20 +1093,91 @@ async def _seed_completing_job(db, grams=17.5):
     return QueueEngine(db, _make_mock_printer_manager([printer_id]), slicer), printer_id, job_id
 
 
+async def _outbox_rows(db):
+    from sqlalchemy import select
+    from app.models import InventoryPendingWrite
+    async with db() as session:
+        return list((await session.execute(select(InventoryPendingWrite).order_by(InventoryPendingWrite.id))).scalars())
+
+
+async def _snapshot(db, job_id, pre, ref="42", provider="spoolman"):
+    from app.models import JobSpoolSnapshot
+    async with db() as session:
+        session.add(JobSpoolSnapshot(job_id=job_id, printer_id=1, provider=provider, spool_ref=ref, pre_weight_g=pre,
+                                     source="live" if pre is not None else "missing", taken_at="2026-01-01T00:00:00+00:00"))
+        await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the_provider_on_the_loop(db):
+    """Provider I/O is only ever scheduled as a host task: with `tasks.spawn` intercepted (coroutines collected, never run),
+    starting and completing a print touch no provider method, yet the outbox row is already durable."""
+    from app.models import JobSpoolSnapshot
+    from sqlalchemy import select
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
+    await use_provider(fake)
+    spawned = []
+
+    def spy(coro, name=None):
+        spawned.append((name, coro))
+
+    gcode = "/tmp/guard.gcode"
+    open(gcode, "w").write("G28\n")
+    with patch("app.services.inventory.tasks.spawn", spy):
+        await engine._do_upload_and_print(job_id, printer_id, gcode, 1, None)
+        assert [n for n, _ in spawned] == [f"inventory-snapshot-{job_id}"]
+        assert fake.calls == []                                           # nothing ran on the loop
+        # run the scheduled snapshot "in the host", as the real task would
+        await spawned[0][1]
+        async with db() as session:
+            snap = (await session.execute(select(JobSpoolSnapshot))).scalar_one()
+        assert (snap.pre_weight_g, snap.source, snap.spool_ref) == (500.0, "live", "42")
+
+        fake.calls.clear()
+        spawned.clear()
+        await engine.handle_print_complete(printer_id)
+        assert fake.calls == [] and fake.writes == []                     # completion called no provider method
+        rows = await _outbox_rows(db)
+        assert [(r.spool_ref, r.target_g, r.status) for r in rows] == [("42", pytest.approx(482.5), "pending")]
+        assert [n for n, _ in spawned] == ["inventory-outbox-flush"]
+        for _, c in spawned:
+            c.close()                                                     # never awaited: avoid the un-awaited warning
+    os.unlink(gcode)
+
+
+@pytest.mark.asyncio
+async def test_print_start_schedules_no_snapshot_when_deduction_cannot_apply(db):
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    await use_provider(FakeInventoryProvider(spools=[spool("42", 500.0)], capabilities=frozenset({"TRACKS_WEIGHT"})))
+    spawned = []
+    gcode = "/tmp/guard2.gcode"
+    open(gcode, "w").write("G28\n")
+    with patch("app.services.inventory.tasks.spawn", lambda coro, name=None: spawned.append(coro)):
+        await engine._do_upload_and_print(job_id, printer_id, gcode, 1, None)
+    assert spawned == []
+    os.unlink(gcode)
+
+
 @pytest.mark.asyncio
 async def test_completion_sets_the_spool_weight_through_the_inventory_provider(db):
-    """Interim deduction (BIZ-218 replaces it): read the spool, then set `remaining - grams` with the slot's spool ref."""
+    """No start snapshot (the job was already printing at upgrade): the weight is taken at completion, then written."""
     from app.models import Job
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
-    from tests.waiting import wait_until
+    from app.services.inventory import tasks as inventory_tasks
 
     engine, printer_id, job_id = await _seed_completing_job(db)
     fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
-    await wait_until(lambda: fake.writes, what="weight written")
+    await inventory_tasks.drain()
 
     assert fake.writes == [("42", pytest.approx(482.5))]
     async with db() as session:
@@ -1147,9 +1196,10 @@ async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabil
     if caps is not None:
         fake = FakeInventoryProvider(spools=[spool("42", 500.0)], capabilities=caps)
         await use_provider(fake)
-    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
-        await engine.handle_print_complete(printer_id)
-    deduct.assert_not_called()
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await inventory_tasks.drain()
+    assert await _outbox_rows(db) == []
     if fake is not None:
         assert fake.calls == [] and fake.writes == []
 
@@ -1168,10 +1218,11 @@ async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
         session.add(InventoryConfig(id=1, deduct_on_complete=False, low_stock_overrides={}, low_stock_alerted=[]))
         await session.commit()
 
-    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
-        await engine.handle_print_complete(printer_id)
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await inventory_tasks.drain()
 
-    deduct.assert_not_called()
+    assert await _outbox_rows(db) == []
     assert fake.calls == [] and fake.writes == []
 
 
@@ -1185,9 +1236,10 @@ async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provide
     engine, printer_id, _ = await _seed_completing_job(db)
     other = FakeInventoryProvider(spools=[spool("42", 500.0)])
     await use_provider(other, plugin_id="other_inventory")
-    with patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as deduct:
-        await engine.handle_print_complete(printer_id)
-    deduct.assert_not_called()
+    from app.services.inventory import tasks as inventory_tasks
+    await engine.handle_print_complete(printer_id)
+    await inventory_tasks.drain()
+    assert await _outbox_rows(db) == []
     assert other.calls == [] and other.writes == []
 
 
@@ -1197,7 +1249,7 @@ async def test_a_failing_provider_never_breaks_completion(db):
     from app.plugins.kinds.filament_inventory import InventoryProviderError
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
-    from tests.waiting import wait_until
+    from app.services.inventory import tasks as inventory_tasks
 
     engine, printer_id, job_id = await _seed_completing_job(db)
     fake = FakeInventoryProvider(spools=[spool("42", 500.0)])
@@ -1205,7 +1257,8 @@ async def test_a_failing_provider_never_breaks_completion(db):
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
-    await wait_until(lambda: "get_spool" in fake.calls, what="deduction attempted")
+    await inventory_tasks.drain()
+    assert "get_spool" in fake.calls
 
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "complete"
@@ -1237,14 +1290,16 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     slicer._data_dir = Path("/tmp")
     engine = QueueEngine(db, mgr, slicer)
 
-    deduction_calls = []
-    async def fake_deduct(*a, **kw):
-        deduction_calls.append(a)
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    fake = FakeInventoryProvider()
+    await use_provider(fake)
 
-    with patch("app.services.inventory.deduction.deduct", fake_deduct):
-        await engine.handle_print_complete(printer_id)
+    await engine.handle_print_complete(printer_id)
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
 
-    assert deduction_calls == []
+    assert await _outbox_rows(db) == [] and fake.calls == []
 
 
 @pytest.mark.asyncio
@@ -1278,13 +1333,9 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     engine = QueueEngine(db, mgr, slicer)
 
     from tests.fake_providers import FakeInventoryProvider
-    from tests.inventory_helpers import use_provider
-    await use_provider(FakeInventoryProvider())
-
-    deduction_calls = []
-
-    async def fake_deduct(spool_ref, grams):
-        deduction_calls.append({"spool_id": spool_ref, "grams": grams})
+    from tests.inventory_helpers import spool, use_provider
+    await use_provider(FakeInventoryProvider(spools=[spool("42", 500.0)]))
+    await _snapshot(db, job_id, 500.0)
 
     # Force the interleave that the old code let happen implicitly: right after the
     # OUTER call's initial read finds the job "printing", run a full SECOND
@@ -1311,10 +1362,9 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
 
     engine._factory = wrapped_factory
 
-    with patch("app.services.inventory.deduction.deduct", fake_deduct):
-        await engine.handle_print_complete(printer_id)
+    await engine.handle_print_complete(printer_id)
 
-    assert len(deduction_calls) == 1
+    assert len(await _outbox_rows(db)) == 1
     async with db() as session:
         printer = await session.get(Printer, printer_id)
         assert printer.lifetime_job_count == 1

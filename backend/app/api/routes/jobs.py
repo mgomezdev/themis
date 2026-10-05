@@ -296,6 +296,7 @@ def _to_dict(j: Job) -> dict:
         "actual_seconds": j.actual_seconds,
         "actual_filament_breakdown": j.actual_filament_breakdown,
         "deduction_skipped": j.deduction_skipped,
+        "deduction_note": j.deduction_note,
         # Estimate values (populated after background test slice)
         "estimate_status": j.estimate_status,
         "estimate_seconds": j.estimate_seconds,
@@ -1212,29 +1213,20 @@ async def complete_job_manually(
     printer.awaiting_plate_clear = True
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
-    spool_id = None
-    grams_to_deduct = None
+    plan = None
     if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
-        loaded = printer.loaded_filaments or []
-        slot = _slot_for_config(config, loaded)
-        if slot is not None:
-            raw_spool_id = inventory_refs.slot_spool_ref(slot)
-            if raw_spool_id is not None:
-                try:
-                    spool_id = int(raw_spool_id)
-                    grams_to_deduct = grams
-                    job.deduction_skipped = False
-                except (TypeError, ValueError):
-                    logger.warning(
-                        "Invalid slot spool ref %r for job %s — deduction skipped",
-                        raw_spool_id, job_id,
-                    )
+        slot = _slot_for_config(config, printer.loaded_filaments or [])
+        raw_spool_id = inventory_refs.slot_spool_ref(slot) if slot is not None else None
+        if raw_spool_id is not None:
+            plan = await inventory_deduction.plan_completion(
+                session, job=job, printer_id=body.printer_id, spool_ref=str(raw_spool_id), grams=grams,
+                source="manual_complete")
 
     await session.commit()
     await session.refresh(job)
 
-    if spool_id is not None and grams_to_deduct is not None:
-        asyncio.create_task(inventory_deduction.deduct(str(spool_id), grams_to_deduct))
+    if plan is not None:
+        inventory_deduction.after_commit(plan, inventory_deduction.factory_for(session))
 
     return _to_dict(job)
 

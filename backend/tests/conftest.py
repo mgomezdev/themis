@@ -59,6 +59,8 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     try:
         yield factory
     finally:
+        from app.services.inventory import tasks as inventory_tasks
+        await inventory_tasks.drain()                       # background snapshot/flush tasks must not outlive the test DB
         await plugin_host.stop()
         plugin_host._reset()
         plugins_registry._REGISTRY.clear()

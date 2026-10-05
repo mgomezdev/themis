@@ -10,7 +10,7 @@ from app.plugins.kinds.filament_inventory import REMOTE, TRACKS_WEIGHT, Inventor
 from app.services.inventory import provider as inventory_provider, sync as inventory_sync
 from app.services.inventory.sync import InventorySyncLoop, record_sync, status
 from tests.fake_providers import FakeInventoryProvider
-from tests.inventory_helpers import enable_spoolman, use_provider
+from tests.inventory_helpers import enable_spoolman, spool, use_provider
 
 URL = "http://spoolman.test"
 
@@ -184,3 +184,17 @@ async def test_loop_survives_a_failing_tick_polls_every_minute_and_propagates_ca
 
     assert len(ticks) == 2  # the first tick's exception did not stop the loop
     assert sleeps == [60, 60]
+
+
+async def test_tick_retries_queued_weight_writes_even_for_a_provider_that_is_not_remote(session_factory):
+    """The outbox retries on every poll, independent of the sync interval or the REMOTE capability."""
+    from app.services.inventory import outbox
+    local = FakeInventoryProvider(spools=[spool("1", 100.0)])                 # TRACKS_WEIGHT + WRITE_WEIGHT, not REMOTE
+    await use_provider(local)
+    async with session_factory() as s:
+        outbox.enqueue(s, "spoolman", "1", 60.0, job_id=None, printer_id=None, source="queue")
+        await s.commit()
+
+    await _loop_for(session_factory)._tick()
+
+    assert local.writes == [("1", 60.0)]
