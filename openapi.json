@@ -10284,7 +10284,6 @@
           "name": {
             "type": "string",
             "maxLength": 200,
-            "minLength": 1,
             "title": "Name"
           },
           "material": {
@@ -12406,7 +12405,6 @@
           "material_ref": {
             "type": "string",
             "maxLength": 64,
-            "minLength": 1,
             "title": "Material Ref"
           },
           "label": {
