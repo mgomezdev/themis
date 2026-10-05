@@ -1,0 +1,26 @@
+{
+  "notification": [
+    {
+      "event": "spool.low",
+      "job_id": null,
+      "message": "Elegoo PLA Black (Slot 2) has 500 g left (alert below 600 g).",
+      "title": "Themis: spool running low"
+    }
+  ],
+  "webhook": [
+    {
+      "payload": {
+        "event": "spool.low",
+        "filament_id": 2,
+        "location": "Slot 2",
+        "name": "Elegoo PLA Black",
+        "remaining_g": 500.0,
+        "spool_id": 2,
+        "threshold_g": 600.0,
+        "timestamp": "<masked>"
+      },
+      "secret": "whsec",
+      "url": "http://hook.test/x"
+    }
+  ]
+}

@@ -123,6 +123,8 @@ npx playwright test             # e2e specs (mocked API; `e2e/mock-api.ts`)
   uses fixed zip timestamps so content hashes are stable); `tests/waiting.py` `wait_until` instead of `sleep`.
   Frontend: Vitest + Testing Library with `src/test/fetchStub.ts` (or `vi.stubGlobal('fetch', …)`) and a `FakeWS` stub.
   A response field the FE reads goes in `contracts/response-keys.json` (checked by both suites).
+  Golden files (BIZ-204): `tests/golden.py` `assert_golden(name, value)` pins wire format byte-for-byte in `tests/golden/`
+  (`UPDATE_GOLDEN=1` regenerates; mask timestamps with `mask()`); `tests/v032_fixture.py` builds a seeded v032 DB for migration tests.
 
 ## Git
 

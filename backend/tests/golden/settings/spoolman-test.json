@@ -1,0 +1,25 @@
+{
+  "blank_url_falls_back_to_saved": {
+    "body": {
+      "ok": true,
+      "status": "ok",
+      "version": "1.0.0-mock"
+    },
+    "status": 200
+  },
+  "nothing_saved": {
+    "body": {
+      "message": "No URL configured",
+      "ok": false
+    },
+    "status": 200
+  },
+  "saved_config": {
+    "body": {
+      "ok": true,
+      "status": "ok",
+      "version": "1.0.0-mock"
+    },
+    "status": 200
+  }
+}

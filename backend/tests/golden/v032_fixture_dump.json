@@ -1,0 +1,277 @@
+{
+  "admin_account": [
+    {
+      "allow_local_login": 1,
+      "id": 1,
+      "password_hash": null,
+      "recovery_attempts": 0,
+      "recovery_code_expires_at": null,
+      "recovery_code_hash": null,
+      "username": "admin"
+    }
+  ],
+  "api_keys": [
+    {
+      "admin_session": 0,
+      "created_at": "2026-01-01T00:00:00",
+      "customer_id": null,
+      "enabled": 1,
+      "expires_at": null,
+      "id": 1,
+      "key_hash": "0000000000000000000000000000000000000000000000000000000000000001",
+      "key_prefix": "fix00001",
+      "last_used_at": null,
+      "name": "Staff integration",
+      "revoked_at": null,
+      "scopes": "[\"jobs:read\", \"jobs:write\", \"settings:read\", \"settings:write\", \"spoolman:read\", \"spoolman:write\"]"
+    },
+    {
+      "admin_session": 1,
+      "created_at": "2026-01-01T00:00:00",
+      "customer_id": null,
+      "enabled": 1,
+      "expires_at": null,
+      "id": 2,
+      "key_hash": "0000000000000000000000000000000000000000000000000000000000000002",
+      "key_prefix": "fix00002",
+      "last_used_at": null,
+      "name": "Admin session",
+      "revoked_at": null,
+      "scopes": "[\"jobs:read\", \"jobs:write\", \"settings:read\", \"settings:write\", \"spoolman:read\", \"spoolman:write\"]"
+    },
+    {
+      "admin_session": 0,
+      "created_at": "2026-01-01T00:00:00",
+      "customer_id": null,
+      "enabled": 1,
+      "expires_at": null,
+      "id": 3,
+      "key_hash": "0000000000000000000000000000000000000000000000000000000000000003",
+      "key_prefix": "fix00003",
+      "last_used_at": null,
+      "name": "Browser device",
+      "revoked_at": null,
+      "scopes": "[\"jobs:read\", \"jobs:write\", \"settings:read\", \"settings:write\", \"spoolman:read\", \"spoolman:write\"]"
+    },
+    {
+      "admin_session": 0,
+      "created_at": "2026-01-01T00:00:00",
+      "customer_id": null,
+      "enabled": 1,
+      "expires_at": null,
+      "id": 4,
+      "key_hash": "0000000000000000000000000000000000000000000000000000000000000004",
+      "key_prefix": "fix00004",
+      "last_used_at": null,
+      "name": "Read-only key",
+      "revoked_at": null,
+      "scopes": "[\"jobs:read\"]"
+    }
+  ],
+  "job_model_targets": [
+    {
+      "filament_color": "000000",
+      "filament_id": 2,
+      "filament_map": null,
+      "filament_profile": null,
+      "filament_type": "PETG",
+      "id": 1,
+      "job_id": 1,
+      "machine_profile": "Bambu Lab X1C 0.4 nozzle",
+      "print_profile": "0.20mm Standard"
+    }
+  ],
+  "job_printer_configs": [
+    {
+      "filament_color": "FFFFFF",
+      "filament_id": 1,
+      "filament_map": null,
+      "filament_profile": null,
+      "filament_type": "PLA",
+      "id": 1,
+      "job_id": 1,
+      "model_target_id": null,
+      "print_profile": "0.20mm Standard",
+      "printer_id": 1,
+      "slice_error": null,
+      "slice_failed": 0,
+      "tool_index": 0
+    }
+  ],
+  "jobs": [
+    {
+      "actual_filament_breakdown": null,
+      "actual_filament_grams": null,
+      "actual_seconds": null,
+      "assigned_printer_id": null,
+      "block_reason": null,
+      "completed_at": null,
+      "created_at": "2026-01-01T00:00:00",
+      "deduction_skipped": null,
+      "estimate_filament_breakdown": null,
+      "estimate_filament_grams": null,
+      "estimate_preset_label": null,
+      "estimate_seconds": null,
+      "estimate_status": null,
+      "estimate_token": 0,
+      "filament_cost": null,
+      "id": 1,
+      "not_before": null,
+      "order_id": 1,
+      "outcome": null,
+      "overrides": null,
+      "plate_number": 1,
+      "printed_on_printer_id": null,
+      "project_id": 1,
+      "project_item_quantities": null,
+      "queue_position": 1.0,
+      "status": "queued",
+      "updated_at": "2026-01-01T00:00:00",
+      "uploaded_file_id": 1
+    }
+  ],
+  "notification_config": [
+    {
+      "discord_enabled": 0,
+      "discord_events": "[]",
+      "discord_webhook_url": null,
+      "email_enabled": 0,
+      "email_events": "[]",
+      "email_from_addr": null,
+      "email_host": null,
+      "email_password": null,
+      "email_port": null,
+      "email_to_addrs": "[]",
+      "email_username": null,
+      "id": 1,
+      "ntfy_enabled": 0,
+      "ntfy_events": "[]",
+      "ntfy_priority": null,
+      "ntfy_server_url": null,
+      "ntfy_topic": null
+    }
+  ],
+  "orders": [
+    {
+      "amount_paid": null,
+      "created_at": "2026-01-01T00:00:00",
+      "customer": "Fixture shop",
+      "due_date": null,
+      "id": 1,
+      "notes": null,
+      "on_hold": 0,
+      "order_type": "internal",
+      "parts": "[{\"name\": \"M3 magnet\", \"quantity\": 4, \"filament_id\": 1}, {\"name\": \"Brass insert\", \"quantity\": 8}]",
+      "payment_status": "unpaid",
+      "title": "Fixture order",
+      "updated_at": "2026-01-01T00:00:00"
+    }
+  ],
+  "printers": [
+    {
+      "awaiting_plate_clear": 0,
+      "bed_x_mm": 256.0,
+      "bed_y_mm": 256.0,
+      "build_plate_type": null,
+      "connection_config": "{}",
+      "current_orca_printer_profile": "Bambu Lab X1C 0.4 nozzle",
+      "enabled": 1,
+      "id": 1,
+      "lifetime_job_count": 0,
+      "lifetime_print_seconds": 0,
+      "loaded_filaments": "[{\"slot\": 0, \"tool_index\": 0, \"type\": \"PLA\", \"color\": \"FFFFFF\", \"spoolman_spool_id\": 1}, {\"slot\": 1, \"tool_index\": 1, \"type\": \"PETG\", \"color\": \"000000\", \"spoolman_spool_id\": 2}, {\"slot\": 2, \"tool_index\": 2, \"type\": \"PLA\", \"color\": \"FF0000\", \"spoolman_spool_id\": null}]",
+      "machine_rate_per_hour": null,
+      "name": "Fixture P1",
+      "no_snapshots_while_idle": 0,
+      "orca_printer_profiles": "[]",
+      "printer_type": "bambu",
+      "queue_on": 1,
+      "quiet_end": null,
+      "quiet_start": null
+    }
+  ],
+  "project_items": [
+    {
+      "color_hex": "#FFFFFF",
+      "filament_color": "FFFFFF",
+      "filament_id": 1,
+      "filament_type": "PLA",
+      "file_id": 1,
+      "id": 1,
+      "project_id": 1,
+      "quantity": 2,
+      "quantity_completed": 0,
+      "quantity_failed": 0,
+      "sort_order": 0
+    }
+  ],
+  "projects": [
+    {
+      "amount_paid": null,
+      "converted_from_order_id": null,
+      "created_at": "2026-01-01T00:00:00",
+      "customer": "",
+      "customer_id": null,
+      "due_date": null,
+      "id": 1,
+      "machine_uuid": null,
+      "name": "Fixture project",
+      "notes": null,
+      "on_hold": 0,
+      "order_id": null,
+      "order_type": "internal",
+      "payment_status": "unpaid",
+      "price": null,
+      "price_visible": 0,
+      "process_uuid": null,
+      "quote_accepted_at": null,
+      "result_file_id": null,
+      "share_token": null,
+      "share_token_created_at": null,
+      "source_app": null,
+      "source_layout_id": null,
+      "source_user": null,
+      "stage": "queued",
+      "updated_at": "2026-01-01T00:00:00"
+    }
+  ],
+  "spoolman_config": [
+    {
+      "api_key": "fixture-key",
+      "enabled": 1,
+      "id": 1,
+      "last_attempt_at": "2026-01-01T00:00:00",
+      "last_sync_at": "2026-01-01T00:00:00",
+      "last_sync_error": null,
+      "last_sync_error_code": null,
+      "low_stock_alerted": "[2, 7]",
+      "low_stock_default_g": 150.0,
+      "low_stock_overrides": "{\"1\": 50.0, \"2\": 0.0}",
+      "sync_interval_minutes": 10,
+      "url": "http://spoolman.fixture:7912"
+    }
+  ],
+  "uploaded_files": [
+    {
+      "content_hash": "",
+      "folder": "/",
+      "id": 1,
+      "missing": 0,
+      "mtime": 0.0,
+      "original_filename": "benchy.3mf",
+      "plates": "[{\"plate_number\": 1, \"filament_g\": 12.5}]",
+      "relative_path": "benchy.3mf",
+      "size_bytes": 0,
+      "stored_path": "",
+      "uploaded_at": "2026-01-01T00:00:00"
+    }
+  ],
+  "webhook_config": [
+    {
+      "events": "[]",
+      "id": 1,
+      "secret": null,
+      "url": null
+    }
+  ]
+}

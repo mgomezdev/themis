@@ -1,0 +1,16 @@
+{
+  "job_details": {
+    "message": "project needs ~340g PLA, spool Bambu PLA Basic Black has ~220g remaining",
+    "needed_g": 340.0,
+    "remaining_g": 220.0,
+    "spool_id": 99,
+    "spool_label": "Bambu PLA Basic Black"
+  },
+  "queue": {
+    "message": "project needs ~340g PLA, spool Bambu PLA Basic Black has ~220g remaining",
+    "needed_g": 340.0,
+    "remaining_g": 220.0,
+    "spool_id": 99,
+    "spool_label": "Bambu PLA Basic Black"
+  }
+}

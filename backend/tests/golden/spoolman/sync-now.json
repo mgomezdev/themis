@@ -1,0 +1,9 @@
+{
+  "ok": {
+    "body": {
+      "filament_count": 2,
+      "spool_count": 2
+    },
+    "status": 200
+  }
+}
