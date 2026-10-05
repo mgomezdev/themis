@@ -21,6 +21,10 @@ THEMIS_VERIFY_MOONRAKER_URL=http://192.168.7.30:7125 [THEMIS_VERIFY_MOONRAKER_AP
 # Discovery: a range containing the printers above (also needs the per-vendor host vars)
 THEMIS_VERIFY_DISCOVERY_RANGE=192.168.7.0/24 THEMIS_VERIFY_BAMBU_HOST=... pytest protocol_verification/test_discovery.py -v -s
 
+# Spoolman absolute weight (the TEST spool's weight is overwritten, then restored; needs ALLOW_WRITE for the writes)
+THEMIS_VERIFY_SPOOLMAN_URL=http://spoolman:7912 THEMIS_VERIFY_SPOOLMAN_SPOOL_ID=7 [THEMIS_VERIFY_SPOOLMAN_API_KEY=...] \
+    [THEMIS_VERIFY_ALLOW_WRITE=1] pytest protocol_verification/test_spoolman_weight.py -m real_protocol -v -s
+
 # Elegoo Centauri (SDCP websocket, port 3030)
 THEMIS_VERIFY_ELEGOO_HOST=192.168.7.40 pytest protocol_verification -m real_protocol -v -s
 ```
@@ -62,3 +66,4 @@ When a feature relies on a vendor protocol we can't exercise in CI:
 | `test_discovery.py` | Bambu: MQTT 8883 + FTPS 990 open; unicast SSDP `M-SEARCH` on UDP 1990 answers with `USN`/`DevModel.bambu.com`/`DevName.bambu.com`; multicast NOTIFY parses. Elegoo: unicast `M99999` on UDP 3000 → SDCP JSON (`MainboardID`, `MachineName`, `Name`, `MainboardIP`). Moonraker: `/server/info` signature (200, or 401/403 when a key is required). Whole sweep of `THEMIS_VERIFY_DISCOVERY_RANGE` finds every configured printer |
 | `test_alarms.py` | Bambu `print.hms` = list of `{attr:int, code:int}` and carries the full current list; entries decode to known modules + severities (set `THEMIS_VERIFY_BAMBU_SERIAL` too). Elegoo `Status.PrintInfo.ErrorNumber` is an int. Moonraker `webhooks.state/state_message` and `print_stats.state/message` exist and the client's alarms match them. Observational on a healthy printer — trigger a harmless fault to exercise decoding |
 | `test_elegoo_files.py` | SDCP `GET_FILE_LIST` response shape for `/local/` (entry keys, how directories are marked, name format); client listing agrees; ids round-trip into `start_print`'s `/local/` prefix rule |
+| `test_spoolman_weight.py` | `GET /spool/{id}` carries `remaining_weight`/`used_weight` and remaining = initial − used; (write; target derived from the spool, original `used_weight` restored and verified — a failed restore fails loudly with the value to put back) `PATCH {remaining_weight: N}` reads back exactly N with `used_weight = initial − N` (not recomputed later); sending it twice is a no-op; sending both weights is a 400. Backs the deduction model's absolute set (BIZ-202 D6) |

@@ -103,6 +103,25 @@ def test_alarm_verification_checks_pass_against_virtual_error_reports(monkeypatc
     assert len(ran) == 5
 
 
+def test_spoolman_weight_verification_checks_pass_against_the_mock_spoolman():
+    """The mock encodes the PATCH remaining_weight semantics the deduction model relies on (BIZ-203)."""
+    import copy
+    from types import SimpleNamespace
+    from starlette.testclient import TestClient
+    from tests import spoolman_mock
+
+    saved = (copy.deepcopy(spoolman_mock._FILAMENTS), copy.deepcopy(spoolman_mock._SPOOLS))
+    try:
+        with TestClient(spoolman_mock.app) as http:
+            ran = _run_all("protocol_verification.test_spoolman_weight",
+                           spoolman=SimpleNamespace(http=http, spool_id=1), require_write=None)
+        assert len(ran) == 4
+        assert [s["remaining_weight"] for s in spoolman_mock._SPOOLS] == [800.0, 500.0]      # the checks restored the spool
+    finally:
+        spoolman_mock._FILAMENTS[:] = saved[0]
+        spoolman_mock._SPOOLS[:] = saved[1]
+
+
 def test_the_suite_skips_cleanly_without_a_printer_configured():
     """Collected by hand (not by default), every check must skip — never error — when no printer is configured."""
     import subprocess
