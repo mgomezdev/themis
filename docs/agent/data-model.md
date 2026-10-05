@@ -255,6 +255,12 @@ now preserves *all* Themis-owned slot keys —, job configs/targets, project ite
 changed vs the stored slot (an edited `inventory` wins; otherwise an edited legacy key wins). Material asks resolve the same way: an old client's echo of the stored `material_ref` never undoes its `filament_id` edit. **A new client must send `inventory: null` to unbind** (omitting the key leaves the stored binding); the legacy key is kept an int when numeric. A ref whose provider is not active is *unresolved*
 (never applied to another provider). Backfill: `('spoolman', CAST(filament_id AS TEXT))`.
 
+### Deduction model  (v037 — BIZ-218)
+
+`job_spool_snapshots{job_id FK CASCADE, printer_id, provider, spool_ref, pre_weight_g?, source live|pending|cached|missing, taken_at}` UNIQUE(job, provider, spool).
+`inventory_pending_writes{provider, spool_ref, target_g, job_id?, printer_id?, source queue|manual_complete, created_at, attempts, last_attempt_at, last_error, status pending|applied|superseded|discarded}` — the outbox (absolute targets only; applied/superseded/discarded rows pruned after 30 days).
+`inventory_spool_status{provider, spool_ref PK, tracking suspended, reason, since, job_id?}`. `jobs.deduction_note TEXT?` says why `deduction_skipped` is true. Events `inventory.tracking_unavailable` / `inventory.tracking_restored` (webhook + notification channels, like `spool.low`).
+
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline

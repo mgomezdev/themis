@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
@@ -16,7 +17,11 @@ from ...plugins.kinds.filament_inventory import (
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     InventoryProviderError, InvMaterial, InvSpool, MaterialDraft, NotSupported, SpoolDraft,
 )
-from ...services.inventory import config as inventory_config, provider as inventory_provider, sync as inventory_sync
+from ...models import InventoryPendingWrite
+from ...services.inventory import (
+    config as inventory_config, deduction as inventory_deduction, outbox as inventory_outbox,
+    provider as inventory_provider, sync as inventory_sync,
+)
 
 router = APIRouter(prefix="/api/v1/inventory", tags=["inventory"])
 
@@ -235,15 +240,114 @@ async def archive_spool(ref: str, body: ArchiveBody | None = None):
     return spool_out(await _write("archive_spool", ref, (body or ArchiveBody()).archived))
 
 
+async def _weight_corrected(session: AsyncSession, ref: str) -> bool:
+    """A user-set weight is authoritative: drop queued writes for the spool (they were computed from the old weight) and
+    clear a tracking suspension. Returns whether tracking was suspended."""
+    pid = inventory_provider.provider_id()
+    await session.execute(update(InventoryPendingWrite).where(
+        InventoryPendingWrite.provider == pid, InventoryPendingWrite.spool_ref == ref,
+        InventoryPendingWrite.status == "pending").values(status="superseded"))
+    restored = await inventory_deduction.restore(session, pid, ref)
+    await session.commit()
+    return restored
+
+
 @router.put("/spools/{ref}/remaining", summary="Set a spool's remaining weight (absolute grams)", responses=_LIBRARY_RESPONSES,
             dependencies=[Depends(require_scope("inventory:write"))])
-async def set_remaining(ref: str, body: RemainingBody):
+async def set_remaining(ref: str, body: RemainingBody, session: AsyncSession = Depends(get_session)):
     inventory_provider.require(WRITE_WEIGHT)
     await _write("set_remaining", ref, body.remaining_g)
+    await _weight_corrected(session, ref)
     # Write then read back (two calls, not atomic). If only the read-back fails the weight IS set: answer with what we wrote.
     read = await inventory_provider.call("get_spool", ref)
     spool = read.value if read.ok and read.value is not None else InvSpool(ref=ref, remaining_g=body.remaining_g, label=f"spool {ref}")
     return spool_out(spool)
+
+
+class ResumeBody(BaseModel):
+    remaining_g: float | None = Field(default=None, ge=0, le=100_000)
+
+
+@router.post("/spools/{ref}/resume-tracking", summary="Resume usage tracking after correcting a spool's weight",
+             description="With `remaining_g` the weight is written first (needs WRITE_WEIGHT); without it the spool's current "
+                         "weight is confirmed as correct. Clears the suspension and queued writes for the spool.",
+             responses={404: {"description": "Tracking is not suspended for this spool"}, **_LIBRARY_RESPONSES},
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def resume_tracking(ref: str, body: ResumeBody | None = None, session: AsyncSession = Depends(get_session)):
+    pid = inventory_provider.require()
+    if not await inventory_deduction.is_suspended(session, pid, ref):
+        raise HTTPException(status_code=404, detail="Tracking is not suspended for this spool")
+    if body and body.remaining_g is not None:
+        inventory_provider.require(WRITE_WEIGHT)
+        await _write("set_remaining", ref, body.remaining_g)
+    await _weight_corrected(session, ref)
+    return {"provider": pid, "spool_ref": ref, "tracking": "ok"}
+
+
+@router.get("/tracking", summary="Spools whose usage tracking is suspended",
+            dependencies=[Depends(require_scope("inventory:read"))])
+async def tracking(session: AsyncSession = Depends(get_session)):
+    pid = inventory_provider.provider_id()
+    rows = await inventory_deduction.suspended(session, pid) if pid else []
+    return {"provider": pid, "items": [{"spool_ref": r.spool_ref, "reason": r.reason, "since": r.since, "job_id": r.job_id}
+                                       for r in rows]}
+
+
+def _write_out(r: InventoryPendingWrite) -> dict:
+    return {"id": r.id, "provider": r.provider, "spool_ref": r.spool_ref, "target_g": r.target_g, "job_id": r.job_id,
+            "printer_id": r.printer_id, "source": r.source, "created_at": r.created_at, "attempts": r.attempts,
+            "last_attempt_at": r.last_attempt_at, "last_error": r.last_error, "status": r.status}
+
+
+@router.get("/pending-writes", summary="Weight updates not yet applied to the provider",
+            dependencies=[Depends(require_scope("inventory:read"))])
+async def pending_writes(session: AsyncSession = Depends(get_session)):
+    rows = (await session.execute(select(InventoryPendingWrite).where(InventoryPendingWrite.status == "pending")
+                                  .order_by(InventoryPendingWrite.id))).scalars().all()
+    return {"provider": inventory_provider.provider_id(), "items": [_write_out(r) for r in rows]}
+
+
+async def _pending_or_404(session: AsyncSession, write_id: int) -> InventoryPendingWrite:
+    row = await session.get(InventoryPendingWrite, write_id)
+    if row is None or row.status != "pending":
+        raise HTTPException(status_code=404, detail="No such pending write")
+    return row
+
+
+@router.post("/pending-writes/flush", summary="Send pending weight updates now",
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def flush_pending_writes(session: AsyncSession = Depends(get_session)):
+    inventory_provider.require(WRITE_WEIGHT)
+    applied = await inventory_outbox.flush(inventory_deduction.factory_for(session))
+    return {"applied": applied}
+
+
+@router.post("/pending-writes/{write_id}/discard", summary="Drop a pending weight update",
+             responses={404: {"description": "No such pending write"}},
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def discard_pending_write(write_id: int, session: AsyncSession = Depends(get_session)):
+    row = await _pending_or_404(session, write_id)
+    row.status = "discarded"
+    await session.commit()
+    return _write_out(row)
+
+
+class ResolveBody(BaseModel):
+    target_g: float | None = Field(default=None, ge=0, le=100_000)
+
+
+@router.post("/pending-writes/{write_id}/resolve", summary="Retry a pending weight update, optionally with a corrected target",
+             responses={404: {"description": "No such pending write"}},
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def resolve_pending_write(write_id: int, body: ResolveBody | None = None, session: AsyncSession = Depends(get_session)):
+    inventory_provider.require(WRITE_WEIGHT)
+    row = await _pending_or_404(session, write_id)
+    if body and body.target_g is not None:
+        row.target_g = body.target_g
+    await session.commit()
+    await inventory_outbox.flush(inventory_deduction.factory_for(session))
+    await session.refresh(row)
+    return _write_out(row)
 
 
 class LabelBody(BaseModel):

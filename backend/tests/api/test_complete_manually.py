@@ -3,6 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
+async def _pending_writes(session_factory):
+    from sqlalchemy import select
+    from app.models import InventoryPendingWrite
+    async with session_factory() as session:
+        return list((await session.execute(select(InventoryPendingWrite).order_by(InventoryPendingWrite.id))).scalars())
+
+
 def _fake_gcode_with_estimates(output_dir, grams: float = 12.5, time_str: str = "1h 5m 30s"):
     output_dir.mkdir(parents=True, exist_ok=True)
     gcode_file = output_dir / "out.gcode"
@@ -26,11 +33,12 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
 
     assert resp.status_code == 200
     body = resp.json()
@@ -39,7 +47,7 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
     assert body["actual_filament_grams"] == 12.5
     assert body["actual_seconds"] == 3930  # 1h5m30s
     assert body["assigned_printer_id"] == printer_id
-    mock_deduct.assert_not_called()  # no spool loaded — nothing to deduct
+    assert await _pending_writes(session_factory) == []  # no spool loaded — nothing to deduct
 
     printer_resp = await client.get(f"/api/v1/printers/{printer_id}")
     printer_data = printer_resp.json()
@@ -181,7 +189,7 @@ async def test_complete_manually_from_printing_status_completes(client, tmp_path
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe),          patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -205,8 +213,7 @@ async def test_complete_manually_output_dir_cleaned_up_on_success(client, tmp_pa
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -236,8 +243,7 @@ async def test_complete_manually_sends_no_printer_commands(client, tmp_path, upl
     from app.services.printer_manager import printer_manager
     printer_manager._clients[printer_id] = mock_client
     try:
-        with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-             patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
+        with patch("app.api.routes.jobs.queue_engine", mock_qe):
             resp = await client.post(
                 f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
             )
@@ -251,7 +257,7 @@ async def test_complete_manually_sends_no_printer_commands(client, tmp_path, upl
         printer_manager._clients.pop(printer_id, None)
 
 
-async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upload_3mf, create_job, create_printer):
+async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, session_factory, upload_3mf, create_job, create_printer):
     file_id = await upload_3mf()
     printer_id = await create_printer(
         loaded_filaments=[{"slot": 0, "type": "PLA", "color": "#000000", "spoolman_spool_id": 42}],
@@ -261,6 +267,10 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
     await client.put("/api/v1/settings/spoolman", json={
         "enabled": True, "url": "http://spoolman.test",
     })           # selects + enables the Spoolman plugin: an active provider that can write weights
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+    fake = FakeInventoryProvider(spools=[spool("42", 100.0)])
+    await use_provider(fake)
 
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
@@ -270,20 +280,23 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
 
     assert resp.status_code == 200
-    mock_deduct.assert_called_once()
-    call_args = mock_deduct.call_args[0]
-    assert call_args[0] == "42"                     # spool ref
-    assert call_args[1] == 8.0                       # grams
+    # No print-start snapshot exists for a manual completion: the weight is taken now, then the absolute target
+    # (`weight - grams`) goes through the outbox (the fake provider holds 100 g).
+    rows = await _pending_writes(session_factory)
+    assert [(r.spool_ref, r.source, r.status) for r in rows] == [("42", "manual_complete", "applied")]
+    assert rows[0].job_id == job_id and rows[0].target_g == 92.0
+    assert fake.writes == [("42", 92.0)]
 
 
-async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, tmp_path, upload_3mf, create_job, create_printer):
+async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, tmp_path, session_factory, upload_3mf, create_job, create_printer):
     file_id = await upload_3mf()
     printer_id = await create_printer(
         loaded_filaments=[{"slot": 0, "type": "PLA", "color": "#000000", "spoolman_spool_id": 42}],
@@ -299,11 +312,12 @@ async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, 
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
+    with patch("app.api.routes.jobs.queue_engine", mock_qe):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
 
     assert resp.status_code == 200
-    mock_deduct.assert_not_called()
+    assert await _pending_writes(session_factory) == []

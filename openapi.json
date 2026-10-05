@@ -8109,6 +8109,223 @@
         }
       }
     },
+    "/api/v1/inventory/spools/{ref}/resume-tracking": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resume usage tracking after correcting a spool's weight",
+        "description": "With `remaining_g` the weight is written first (needs WRITE_WEIGHT); without it the spool's current weight is confirmed as correct. Clears the suspension and queued writes for the spool.",
+        "operationId": "resume_tracking_api_v1_inventory_spools__ref__resume_tracking_post",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResumeBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "422": {
+            "description": "Invalid input"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/tracking": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Spools whose usage tracking is suspended",
+        "operationId": "tracking_api_v1_inventory_tracking_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Weight updates not yet applied to the provider",
+        "operationId": "pending_writes_api_v1_inventory_pending_writes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/flush": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Send pending weight updates now",
+        "operationId": "flush_pending_writes_api_v1_inventory_pending_writes_flush_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/discard": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Drop a pending weight update",
+        "operationId": "discard_pending_write_api_v1_inventory_pending_writes__write_id__discard_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending write"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/resolve": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Retry a pending weight update, optionally with a corrected target",
+        "operationId": "resolve_pending_write_api_v1_inventory_pending_writes__write_id__resolve_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ResolveBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending write"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/inventory/resolve-label": {
       "post": {
         "tags": [
@@ -12465,6 +12682,44 @@
           "positions"
         ],
         "title": "ReorderRequest"
+      },
+      "ResolveBody": {
+        "properties": {
+          "target_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target G"
+          }
+        },
+        "type": "object",
+        "title": "ResolveBody"
+      },
+      "ResumeBody": {
+        "properties": {
+          "remaining_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remaining G"
+          }
+        },
+        "type": "object",
+        "title": "ResumeBody"
       },
       "SettingsIn": {
         "properties": {

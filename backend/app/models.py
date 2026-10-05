@@ -151,6 +151,8 @@ class Job(Base):
     actual_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     actual_filament_breakdown: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     deduction_skipped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    # Why filament usage was not recorded for this job (inventory tracking suspended / no starting weight); null otherwise.
+    deduction_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # --- Estimate values (set after background test slice) ---
     estimate_token: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     estimate_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
@@ -613,3 +615,52 @@ class InventoryConfig(Base):
     low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)     # {"spoolman:3": 40.0}
     low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)       # ["spoolman:7"]
+
+
+class JobSpoolSnapshot(Base):
+    """A spool's weight when a job started printing (the base for the absolute `pre - spent` write at completion).
+    `source` = live | pending | cached | missing (missing: no starting weight could be obtained -> tracking suspends)."""
+    __tablename__ = "job_spool_snapshots"
+    __table_args__ = (UniqueConstraint("job_id", "provider", "spool_ref", name="ux_job_spool_snapshots"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    spool_ref: Mapped[str] = mapped_column(String(128))
+    pre_weight_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    source: Mapped[str] = mapped_column(String(16))
+    taken_at: Mapped[str] = mapped_column(String(32))
+
+
+class InventoryPendingWrite(Base):
+    """The deduction outbox: an ABSOLUTE `set remaining = target_g` for a spool, written in the completion transaction and
+    flushed to the provider by the host (re-sending is harmless). status: pending -> applied | superseded | discarded."""
+    __tablename__ = "inventory_pending_writes"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    spool_ref: Mapped[str] = mapped_column(String(128))
+    target_g: Mapped[float] = mapped_column(Float)
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    printer_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    source: Mapped[str] = mapped_column(String(24))                      # queue | manual_complete
+    created_at: Mapped[str] = mapped_column(String(32))
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+
+    __table_args__ = (Index("ix_inventory_pending_writes_spool", "provider", "spool_ref", "status"),)
+
+
+class InventorySpoolStatus(Base):
+    """A spool whose usage tracking is suspended (its recorded weight is known to be wrong) until a user corrects it."""
+    __tablename__ = "inventory_spool_status"
+
+    provider: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spool_ref: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tracking: Mapped[str] = mapped_column(String(16), default="suspended")
+    reason: Mapped[str] = mapped_column(Text)
+    since: Mapped[str] = mapped_column(String(32))
+    job_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

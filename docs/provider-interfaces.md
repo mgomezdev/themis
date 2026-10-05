@@ -47,7 +47,7 @@ see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 |---|---|---|
 | `test_connection()` | `dict` | Spoolman: `GET /api/v1/info`. |
 | `list_materials()` / `list_spools()` | `list[InvMaterial]` / `list[InvSpool]` | Routes batch: **one call per request** (queue/jobs preflight). |
-| `get_spool(ref)` | `InvSpool \| None` | `None` = not found (404). Used by the interim deduction (and, later, the pre-print snapshot). |
+| `get_spool(ref)` | `InvSpool \| None` | `None` = not found (404). Used by the print-start snapshot (and the deferred completion path). |
 | `set_remaining(ref, grams)` | `None` | `WRITE_WEIGHT`. **Absolute**, never a delta (D6): re-sending is harmless. Spoolman: `PATCH /spool/{id} {remaining_weight}` (`protocol_verification/test_spoolman_weight.py`). |
 | `set_profile_links(material_ref, links)` | `InvMaterial` | `PROFILE_LINKS_WRITE`. `{orca printer preset: [orca filament presets]}`. |
 | `create_material(MaterialDraft)` / `update_material(ref, patch)` / `archive_material(ref, archived=True)` | `InvMaterial` | `MANAGE_MATERIALS`. Patch keys ⊆ `MATERIAL_FIELDS` (name, material, color_hex, vendor, density, diameter). Archive is reversible; `list_materials` still returns archived ones (`archived=True`), core hides them unless `include_archived`. |
@@ -61,12 +61,21 @@ Optional methods raise `NotSupported(capability)` by default; callers check `pro
 DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
 `InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. Refs are strings. `raw` is
 provider-private (the plugin's own alias routes relay it); core code never reads it and the neutral API never serialises it.
+**Deduction model (BIZ-218).** Provider I/O never runs on the queue loop. At print *start* (after the `printing` commit) a host task
+records `job_spool_snapshots` (the spool's weight: newest pending outbox target → live `get_spool` → `missing`). At *completion*
+(queue or `complete-manually`) the transaction enqueues an **absolute** `inventory_pending_writes` row `target = max(0, pre − spent)`;
+a host task flushes it with `set_remaining` (newest per spool; older rows → `superseded`; retried every sync-loop poll and via
+`POST /inventory/pending-writes/flush`). No snapshot (job already printing at upgrade, manual completion) → the weight is read in a
+host task at completion. A spool with no obtainable starting weight is **suspended** (`inventory_spool_status`): the write is skipped,
+the job gets `deduction_skipped` + `deduction_note`, one `inventory.tracking_unavailable` event fires, later prints on it are skipped
+and flagged, until a user corrects the weight (`resume-tracking` / `PUT …/remaining`) → `inventory.tracking_restored`.
+
 Errors: `InventoryProviderError(message, code, status)` — `code` is the HTTP status string or the transport exception class name.
 
 **Core access** is `app/services/inventory/`: `provider.py` (`active_provider()`, `has(cap)`, `require(cap)` → raises
 `CapabilityUnavailable` → HTTP 409 `{"error": "capability_unavailable", "kind", "capability"}`, `call(method, …)` → the host's
 contained `CallResult`), `read.py`, `alerts.py` (`spool.low`), `preflight.py` (`low_stock_warning`), `sync.py` (generic sync
-loop + health in `plugin_configs.state`), `deduction.py` (interim read→set; BIZ-218 replaces it), `config.py`
+loop + health in `plugin_configs.state`), `deduction.py` + `snapshots.py` + `outbox.py` + `tasks.py` (the deduction model below), `config.py`
 (`inventory_config`: `deduct_on_complete` + low-stock thresholds, keys namespaced `"<provider>:<ref>"`).
 
 **Profile links** are the one place Laminus and the inventory meet: Spoolman stores Orca preset names in `extra.orca_profiles`

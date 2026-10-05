@@ -31,7 +31,7 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs
+from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
@@ -1435,15 +1435,31 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             if printer is not None:
                 printer.awaiting_plate_clear = True
+            snapshot_ref = await self._snapshot_ref(session, job_id, printer_id, printer)
             await session.commit()
 
+        if snapshot_ref is not None:
+            # Provider I/O never runs on the queue loop: the starting weight is read in a host task.
+            inventory_tasks.spawn(inventory_snapshots.take(self._factory, job_id, printer_id, snapshot_ref),
+                                  name=f"inventory-snapshot-{job_id}")
         await self._broadcast_job(job_id)
+
+    async def _snapshot_ref(self, session, job_id: int, printer_id: int, printer) -> str | None:
+        """The spool ref to snapshot at print start (DB only), or None when no deduction will apply."""
+        if not (inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session)):
+            return None
+        config = (await session.execute(select(JobPrinterConfig).where(
+            JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
+        if config is None:
+            return None
+        slot = _slot_for_config(config, (printer.loaded_filaments if printer else None) or [])
+        ref = inventory_refs.slot_spool_ref(slot) if slot is not None else None
+        return str(ref) if ref is not None else None
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
         job_id = None
-        spool_id: int | None = None
-        grams_to_deduct: float | None = None
+        deduction_plan = None
 
         async with self._factory() as session:
             result = await session.execute(
@@ -1495,15 +1511,9 @@ class QueueEngine:
                     if slot is not None:
                         raw_spool_id = inventory_refs.slot_spool_ref(slot)
                         if raw_spool_id is not None:
-                            try:
-                                spool_id = int(raw_spool_id)
-                                grams_to_deduct = actual_grams
-                                job.deduction_skipped = False
-                            except (TypeError, ValueError):
-                                logger.warning(
-                                    "Invalid slot spool ref %r for job %s — deduction skipped",
-                                    raw_spool_id, job_id,
-                                )
+                            deduction_plan = await inventory_deduction.plan_completion(
+                                session, job=job, printer_id=printer_id, spool_ref=str(raw_spool_id),
+                                grams=actual_grams, source="queue")
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1521,12 +1531,8 @@ class QueueEngine:
                 await session.delete(gcode)
             await session.commit()
 
-        if spool_id is not None and grams_to_deduct is not None:
-            task = asyncio.create_task(
-                inventory_deduction.deduct(str(spool_id), grams_to_deduct)
-            )
-            self._estimate_tasks.add(task)
-            task.add_done_callback(self._estimate_tasks.discard)
+        if deduction_plan is not None:
+            inventory_deduction.after_commit(deduction_plan, self._factory)
 
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.complete")

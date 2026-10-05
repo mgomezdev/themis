@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...plugins.host import plugin_host
 from ...plugins.kinds.filament_inventory import KIND, REMOTE, TRACKS_WEIGHT, InventoryProviderError
-from . import alerts, provider
+from . import alerts, outbox, provider
 
 logger = logging.getLogger("app")
 
@@ -93,6 +93,8 @@ class InventorySyncLoop:
 
     async def _tick(self) -> None:
         assert self._session_factory is not None
+        if await outbox.has_pending(self._session_factory):       # queued weight updates retry on every poll
+            await outbox.flush(self._session_factory)
         if not provider.has(REMOTE):
             return
         st = status(provider.provider_id())
