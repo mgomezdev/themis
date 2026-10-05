@@ -23,8 +23,8 @@ SPOOLMAN_ALLOWLIST = {
     "api/routes/laminus.py", "services/catalog_service.py", "services/catalog_utils.py",
     # the legacy slot/ask key names + provider constant (the dual-write normalizer): removed by the cleanup release (BIZ-221)
     "services/inventory/refs.py",
-    # permanent (spec §6): scopes, migrations, the legacy table's model, the bundled-plugin list
-    "auth.py", "models.py", "plugins/__init__.py",
+    # permanent (spec §6): scopes, migrations, the legacy table's model
+    "auth.py", "models.py",
     "migrations/runner.py", "migrations/v020_spoolman_sync_status.py", "migrations/v026_spool_low_stock.py",
     "migrations/v035_inventory_core.py", "migrations/v036_inventory_refs.py",
 }
@@ -63,7 +63,7 @@ def test_the_allowlist_only_shrinks():
 
 def test_the_plugin_host_itself_is_provider_agnostic():
     for path, rel in _files(APP / "plugins"):
-        if rel.startswith(("spoolman/", "local_inventory/")) or rel == "__init__.py":     # __init__ holds BUNDLED_MODULES
+        if rel.startswith(("spoolman/", "local_inventory/")):                             # the plugins themselves
             continue
         text = path.read_text(encoding="utf-8")
         assert not SPOOLMAN.search(text) and not LOCAL_INVENTORY.search(text), rel

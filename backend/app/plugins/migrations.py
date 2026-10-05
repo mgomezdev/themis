@@ -43,7 +43,8 @@ async def _applied(conn, plugin_id: str) -> set[int]:
 async def _apply(conn, m: PluginManifest, mod) -> None:
     before = await _tables(conn)
     await mod.up(conn)
-    stray = sorted(t for t in (await _tables(conn)) - before if not t.startswith(m.prefix))
+    # SQLite's own bookkeeping tables (`sqlite_sequence` appears with the first AUTOINCREMENT table) are not the plugin's
+    stray = sorted(t for t in (await _tables(conn)) - before if not t.startswith(m.prefix) and not t.startswith("sqlite_"))
     if stray:
         raise PluginError(f"plugin {m.id!r} migration v{mod.version} created tables outside its prefix "
                           f"{m.prefix!r}: {stray}")

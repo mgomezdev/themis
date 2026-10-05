@@ -11,8 +11,16 @@ from .manifest import HOST_API, PluginError, PluginManifest, UiContribution, UiT
 __all__ = ["HOST_API", "PluginError", "PluginManifest", "UiContribution", "UiTab", "register_plugin", "get_plugin",
            "plugins_of_kind", "registered_plugins", "load_bundled", "BUNDLED_MODULES"]
 
-# Modules (dotted paths) that export `MANIFEST`. Bundled plugins ship in the image and cannot be uninstalled.
-BUNDLED_MODULES: tuple[str, ...] = ("app.plugins.spoolman",)
+def _discover_bundled() -> tuple[str, ...]:
+    """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `kinds`, the contracts). They
+    ship in the image and cannot be uninstalled. Discovery by directory keeps this module from naming any plugin."""
+    import pkgutil
+    return tuple(f"{__name__}.{m.name}" for m in pkgutil.iter_modules(__path__)
+                 if m.ispkg and not m.name.startswith("_") and m.name != "kinds")
+
+
+# Modules (dotted paths) that export `MANIFEST`.
+BUNDLED_MODULES: tuple[str, ...] = _discover_bundled()
 
 _REGISTRY: dict[str, PluginManifest] = {}
 

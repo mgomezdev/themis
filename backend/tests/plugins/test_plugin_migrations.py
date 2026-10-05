@@ -168,3 +168,10 @@ async def test_a_failing_down_is_rolled_back_and_leaves_the_version_recorded(con
     with pytest.raises(RuntimeError):
         await rollback_plugin_migration(conn, m)
     assert "dummy_one_items" in await _tables(conn) and await _versions(conn) == [1]
+
+
+async def test_an_autoincrement_table_is_not_a_stray_table_because_sqlite_adds_its_own_bookkeeping_table(conn):
+    """The first AUTOINCREMENT table makes SQLite create `sqlite_sequence`; that must not read as the plugin escaping its prefix."""
+    m = make_manifest(migrations=(migration(1, "CREATE TABLE dummy_one_items (id INTEGER PRIMARY KEY AUTOINCREMENT)", DROP_ITEMS),))
+    assert await run_plugin_migrations(conn, [m]) == {}
+    assert "dummy_one_items" in await _tables(conn)
