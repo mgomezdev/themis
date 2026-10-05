@@ -595,3 +595,14 @@ class PluginSchemaVersion(Base):
     version: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
     applied_at: Mapped[str] = mapped_column(String(32), server_default=text("(strftime('%Y-%m-%dT%H:%M:%S', 'now'))"))
+
+
+class InventoryConfig(Base):
+    """Provider-agnostic inventory settings (singleton id=1). Low-stock keys are namespaced `"<provider>:<ref>"`."""
+    __tablename__ = "inventory_config"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    deduct_on_complete: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    low_stock_default_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    low_stock_overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)     # {"spoolman:3": 40.0}
+    low_stock_alerted: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)       # ["spoolman:7"]

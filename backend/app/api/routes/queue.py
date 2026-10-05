@@ -12,8 +12,9 @@ from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
 from ...services.model_targets import target_dicts_by_job
-from ...services.spool_check import check_spool_sufficiency
-from ...services.providers.filament_inventory import Spool, get_inventory_provider
+from ...plugins.kinds.filament_inventory import InvSpool
+from ...services.inventory import read as inventory_read
+from ...services.inventory.preflight import check_spool_sufficiency
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ async def _needed_grams(j: Job, session: AsyncSession) -> float | None:
 
 
 async def _enrich(
-    j: Job, session: AsyncSession, spools_by_id: dict[str, Spool], targets: list[dict]
+    j: Job, session: AsyncSession, spools_by_id: dict[str, InvSpool], targets: list[dict]
 ) -> dict:
     d = _base_dict(j)
     cfg_result = await session.execute(
@@ -125,15 +126,9 @@ async def _active_jobs_enriched(session: AsyncSession) -> list[dict]:
             if slot and slot.get("spoolman_spool_id") is not None:
                 spool_ids_needed.add(str(slot["spoolman_spool_id"]))
 
-    spools_by_id: dict[str, Spool] = {}
+    spools_by_id: dict[str, InvSpool] = {}
     if spool_ids_needed:
-        provider = await get_inventory_provider(session)
-        if provider is not None:
-            try:
-                spools = await provider.list_spools()
-                spools_by_id = {s.ref: s for s in spools}
-            except Exception:
-                logger.warning("Spoolman unreachable while checking spool sufficiency for queue", exc_info=True)
+        spools_by_id = await inventory_read.spools_by_ref("queue")
 
     # Second pass: build the enriched dicts using the precomputed spool lookup.
     targets_by_job = await target_dicts_by_job(session, [j.id for j in jobs])

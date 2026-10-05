@@ -1,6 +1,9 @@
-# backend/tests/services/test_spool_check.py
-from app.services.providers.filament_inventory import Spool
-from app.services.spool_check import check_spool_sufficiency
+from app.services.inventory.preflight import check_spool_sufficiency
+from tests.inventory_helpers import spool as make_spool
+
+
+def Spool(ref, remaining_weight=None, filament_name="", filament_material=None):
+    return make_spool(ref, remaining_weight, name=filament_name, material=filament_material, material_ref="1" if filament_name or filament_material else None)
 
 
 def test_sufficient_remaining_weight_returns_none():

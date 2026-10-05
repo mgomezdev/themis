@@ -47,9 +47,18 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     shutil.copyfile(_schema_template, db_file)
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
     event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
+    # The plugin host is a process-wide singleton: point it at THIS test's database with a clean in-memory state.
+    from app.plugins import load_bundled
+    from app.plugins.host import plugin_host
+    load_bundled()
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    plugin_host._reset()
+    plugin_host.configure(factory)
     try:
-        yield async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        yield factory
     finally:
+        await plugin_host.stop()
+        plugin_host._reset()
         await engine.dispose()
 
 
@@ -242,7 +251,7 @@ def spoolman_upstream():
         hooks = {**hooks, "request": [*hooks.get("request", []), _record]}
         return real_client(*args, transport=transport, event_hooks=hooks, **kwargs)
 
-    with patch("app.services.providers.spoolman.service.httpx.AsyncClient", _factory):
+    with patch("app.plugins.spoolman.client.httpx.AsyncClient", _factory):
         yield up
 
 

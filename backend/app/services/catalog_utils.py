@@ -6,7 +6,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.providers.slicing import Catalog
-from app.services.providers.filament_inventory import Filament, FilamentInventoryProvider
+from app.plugins.kinds.filament_inventory import PROFILE_LINKS_READ, InvMaterial
+from app.services.inventory import provider as inventory_provider, read as inventory_read
 
 logger = logging.getLogger("app.catalog_utils")
 
@@ -21,12 +22,12 @@ def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], s
     )
 
 
-def stale_binding_groups(filaments: list[Filament], is_stale) -> dict[tuple[str, str], dict]:
+def stale_binding_groups(filaments: list[InvMaterial], is_stale) -> dict[tuple[str, str], dict]:
     """Group the profile names bound to inventory filaments that `is_stale(name)` flags, by (printer preset, name)."""
     groups: dict[tuple[str, str], dict] = {}
     for fil in filaments:
         fil_id = int(fil.ref) if fil.ref.isdigit() else fil.ref
-        for printer_preset, names in fil.profile_bindings.items():
+        for printer_preset, names in (fil.profile_links or {}).items():
             for name in names:
                 if is_stale(name):
                     g = groups.setdefault((printer_preset, name), {
@@ -45,7 +46,6 @@ async def compute_drift(
     old_catalog: Catalog,
     new_catalog: Catalog,
     session: AsyncSession,
-    inventory: FilamentInventoryProvider | None,
 ) -> dict | None:
     """Compare old vs new catalog; query live data for stale references.
 
@@ -143,13 +143,13 @@ async def compute_drift(
     # Bindings are {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
     spoolman_groups: dict[tuple[str, str], dict] = {}
     spoolman_error: str | None = None
-    if inventory is not None and inventory.PROFILE_BINDINGS and removed_filaments:
-        try:
-            spoolman_groups = stale_binding_groups(
-                await inventory.list_filaments(), lambda name: name in removed_filaments)
-        except Exception as exc:
-            spoolman_error = str(exc)
-            logger.warning("Spoolman fetch failed during drift check: %s", exc)
+    if inventory_provider.has(PROFILE_LINKS_READ) and removed_filaments:
+        fetched = await inventory_provider.call("list_materials")
+        if fetched.ok:
+            spoolman_groups = stale_binding_groups(fetched.value, lambda name: name in removed_filaments)
+        else:
+            spoolman_error = inventory_provider.describe_failure(fetched)[1]
+            logger.warning("Inventory fetch failed during drift check: %s", spoolman_error)
 
     all_printer = list(printer_groups.values())
     all_jobs = list(job_groups.values())

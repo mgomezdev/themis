@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,7 +27,7 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
     mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.api.routes.jobs._deduct_spool") as mock_deduct:
+         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -260,7 +260,7 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
 
     await client.put("/api/v1/settings/spoolman", json={
         "enabled": True, "url": "http://spoolman.test",
-    })
+    })           # selects + enables the Spoolman plugin: an active provider that can write weights
 
     mock_qe = MagicMock()
     mock_qe._slicer._data_dir = tmp_path
@@ -271,7 +271,7 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
     mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.api.routes.jobs._deduct_spool") as mock_deduct:
+         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -279,10 +279,8 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, upl
     assert resp.status_code == 200
     mock_deduct.assert_called_once()
     call_args = mock_deduct.call_args[0]
-    from app.services.providers.spoolman import SpoolmanInventoryProvider
-    assert isinstance(call_args[0], SpoolmanInventoryProvider)
-    assert call_args[1] == 42                       # spool_id
-    assert call_args[2] == 8.0                       # grams
+    assert call_args[0] == "42"                     # spool ref
+    assert call_args[1] == 8.0                       # grams
 
 
 async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, tmp_path, upload_3mf, create_job, create_printer):
@@ -302,7 +300,7 @@ async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.api.routes.jobs._deduct_spool") as mock_deduct:
+         patch("app.services.inventory.deduction.deduct", new=AsyncMock()) as mock_deduct:
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
