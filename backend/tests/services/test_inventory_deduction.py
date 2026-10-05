@@ -255,3 +255,20 @@ async def test_can_deduct_needs_both_weight_capabilities(session_factory, caps, 
     assert deduction.can_deduct() is False                                    # no provider
     await use_provider(FakeInventoryProvider(capabilities=caps))
     assert deduction.can_deduct() is expected
+
+
+async def test_suspending_an_already_suspended_spool_emits_no_second_event_but_still_flags_the_job(session_factory):
+    await use_provider(FakeInventoryProvider(spools=[spool("1", 100.0)]))
+    await _webhook(session_factory)
+    a, b = await _job(session_factory), await _job(session_factory)
+
+    with patch("app.services.webhook_service.schedule") as hook:
+        async with session_factory() as s:
+            assert await deduction.suspend(s, "spoolman", "1", "first", await s.get(Job, a)) is True
+            assert await deduction.suspend(s, "spoolman", "1", "again", await s.get(Job, b)) is False
+            await s.commit()
+
+    assert len(hook.call_args_list) == 1
+    async with session_factory() as s:
+        assert (await s.get(Job, b)).deduction_note == "again"
+        assert (await _status(session_factory))[0].job_id == a             # the original suspension is kept
