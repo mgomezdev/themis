@@ -5,7 +5,7 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (25)
+## Tables (28)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -24,6 +24,9 @@ job_printer_configs  ← (model_target_id, plain int → job_model_targets.id, n
 job_model_targets   (job_id CASCADE; v031)
 gcode_files
 sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
+plugin_configs      (plugin_id PK; enabled, settings, secrets, state JSON; v034)   — no FKs
+extension_slots     (kind PK → plugin_id NULL; v034)
+plugin_schema_versions (plugin_id, version PK; plugin-owned migrations; v034)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
                        estimates_enabled, slice_cache_use_latest_settings)
 spoolman_config     (enabled, url, api_key)
@@ -62,7 +65,8 @@ trigger math, never reset except by construction (per-item resets live on `print
   For AMS printers the list is **auto-synced** from the live AMS via `printer_manager.on_ams_change`
   (merge: per-slot `filament_profile`+`spoolman_spool_id` preserved; orphaned slots dropped). The Snapmaker U1
   syncs the same way from Klipper `print_task_config`, **positionally** (list index == tool index; an empty tool is a
-  `{"empty": true, "type": ""}` placeholder, which the queue engine treats as not loaded; the printer is the source of truth, so the
+  `{"empty": true, "type": ""}` placeholder, which the queue engine treats as not loaded; the printer is the source of truth, so the
+
   first report after every (re)connect replaces the stored list, keeping only per-slot `filament_profile`/`spoolman_spool_id`); for others the user sets it via Fleet / EditForm. This is what the queue engine matches a job's ask against.
 `quiet_start` / `quiet_end: str?` (v028) — server-local `HH:MM` window (wraps midnight; both or neither, validated in `PrinterUpdate`) in which a *ready* printer starts no new jobs (neither claims nor resumes pre-sliced gcode); running prints are never interrupted and offline slice-ahead still happens. The end of a window is noticed at the next periodic queue check (no dedicated wake). The UI times are server-local (UTC in a default Docker container). Logic in `services/scheduling.py::in_quiet_hours`.
 
@@ -223,6 +227,13 @@ on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both)
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
+
+### plugin_configs / extension_slots / plugin_schema_versions  (v034 — plugin host, BIZ-205)
+
+`plugin_configs{plugin_id PK, enabled, settings JSON, secrets JSON (write-only through every API), state JSON
+{last_error?, last_error_at?, last_ok_at?}, updated_at}`; `extension_slots{kind PK, plugin_id?}` — a provider is active iff
+its slot names it AND `enabled`; `plugin_schema_versions{plugin_id, version, name, applied_at}` PK(plugin_id, version).
+Plugin-owned tables are prefixed with the plugin's `table_prefix`; they may FK *to* core tables, never the reverse.
 
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,

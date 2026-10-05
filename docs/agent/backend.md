@@ -127,6 +127,28 @@ touch.
 | `spool_alerts.py` | Low-inventory alerts: `process(session, row, spools)` runs inside `record_sync` after each successful fetch; spools below their threshold (`threshold_for`: per-filament override else default; none = off) raise a `spool.low` event once (webhook + notification channels, `job_id` null) tracked in `spoolman_config.low_stock_alerted`; re-armed when the spool is refilled. Never raises into the sync. |
 | `api_key_service.py` | `generate_key() -> (raw, prefix)` (`raw` = `"thm_" + secrets.token_urlsafe(24)`, shown to the user once), `hash_key(raw) -> str` (sha256 hex — no bcrypt/argon2, these are high-entropy random tokens not human passwords). |
 
+### Plugin host (`app/plugins/`, BIZ-202 phase 1a)
+
+Core talks to *kinds* of plugin, never to a specific one. `PluginManifest` (id, kind, `host_api`, `settings_model`,
+`secret_fields`, `factory`, `capabilities`, `ui`, `routers`, `migrations`, `table_prefix`) is the public contract;
+`plugins/__init__.py` is a plain-dict registry (`register_plugin`, `get_plugin`, `plugins_of_kind`, `load_bundled` —
+a bundled plugin that fails to import is logged and skipped, Themis still boots). `host.py` `plugin_host` (started/stopped
+in the `main.py` lifespan; `configure(SessionLocal)` first):
+
+- **Active rule:** active iff `extension_slots[kind] == id` AND `plugin_configs[id].enabled`; `host.active(kind)` /
+  `host.has(kind, capability)` are synchronous reads of an in-memory snapshot. `set_slot` selects (and enables);
+  `update_config(settings=, secrets=, enabled=)` validates with the manifest's model, persists, and rebuilds the
+  instance in place. Secrets are write-only (omit = keep, `""` = clear).
+- **Containment:** every core → provider call is `await host.call(kind, method, *args, timeout=)` → `CallResult(ok,
+  value, error, reason)`; it never raises (timeout + catch-all), logs with the plugin id and records
+  `plugin_configs.state.last_error` (`last_ok_at` on recovery; only transitions are persisted). The queue loop never
+  awaits it. A provider that can't be built is reported (`build_error`) and inactive, never fatal.
+- **Plugin migrations:** `plugins/migrations.py` runs each registered plugin's `migrations/vNNN_*.py` (`version/name/up/down`,
+  `down` required) after core migrations in `init_db`, tracked in `plugin_schema_versions`; tables must start with
+  the plugin's `table_prefix` (default `<id>_`); a failing migration is rolled back (savepoint) and reported, not fatal.
+- **Guard:** `tests/test_no_provider_in_core.py` — core files may not name Spoolman (ratchet allowlist that only
+  shrinks) or Local inventory (plugin package only).
+
 ## Key flows (where to change behavior)
 
 - **Claim eligibility** → `printer_manager.is_printer_ready` + `queue_engine._try_claim_for_printer`. Gate add/changes here. Laminus health gate (`_laminus_down_reason`): with Laminus down a non-pre-sliced job blocks, unless it has `allow_cached_slice` and `_cached_version_for_claim` finds a usable cached version for **this** printer's slice of it (BIZ-201, per printer) — then the claim passes and `_run_slice_and_print(cache_only_version=…)` prints exactly that version; if it's gone by dispatch and Laminus is still down, `_release_cache_only_claim` re-blocks (never slices, never `slice_failed`); if Laminus is back it just slices. The claim applies dispatch's staleness rule too (a version dispatch would reslice never carries a claim). Request/key building is shared via `_slice_params` + `_slice_request` so claim and dispatch agree on the key.

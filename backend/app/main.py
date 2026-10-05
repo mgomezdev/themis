@@ -116,6 +116,10 @@ async def lifespan(app: FastAPI):
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
 
+    from .plugins.host import plugin_host
+    plugin_host.configure(SessionLocal)
+    await plugin_host.start()
+
     spoolman_sync_loop.configure(SessionLocal)
     await spoolman_sync_loop.start()
 
@@ -138,6 +142,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await spoolman_sync_loop.stop()
+    await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
         printer_manager.disconnect_printer(pid)

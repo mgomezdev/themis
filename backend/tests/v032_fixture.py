@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.migrations import v033_slice_cache
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
+# Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).
+_POST_V032_TABLES = ("plugin_configs", "extension_slots", "plugin_schema_versions")
 NOW = "2026-01-01T00:00:00"
 V032_SCOPES = ["jobs:read", "jobs:write", "settings:read", "settings:write", "spoolman:read", "spoolman:write"]
 _SLOTS = [
@@ -78,15 +80,15 @@ async def _build(path: Path) -> None:
     try:
         async with engine.begin() as conn:
             await conn.execute(text(_CREATE_TABLE))
-            for m in _MIGRATIONS:
+            for m in [m for m in _MIGRATIONS if m.version <= 33]:
                 await m.up(conn)
                 await conn.execute(text("INSERT INTO schema_migrations (version, name) VALUES (:v, :n)"),
                                    {"v": m.version, "n": m.name})
-            # v001 builds the *current* models, so roll back everything after v032 to get a true v032 shape.
-            for m in reversed([m for m in _MIGRATIONS if m.version > 32]):
-                assert m is v033_slice_cache, f"extend v032_fixture to roll back v{m.version}"
-                await m.down(conn)
-                await conn.execute(text("DELETE FROM schema_migrations WHERE version = :v"), {"v": m.version})
+            # v001 builds the *current* models (tables added by later phases too): drop what post-v032 migrations own.
+            await v033_slice_cache.down(conn)
+            await conn.execute(text("DELETE FROM schema_migrations WHERE version = 33"))
+            for table in _POST_V032_TABLES:
+                await conn.execute(text(f"DROP TABLE IF EXISTS {table}"))
             await _seed(conn)
     finally:
         await engine.dispose()

@@ -565,3 +565,33 @@ class PrinterAlarm(Base):
     last_seen: Mapped[str] = mapped_column(String(32))
     resolved_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     acknowledged_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class PluginConfig(Base):
+    """Per-plugin settings, secrets (write-only through every API) and runtime state (health, last error)."""
+    __tablename__ = "plugin_configs"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    secrets: Mapped[dict] = mapped_column(JSON, default=dict)
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+
+class ExtensionSlot(Base):
+    """Which plugin fills a single-provider kind. A provider is *active* iff the slot names it AND it is enabled."""
+    __tablename__ = "extension_slots"
+
+    kind: Mapped[str] = mapped_column(String(64), primary_key=True)
+    plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class PluginSchemaVersion(Base):
+    """Applied plugin-owned migrations (see plugins/migrations.py)."""
+    __tablename__ = "plugin_schema_versions"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    applied_at: Mapped[str] = mapped_column(String(32), server_default=text("(strftime('%Y-%m-%dT%H:%M:%S', 'now'))"))

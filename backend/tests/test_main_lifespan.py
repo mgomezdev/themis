@@ -73,6 +73,8 @@ async def test_startup_wires_the_printer_manager_queue_engine_and_background_ser
         boot.engine_start.assert_awaited_once()
         boot.spoolman_configure.assert_called_once_with(session_factory)
         boot.spoolman_start.assert_awaited_once()
+        from app.plugins.host import plugin_host
+        assert plugin_host._session_factory is session_factory           # the plugin host is wired and loaded at boot
         boot.engine_stop.assert_not_awaited()
 
 

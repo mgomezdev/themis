@@ -39,6 +39,10 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await run_migrations(conn)
+        from .plugins import load_bundled
+        from .plugins.migrations import run_plugin_migrations
+        load_bundled()
+        await run_plugin_migrations(conn)        # plugin-owned tables; a failing plugin is reported, never fatal
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
