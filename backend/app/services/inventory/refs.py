@@ -83,7 +83,9 @@ def normalize_slot(slot: dict, previous: dict | None = None) -> dict:
         out["inventory"] = chosen
     # mirror the legacy key only for the legacy provider
     if chosen is not None and chosen["provider"] == LEGACY_PROVIDER:
-        out[LEGACY_SLOT_KEY] = legacy if legacy_set and str(legacy) == chosen["spool_ref"] else chosen["spool_ref"]
+        ref = chosen["spool_ref"]
+        # keep the type old clients compare against (an int id), unless the caller's own value already matches
+        out[LEGACY_SLOT_KEY] = legacy if legacy_set and str(legacy) == ref else (int(ref) if ref.isdigit() else ref)
     elif LEGACY_SLOT_KEY in slot or LEGACY_SLOT_KEY in out:
         out[LEGACY_SLOT_KEY] = None
     return out
@@ -115,12 +117,21 @@ def preserve_slot_keys(previous: dict | None, fresh: dict) -> dict:
 
 # --- "specific material" asks ----------------------------------------------------------------------------------------------
 
-def material(filament_id: int | None, material_provider: str | None = None,
-             material_ref: str | None = None) -> tuple[int | None, str | None, str | None]:
+def material(filament_id: int | None, material_provider: str | None = None, material_ref: str | None = None,
+             previous: tuple[int | None, str | None, str | None] | None = None) -> tuple[int | None, str | None, str | None]:
     """Normalise a material ask to `(filament_id, material_provider, material_ref)`.
 
     Accepts the legacy `filament_id` (a Spoolman filament id) or the provider-namespaced pair. `material_ref` wins when both
-    are given. `filament_id` is only ever filled for the legacy provider (non-Spoolman refs have no such integer)."""
+    are given. `filament_id` is only ever filled for the legacy provider (non-Spoolman refs have no such integer).
+
+    `previous` is the stored `(filament_id, provider, ref)` of the row being rewritten. An OLD client reads the whole object
+    (which now carries `material_ref`), edits only `filament_id` and echoes both back: if `material_ref` is just the stored one
+    and `filament_id` differs from the stored one, the `filament_id` edit is what was meant and the stale ref is ignored."""
+    if previous is not None and not _blank(material_ref) and filament_id is not None:
+        prev_fid, prev_provider, prev_ref = previous
+        echoed = str(material_ref).strip() == str(prev_ref or "") and (_blank(material_provider) or material_provider == prev_provider)
+        if echoed and filament_id != prev_fid:
+            material_provider, material_ref = None, None
     if not _blank(material_ref):
         pid = None if _blank(material_provider) else str(material_provider)
         pid = pid or provider.provider_id()

@@ -30,7 +30,7 @@ async def test_patch_old_key_only_new_key_only_and_both(client, create_printer):
         {"slot": 1, "type": "PETG", "inventory": {"provider": "spoolman", "spool_ref": "8"}}]})              # new key only
     a, b = await _slots(client, pid)
     assert (a["inventory"], a["spoolman_spool_id"]) == (INV7, "7")
-    assert (b["inventory"]["spool_ref"], b["spoolman_spool_id"]) == ("8", "8")
+    assert (b["inventory"]["spool_ref"], b["spoolman_spool_id"]) == ("8", 8)
 
     await client.patch(f"/api/v1/printers/{pid}", json={"loaded_filaments": [
         {"slot": 0, "type": "PLA", "spoolman_spool_id": "7", "inventory": INV7},                             # both, consistent
@@ -184,3 +184,45 @@ def test_project_items_group_by_provider_and_ref_and_label_files_accordingly():
     assert _material_cols(("spoolman", "4")) == {"filament_id": 4, "material_provider": "spoolman", "material_ref": "4"}
     assert _material_cols(("local", "m-1")) == {"filament_id": None, "material_provider": "local", "material_ref": "m-1"}
     assert _material_cols(None) == {"filament_id": None, "material_provider": None, "material_ref": None}
+
+
+# --- old-client echo: GET now returns material_ref, an old client edits only filament_id and echoes the whole object -------------------
+
+async def test_an_old_client_editing_filament_id_on_a_job_config_is_not_undone_by_the_echoed_ref(client, create_job, session_factory):
+    job_id = await create_job(filament_id=5)
+    (cfg,) = await _configs(session_factory, job_id)
+    from unittest.mock import MagicMock, patch
+    body = {"printer_configs": [{"printer_id": cfg.printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any",
+                                 "filament_id": 9, "material_provider": cfg.material_provider, "material_ref": cfg.material_ref}]}
+    with patch("app.api.routes.jobs.queue_engine", MagicMock()):
+        resp = await client.patch(f"/api/v1/jobs/{job_id}/configs", json=body)
+    assert resp.status_code == 200, resp.text
+    (new,) = await _configs(session_factory, job_id)
+    assert (new.filament_id, new.material_provider, new.material_ref) == (9, "spoolman", "9")        # the edit won; the stale ref did not
+
+
+async def test_an_old_client_editing_an_order_part_or_project_item_is_not_undone_by_the_echoed_ref(client, upload_3mf):
+    from tests.api.test_orders_api import _create_order
+    order = (await _create_order(client, parts=[{"name": "A", "filament_id": 3}])).json()
+    echoed = {**order["parts"][0], "filament_id": 8}                       # the stored part incl. material_ref "3", edited filament_id
+    patched = (await client.patch(f"/api/v1/orders/{order['id']}", json={"parts": [echoed]})).json()
+    assert (patched["parts"][0]["filament_id"], patched["parts"][0]["material_ref"]) == (8, "8")
+    same = (await client.patch(f"/api/v1/orders/{order['id']}", json={"parts": [patched["parts"][0]]})).json()
+    assert same["parts"][0]["material_ref"] == "8"                         # echoing unchanged keeps it
+
+    project = (await client.post("/api/v1/projects", json={"name": "P"})).json()["id"]
+    item = (await client.post(f"/api/v1/projects/{project}/items", json={"file_id": await upload_3mf(), "filament_id": 4})).json()
+    upd = (await client.put(f"/api/v1/projects/{project}/items/{item['id']}",
+                            json={"filament_id": 6, "material_provider": "spoolman", "material_ref": "4"})).json()
+    assert (upd["filament_id"], upd["material_ref"]) == (6, "6")
+    keep = (await client.put(f"/api/v1/projects/{project}/items/{item['id']}",
+                             json={"filament_id": 6, "material_provider": "spoolman", "material_ref": "6", "quantity": 3})).json()
+    assert (keep["material_ref"], keep["quantity"]) == ("6", 3)
+
+
+async def test_a_new_client_rebind_keeps_the_legacy_spool_id_an_int(client, create_printer):
+    pid = await create_printer(loaded_filaments=[{"slot": 0, "spoolman_spool_id": 7}])
+    await client.patch(f"/api/v1/printers/{pid}", json={"loaded_filaments": [
+        {"slot": 0, "inventory": {"provider": "spoolman", "spool_ref": "12"}}]})
+    (slot,) = await _slots(client, pid)
+    assert slot["spoolman_spool_id"] == 12 and isinstance(slot["spoolman_spool_id"], int)

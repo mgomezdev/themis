@@ -26,7 +26,7 @@ from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
 from ...plugins.kinds.filament_inventory import InvSpool
-from ._materials import material_columns
+from ._materials import material_columns, stored
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.slicing import get_format_provider
@@ -208,7 +208,9 @@ def _validate_targets(targets: list[ModelTargetInput]) -> None:
         seen.add(t.machine_profile)
 
 
-def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput]) -> None:
+def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput],
+                 previous: dict[str, tuple] | None = None) -> None:
+    """`previous`: stored material asks by machine_profile (when an edit replaces the targets)."""
     for t in targets:
         session.add(JobModelTarget(
             job_id=job_id,
@@ -217,7 +219,7 @@ def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetIn
             # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
             # each printer's loaded slot supplies the preset.
             filament_profile=t.filament_profile or None,
-            **material_columns(t.filament_id, t.material_provider, t.material_ref),
+            **material_columns(t.filament_id, t.material_provider, t.material_ref, (previous or {}).get(t.machine_profile)),
             filament_type=t.filament_type,
             filament_color=t.filament_color,
             filament_map=t.filament_map,
@@ -810,6 +812,12 @@ async def update_job_configs(
     await _check_version_printers(
         session, await _cached_version_of(session, edited_file), body.printer_configs, body.model_targets)
 
+    # Remember the stored material asks: an old client echoes the whole object back with a stale `material_ref`.
+    prev_cfg = {c.printer_id: stored(c) for c in (await session.execute(
+        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars()}
+    prev_target = {t.machine_profile: stored(t) for t in (await session.execute(
+        select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars()}
+
     # Configs first (they reference the targets), then the targets themselves.
     await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
     await session.execute(delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
@@ -829,7 +837,7 @@ async def update_job_configs(
             # Mirror the New Job convention: manual filaments store the type as the
             # profile name. Never null — legacy DBs have a NOT NULL constraint here.
             filament_profile=cfg.filament_profile or cfg.filament_type or "",
-            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref),
+            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref, prev_cfg.get(cfg.printer_id)),
             filament_type=cfg.filament_type,
             filament_color=cfg.filament_color,
             tool_index=cfg.tool_index,
@@ -837,7 +845,7 @@ async def update_job_configs(
             slice_failed=False,
             slice_error=None,
         ))
-    _add_targets(session, job_id, body.model_targets)
+    _add_targets(session, job_id, body.model_targets, prev_target)
     await session.flush()
     await model_targets.materialize_job(session, job_id)
 

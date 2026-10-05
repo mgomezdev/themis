@@ -16,7 +16,7 @@ def test_an_old_client_that_only_sends_the_legacy_key_gets_the_namespaced_bindin
 
 
 def test_a_new_client_that_only_sends_inventory_gets_the_legacy_key_mirrored_for_the_legacy_provider():
-    assert refs.normalize_slot({"slot": 0, "inventory": INV}) == {"slot": 0, "inventory": INV, "spoolman_spool_id": "7"}
+    assert refs.normalize_slot({"slot": 0, "inventory": INV}) == {"slot": 0, "inventory": INV, "spoolman_spool_id": 7}
 
 
 def test_a_binding_to_another_provider_clears_the_legacy_key():
@@ -52,7 +52,7 @@ def test_a_new_client_unlinking_with_null_inventory_unlinks_both():
 def test_when_both_keys_changed_the_inventory_wins():
     prev = {"slot": 0, "spoolman_spool_id": "7", "inventory": INV}
     out = refs.normalize_slot({"slot": 0, "spoolman_spool_id": "9", "inventory": {"provider": "spoolman", "spool_ref": "11"}}, previous=prev)
-    assert out["inventory"]["spool_ref"] == "11" and out["spoolman_spool_id"] == "11"
+    assert out["inventory"]["spool_ref"] == "11" and out["spoolman_spool_id"] == 11
 
 
 def test_an_old_client_cannot_wipe_a_binding_it_cannot_see():
@@ -125,3 +125,19 @@ async def test_material_ref_without_a_provider_uses_the_active_one_or_is_an_erro
 def test_a_legacy_provider_ref_must_be_a_number():
     with pytest.raises(refs.MaterialRefError):
         refs.material(None, "spoolman", "abc")
+
+
+def test_a_stale_echoed_ref_does_not_undo_a_filament_id_edit_but_a_matching_one_is_a_no_op():
+    stored = (5, "spoolman", "5")
+    assert refs.material(9, "spoolman", "5", previous=stored) == (9, "spoolman", "9")        # old client edited filament_id
+    assert refs.material(5, "spoolman", "5", previous=stored) == (5, "spoolman", "5")        # unchanged echo
+    assert refs.material(None, "spoolman", "5", previous=stored) == (5, "spoolman", "5")     # new client, same ref
+    assert refs.material(9, "spoolman", "12", previous=stored) == (12, "spoolman", "12")      # a really new ref wins
+    assert refs.material(9, "spoolman", "5") == (5, "spoolman", "5")                          # no stored row: the ref wins as before
+    assert refs.material(None, previous=stored) == (None, None, None)                          # both dropped = cleared
+
+
+def test_the_legacy_slot_key_is_an_int_after_a_rebind_when_the_ref_is_numeric():
+    out = refs.normalize_slot({"slot": 0, "inventory": {"provider": "spoolman", "spool_ref": "12"}})
+    assert out["spoolman_spool_id"] == 12 and isinstance(out["spoolman_spool_id"], int)
+    assert refs.normalize_slot({"slot": 0, "inventory": {"provider": "spoolman", "spool_ref": "A-1"}})["spoolman_spool_id"] == "A-1"

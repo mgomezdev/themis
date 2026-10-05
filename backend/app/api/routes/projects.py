@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ._materials import material_columns
+from ._materials import material_columns, stored
 from ...services.inventory import refs as inventory_refs
 from ...auth import require_scope
 from ...config import get_library_dir
@@ -812,7 +812,8 @@ async def update_item(
     if body.filament_color is not None:
         item.filament_color = body.filament_color
     if body.filament_id is not None or body.material_ref is not None:
-        for column, value in material_columns(body.filament_id, body.material_provider, body.material_ref).items():
+        # a lone material_provider means nothing without a ref; an old client's echo of the stored ref must not undo its filament_id edit
+        for column, value in material_columns(body.filament_id, body.material_provider, body.material_ref, stored(item)).items():
             setattr(item, column, value)
     if body.sort_order is not None:
         item.sort_order = body.sort_order
