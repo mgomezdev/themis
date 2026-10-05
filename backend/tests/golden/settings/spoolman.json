@@ -1,0 +1,20 @@
+{
+  "initial": {
+    "body": {
+      "enabled": false,
+      "has_api_key": false,
+      "sync_interval_minutes": 15,
+      "url": null
+    },
+    "status": 200
+  },
+  "saved": {
+    "body": {
+      "enabled": true,
+      "has_api_key": true,
+      "sync_interval_minutes": 15,
+      "url": "http://spoolman.test"
+    },
+    "status": 200
+  }
+}
