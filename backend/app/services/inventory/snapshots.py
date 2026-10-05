@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...models import InventoryPendingWrite, JobSpoolSnapshot
@@ -29,9 +30,12 @@ async def newest_pending_target(session: AsyncSession, provider_id: str, spool_r
     return float(row[0]) if row else None
 
 
-async def read_pre_weight(session: AsyncSession, provider_id: str, spool_ref: str) -> tuple[float | None, str]:
-    """(grams, source). Provider call is contained (never raises)."""
-    pending = await newest_pending_target(session, provider_id, spool_ref)
+async def read_pre_weight(factory: async_sessionmaker[AsyncSession], provider_id: str,
+                          spool_ref: str) -> tuple[float | None, str]:
+    """(grams, source). The pending-target lookup uses its own short session, closed before the provider call (never
+    held across provider I/O). The provider call is contained (never raises)."""
+    async with factory() as session:
+        pending = await newest_pending_target(session, provider_id, spool_ref)
     if pending is not None:
         return pending, "pending"
     read = await provider.call("get_spool", spool_ref)
@@ -47,18 +51,18 @@ async def take(factory: async_sessionmaker[AsyncSession], job_id: int, printer_i
     if pid is None:
         return
     async with factory() as session:
-        exists = (await session.execute(select(JobSpoolSnapshot.id).where(
-            JobSpoolSnapshot.job_id == job_id, JobSpoolSnapshot.provider == pid,
-            JobSpoolSnapshot.spool_ref == spool_ref))).first()
-        if exists:
+        if await get(session, job_id, pid, spool_ref) is not None:
             return
-        pre, source = await read_pre_weight(session, pid, spool_ref)
+    pre, source = await read_pre_weight(factory, pid, spool_ref)           # no session open during provider I/O
+    async with factory() as session:
+        if await get(session, job_id, pid, spool_ref) is not None:         # a concurrent take won
+            return
         session.add(JobSpoolSnapshot(job_id=job_id, printer_id=printer_id, provider=pid, spool_ref=spool_ref,
                                      pre_weight_g=pre, source=source, taken_at=_now()))
         try:
             await session.commit()
-        except Exception:
-            logger.warning("Spool snapshot for job %s spool %s not stored (job gone?)", job_id, spool_ref)
+        except IntegrityError:
+            logger.info("Spool snapshot for job %s spool %s not stored (job gone or already taken)", job_id, spool_ref)
 
 
 async def get(session: AsyncSession, job_id: int, provider_id: str, spool_ref: str) -> JobSpoolSnapshot | None:

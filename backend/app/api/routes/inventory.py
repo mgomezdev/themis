@@ -256,8 +256,9 @@ async def _weight_corrected(session: AsyncSession, ref: str) -> bool:
             dependencies=[Depends(require_scope("inventory:write"))])
 async def set_remaining(ref: str, body: RemainingBody, session: AsyncSession = Depends(get_session)):
     inventory_provider.require(WRITE_WEIGHT)
-    await _write("set_remaining", ref, body.remaining_g)
-    await _weight_corrected(session, ref)
+    async with inventory_outbox.flush_lock():            # no queued write may land after this one
+        await _write("set_remaining", ref, body.remaining_g)
+        await _weight_corrected(session, ref)
     # Write then read back (two calls, not atomic). If only the read-back fails the weight IS set: answer with what we wrote.
     read = await inventory_provider.call("get_spool", ref)
     spool = read.value if read.ok and read.value is not None else InvSpool(ref=ref, remaining_g=body.remaining_g, label=f"spool {ref}")
@@ -279,8 +280,10 @@ async def resume_tracking(ref: str, body: ResumeBody | None = None, session: Asy
         raise HTTPException(status_code=404, detail="Tracking is not suspended for this spool")
     if body and body.remaining_g is not None:
         inventory_provider.require(WRITE_WEIGHT)
-        await _write("set_remaining", ref, body.remaining_g)
-    await _weight_corrected(session, ref)
+    async with inventory_outbox.flush_lock():
+        if body and body.remaining_g is not None:
+            await _write("set_remaining", ref, body.remaining_g)
+        await _weight_corrected(session, ref)
     return {"provider": pid, "spool_ref": ref, "tracking": "ok"}
 
 
@@ -326,9 +329,10 @@ async def flush_pending_writes(session: AsyncSession = Depends(get_session)):
              responses={404: {"description": "No such pending write"}},
              dependencies=[Depends(require_scope("inventory:write"))])
 async def discard_pending_write(write_id: int, session: AsyncSession = Depends(get_session)):
-    row = await _pending_or_404(session, write_id)
-    row.status = "discarded"
-    await session.commit()
+    async with inventory_outbox.flush_lock():            # not while a send of this row is in flight
+        row = await _pending_or_404(session, write_id)
+        row.status = "discarded"
+        await session.commit()
     return _write_out(row)
 
 
@@ -341,10 +345,11 @@ class ResolveBody(BaseModel):
              dependencies=[Depends(require_scope("inventory:write"))])
 async def resolve_pending_write(write_id: int, body: ResolveBody | None = None, session: AsyncSession = Depends(get_session)):
     inventory_provider.require(WRITE_WEIGHT)
-    row = await _pending_or_404(session, write_id)
-    if body and body.target_g is not None:
-        row.target_g = body.target_g
-    await session.commit()
+    async with inventory_outbox.flush_lock():
+        row = await _pending_or_404(session, write_id)
+        if body and body.target_g is not None:
+            row.target_g = body.target_g
+        await session.commit()
     await inventory_outbox.flush(inventory_deduction.factory_for(session))
     await session.refresh(row)
     return _write_out(row)

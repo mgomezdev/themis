@@ -92,10 +92,10 @@ def after_commit(plan: Plan, factory: async_sessionmaker[AsyncSession]) -> None:
 
 async def complete_deferred(factory: async_sessionmaker[AsyncSession], plan: Plan) -> None:
     """No start snapshot: take the weight now (the provider has not seen this print yet) and enqueue the write."""
+    if provider.provider_id() != plan.provider:
+        return
+    pre, _ = await snapshots.read_pre_weight(factory, plan.provider, plan.spool_ref)     # no session during provider I/O
     async with factory() as session:
-        if provider.provider_id() != plan.provider:
-            return
-        pre, _ = await snapshots.read_pre_weight(session, plan.provider, plan.spool_ref)
         job = await session.get(Job, plan.job_id)
         if pre is None:
             await suspend(session, plan.provider, plan.spool_ref, NOTE_NO_WEIGHT, job)

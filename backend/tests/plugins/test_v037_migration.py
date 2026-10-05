@@ -2,6 +2,7 @@
 idempotent, `down()`, fresh DB."""
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.database import Base
@@ -41,13 +42,21 @@ async def test_creates_the_tables_and_the_job_note_column_without_touching_exist
 
 async def test_a_snapshot_is_unique_per_job_provider_and_spool_and_cascades_with_its_job(migrated):
     await migrated.execute(text("PRAGMA foreign_keys=ON"))
-    job_id = (await migrated.execute(text("SELECT id FROM jobs LIMIT 1"))).scalar_one()
+    job_id = (await migrated.execute(text(                        # a job with no other dependents, so it can be deleted
+        "INSERT INTO jobs (uploaded_file_id, plate_number, queue_position, status, created_at, updated_at) "
+        "SELECT uploaded_file_id, plate_number, queue_position, 'queued', created_at, updated_at FROM jobs LIMIT 1 "
+        "RETURNING id"))).scalar_one()
+    await migrated.commit()                                           # so the rollback below only undoes the duplicate
     ins = text("INSERT INTO job_spool_snapshots (job_id, provider, spool_ref, source, taken_at) "
                "VALUES (:j, 'spoolman', '1', 'live', 'x')")
     await migrated.execute(ins, {"j": job_id})
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError, match="UNIQUE"):
         await migrated.execute(ins, {"j": job_id})
     await migrated.rollback()
+    await migrated.execute(text("PRAGMA foreign_keys=ON"))
+    await migrated.execute(ins, {"j": job_id})
+    await migrated.execute(text("DELETE FROM jobs WHERE id=:j"), {"j": job_id})
+    assert (await migrated.execute(text("SELECT COUNT(*) FROM job_spool_snapshots"))).scalar_one() == 0   # cascaded
 
 
 async def test_running_twice_is_idempotent_and_down_removes_only_what_up_added(migrated):

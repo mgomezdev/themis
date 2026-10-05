@@ -147,3 +147,57 @@ async def test_these_routes_need_the_inventory_scopes(client, session_factory):
         assert (await reader.post(f"{BASE}/pending-writes/flush")).status_code == 403
         assert (await reader.post(f"{BASE}/pending-writes/{wid}/discard")).status_code == 403
         assert (await reader.post(f"{BASE}/spools/1/resume-tracking")).status_code == 403
+
+
+class _SlowFake(FakeInventoryProvider):
+    """The FIRST set_remaining parks until released (a flush held 'in flight'); later ones go straight through."""
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        import asyncio
+        self.entered, self.release = asyncio.Event(), asyncio.Event()
+        self._first = True
+
+    async def set_remaining(self, spool_ref, remaining_g):
+        if self._first:
+            self._first = False
+            self.entered.set()
+            await self.release.wait()
+        await super().set_remaining(spool_ref, remaining_g)
+
+
+async def test_a_manual_weight_waits_for_an_in_flight_flush_so_it_always_lands_last(client, session_factory):
+    import asyncio
+    fake = _SlowFake(spools=[spool("1", 100.0)])
+    await use_provider(fake)
+    await _queue(session_factory, target=40.0)
+
+    flush = asyncio.create_task(outbox.flush(session_factory))
+    await asyncio.wait_for(fake.entered.wait(), 5)                      # the stale 40 g write is in flight
+    put = asyncio.create_task(client.put(f"{BASE}/spools/1/remaining", json={"remaining_g": 321.0}))
+    await asyncio.sleep(0.05)
+    assert not put.done()                                               # held back by the flush lock
+    fake.release.set()
+    await flush
+    assert (await put).status_code == 200
+
+    assert fake.writes == [("1", 40.0), ("1", 321.0)]                   # the user's value is the last word
+    assert fake.spools["1"].remaining_g == 321.0
+
+
+async def test_discard_waits_for_an_in_flight_send_of_the_same_row(client, session_factory):
+    import asyncio
+    fake = _SlowFake(spools=[spool("1", 100.0)])
+    await use_provider(fake)
+    wid = await _queue(session_factory, target=40.0)
+
+    flush = asyncio.create_task(outbox.flush(session_factory))
+    await asyncio.wait_for(fake.entered.wait(), 5)
+    discard = asyncio.create_task(client.post(f"{BASE}/pending-writes/{wid}/discard"))
+    await asyncio.sleep(0.05)
+    assert not discard.done()
+    fake.release.set()
+    await flush
+
+    assert (await discard).status_code == 404                           # it was already applied: nothing left to discard
+    async with session_factory() as s:
+        assert (await s.get(InventoryPendingWrite, wid)).status == "applied"

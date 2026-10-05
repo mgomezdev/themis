@@ -25,7 +25,9 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _flush_lock() -> asyncio.Lock:
+def flush_lock() -> asyncio.Lock:
+    """Held by a flush for its whole run, and by anything that changes pending rows or writes a weight by hand, so a
+    send already in flight cannot land after (and overwrite) a user's correction or discard."""
     global _lock
     loop = asyncio.get_running_loop()
     if _lock is None or getattr(_lock, "_themis_loop", None) is not loop:
@@ -58,7 +60,7 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
     pid = provider.provider_id()
     if pid is None:
         return 0
-    async with _flush_lock():
+    async with flush_lock():
         async with factory() as session:
             rows = (await session.execute(select(InventoryPendingWrite).where(
                 InventoryPendingWrite.provider == pid, InventoryPendingWrite.status == "pending")
@@ -74,8 +76,8 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
             async with factory() as session:
                 if result.ok:
                     await session.execute(update(InventoryPendingWrite).where(
-                        InventoryPendingWrite.id == newest_id).values(status="applied", last_attempt_at=_now(),
-                                                                      last_error=None))
+                        InventoryPendingWrite.id == newest_id, InventoryPendingWrite.status == "pending")
+                        .values(status="applied", last_attempt_at=_now(), last_error=None))
                     if older:
                         await session.execute(update(InventoryPendingWrite).where(
                             InventoryPendingWrite.id.in_(older), InventoryPendingWrite.status == "pending")
