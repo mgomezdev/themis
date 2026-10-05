@@ -8,6 +8,8 @@ import logging
 from dataclasses import asdict, fields
 from datetime import datetime, timezone
 
+from sqlalchemy import delete
+
 from ...models import InventoryCache
 from ...plugins.host import plugin_host
 from ...plugins.kinds.filament_inventory import REMOTE, InvMaterial, InvSpool
@@ -109,3 +111,21 @@ async def cached_weight(provider_id: str, spool_ref: str) -> float | None:
         if s.ref == spool_ref and s.remaining_g is not None:
             return float(s.remaining_g)
     return None
+
+
+async def invalidate(provider_id: str) -> None:
+    """Drop a provider's cache. Run when its settings change (a different server/credentials: its last-known data must
+    never be served as if it were the new one's). Never raises."""
+    factory = plugin_host.session_factory
+    if factory is None:
+        return
+    try:
+        async with factory() as session:
+            await session.execute(delete(InventoryCache).where(InventoryCache.provider == provider_id))
+            await session.commit()
+    except Exception:
+        logger.warning("Could not clear the inventory cache of %s", provider_id)
+
+
+if invalidate not in plugin_host.config_changed_hooks:
+    plugin_host.config_changed_hooks.append(invalidate)

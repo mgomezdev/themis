@@ -77,13 +77,20 @@ async def _recovered(session: AsyncSession, pid: str) -> None:
     state = plugin_host.state(pid)
     since, alerted = state.get("disconnected_since"), state.get("disconnect_alerted_at")
     factory = async_sessionmaker(session.bind, expire_on_commit=False)
-    applied = await outbox.flush(factory)
+    try:
+        applied = await outbox.flush(factory)
+    except Exception:                                    # a local DB problem must not turn a successful sync into a failure
+        logger.exception("Flushing queued inventory writes failed; they stay queued")
+        applied = 0
     if not since:
         return
     if alerted:
-        await events.emit(session, events.RECONNECTED,
-                          {"provider": pid, "since": since, "flushed": applied, "pending_count": await pending_count(session, pid)},
-                          "Themis: inventory reconnected", f"{pid} is reachable again; {applied} queued weight update(s) applied")
+        delivered = await events.emit(
+            session, events.RECONNECTED,
+            {"provider": pid, "since": since, "flushed": applied, "pending_count": await pending_count(session, pid)},
+            "Themis: inventory reconnected", f"{pid} is reachable again; {applied} queued weight update(s) applied")
+        if not delivered:
+            return                                       # keep the outage state: the next sync retries the announcement
     await plugin_host.record_state(pid, disconnected_since=None, disconnect_alerted_at=None)
 
 

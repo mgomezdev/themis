@@ -67,6 +67,9 @@ class PluginHost:
         self._instances: dict[str, Any] = {}
         self._build_errors: dict[str, str] = {}
         self._fingerprints: dict[str, tuple] = {}
+        # Async callbacks `(plugin_id)` run when a *running* plugin's settings/secrets change (its instance is replaced), so a
+        # kind's services can drop anything derived from the old configuration (e.g. a cache of a different server's data).
+        self.config_changed_hooks: list = []
         self._lock = asyncio.Lock()          # serialises reload/update_config/set_slot (instance swaps)
         self._state_lock = asyncio.Lock()    # serialises state persistence (memory + DB stay in step)
 
@@ -113,8 +116,15 @@ class PluginHost:
                            plugin_migrations.failed.get(plugin_id))
             if self._fingerprints.get(plugin_id) == fingerprint and (plugin_id in self._instances or plugin_id in self._build_errors):
                 continue
+            changed = plugin_id in self._fingerprints                    # a known instance whose configuration changed
             await self._rebuild(plugin_id)
             self._fingerprints[plugin_id] = fingerprint
+            if changed:
+                for hook in self.config_changed_hooks:
+                    try:
+                        await hook(plugin_id)
+                    except Exception:
+                        logger.warning("Config-changed hook failed for plugin %s", plugin_id)
 
     def _is_enabled(self, plugin_id: str) -> bool:
         cfg = self._configs.get(plugin_id)

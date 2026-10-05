@@ -230,3 +230,45 @@ async def test_while_disconnected_the_loop_probes_every_poll_instead_of_waiting_
     await plugin_host.record_state("spoolman", disconnected_since=_since(1))
     await loop._tick()
     assert fake.calls.count("list_materials") == calls + 1                           # probed despite the interval
+
+
+# ---- review fixes ----------------------------------------------------------------------------------------------------
+
+async def test_changing_the_provider_settings_drops_its_cache_so_another_servers_data_is_never_served(client, session_factory):
+    fake = remote()
+    await use_provider(fake)
+    await plugin_host.update_config("spoolman", settings={"max_disconnect_minutes": 5})   # a known, running configuration
+    await client.get(f"{BASE}/spools")
+    assert await cache.load("spoolman", "spools") is not None
+
+    await plugin_host.update_config("spoolman", settings={"max_disconnect_minutes": 6})   # e.g. a new URL / credentials
+    fake.fail_with = DOWN
+
+    assert await cache.load("spoolman", "spools") is None
+    assert (await client.get(f"{BASE}/spools")).status_code == 503
+
+
+async def test_a_failed_reconnect_announcement_keeps_the_outage_state_for_a_retry(session_factory):
+    fake = await _alerting(session_factory)
+    fake.fail_with = DOWN
+    await plugin_host.record_state("spoolman", disconnected_since=_since(30))
+    with patch("app.services.webhook_service.schedule"):
+        await _failing_sync(session_factory)
+        fake.fail_with = None
+        with patch("app.services.inventory.events.emit", return_value=False) as emit:
+            async with session_factory() as s:
+                await sync.record_sync(s)
+        assert emit.await_count == 1
+        assert sync.status("spoolman")["disconnected_since"] is not None              # not reset: the next sync retries
+        async with session_factory() as s:
+            await sync.record_sync(s)
+        assert sync.status("spoolman")["disconnected_since"] is None
+
+
+async def test_a_flush_error_after_a_good_sync_does_not_fail_the_sync(session_factory):
+    fake = remote()
+    await use_provider(fake)
+    with patch("app.services.inventory.outbox.flush", side_effect=RuntimeError("db locked")):
+        async with session_factory() as s:
+            counts = await sync.record_sync(s)                                           # no exception
+    assert counts["spool_count"] == 2 and sync.status("spoolman")["last_error"] is None
