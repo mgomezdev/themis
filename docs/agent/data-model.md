@@ -5,7 +5,7 @@ startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (28)
+## Tables (29)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -27,6 +27,7 @@ sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL
 plugin_configs      (plugin_id PK; enabled, settings, secrets, state JSON; v034)   — no FKs
 extension_slots     (kind PK → plugin_id NULL; v034)
 plugin_schema_versions (plugin_id, version PK; plugin-owned migrations; v034)
+inventory_config    (id=1 singleton; deduct_on_complete, low_stock_default_g, low_stock_overrides, low_stock_alerted; v035)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
                        estimates_enabled, slice_cache_use_latest_settings)
 spoolman_config     (enabled, url, api_key)
@@ -234,6 +235,14 @@ on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both)
 {last_error?, last_error_at?, last_ok_at?}, updated_at}`; `extension_slots{kind PK, plugin_id?}` — a provider is active iff
 its slot names it AND `enabled`; `plugin_schema_versions{plugin_id, version, name, applied_at}` PK(plugin_id, version).
 Plugin-owned tables are prefixed with the plugin's `table_prefix`; they may FK *to* core tables, never the reverse.
+
+### inventory_config  (v035 — provider-agnostic inventory settings, BIZ-215)
+
+Singleton `id=1`: `deduct_on_complete: bool = true`, `low_stock_default_g?: float`, `low_stock_overrides: {"<provider>:<material_ref>": grams}`,
+`low_stock_alerted: ["<provider>:<spool_ref>"]` (spools already alerted while below threshold). Created lazily on first use. v035 also moved
+the Spoolman integration onto the plugin host: `spoolman_config` → `plugin_configs('spoolman')` (+ `extension_slots`), thresholds re-keyed with the
+`spoolman:` namespace, and `inventory:read/write` granted to every key holding the matching `spoolman:*`/`settings:*` scope. **`spoolman_config`
+is kept but no longer read or written** (dropped in a later cleanup release).
 
 ### queue_config / spoolman_config / webhook_config / notification_config
 `queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,

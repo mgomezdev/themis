@@ -236,6 +236,9 @@ class PluginHost:
         """Forget everything in memory (tests; the DB is untouched)."""
         self._slots, self._configs, self._instances = {}, {}, {}
         self._build_errors, self._fingerprints = {}, {}
+        # Fresh locks: a lock is bound to the event loop that first contended it, and a task killed mid-hold when a
+        # test's loop closes would leave it locked forever for the next test.
+        self._lock, self._state_lock = asyncio.Lock(), asyncio.Lock()
 
     # --- containment -------------------------------------------------------------------------------------------
 

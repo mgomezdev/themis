@@ -181,7 +181,7 @@ async def test_complete_manually_from_printing_status_completes(client, tmp_path
 
     mock_qe.run_verify_slice = fake_run_verify_slice
 
-    with patch("app.api.routes.jobs.queue_engine", mock_qe),          patch("app.api.routes.jobs._deduct_spool"):
+    with patch("app.api.routes.jobs.queue_engine", mock_qe),          patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -206,7 +206,7 @@ async def test_complete_manually_output_dir_cleaned_up_on_success(client, tmp_pa
     mock_qe.run_verify_slice = fake_run_verify_slice
 
     with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-         patch("app.api.routes.jobs._deduct_spool"):
+         patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
         resp = await client.post(
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
@@ -237,7 +237,7 @@ async def test_complete_manually_sends_no_printer_commands(client, tmp_path, upl
     printer_manager._clients[printer_id] = mock_client
     try:
         with patch("app.api.routes.jobs.queue_engine", mock_qe), \
-             patch("app.api.routes.jobs._deduct_spool"):
+             patch("app.services.inventory.deduction.deduct", new=AsyncMock()):
             resp = await client.post(
                 f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
             )

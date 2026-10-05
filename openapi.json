@@ -7415,7 +7415,7 @@
           "settings"
         ],
         "summary": "Update Spoolman config",
-        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it.",
+        "description": "Update Spoolman integration settings. Omitted fields (including `api_key`) are left\nunchanged; an empty string for `api_key` clears it. Enabling Spoolman makes it the active inventory provider.",
         "operationId": "update_spoolman_config_api_v1_settings_spoolman_put",
         "requestBody": {
           "content": {
@@ -7932,6 +7932,464 @@
                 "schema": {
                   "$ref": "#/components/schemas/LowStockConfig"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "List materials of the active inventory provider",
+        "operationId": "list_materials_api_v1_inventory_materials_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No inventory provider is active"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/spools": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "List spools of the active inventory provider",
+        "operationId": "list_spools_api_v1_inventory_spools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No inventory provider is active"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/sync-now": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Refresh from the provider now",
+        "operationId": "sync_now_api_v1_inventory_sync_now_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "No provider, or it is not a remote one"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/sync-status": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Provider health and sync status (never fails)",
+        "operationId": "sync_status_api_v1_inventory_sync_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/resolve-label": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resolve scanned label text to a spool",
+        "operationId": "resolve_label_api_v1_inventory_resolve_label_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LabelBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider cannot scan labels"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/materials/{ref}/profile-links": {
+      "patch": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set a material's Orca preset links",
+        "operationId": "set_profile_links_api_v1_inventory_materials__ref__profile_links_patch",
+        "parameters": [
+          {
+            "name": "ref",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Ref"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinksBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "The provider cannot store profile links"
+          },
+          "503": {
+            "description": "Provider unreachable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/settings": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Inventory settings (deduct on completion, low-stock thresholds)",
+        "operationId": "get_settings_api_v1_inventory_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Update inventory settings; omitted fields are unchanged",
+        "operationId": "put_settings_api_v1_inventory_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "409": {
+            "description": "Low-stock thresholds need a provider that tracks weight"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List plugins (manifests, UI contributions, capabilities, enabled/active)",
+        "operationId": "list_plugins_api_v1_plugins_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "One plugin: settings (secrets as set/unset), schema and state",
+        "operationId": "get_plugin_detail_api_v1_plugins__plugin_id__get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Update a plugin's settings / enabled flag",
+        "operationId": "update_plugin_api_v1_plugins__plugin_id__put",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/test": {
+      "post": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Test a connection with the saved or the supplied (unsaved) settings",
+        "operationId": "test_plugin_api_v1_plugins__plugin_id__test_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginTest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extension-slots/{kind}": {
+      "put": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "Choose the provider for a plugin kind (null = none)",
+        "operationId": "set_slot_api_v1_extension_slots__kind__put",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Kind"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SlotBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -9131,6 +9589,20 @@
         ],
         "title": "JogZBody"
       },
+      "LabelBody": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "LabelBody"
+      },
       "LaborCreate": {
         "properties": {
           "minutes": {
@@ -9199,6 +9671,25 @@
         ],
         "title": "LinkProjectsBody"
       },
+      "LinksBody": {
+        "properties": {
+          "links": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Links"
+          }
+        },
+        "type": "object",
+        "required": [
+          "links"
+        ],
+        "title": "LinksBody"
+      },
       "LoginBody": {
         "properties": {
           "email": {
@@ -9216,6 +9707,33 @@
           "password"
         ],
         "title": "LoginBody"
+      },
+      "LowStock": {
+        "properties": {
+          "default_g": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default G"
+          },
+          "overrides": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "type": "object",
+            "title": "Overrides"
+          }
+        },
+        "type": "object",
+        "title": "LowStock",
+        "description": "Grams below which a spool raises `spool.low`. `overrides` maps a material ref (of the active provider) to its own\nthreshold and wins over `default_g`; with neither set nothing alerts."
       },
       "LowStockConfig": {
         "properties": {
@@ -10027,6 +10545,81 @@
         },
         "type": "object",
         "title": "PaymentPatch"
+      },
+      "PluginTest": {
+        "properties": {
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          }
+        },
+        "type": "object",
+        "title": "PluginTest"
+      },
+      "PluginUpdate": {
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "settings": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settings"
+          },
+          "secrets": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secrets"
+          }
+        },
+        "type": "object",
+        "title": "PluginUpdate"
       },
       "PositionUpdate": {
         "properties": {
@@ -11203,6 +11796,50 @@
           "positions"
         ],
         "title": "ReorderRequest"
+      },
+      "SettingsIn": {
+        "properties": {
+          "deduct_on_complete": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deduct On Complete"
+          },
+          "low_stock": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LowStock"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "SettingsIn"
+      },
+      "SlotBody": {
+        "properties": {
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "type": "object",
+        "title": "SlotBody"
       },
       "SpoolmanConfigIn": {
         "properties": {

@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from app.database import Base
 from app.models import Job, JobPrinterConfig, Printer, UploadedFile
 from tests.catalog_helpers import catalog_from_dict as C
-from app.services.providers.filament_inventory import Filament, InventoryProviderError
+from app.plugins.kinds.filament_inventory import InvMaterial, InventoryProviderError
 from tests.fake_providers import FakeInventoryProvider
+from tests.inventory_helpers import use_provider
 from app.services.catalog_utils import catalog_name_sets, compute_drift
 
 
@@ -22,14 +23,10 @@ from app.services.catalog_utils import catalog_name_sets, compute_drift
 # ---------------------------------------------------------------------------
 
 @pytest_asyncio.fixture
-async def drift_session():
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
-    async with factory() as session:
+async def drift_session(session_factory):
+    """A session on the shared per-test DB (so the plugin host, which `use_provider` configures, is wired to it too)."""
+    async with session_factory() as session:
         yield session
-    await engine.dispose()
 
 
 def _now() -> str:
@@ -156,7 +153,7 @@ NEW_CAT_ALL_DIFFERENT = {
 
 @pytest.mark.asyncio
 async def test_compute_drift_no_removals_returns_none(drift_session):
-    result = await compute_drift(C(OLD_CAT), C(NEW_CAT_SAME), drift_session, None)
+    result = await compute_drift(C(OLD_CAT), C(NEW_CAT_SAME), drift_session)
     assert result is None
 
 
@@ -169,7 +166,7 @@ async def test_compute_drift_removals_unreferenced_returns_none(drift_session):
         "filament": [{"name": "Bambu PLA Basic", "uuid": "aaaa-1111"}],
     }
     # No printers in DB at all → nothing stale references the removed machine
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, None)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
     assert result is None
 
 
@@ -194,7 +191,7 @@ async def test_compute_drift_stale_printer_profile(drift_session):
         "filament": [{"name": "Bambu PLA Basic", "uuid": "aaaa-1111"}],
     }
 
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, None)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
     assert result is not None
 
     printer_entries = result["pending"]["printers"]
@@ -219,7 +216,7 @@ async def test_compute_drift_two_queued_jobs_same_stale_profile(drift_session):
     _, cfg1 = await _add_queued_job(drift_session, print_profile="0.20mm Standard")
     _, cfg2 = await _add_queued_job(drift_session, print_profile="0.20mm Standard")
 
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, None)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
     assert result is not None
 
     job_entries = result["pending"]["jobs"]
@@ -243,13 +240,14 @@ async def test_compute_drift_spoolman_stale_name(drift_session):
 
     # Two inventory filaments both have "Bambu PLA Basic" bound for the same printer preset
     stale = {"Bambu X1C 0.4 nozzle": ["Bambu PLA Basic"]}
-    inventory = FakeInventoryProvider(filaments=[
-        Filament(ref="1", name="Spool A", profile_bindings=stale),
-        Filament(ref="2", name="Spool B", profile_bindings=stale),
-        Filament(ref="3", name="Spool C", profile_bindings={"Bambu X1C 0.4 nozzle": ["Bambu PLA New"]}),   # still valid
+    inventory = FakeInventoryProvider(materials=[
+        InvMaterial(ref="1", name="Spool A", profile_links=stale),
+        InvMaterial(ref="2", name="Spool B", profile_links=stale),
+        InvMaterial(ref="3", name="Spool C", profile_links={"Bambu X1C 0.4 nozzle": ["Bambu PLA New"]}),   # still valid
     ])
 
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, inventory)
+    await use_provider(inventory)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert result is not None
     spool_entries = result["pending"]["spoolman_filaments"]
@@ -272,6 +270,10 @@ async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
         "filament": [{"name": "Bambu PLA New", "uuid": "bbbb-9999"}],
     }
 
+    inventory = FakeInventoryProvider()
+    inventory.fail_with = InventoryProviderError("connection refused", code="ConnectError")
+    await use_provider(inventory)
+
     # Add a printer that references the removed machine profile
     await _add_printer(
         drift_session,
@@ -279,10 +281,7 @@ async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
         current_orca_printer_profile="Bambu X1C",
     )
 
-    inventory = FakeInventoryProvider()
-    inventory.fail_with = InventoryProviderError("connection refused", code="ConnectError")
-
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, inventory)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert result is not None
     assert result["spoolman_error"] == "connection refused"
@@ -307,7 +306,7 @@ async def test_compute_drift_spoolman_disabled_skips_section(drift_session):
         loaded_filaments=[{"filament_profile": "Bambu PLA Basic", "slot": 0}],
     )
 
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, None)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     # If filament was stale, it should show in printers section even though spoolman skipped
     assert result is not None
@@ -321,15 +320,14 @@ async def test_compute_drift_skips_inventories_without_profile_bindings(drift_se
         "process": [{"name": "0.20mm Standard"}],
         "filament": [{"name": "Bambu PLA New", "uuid": "bbbb-9999"}],
     }
+    inventory = FakeInventoryProvider(materials=[
+        InvMaterial(ref="1", name="A", profile_links={"P": ["Bambu PLA Basic"]})], capabilities=frozenset())
+    await use_provider(inventory)
     await _add_printer(
         drift_session, name="Printer X", current_orca_printer_profile=None,
         loaded_filaments=[{"filament_profile": "Bambu PLA Basic", "slot": 0}],
     )
-    inventory = FakeInventoryProvider(filaments=[
-        Filament(ref="1", name="A", profile_bindings={"P": ["Bambu PLA Basic"]})])
-    inventory.PROFILE_BINDINGS = False
-
-    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session, inventory)
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert inventory.calls == []
     assert result["pending"]["spoolman_filaments"] == [] and result["spoolman_error"] is None

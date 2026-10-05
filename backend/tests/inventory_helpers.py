@@ -23,7 +23,9 @@ async def use_provider(provider, plugin_id: str = "fake_inventory") -> None:
     """Make `provider` (e.g. a FakeInventoryProvider) the active inventory provider."""
     manifest = PluginManifest(id=plugin_id, name="Fake inventory", kind=KIND, version="0", host_api=HOST_API,
                               settings_model=_NoSettings, factory=lambda _s: provider, capabilities=frozenset(provider.capabilities))
+    plugins._REGISTRY.pop(plugin_id, None)               # a test may swap the provider more than once
     plugins.register_plugin(manifest)
+    plugin_host._fingerprints.pop(plugin_id, None)       # force a rebuild even if this id already has a live instance
     await plugin_host.set_slot(KIND, plugin_id)
 
 

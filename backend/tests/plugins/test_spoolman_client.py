@@ -1,4 +1,4 @@
-"""Tests for spoolman_service.patch_filament.
+"""Tests for the Spoolman plugin client's PATCH calls (patch_filament, patch_spool_remaining).
 
 Assumed Spoolman behaviors verified here:
   1. PATCH /api/v1/filament/{id} does a partial update of the `extra` dict
@@ -14,7 +14,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from app.services.providers.spoolman.service import patch_filament
+from app.plugins.spoolman import client as spoolman_client
+from app.plugins.spoolman.client import patch_filament, patch_spool_remaining
+from tests import spoolman_mock
+
+URL = "http://spoolman.test"
 
 BASE_URL = "http://spoolman.test"
 FILAMENT_ID = 5
@@ -39,7 +43,7 @@ def _mock_client(patch_response: httpx.Response):
     async def _ctx(*args, **kwargs):
         yield mock_instance
 
-    return patch("app.services.providers.spoolman.service.httpx.AsyncClient", side_effect=_ctx), mock_instance
+    return patch("app.plugins.spoolman.client.httpx.AsyncClient", side_effect=_ctx), mock_instance
 
 
 # ---------------------------------------------------------------------------
@@ -187,65 +191,82 @@ async def test_patch_target_url_is_correct():
 
 
 # ---------------------------------------------------------------------------
-# record_spool_use tests
+# patch_spool_remaining tests (absolute weight; there is deliberately no delta call)
 # ---------------------------------------------------------------------------
 
-from app.services.providers.spoolman.service import record_spool_use
-
-
-def _ok_response_with_request(data: dict, url: str = "http://spoolman.test/api/v1/spool/42/use") -> httpx.Response:
-    resp = httpx.Response(200, json=data)
-    resp._request = httpx.Request("PUT", url)
-    return resp
-
-
-def _mock_client_put(put_response: httpx.Response):
-    """Return a context manager that patches httpx.AsyncClient for PUT requests."""
-    mock_instance = AsyncMock()
-    mock_instance.put = AsyncMock(return_value=put_response)
-
-    @asynccontextmanager
-    async def _ctx(*args, **kwargs):
-        yield mock_instance
-
-    return patch("app.services.providers.spoolman.service.httpx.AsyncClient", side_effect=_ctx), mock_instance
 
 
 @pytest.mark.asyncio
-async def test_record_spool_use_calls_correct_endpoint():
-    """Verify record_spool_use calls PUT /api/v1/spool/{spool_id}/use with correct body."""
-    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/42/use"))
+async def test_patch_spool_remaining_sends_the_absolute_weight_to_the_spool_endpoint():
+    ctx, mock_client = _mock_client(_ok_response({"id": 42, "remaining_weight": 480.0}))
     with ctx:
-        await record_spool_use("http://spoolman.test", "key123", spool_id=42, grams=15.5)
+        result = await patch_spool_remaining("http://spoolman.test", "key123", spool_id=42, remaining_g=480.0)
 
-    mock_client.put.assert_called_once()
-    call_args = mock_client.put.call_args
-    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
-    assert "/api/v1/spool/42/use" in url
-    assert call_args.kwargs["json"] == {"use_weight": 15.5}
+    mock_client.patch.assert_called_once()
+    call_args = mock_client.patch.call_args
+    assert call_args.args[0] == "http://spoolman.test/api/v1/spool/42"
+    assert call_args.kwargs["json"] == {"remaining_weight": 480.0}          # absolute, never a delta
     assert call_args.kwargs["headers"]["X-API-Key"] == "key123"
+    assert result["remaining_weight"] == 480.0
 
 
 @pytest.mark.asyncio
-async def test_record_spool_use_no_api_key():
-    """Verify X-API-Key header is omitted when api_key is None."""
-    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/7/use"))
+async def test_patch_spool_remaining_omits_the_key_header_and_strips_the_trailing_slash():
+    ctx, mock_client = _mock_client(_ok_response({}))
     with ctx:
-        await record_spool_use("http://spoolman.test", None, spool_id=7, grams=5.0)
+        await patch_spool_remaining("http://spoolman.test/", None, spool_id=7, remaining_g=5.0)
 
-    call_args = mock_client.put.call_args
-    headers = call_args.kwargs.get("headers", {})
-    assert "X-API-Key" not in headers
+    call_args = mock_client.patch.call_args
+    assert call_args.args[0] == "http://spoolman.test/api/v1/spool/7" and "//api" not in call_args.args[0]
+    assert "X-API-Key" not in call_args.kwargs.get("headers", {})
 
 
 @pytest.mark.asyncio
-async def test_record_spool_use_strips_trailing_slash():
-    """Verify trailing slash on base URL does not produce double slash."""
-    ctx, mock_client = _mock_client_put(_ok_response_with_request({}, "http://spoolman.test/api/v1/spool/42/use"))
-    with ctx:
-        await record_spool_use("http://spoolman.test/", None, spool_id=42, grams=10.0)
+async def test_patch_spool_remaining_surfaces_the_error_body():
+    ctx, _ = _mock_client(_error_response(400, "remaining_weight can only be used if the filament has a weight set."))
+    with ctx, pytest.raises(httpx.HTTPStatusError, match="has a weight set"):
+        await patch_spool_remaining("http://spoolman.test", None, spool_id=1, remaining_g=1.0)
 
-    call_args = mock_client.put.call_args
-    url = call_args.args[0] if call_args.args else call_args.kwargs.get("url")
-    assert url == "http://spoolman.test/api/v1/spool/42/use"
-    assert "//api" not in url
+
+# ---------------------------------------------------------------------------
+# reads
+# ---------------------------------------------------------------------------
+
+async def test_reads_return_the_upstream_payloads(spoolman_upstream):
+    assert await spoolman_client.fetch_filaments(URL) == spoolman_mock._FILAMENTS
+    assert await spoolman_client.fetch_spools(URL) == spoolman_mock._SPOOLS
+    assert await spoolman_client.fetch_filament(URL, None, 2) == spoolman_mock._FILAMENTS[1]
+    assert await spoolman_client.test_connection(URL) == {"version": "1.0.0-mock", "debug_mode": False}
+    assert [(r.method, r.url.path) for r in spoolman_upstream.requests] == [
+        ("GET", "/api/v1/filament"), ("GET", "/api/v1/spool"), ("GET", "/api/v1/filament/2"), ("GET", "/api/v1/info")]
+
+
+async def test_reads_strip_the_trailing_slash_and_send_the_api_key_only_when_set(spoolman_upstream):
+    await spoolman_client.fetch_spools(f"{URL}/", "secret")
+    await spoolman_client.fetch_spools(URL, None)
+
+    with_key, without_key = spoolman_upstream.requests
+    assert str(with_key.url) == f"{URL}/api/v1/spool"  # no '//api'
+    assert with_key.headers["x-api-key"] == "secret"
+    assert "x-api-key" not in without_key.headers
+
+
+@pytest.mark.parametrize("call", [
+    lambda: spoolman_client.fetch_filaments(URL),
+    lambda: spoolman_client.fetch_spools(URL),
+    lambda: spoolman_client.fetch_filament(URL, None, 1),
+    lambda: spoolman_client.test_connection(URL),
+])
+async def test_reads_raise_on_http_errors_and_timeouts(spoolman_upstream, call):
+    spoolman_upstream.handler = lambda request: httpx.Response(503, text="down")
+    with pytest.raises(httpx.HTTPStatusError) as exc:
+        await call()
+    assert exc.value.response.status_code == 503
+
+    def _timeout(request):
+        raise httpx.ConnectTimeout("timed out", request=request)
+    spoolman_upstream.handler = _timeout
+    with pytest.raises(httpx.ConnectTimeout):
+        await call()
+
+

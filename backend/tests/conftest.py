@@ -48,9 +48,11 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_file}")
     event.listens_for(engine.sync_engine, "connect")(_set_sqlite_pragmas)
     # The plugin host is a process-wide singleton: point it at THIS test's database with a clean in-memory state.
+    from app import plugins as plugins_registry
     from app.plugins import load_bundled
     from app.plugins.host import plugin_host
     load_bundled()
+    registry_before = dict(plugins_registry._REGISTRY)         # tests may register fake providers; undo that afterwards
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     plugin_host._reset()
     plugin_host.configure(factory)
@@ -59,6 +61,8 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     finally:
         await plugin_host.stop()
         plugin_host._reset()
+        plugins_registry._REGISTRY.clear()
+        plugins_registry._REGISTRY.update(registry_before)
         await engine.dispose()
 
 

@@ -1,6 +1,5 @@
 # backend/tests/api/test_jobs_api.py
 from unittest.mock import AsyncMock, patch
-from app.services.providers.filament_inventory import Spool
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
 from app.models import Job

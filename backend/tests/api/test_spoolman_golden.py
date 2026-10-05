@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models import SpoolmanConfig
-from app.services import notification_service, spool_alerts, webhook_service
-from app.services.providers.filament_inventory import Spool
-from app.services.spoolman_sync import record_sync
+from app.models import InventoryConfig
+from app.services import notification_service, webhook_service
+from app.services.inventory.sync import record_sync
 from tests import spoolman_mock
 from tests.api.test_jobs_api import _seed_spool_warning_fixture
 from tests.api.test_queue_api import _seed_queue_spool_warning_fixture
 from tests.fake_providers import FakeInventoryProvider
+from tests.inventory_helpers import enable_spoolman, spool as make_spool, use_provider
 from tests.golden import assert_golden, mask
 from tests.waiting import wait_until
 
@@ -83,6 +83,7 @@ async def test_golden_settings_spoolman_and_test(client, spoolman_upstream):
 
 
 async def test_golden_spool_low_webhook_and_notification(session_factory, spoolman_upstream):
+    await enable_spoolman()
     sent, notified = [], []
 
     async def fire(url, secret, payload):
@@ -93,31 +94,30 @@ async def test_golden_spool_low_webhook_and_notification(session_factory, spoolm
 
     from app.models import NotificationConfig, WebhookConfig
     async with session_factory() as s:
-        s.add(SpoolmanConfig(id=1, enabled=True, url="http://spoolman.test", low_stock_default_g=600.0))
+        s.add(InventoryConfig(id=1, deduct_on_complete=True, low_stock_default_g=600.0, low_stock_overrides={},
+                              low_stock_alerted=[]))
         s.add(WebhookConfig(id=1, url="http://hook.test/x", secret="whsec"))
         s.add(NotificationConfig(id=1, ntfy_enabled=True))
         await s.commit()
-        row = await s.get(SpoolmanConfig, 1)
         with patch.object(webhook_service, "fire", fire), patch.object(notification_service, "dispatch", dispatch):
-            await record_sync(s, row)
+            await record_sync(s)
             await wait_until(lambda: sent and notified)
-        assert row.low_stock_alerted == [2]
+        assert (await s.get(InventoryConfig, 1)).low_stock_alerted == ["spoolman:2"]
 
     assert_golden("spoolman/spool-low", {"webhook": sent, "notification": notified})
 
 
 @pytest.mark.parametrize("grams,remaining,name", [(200.0, 900.0, "sufficient"), (340.0, 220.0, "insufficient")])
 async def test_golden_low_stock_warning_on_queue_and_job_details(client, session_factory, grams, remaining, name):
-    fake = FakeInventoryProvider(spools=[Spool(ref="99", remaining_weight=remaining,
-                                               filament_name="Bambu PLA Basic Black", filament_material="PLA")])
+    fake = FakeInventoryProvider(spools=[make_spool("99", remaining, name="Bambu PLA Basic Black", material="PLA")])
     qjob, _ = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=grams)
-    with patch("app.api.routes.queue.get_inventory_provider", AsyncMock(return_value=fake)):
-        queue = (await client.get("/api/v1/queue")).json()
+    await use_provider(fake)
+    queue = (await client.get("/api/v1/queue")).json()
     queue_warning = next(j for j in queue if j["id"] == qjob)["low_stock_warning"]
 
     jjob, jprinter = await _seed_spool_warning_fixture(session_factory, estimate_grams=grams)
-    with patch("app.api.routes.jobs.get_inventory_provider", AsyncMock(return_value=fake)):
-        details = (await client.get(f"/api/v1/jobs/{jjob}/details")).json()
+    await use_provider(fake)
+    details = (await client.get(f"/api/v1/jobs/{jjob}/details")).json()
     detail_warning = next(c for c in details["printer_configs"] if c["printer_id"] == jprinter)["low_stock_warning"]
 
     assert_golden(f"spoolman/low-stock-warning-{name}", {"queue": queue_warning, "job_details": detail_warning})

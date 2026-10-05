@@ -17,7 +17,7 @@ from app.migrations import v033_slice_cache
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
 # Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).
-_POST_V032_TABLES = ("plugin_configs", "extension_slots", "plugin_schema_versions")
+_POST_V032_TABLES = ("plugin_configs", "extension_slots", "plugin_schema_versions", "inventory_config")
 NOW = "2026-01-01T00:00:00"
 V032_SCOPES = ["jobs:read", "jobs:write", "settings:read", "settings:write", "spoolman:read", "spoolman:write"]
 _SLOTS = [

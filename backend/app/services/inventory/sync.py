@@ -1,4 +1,4 @@
-"""Generic inventory sync + health for `REMOTE` providers (replaces the Spoolman-specific loop).
+"""Generic inventory sync + health for `REMOTE` providers (replaces the old provider-specific loop).
 
 Health lives in the provider's `plugin_configs.state` (`last_sync_at`, `last_attempt_at`, `sync_error`,
 `sync_error_code`); the interval and enabled flag are the plugin's own settings. `record_sync` is the single place that

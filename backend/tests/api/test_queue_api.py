@@ -1,7 +1,6 @@
 # backend/tests/api/test_queue_api.py
 import pytest
 from unittest.mock import AsyncMock, patch
-from app.services.providers.filament_inventory import Spool
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
 
@@ -130,3 +129,22 @@ async def test_queue_fetch_spools_called_once_for_multiple_jobs(client, session_
     assert job1 in ids
     assert job2 in ids
     assert fake.calls.count("list_spools") == 1
+
+
+async def test_queue_preflight_is_skipped_without_a_weight_tracking_provider_and_survives_a_failing_one(client, session_factory):
+    """§3.10: no TRACKS_WEIGHT -> `low_stock_warning: null` and the provider is not even asked; a provider that fails
+    never breaks the queue (the warning is advisory)."""
+    job_id, _ = await _seed_queue_spool_warning_fixture(session_factory, estimate_grams=340.0)
+
+    untracked = FakeInventoryProvider(spools=[spool("99", 220.0, name="x", material="PLA")], capabilities=frozenset())
+    await use_provider(untracked)
+    resp = await client.get("/api/v1/queue")
+    assert next(j for j in resp.json() if j["id"] == job_id)["low_stock_warning"] is None
+    assert untracked.calls == []
+
+    failing = FakeInventoryProvider(spools=[spool("99", 220.0, name="x", material="PLA")])
+    failing.fail_with = RuntimeError("down")
+    await use_provider(failing)
+    resp = await client.get("/api/v1/queue")
+    assert resp.status_code == 200 and next(j for j in resp.json() if j["id"] == job_id)["low_stock_warning"] is None
+    assert "list_spools" in failing.calls

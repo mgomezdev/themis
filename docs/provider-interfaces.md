@@ -1,34 +1,36 @@
-# Provider Interfaces (Laminus & Spoolman)
+# Provider Interfaces (Laminus & filament inventory)
 
-Themis core never talks to Laminus (slicing) or Spoolman (filament inventory) directly. Every call goes
-through an interface in `backend/app/services/providers/`, using the same pattern as
-`AbstractPrinterClient` (see `printer-interface.md`): an ABC, capability flags, and a registry + accessor.
+Themis core never talks to Laminus (slicing) or to an inventory system (Spoolman, Local inventory...) directly.
+Slicing goes through `backend/app/services/providers/slicing.py` (an ABC, capability flags, a registry + accessor, the
+same pattern as `AbstractPrinterClient`, see `printer-interface.md`). **Filament inventory is a plugin kind** (BIZ-202):
+the ABC and DTOs live in `backend/app/plugins/kinds/filament_inventory.py`, every inventory system is a plugin
+(`backend/app/plugins/<id>/`), and core reaches the active one only through the plugin host
+(`backend/app/services/inventory/`).
 
 ```
 core (queue_engine, routes, services)
         │  neutral DTOs + ABC methods only
         ▼
-providers/slicing.py              providers/filament_inventory.py
-  SlicingProvider (sync)            FilamentInventoryProvider (async)
-  Catalog / Preset / SliceSpec      Filament / Spool
-        │ registry                          │ registry
-        ▼                                   ▼
-providers/laminus/                providers/spoolman/
-  adapter.py  LaminusSlicingProvider  adapter.py  SpoolmanInventoryProvider
-  sidecar_client.py  (httpx)          service.py  (httpx)
+providers/slicing.py                     app/services/inventory/*  →  plugins/host.py  (host.call: contained, capability-gated)
+  SlicingProvider (sync)                        │ the active filament_inventory plugin
+  Catalog / Preset / SliceSpec                  ▼
+        │ registry                       plugins/kinds/filament_inventory.py   FilamentInventoryProvider (async)
+        ▼                                  InvMaterial / InvSpool, capabilities
+providers/laminus/                              │ registry (plugins/__init__.py)
+  adapter.py  LaminusSlicingProvider            ▼
+  sidecar_client.py  (httpx)             plugins/spoolman/   provider.py  client.py (httpx)  labels.py  settings.py
   gcode.py overrides.py profile_index.py preset_resolver.py
 ```
 
-**Scope.** This is the interface layer for *current behavior*: no plugin host, no API change. Routes keep
-their `/api/v1/laminus/*` and `/api/v1/spoolman/*` paths and response shapes (adapters re-serialize via the
-DTOs' `raw` field), so `openapi.json`, `contracts/response-keys.json` and the frontend are untouched.
-Persisted ids (`loaded_filaments[].spoolman_spool_id`, `filament_id` columns, low-stock overrides, preset
-names, `machine_uuid`/`process_uuid`) stay opaque provider refs and are not renamed.
+**Scope.** Laminus keeps its `/api/v1/laminus/*` paths and response shapes (the adapter re-serializes via the DTOs' `raw`
+field). The deprecated `/api/v1/spoolman/*` + `/api/v1/settings/spoolman*` aliases keep their shapes too (byte-for-byte
+goldens in `tests/golden/`), now relayed through the inventory provider. Persisted ids (`loaded_filaments[].spoolman_spool_id`,
+`filament_id` columns, preset names, `machine_uuid`/`process_uuid`) stay opaque refs for now (BIZ-217 adds provider-namespaced ones).
 
 ## The boundary (enforced)
 
 `backend/tests/test_provider_boundary.py` walks every module under `app/` and fails if code **outside**
-`app/services/providers/<adapter>/` imports an adapter-internal module (the sidecar client, the Spoolman
+`app/services/providers/laminus/` or `app/plugins/spoolman/` imports an adapter-internal module (the sidecar client, the Spoolman
 client, the Orca override/gcode/preset logic, or their old `app/services/*` paths), names a vendor symbol
 (`LaminusSidecarClient`, `SidecarError`, `parse_gcode_estimates`, `get_laminus_sidecar_url`), or imports
 `httpx` without being on the `HTTPX_ALLOWED` list (printers, webhooks, notifications, camera, discovery).
@@ -36,39 +38,41 @@ Only the two accessor modules (`providers/slicing.py`, `providers/filament_inven
 adapter package, to register it. The test is in CI (`pytest`) and has planted-violation cases proving it
 can fail. Importing the DTOs / ABCs from `providers.slicing` / `providers.filament_inventory` is always fine.
 
-## `FilamentInventoryProvider` — async
+## `FilamentInventoryProvider` — async (a plugin kind)
 
-`providers/filament_inventory.py`. Mirrors what the Spoolman client does today.
+`plugins/kinds/filament_inventory.py` (spec: Linear "Plugin architecture — design spec" §3.2). Core and the frontend only
+see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 
 | Method | Returns | Notes |
 |---|---|---|
 | `test_connection()` | `dict` | Spoolman: `GET /api/v1/info`. |
-| `list_filaments()` / `get_filament(ref)` | `list[Filament]` / `Filament` | |
-| `list_spools()` | `list[Spool]` | Routes batch: **one call per request** (queue/jobs preflight). |
-| `record_usage(spool_ref, grams)` | `None` | Fire-and-forget at the call site (`queue_engine._deduct_spool`): errors are logged, never raised. |
-| `get_profile_bindings(filament_ref)` / `set_profile_bindings(filament_ref, bindings)` | `dict[str, list[str]]` / `Filament` | `{printer_preset: [filament profile names]}` — see below. |
+| `list_materials()` / `list_spools()` | `list[InvMaterial]` / `list[InvSpool]` | Routes batch: **one call per request** (queue/jobs preflight). |
+| `get_spool(ref)` | `InvSpool \| None` | `None` = not found (404). Used by the interim deduction (and, later, the pre-print snapshot). |
+| `set_remaining(ref, grams)` | `None` | `WRITE_WEIGHT`. **Absolute**, never a delta (D6): re-sending is harmless. Spoolman: `PATCH /spool/{id} {remaining_weight}` (`protocol_verification/test_spoolman_weight.py`). |
+| `set_profile_links(material_ref, links)` | `InvMaterial` | `PROFILE_LINKS_WRITE`. `{orca printer preset: [orca filament presets]}`. |
+| `parse_label(text)` / `spool_url(ref)` | `ref \| None` / `url \| None` | `LABEL_SCAN` / optional deep link. |
 
-Capability flags (class attrs, default `False`): `TRACKS_WEIGHT`, `RECORDS_USAGE` (gates the completion
-deduction), `PROFILE_BINDINGS` (gates the drift check, remap writes and `PATCH /spoolman/filaments/{id}`;
-a provider without it is skipped, never errors).
+Capabilities (`frozenset` class attr; the manifest declares the same set): `TRACKS_WEIGHT`, `WRITE_WEIGHT`,
+`PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (can be unreachable → sync loop, health, later the offline cache).
+Optional methods raise `NotSupported(capability)` by default; callers check `provider.has(cap)` first.
 
-DTOs: `Filament(ref, name, vendor, material, color_hex, profile_bindings, raw)`,
-`Spool(ref, filament_ref, filament_name, filament_vendor, filament_material, location, remaining_weight,
-archived, raw)`. `ref`s are strings. `raw` is the vendor payload, kept so legacy routes return the exact
-shape they always did (`[f.raw for f in …]`).
+DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
+`InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. Refs are strings. `raw` is
+provider-private (the plugin's own alias routes relay it); core code never reads it and the neutral API never serialises it.
+Errors: `InventoryProviderError(message, code, status)` — `code` is the HTTP status string or the transport exception class name.
 
-Errors: `InventoryProviderError(message, code, status)` — `code` is the HTTP status string or the transport
-exception class name (stored in `spoolman_config.last_sync_error_code`); `status` the upstream HTTP status
-when there was one (the PATCH route passes it through, else 503).
+**Core access** is `app/services/inventory/`: `provider.py` (`active_provider()`, `has(cap)`, `require(cap)` → raises
+`CapabilityUnavailable` → HTTP 409 `{"error": "capability_unavailable", "kind", "capability"}`, `call(method, …)` → the host's
+contained `CallResult`), `read.py`, `alerts.py` (`spool.low`), `preflight.py` (`low_stock_warning`), `sync.py` (generic sync
+loop + health in `plugin_configs.state`), `deduction.py` (interim read→set; BIZ-218 replaces it), `config.py`
+(`inventory_config`: `deduct_on_complete` + low-stock thresholds, keys namespaced `"<provider>:<ref>"`).
 
-Accessors: `get_inventory_provider(session)` → provider or `None` when `SpoolmanConfig` is missing, disabled
-or has no URL (replaces every per-caller `enabled`/`url` check); `make_inventory_provider(url, api_key)` for
-explicit credentials (the "test connection" button, before anything is saved).
+**Profile links** are the one place Laminus and the inventory meet: Spoolman stores Orca preset names in `extra.orca_profiles`
+(double-JSON-encoded). Only the Spoolman plugin encodes/decodes it; core reads `InvMaterial.profile_links` and writes via
+`set_profile_links` (drift repair in `laminus.py` confirm-remap; the catalog drift check needs `PROFILE_LINKS_READ`).
 
-**Profile bindings** are the one place Laminus and Spoolman meet: Spoolman filaments store Orca preset names
-in `extra.orca_profiles` (double-JSON-encoded). Only the Spoolman adapter encodes/decodes it; core reads
-`Filament.profile_bindings` / `get_profile_bindings` and writes via `set_profile_bindings`. They stay stored
-in Spoolman (moving them to a Themis table is out of scope).
+Neutral API: `/api/v1/inventory/{materials,spools,sync-now,sync-status,resolve-label,settings}` and `PATCH …/materials/{ref}/profile-links`
+(scopes `inventory:read/write`); plugin management `/api/v1/plugins…` and `PUT /api/v1/extension-slots/{kind}` (scopes `settings:*`).
 
 ## `SlicingProvider` — sync
 
@@ -106,7 +110,8 @@ Accessors:
 The slicing provider is **sync** and is called from the queue's `ThreadPoolExecutor` (4 threads; a slice
 polls up to ~620 s) or via `asyncio.to_thread` / `run_in_executor` from routes. Never call its methods on the
 event loop directly — the queue loop's non-blocking behavior depends on it. The inventory provider is **async**
-(httpx `AsyncClient`) and is awaited directly. Per-call `timeout` overrides exist so existing short timeouts
+(httpx `AsyncClient`) and is awaited through `host.call` (never from the queue loop itself: the completion path schedules
+a fire-and-forget task). Per-call `timeout` overrides exist so existing short timeouts
 (health 2 s, fingerprint 10 s, catalog health 5 s) are preserved; defaults (client 630 s, poll 620 s) are
 unchanged.
 
@@ -120,23 +125,20 @@ map to `HTTPException`.
 
 ## Adding a provider
 
-1. Add `providers/<name>/adapter.py` with a class implementing the ABC (set the capability flags), plus any
-   vendor client/format modules next to it. Map vendor errors to `InventoryProviderError` /
-   `SlicingProviderError`; give the DTOs a `raw` payload if a legacy route re-serializes it.
-2. Add `providers/<name>/__init__.py` calling `register_inventory_provider("<name>", Cls)` /
-   `register_slicing_provider("<name>", Cls)`.
-3. Add one entry to the accessor in `providers/slicing.py` / `filament_inventory.py` (they currently
-   instantiate the sole registered adapter; selection by config is the next step and belongs to the plugin
-   epic), and add the new package to `ADAPTER_PACKAGES` in `test_provider_boundary.py`.
-4. Add a `Fake…Provider` to `backend/tests/fake_providers.py` (if the ABC grew) and run the provider contract
-   suite against it (`tests/services/test_inventory_provider_contract.py`,
-   `test_slicing_provider_contract.py`): the fake and every adapter are parametrized through the same tests.
+**Slicing:** add `providers/<name>/adapter.py` implementing `SlicingProvider` (set the capability flags) plus any vendor client next to
+it, a `providers/<name>/__init__.py` calling `register_slicing_provider`, one entry in the accessor in `providers/slicing.py`, and the
+package in `ADAPTER_PACKAGES` of `test_provider_boundary.py`.
+
+**Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, kind `filament_inventory`, `settings_model`,
+`secret_fields`, `factory`, `capabilities`, `ui`), a provider class implementing the ABC, one entry in `plugins.BUNDLED_MODULES`, the
+package in `ADAPTER_PACKAGES`, and a parameter in the provider contract suite
+(`tests/plugins/test_filament_inventory_contract.py`). Map vendor errors to `InventoryProviderError`. No core file changes.
 
 ## Testing
 
 - `backend/tests/fake_providers.py`: `FakeInventoryProvider`, `FakeSlicingProvider` (records `calls`,
   `fail_with` / `fail_on[method]`, canned `estimates` / `merged` / `health_script`). Patch the accessor **in the
-  module under test** (`patch("app.api.routes.jobs.get_inventory_provider", AsyncMock(return_value=fake))`);
+  module under test** (inventory: `await use_provider(fake)` from `tests/inventory_helpers.py` makes it the active provider; the plugin host is configured per test by `session_factory`);
   the accessor reads `config.get_laminus_sidecar_url()` at call time, so `patch("app.config.get_laminus_sidecar_url")`
   also still works.
 - Adapter tests run against the real wire formats: Spoolman via `spoolman_upstream` (the real

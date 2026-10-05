@@ -1,5 +1,5 @@
 """App startup/shutdown wiring (app.main.lifespan). Runs the real lifespan with the module-level DB session
-factory redirected to a per-test database and the long-running services (queue loop, Spoolman sync) replaced
+factory redirected to a per-test database and the long-running services (queue loop, inventory sync) replaced
 by spies, then asserts the singletons end up wired the way the rest of the app assumes."""
 import asyncio
 import logging
@@ -32,11 +32,11 @@ def boot(session_factory, tmp_path, monkeypatch):
     spies.engine_start, spies.engine_stop = AsyncMock(), AsyncMock()
     monkeypatch.setattr(queue_engine, "start", spies.engine_start, raising=False)
     monkeypatch.setattr(queue_engine, "stop", spies.engine_stop, raising=False)
-    spies.spoolman_configure = MagicMock()
-    spies.spoolman_start, spies.spoolman_stop = AsyncMock(), AsyncMock()
-    monkeypatch.setattr(main.spoolman_sync_loop, "configure", spies.spoolman_configure)
-    monkeypatch.setattr(main.spoolman_sync_loop, "start", spies.spoolman_start)
-    monkeypatch.setattr(main.spoolman_sync_loop, "stop", spies.spoolman_stop)
+    spies.inventory_configure = MagicMock()
+    spies.inventory_start, spies.inventory_stop = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(main.inventory_sync_loop, "configure", spies.inventory_configure)
+    monkeypatch.setattr(main.inventory_sync_loop, "start", spies.inventory_start)
+    monkeypatch.setattr(main.inventory_sync_loop, "stop", spies.inventory_stop)
 
     from app.plugins.host import plugin_host
     spies.plugin_start, spies.plugin_stop = AsyncMock(), AsyncMock()
@@ -76,8 +76,8 @@ async def test_startup_wires_the_printer_manager_queue_engine_and_background_ser
         assert queue_engine._mgr is printer_manager
         assert printer_manager._on_job_complete == queue_engine.handle_print_complete
         boot.engine_start.assert_awaited_once()
-        boot.spoolman_configure.assert_called_once_with(session_factory)
-        boot.spoolman_start.assert_awaited_once()
+        boot.inventory_configure.assert_called_once_with(session_factory)
+        boot.inventory_start.assert_awaited_once()
         from app.plugins.host import plugin_host
         assert plugin_host._session_factory is session_factory           # the plugin host is wired and started at boot
         boot.plugin_start.assert_awaited_once()
@@ -104,7 +104,7 @@ async def test_shutdown_stops_background_services_and_disconnects_every_printer(
         client.disconnect = MagicMock(wraps=client.disconnect)
 
     boot.engine_stop.assert_awaited_once()
-    boot.spoolman_stop.assert_awaited_once()
+    boot.inventory_stop.assert_awaited_once()
     boot.plugin_stop.assert_awaited_once()
     client.disconnect.assert_called_once()
     assert printer_manager.get_all_printer_ids() == []
@@ -189,4 +189,4 @@ async def test_a_plugin_host_that_fails_to_start_does_not_stop_themis_booting(bo
     boot.plugin_start.side_effect = RuntimeError("plugin tables unreadable")
     async with main.lifespan(main.app):
         boot.engine_start.assert_awaited_once()
-        boot.spoolman_start.assert_awaited_once()
+        boot.inventory_start.assert_awaited_once()
