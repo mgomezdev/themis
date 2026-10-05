@@ -6,6 +6,8 @@ Implements the Spoolman REST API subset used by Themis:
     GET  /api/v1/filament/{id}
     PATCH /api/v1/filament/{id}
     GET  /api/v1/spool
+    GET  /api/v1/spool/{id}
+    PATCH /api/v1/spool/{id}
     PUT  /api/v1/spool/{id}/use
 
 Run via docker-compose.test.yml, or standalone:
@@ -115,6 +117,44 @@ async def patch_filament(filament_id: int, body: dict):
 @app.get("/api/v1/spool")
 async def list_spools():
     return _SPOOLS
+
+
+def _spool(spool_id: int) -> dict:
+    for s in _SPOOLS:
+        if s["id"] == spool_id:
+            return s
+    raise HTTPException(404, f"Spool {spool_id} not found")
+
+
+@app.get("/api/v1/spool/{spool_id}")
+async def get_spool(spool_id: int):
+    return _spool(spool_id)
+
+
+@app.patch("/api/v1/spool/{spool_id}")
+async def patch_spool(spool_id: int, body: dict):
+    """Spoolman couples the two weights: `remaining_weight` and `used_weight` describe the same quantity
+    (remaining = initial - used, initial = the filament's `weight`). Setting either derives the other; sending both
+    is a 400. Setting a value never changes it afterwards, and sending it again is a no-op.
+    Verified against a real instance by protocol_verification/test_spoolman_weight.py (BIZ-203)."""
+    s = _spool(spool_id)
+    if "remaining_weight" in body and "used_weight" in body:
+        raise HTTPException(400, "Only specify either remaining_weight or used_weight.")
+    initial = s["filament"].get("weight")
+    if "remaining_weight" in body:
+        if initial is None:
+            raise HTTPException(400, "remaining_weight can only be used if the filament has a weight set.")
+        remaining = max(0.0, float(body["remaining_weight"]))
+        s["remaining_weight"], s["used_weight"] = remaining, max(0.0, initial - remaining)
+    elif "used_weight" in body:
+        used = max(0.0, float(body["used_weight"]))
+        s["used_weight"] = used
+        if initial is not None:
+            s["remaining_weight"] = max(0.0, initial - used)
+    for key in ("location", "comment", "archived"):
+        if key in body:
+            s[key] = body[key]
+    return s
 
 
 @app.put("/api/v1/spool/{spool_id}/use")
