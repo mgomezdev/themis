@@ -16,10 +16,10 @@ const PROFILE = '0.20mm Standard @ECC';
 function Where() { return <div data-testid="where">{useLocation().pathname}</div>; }
 const where = () => screen.getByTestId('where').textContent;
 
-function open(plates = [plate(1)], over: Record<string, unknown> = {}) {
+function open(plates = [plate(1)], over: Record<string, unknown> = {}, entry = '/queue/new') {
   const api = stubFetch({
     'GET /api/v1/printers': [PRINTER],
-    'GET /api/v1/orders': [],
+    'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
     'GET /api/v1/settings/spoolman': { enabled: false, url: '', has_api_key: false, sync_interval_minutes: 15 },
     'POST /api/v1/files/upload': { id: 42, original_filename: 'model.3mf' },
@@ -34,7 +34,7 @@ function open(plates = [plate(1)], over: Record<string, unknown> = {}) {
     ...over,
   });
   render(
-    <MemoryRouter initialEntries={['/queue/new']}>
+    <MemoryRouter initialEntries={[entry]}>
       <Where />
       <Routes>
         <Route path="/queue/new" element={<NewJobScreen />} />
@@ -97,18 +97,47 @@ describe('NewJobScreen - upload failures', () => {
   });
 });
 
-describe('NewJobScreen - linking an order', () => {
-  it('offers internal orders only: customer work is recorded as a project', async () => {
-    const order = (id: number, order_type: string, customer: string) => ({
-      id, order_type, customer, title: 't', status: 'queued', progress: 0, job_count: 0, parts: [],
-      due_date: null, notes: null, on_hold: false, amount_paid: null, payment_status: 'unpaid',
-      filament_cost_total: null, created_at: 'x', updated_at: 'x',
-    });
-    open([plate(1)], { 'GET /api/v1/orders': [order(1, 'customer', 'Vela Robotics'), order(2, 'internal', 'R&D oven')] });
-    await upload();
+const project = (id: number, name: string, stage = 'queued') => ({ id, name, stage, customer: '', order_type: 'customer' });
 
-    expect(await screen.findByText('R&D oven')).toBeTruthy();
-    expect(screen.queryByText('Vela Robotics')).toBeNull();
+describe('NewJobScreen - linking a project', () => {
+  it('offers projects that can take jobs (not drafts) and sends the chosen one with the job', async () => {
+    const api = open([plate(1)], {
+      'GET /api/v1/projects': [project(1, 'Vela Robotics'), project(2, 'R&D oven', 'planning'), project(3, 'Idea', 'draft')],
+    });
+    await upload();
+    await configureActivePlate();
+
+    expect(await screen.findByText('Vela Robotics')).toBeTruthy();
+    expect(screen.getByText('R&D oven')).toBeTruthy();
+    expect(screen.queryByText('Idea')).toBeNull();                 // a draft project cannot have jobs yet
+    await userEvent.click(screen.getByText('Vela Robotics'));
+    await userEvent.click(addButton());
+
+    await screen.findByText(/1 job added to queue/);
+    expect(jobPosts(api)[0].body).toMatchObject({ project_id: 1 });
+  });
+
+  it('starts linked to the project in ?project=<id> (Add job from a project page)', async () => {
+    const api = open([plate(1)], { 'GET /api/v1/projects': [project(7, 'Gate hinges')] }, '/queue/new?project=7');
+    await upload();
+    await configureActivePlate();
+
+    await userEvent.click(addButton());
+
+    await screen.findByText(/1 job added to queue/);
+    expect(jobPosts(api)[0].body).toMatchObject({ project_id: 7 });
+  });
+
+  it('can clear the link and create a standalone job', async () => {
+    const api = open([plate(1)], { 'GET /api/v1/projects': [project(7, 'Gate hinges')] }, '/queue/new?project=7');
+    await upload();
+    await configureActivePlate();
+
+    await userEvent.click(await screen.findByText('None — standalone job'));
+    await userEvent.click(addButton());
+
+    await screen.findByText(/1 job added to queue/);
+    expect(jobPosts(api)[0].body).toMatchObject({ project_id: null });
   });
 });
 
@@ -122,7 +151,7 @@ describe('NewJobScreen - creating the job', () => {
 
     expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
     expect(jobPosts(api).map(c => c.body)).toEqual([{
-      uploaded_file_id: 42, plate_number: 1, order_id: null, overrides: null,
+      uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
         printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_id: null,
         filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
@@ -144,7 +173,7 @@ describe('NewJobScreen - creating the job', () => {
 
     expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
     expect(jobPosts(api).map(c => c.body)).toEqual([{
-      uploaded_file_id: 42, plate_number: 1, order_id: null, overrides: null,
+      uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [],
       model_targets: [{
         machine_profile: 'Elegoo Centauri Carbon', print_profile: PROFILE, filament_profile: null,
@@ -165,7 +194,7 @@ describe('NewJobScreen - creating the job', () => {
 
     expect(await screen.findByText(/1 job added to queue/)).toBeTruthy();
     expect(jobPosts(api).map(c => c.body)).toEqual([{
-      uploaded_file_id: 42, plate_number: 1, order_id: null, overrides: null,
+      uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
         printer_id: 1, print_profile: '', filament_profile: null, filament_id: null,
         filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,

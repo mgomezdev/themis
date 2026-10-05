@@ -62,6 +62,7 @@ export interface ApiJob {
   uploaded_file_id: number;
   plate_number: number;
   order_id: number | null;
+  project_id?: number | null;
   assigned_printer_id: number | null;
   queue_position: number | null;
   status: string;
@@ -222,6 +223,7 @@ export async function createJob(body: {
   printer_configs: PrinterConfigInput[];
   model_targets?: ModelTargetInput[];
   order_id?: number | null;
+  project_id?: number | null;
   overrides?: Record<string, string> | null;
   save_slice?: boolean;
   save_slice_name?: string | null;
@@ -230,6 +232,20 @@ export async function createJob(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+/** Every job, in queue order (all statuses). */
+export async function listJobs(): Promise<ApiJob[]> {
+  return request('/api/v1/jobs');
+}
+
+/** Attach an existing job to a project, or detach it with null (a job moves between projects only via null first). */
+export async function setJobProject(jobId: number, projectId: number | null): Promise<ApiJob> {
+  return request(`/api/v1/jobs/${jobId}/project`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ project_id: projectId }),
   });
 }
 

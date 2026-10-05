@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
@@ -301,5 +301,25 @@ describe('JobDetailScreen — slicing cache (BIZ-194)', () => {
     renderJobDetail();
     await screen.findByText(/part\.gcode\.3mf/);
     expect(screen.queryByTestId('save-slice-control')).toBeNull();
+  });
+});
+
+describe('JobDetailScreen — project link', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('shows the linked project name and unlinks it', async () => {
+    const { stubFetch } = await import('../test/fetchStub');
+    const api = stubFetch({
+      'GET /api/v1/projects/3': { id: 3, name: 'Bracket run', stage: 'queued' },
+      'PATCH /api/v1/jobs/5/project': { ...BASE_JOB, project_id: null },
+    });
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({ ...BASE_JOB, project_id: 3 });
+
+    renderJobDetail();
+
+    expect(await screen.findByText('Bracket run')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Unlink' }));
+    expect(await screen.findByText('Link to project…')).toBeTruthy();
+    expect(api.to('PATCH', '/api/v1/jobs/5/project')[0].body).toEqual({ project_id: null });
   });
 });

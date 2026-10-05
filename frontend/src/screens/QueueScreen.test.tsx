@@ -15,7 +15,12 @@ vi.mock('../api/queue', () => ({
   getSliceFailures: vi.fn(() => Promise.resolve([])),
   getJobDetails: vi.fn(() => Promise.resolve({ printer_configs: [] })),
   verifySlice: vi.fn(),
+  setJobProject: vi.fn(),
   plateThumbnailUrl: vi.fn(() => null),
+}));
+
+vi.mock('../api/projects', () => ({
+  useProjects: vi.fn(() => ({ projects: [], refetch: vi.fn() })),
 }));
 
 vi.mock('../api/fleet', () => ({
@@ -24,6 +29,7 @@ vi.mock('../api/fleet', () => ({
 
 import * as queueApi from '../api/queue';
 import * as fleetApi from '../api/fleet';
+import * as projectsApi from '../api/projects';
 
 const nullEstimate = {
   actual_filament_grams: null, actual_seconds: null, actual_filament_breakdown: null,
@@ -59,6 +65,28 @@ describe('QueueScreen', () => {
   beforeEach(() => {
     vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: mockJobs, refetch: vi.fn() });
     vi.mocked(queueApi.useFilePlates).mockReturnValue({ getPlate: () => null, getFileName: () => null });
+  });
+
+  it('shows the linked project name on a job card', () => {
+    vi.mocked(projectsApi.useProjects).mockReturnValue({ projects: [{ id: 4, name: 'Bracket run' }], refetch: vi.fn() } as never);
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4 }, mockJobs[0]], refetch: vi.fn() });
+    render(<QueueScreen />, { wrapper });
+    expect(screen.getAllByText('Bracket run')).toHaveLength(1);   // only the linked job's card
+  });
+
+  it('opens the job panel with a project control that refetches the queue after a change', async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn();
+    const refetchProjects = vi.fn();
+    vi.mocked(projectsApi.useProjects).mockReturnValue({ projects: [{ id: 4, name: 'Bracket run' }], refetch: refetchProjects } as never);
+    vi.mocked(queueApi.useQueue).mockReturnValue({ jobs: [{ ...mockJobs[1], project_id: 4 }], refetch });
+    vi.mocked(queueApi.setJobProject).mockResolvedValue({ ...mockJobs[1], project_id: null });
+    render(<QueueScreen />, { wrapper });
+    await user.click(screen.getByText('Plate 2'));
+    await user.click(screen.getByRole('button', { name: 'Unlink' }));
+    await vi.waitFor(() => expect(refetch).toHaveBeenCalled());
+    expect(refetchProjects).toHaveBeenCalled();
+    expect(queueApi.setJobProject).toHaveBeenCalledWith(2, null);
   });
 
   it('renders summary stats', () => {

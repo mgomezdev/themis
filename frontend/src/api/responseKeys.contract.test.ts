@@ -35,7 +35,7 @@ const PRINTER = {
 } satisfies Record<keyof ApiPrinter, 1>;
 
 const JOB = {
-  id: 1, uploaded_file_id: 1, plate_number: 1, order_id: 1, assigned_printer_id: 1, queue_position: 1, status: 1,
+  id: 1, uploaded_file_id: 1, plate_number: 1, order_id: 1, project_id: 1, assigned_printer_id: 1, queue_position: 1, status: 1,
   overrides: 1, block_reason: 1, actual_filament_grams: 1, actual_seconds: 1, actual_filament_breakdown: 1,
   deduction_skipped: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,

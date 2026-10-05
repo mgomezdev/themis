@@ -4549,6 +4549,67 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/project": {
+      "patch": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Link or unlink a job's project",
+        "description": "Attach an existing job to a project (so it counts toward the project's progress and costs), or detach it\nwith `project_id: null`. A job moves between projects only by being unlinked first. A project that has an\norder grouping replaces the job's own `order_id`; unlinking clears `order_id` only when it is that project's. While the project is not\nyet queued, the queue engine holds its queued/blocked jobs back (already sliced or running ones are unaffected).",
+        "operationId": "set_job_project_api_v1_jobs__job_id__project_patch",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobProjectLink"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Job Project Api V1 Jobs  Job Id  Project Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job or project not found"
+          },
+          "409": {
+            "description": "The job already belongs to another project, or the project is still a draft"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/save-slice": {
       "patch": {
         "tags": [
@@ -8899,6 +8960,17 @@
             ],
             "title": "Order Id"
           },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
           "printer_configs": {
             "items": {
               "$ref": "#/components/schemas/PrinterConfigInput"
@@ -8961,6 +9033,23 @@
           "uploaded_file_id"
         ],
         "title": "JobCreate"
+      },
+      "JobProjectLink": {
+        "properties": {
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "title": "JobProjectLink"
       },
       "JobSaveSlicePatch": {
         "properties": {
