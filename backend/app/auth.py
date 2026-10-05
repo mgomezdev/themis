@@ -22,6 +22,7 @@ SCOPES: set[str] = {
     "laminus:read", "laminus:write",
     "settings:read", "settings:write",
     "spoolman:read", "spoolman:write",
+    "inventory:read", "inventory:write",
     "tags:read", "tags:write",
     "maintenance:read", "maintenance:write",
     "apikeys:read", "apikeys:write",

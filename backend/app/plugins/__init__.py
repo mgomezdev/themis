@@ -12,7 +12,7 @@ __all__ = ["HOST_API", "PluginError", "PluginManifest", "UiContribution", "UiTab
            "plugins_of_kind", "registered_plugins", "load_bundled", "BUNDLED_MODULES"]
 
 # Modules (dotted paths) that export `MANIFEST`. Bundled plugins ship in the image and cannot be uninstalled.
-BUNDLED_MODULES: tuple[str, ...] = ()
+BUNDLED_MODULES: tuple[str, ...] = ("app.plugins.spoolman",)
 
 _REGISTRY: dict[str, PluginManifest] = {}
 

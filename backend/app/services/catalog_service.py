@@ -204,8 +204,7 @@ async def _apply_drift_gate(raw: bytes, new_catalog: Catalog, session: AsyncSess
         return {"status": "ok", "bytes": len(raw)}
 
     from .catalog_utils import compute_drift
-    from .providers.filament_inventory import get_inventory_provider
-    drift = await compute_drift(old_catalog, new_catalog, session, await get_inventory_provider(session))
+    drift = await compute_drift(old_catalog, new_catalog, session)
 
     if drift is None:
         commit_catalog(raw, new_catalog)

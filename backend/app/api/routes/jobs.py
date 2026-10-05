@@ -23,10 +23,11 @@ from ...services.library_scanner import file_kind, is_presliced_file, library_ab
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
-from ...services.queue_engine import queue_engine, _slot_for_config, _deduct_spool
+from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
-from ...services.spool_check import check_spool_sufficiency
-from ...services.providers.filament_inventory import Spool, get_inventory_provider
+from ...plugins.kinds.filament_inventory import InvSpool
+from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
+from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.slicing import get_format_provider
 
 logger = logging.getLogger(__name__)
@@ -650,24 +651,18 @@ async def get_job_details(
         p = await session.get(Printer, cfg.printer_id)
         slot = _slot_for_config(cfg, (p.loaded_filaments if p else None) or []) if p else None
         resolved.append((cfg, p, slot))
-        if slot and slot.get("spoolman_spool_id") is not None:
-            spool_ids_needed.add(str(slot["spoolman_spool_id"]))
+        if inventory_refs.slot_spool_ref(slot) is not None:
+            spool_ids_needed.add(inventory_refs.slot_spool_ref(slot))
 
-    spools_by_id: dict[str, Spool] = {}
+    spools_by_id: dict[str, InvSpool] = {}
     if spool_ids_needed:
-        provider = await get_inventory_provider(session)
-        if provider is not None:
-            try:
-                spools = await provider.list_spools()
-                spools_by_id = {s.ref: s for s in spools}
-            except Exception:
-                logger.warning("Spoolman unreachable while checking spool sufficiency for job %s", job_id, exc_info=True)
+        spools_by_id = await inventory_read.spools_by_ref(f"job {job_id}")
 
     printer_configs = []
     for cfg, p, slot in resolved:
         spool_warning = None
-        if slot and slot.get("spoolman_spool_id") is not None:
-            spool = spools_by_id.get(str(slot["spoolman_spool_id"]))
+        if inventory_refs.slot_spool_ref(slot) is not None:
+            spool = spools_by_id.get(inventory_refs.slot_spool_ref(slot))
             if spool is not None:
                 spool_warning = check_spool_sufficiency(needed_g, spool)
         printer_configs.append({
@@ -1203,32 +1198,28 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     spool_id = None
-    provider = None
     grams_to_deduct = None
-    if grams is not None:
-        inventory = await get_inventory_provider(session)
-        if inventory is not None and inventory.RECORDS_USAGE:
-            loaded = printer.loaded_filaments or []
-            slot = _slot_for_config(config, loaded)
-            if slot is not None:
-                raw_spool_id = slot.get("spoolman_spool_id")
-                if raw_spool_id is not None:
-                    try:
-                        spool_id = int(raw_spool_id)
-                        provider = inventory
-                        grams_to_deduct = grams
-                        job.deduction_skipped = False
-                    except (TypeError, ValueError):
-                        logger.warning(
-                            "Invalid spoolman_spool_id %r for job %s — deduction skipped",
-                            raw_spool_id, job_id,
-                        )
+    if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
+        loaded = printer.loaded_filaments or []
+        slot = _slot_for_config(config, loaded)
+        if slot is not None:
+            raw_spool_id = inventory_refs.slot_spool_ref(slot)
+            if raw_spool_id is not None:
+                try:
+                    spool_id = int(raw_spool_id)
+                    grams_to_deduct = grams
+                    job.deduction_skipped = False
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                        raw_spool_id, job_id,
+                    )
 
     await session.commit()
     await session.refresh(job)
 
-    if spool_id is not None and provider is not None and grams_to_deduct is not None:
-        asyncio.create_task(_deduct_spool(provider, spool_id, grams_to_deduct))
+    if spool_id is not None and grams_to_deduct is not None:
+        asyncio.create_task(inventory_deduction.deduct(str(spool_id), grams_to_deduct))
 
     return _to_dict(job)
 

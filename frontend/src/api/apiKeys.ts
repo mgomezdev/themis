@@ -91,6 +91,10 @@ export const SCOPES: ScopeGroup[] = [
     { scope: 'spoolman:read', label: 'Read' },
     { scope: 'spoolman:write', label: 'Write' },
   ] },
+  { resource: 'inventory', label: 'Filament inventory', scopes: [
+    { scope: 'inventory:read', label: 'Read' },
+    { scope: 'inventory:write', label: 'Write' },
+  ] },
   { resource: 'tags', label: 'Tags', scopes: [
     { scope: 'tags:read', label: 'Read' },
     { scope: 'tags:write', label: 'Write' },

@@ -31,7 +31,7 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .providers.filament_inventory import FilamentInventoryProvider, get_inventory_provider
+from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService
 from . import model_targets, slice_cache, slice_saver
@@ -48,14 +48,6 @@ _DEFAULT_CHECK_MINUTES = 5
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-async def _deduct_spool(provider: FilamentInventoryProvider, spool_id: int, grams: float) -> None:
-    """Fire-and-forget inventory deduction. Logs warning on failure; never raises."""
-    try:
-        await provider.record_usage(str(spool_id), grams)
-    except Exception:
-        logger.warning("Spoolman deduction failed: spool_id=%s grams=%s", spool_id, grams)
 
 
 def _norm_color(value) -> str:
@@ -1450,7 +1442,6 @@ class QueueEngine:
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
         job_id = None
-        provider: FilamentInventoryProvider | None = None
         spool_id: int | None = None
         grams_to_deduct: float | None = None
 
@@ -1489,32 +1480,30 @@ class QueueEngine:
 
             # Collect Spoolman deduction data before session closes
             actual_grams = job.actual_filament_grams
-            if actual_grams is not None:
-                inventory = await get_inventory_provider(session)
-                if inventory is not None and inventory.RECORDS_USAGE:
-                    provider = inventory
-                    loaded = (printer.loaded_filaments if printer else None) or []
-                    cfg_result = await session.execute(
-                        select(JobPrinterConfig).where(
-                            JobPrinterConfig.job_id == job_id,
-                            JobPrinterConfig.printer_id == printer_id,
-                        )
+            if actual_grams is not None and inventory_deduction.can_deduct() \
+                    and await inventory_config.deduct_enabled(session):
+                loaded = (printer.loaded_filaments if printer else None) or []
+                cfg_result = await session.execute(
+                    select(JobPrinterConfig).where(
+                        JobPrinterConfig.job_id == job_id,
+                        JobPrinterConfig.printer_id == printer_id,
                     )
-                    config = cfg_result.scalar_one_or_none()
-                    if config is not None:
-                        slot = _slot_for_config(config, loaded)
-                        if slot is not None:
-                            raw_spool_id = slot.get("spoolman_spool_id")
-                            if raw_spool_id is not None:
-                                try:
-                                    spool_id = int(raw_spool_id)
-                                    grams_to_deduct = actual_grams
-                                    job.deduction_skipped = False
-                                except (TypeError, ValueError):
-                                    logger.warning(
-                                        "Invalid spoolman_spool_id %r for job %s — deduction skipped",
-                                        raw_spool_id, job_id,
-                                    )
+                )
+                config = cfg_result.scalar_one_or_none()
+                if config is not None:
+                    slot = _slot_for_config(config, loaded)
+                    if slot is not None:
+                        raw_spool_id = inventory_refs.slot_spool_ref(slot)
+                        if raw_spool_id is not None:
+                            try:
+                                spool_id = int(raw_spool_id)
+                                grams_to_deduct = actual_grams
+                                job.deduction_skipped = False
+                            except (TypeError, ValueError):
+                                logger.warning(
+                                    "Invalid spoolman_spool_id %r for job %s — deduction skipped",
+                                    raw_spool_id, job_id,
+                                )
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1532,9 +1521,9 @@ class QueueEngine:
                 await session.delete(gcode)
             await session.commit()
 
-        if spool_id is not None and provider is not None and grams_to_deduct is not None:
+        if spool_id is not None and grams_to_deduct is not None:
             task = asyncio.create_task(
-                _deduct_spool(provider, spool_id, grams_to_deduct)
+                inventory_deduction.deduct(str(spool_id), grams_to_deduct)
             )
             self._estimate_tasks.add(task)
             task.add_done_callback(self._estimate_tasks.discard)

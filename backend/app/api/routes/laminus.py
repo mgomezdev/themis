@@ -11,7 +11,8 @@ from ...auth import require_scope
 from ...database import get_session
 from ...services import catalog_service
 from ...services.catalog_service import CatalogUnavailable
-from ...services.providers.filament_inventory import get_inventory_provider
+from ...plugins.kinds.filament_inventory import PROFILE_LINKS_READ, PROFILE_LINKS_WRITE
+from ...services.inventory import provider as inventory_provider
 from ...services.providers.slicing import Catalog
 
 
@@ -221,15 +222,24 @@ async def confirm_remap(
     spoolman_failures: list[str] = []
     applied_spoolman = 0
     if pending.get("spoolman_filaments"):
-        inventory = await get_inventory_provider(session)
-        if inventory is not None and inventory.PROFILE_BINDINGS:
+        if inventory_provider.has(PROFILE_LINKS_READ) and inventory_provider.has(PROFILE_LINKS_WRITE):
+            # One read for the whole remap (not one per filament); the local copy follows our own writes, so several
+            # entries touching the same material see each other's changes.
+            fetched = await inventory_provider.call("list_materials")
+            materials = {m.ref: m for m in fetched.value} if fetched.ok else {}
+            load_error = None if fetched.ok else inventory_provider.describe_failure(fetched)[1]
             for entry in pending["spoolman_filaments"]:
                 printer_preset = entry["printer_preset"]
                 stale_name = entry["stale_name"]
                 new_name = spoolman_res_map.get((printer_preset, stale_name))
                 for fil_id in entry["affected_filament_ids"]:
                     try:
-                        bindings = await inventory.get_profile_bindings(str(fil_id))
+                        if load_error:
+                            raise RuntimeError(load_error)
+                        material = materials.get(str(fil_id))
+                        if material is None:
+                            raise RuntimeError("material not found")
+                        bindings = {k: list(v) for k, v in (material.profile_links or {}).items()}
                         names = [n for n in bindings.get(printer_preset, []) if n != stale_name]
                         if new_name:
                             names.append(new_name)
@@ -237,11 +247,14 @@ async def confirm_remap(
                             bindings[printer_preset] = names
                         else:
                             bindings.pop(printer_preset, None)
-                        await inventory.set_profile_bindings(str(fil_id), bindings)
+                        written = await inventory_provider.call("set_profile_links", str(fil_id), bindings)
+                        if not written.ok:
+                            raise RuntimeError(inventory_provider.describe_failure(written)[1])
+                        materials[str(fil_id)] = written.value
                         applied_spoolman += 1
                     except Exception as exc:
                         spoolman_failures.append(f"filament {fil_id}: {exc}")
-                        logger.warning("Spoolman patch failed for filament %s: %s", fil_id, exc)
+                        logger.warning("Inventory profile-link rewrite failed for material %s: %s", fil_id, exc)
 
     # Commit catalog only when raw is not None (Spoolman-only pending skips this)
     if pending_sync.get("raw") is not None:

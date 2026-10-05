@@ -41,6 +41,8 @@ class CallResult:
     error: str | None = None
     # ok | inactive (no active provider / method) | timeout | error
     reason: Literal["ok", "inactive", "timeout", "error"] = "ok"
+    # The original exception (never persisted; may embed secrets — show it only through `PluginHost.redact`).
+    exception: Exception | None = None
 
 
 @dataclass(frozen=True)
@@ -181,6 +183,64 @@ class PluginHost:
         cfg = self._configs.get(plugin_id)
         return dict(cfg.state) if cfg else {}
 
+    def settings(self, plugin_id: str) -> dict:
+        """The plugin's stored non-secret settings (no model defaults applied)."""
+        cfg = self._configs.get(plugin_id)
+        return dict(cfg.settings) if cfg else {}
+
+    def is_enabled(self, plugin_id: str) -> bool:
+        cfg = self._configs.get(plugin_id)
+        return bool(cfg and cfg.enabled)
+
+    def has_secret(self, plugin_id: str, field: str) -> bool:
+        cfg = self._configs.get(plugin_id)
+        return bool(cfg and cfg.secrets.get(field))
+
+    def slot(self, kind: str) -> str | None:
+        return self._slots.get(kind)
+
+    def redact(self, plugin_id: str, text: str, extra: tuple[str, ...] = ()) -> str:
+        """`text` with the plugin's secret values (and any `extra` candidate secrets the caller is trying) masked — for
+        messages built from a CallResult.exception or a failed connection test."""
+        return self._redact(plugin_id, text, tuple(x for x in extra if x))
+
+    def build_candidate(self, plugin_id: str, settings: dict | None = None, secrets: dict | None = None) -> Any:
+        """A throw-away provider instance for `plugin_id` built from the saved config overlaid with the given values
+        (nothing is persisted; saved secrets never leave the host). Used to "test connection" before saving. Raises
+        `PluginError` for an unknown plugin / invalid settings, and whatever the factory raises."""
+        manifest = get_plugin(plugin_id)
+        if manifest is None:
+            raise PluginError(f"unknown plugin {plugin_id!r}")
+        cfg = self._configs.get(plugin_id) or _Snapshot()
+        merged_secrets = {**cfg.secrets}
+        for k, v in (secrets or {}).items():
+            if k not in manifest.secret_fields:
+                raise PluginError(f"{k!r} is not a secret field of {plugin_id!r}")
+            if v == "":
+                merged_secrets.pop(k, None)
+            else:
+                merged_secrets[k] = v
+        leaked = sorted(set(settings or {}) & manifest.secret_fields)
+        if leaked:
+            raise PluginError(f"{leaked} are secret fields: send them as secrets, not settings")
+        try:
+            model = manifest.settings_model(**{**cfg.settings, **(settings or {}), **merged_secrets})
+        except ValidationError as e:
+            raise PluginError(self._describe(e)) from None
+        return manifest.factory(model)
+
+    async def record_state(self, plugin_id: str, **patch) -> None:
+        """Merge keys into the plugin's persisted state (sync health, connection status...)."""
+        await self._record(plugin_id, **patch)
+
+    def _reset(self) -> None:
+        """Forget everything in memory (tests; the DB is untouched)."""
+        self._slots, self._configs, self._instances = {}, {}, {}
+        self._build_errors, self._fingerprints = {}, {}
+        # Fresh locks: a lock is bound to the event loop that first contended it, and a task killed mid-hold when a
+        # test's loop closes would leave it locked forever for the next test.
+        self._lock, self._state_lock = asyncio.Lock(), asyncio.Lock()
+
     # --- containment -------------------------------------------------------------------------------------------
 
     async def call(self, kind: str, method: str, *args, timeout: float = DEFAULT_TIMEOUT_S, **kwargs) -> CallResult:
@@ -202,17 +262,17 @@ class PluginHost:
                 raise
             return await self._failed(plugin_id, instance, f"{method} was cancelled inside the plugin", "error")
         except Exception as e:
-            return await self._failed(plugin_id, instance, f"{method} failed: {self._describe(e)}", "error")
+            return await self._failed(plugin_id, instance, f"{method} failed: {self._describe(e)}", "error", exc=e)
         if self._instances.get(plugin_id) is instance:
             await self._record(plugin_id, last_error=None, last_ok_at=_now())
         return CallResult(True, value=value)
 
-    async def _failed(self, plugin_id: str, instance: Any, message: str, reason: str) -> CallResult:
+    async def _failed(self, plugin_id: str, instance: Any, message: str, reason: str, exc: Exception | None = None) -> CallResult:
         message = self._redact(plugin_id, message)
         logger.warning("Plugin %s: %s", plugin_id, message)
         if self._instances.get(plugin_id) is instance:          # a call that straddled a reload must not blame the new instance
             await self._record(plugin_id, last_error=message, last_error_at=_now())
-        return CallResult(False, error=message, reason=reason)  # type: ignore[arg-type]
+        return CallResult(False, error=message, reason=reason, exception=exc)  # type: ignore[arg-type]
 
     async def _record(self, plugin_id: str, **patch) -> None:
         """Persist state changes (DB first, then memory, under a lock so they cannot drift). Only writes when

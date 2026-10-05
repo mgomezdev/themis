@@ -6,9 +6,10 @@ import httpx
 import pytest
 from httpx import AsyncClient
 
-from app.services.providers.filament_inventory import Filament, InventoryProviderError
+from app.plugins.kinds.filament_inventory import InvMaterial, InventoryProviderError
 from tests import spoolman_mock
 from tests.fake_providers import FakeInventoryProvider
+from tests.inventory_helpers import use_provider
 
 
 @pytest.fixture(autouse=True)
@@ -78,21 +79,20 @@ async def test_patch_filament_is_503_with_the_reason_when_spoolman_is_unreachabl
 
 async def test_patch_filament_501_when_the_provider_has_no_profile_bindings(client: AsyncClient):
     await _seed_spoolman(client)
-    provider = FakeInventoryProvider(filaments=[Filament(ref="42", name="PLA")])
-    provider.PROFILE_BINDINGS = False
-    with patch("app.api.routes.spoolman.get_inventory_provider", AsyncMock(return_value=provider)):
-        resp = await client.patch("/api/v1/spoolman/filaments/42", json={"orca_profiles": {"P": ["x"]}})
+    provider = FakeInventoryProvider(materials=[InvMaterial(ref="42", name="PLA")], capabilities=frozenset())
+    await use_provider(provider, plugin_id="spoolman")      # stands in for the Spoolman plugin
+    resp = await client.patch("/api/v1/spoolman/filaments/42", json={"orca_profiles": {"P": ["x"]}})
 
     assert resp.status_code == 501
-    assert provider.filaments["42"].profile_bindings == {}      # nothing written
+    assert provider.materials["42"].profile_links is None      # nothing written
 
 
 async def test_patch_filament_passes_a_provider_error_status_through(client: AsyncClient):
     await _seed_spoolman(client)
     provider = FakeInventoryProvider()
     provider.fail_with = InventoryProviderError("Spoolman said no", code="403", status=403)
-    with patch("app.api.routes.spoolman.get_inventory_provider", AsyncMock(return_value=provider)):
-        resp = await client.patch("/api/v1/spoolman/filaments/1", json={"orca_profiles": {}})
+    await use_provider(provider, plugin_id="spoolman")      # stands in for the Spoolman plugin
+    resp = await client.patch("/api/v1/spoolman/filaments/1", json={"orca_profiles": {}})
     assert (resp.status_code, resp.json()["detail"]) == (403, "Spoolman said no")
 
 

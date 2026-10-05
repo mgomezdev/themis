@@ -1,4 +1,4 @@
-from app.services.providers.filament_inventory import Filament, InventoryProviderError
+from app.plugins.kinds.filament_inventory import InvMaterial, InventoryProviderError
 from tests.catalog_helpers import cached_raw, prime_catalog
 from tests.fake_providers import FakeInventoryProvider
 from app.services import catalog_service
@@ -172,18 +172,18 @@ async def test_spoolman_test_falls_back_to_saved_api_key_when_url_is_also_sent(c
 
 
 def _bound(ref, name, bindings):
-    return Filament(ref=str(ref), name=name, profile_bindings=bindings)
+    return InvMaterial(ref=str(ref), name=name, profile_links=bindings)
 
 
 def _patch_inventory(provider):
-    return patch("app.api.routes.settings.make_inventory_provider", return_value=provider)
+    return patch("app.api.routes.settings.plugin_host.build_candidate", return_value=provider)
 
 
 async def test_spoolman_test_connection_all_names_valid_returns_ok(client):
     """All profile names bound in Spoolman present in the catalog → normal success response."""
     original_pending = catalog_service._pending_sync
     prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA", "uuid": "f1"}]})
-    provider = FakeInventoryProvider(filaments=[_bound(1, "PLA Red", {"Bambu X1C": ["PLA"]})])
+    provider = FakeInventoryProvider(materials=[_bound(1, "PLA Red", {"Bambu X1C": ["PLA"]})])
 
     try:
         with _patch_inventory(provider):
@@ -192,7 +192,7 @@ async def test_spoolman_test_connection_all_names_valid_returns_ok(client):
         assert resp.status_code == 200
         body = resp.json()
         assert body.get("status") == "ok" and body.get("ok") is True
-        assert provider.calls == ["test_connection", "list_filaments"]
+        assert provider.calls == ["test_connection", "list_materials"]
         assert catalog_service._pending_sync is original_pending       # nothing parked
     finally:
         catalog_service._pending_sync = original_pending
@@ -205,7 +205,7 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
     prime_catalog({"machine": [], "process": [], "filament": [{"name": "PLA New", "uuid": "f-new"}]})
     catalog_service._pending_sync = None
     stale = {"Bambu X1C 0.4 nozzle": ["PLA Old"]}
-    provider = FakeInventoryProvider(filaments=[
+    provider = FakeInventoryProvider(materials=[
         _bound(9, "Red PLA", stale), _bound(14, "Blue PLA", stale), _bound(22, "White PLA", stale),
         _bound(30, "Fine PLA", {"Bambu X1C 0.4 nozzle": ["PLA New"]}),     # valid binding: not flagged
     ])
@@ -247,8 +247,8 @@ async def test_spoolman_test_connection_cold_catalog_returns_ok(client):
 
 async def test_spoolman_test_connection_skips_the_name_check_without_profile_bindings(client):
     prime_catalog({"machine": [], "process": [], "filament": []})
-    provider = FakeInventoryProvider(filaments=[_bound(1, "x", {"P": ["gone"]})])
-    provider.PROFILE_BINDINGS = False
+    provider = FakeInventoryProvider(materials=[_bound(1, "x", {"P": ["gone"]})])
+    provider.capabilities = frozenset()
 
     with _patch_inventory(provider):
         resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
@@ -267,10 +267,10 @@ async def test_spoolman_test_connection_reports_a_failed_connection_and_survives
 
     flaky = FakeInventoryProvider()
 
-    async def list_filaments():
+    async def list_materials():
         raise InventoryProviderError("boom")
 
-    flaky.list_filaments = list_filaments
+    flaky.list_materials = list_materials
     with _patch_inventory(flaky):
         resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
     assert resp.json()["ok"] is True and resp.json()["status"] == "ok"      # best-effort: connection still ok

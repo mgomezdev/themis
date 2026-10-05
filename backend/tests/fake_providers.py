@@ -1,25 +1,31 @@
 """In-memory provider fakes for tests that need to swap a provider without touching HTTP."""
 from __future__ import annotations
 
-from app.services.providers.filament_inventory import (
-    Filament,
+from app.plugins.kinds.filament_inventory import (
+    ALL_CAPABILITIES,
     FilamentInventoryProvider,
     InventoryProviderError,
-    Spool,
+    InvMaterial,
+    InvSpool,
+    NotSupported,
+    PROFILE_LINKS_READ,
+    PROFILE_LINKS_WRITE,
+    TRACKS_WEIGHT,
+    WRITE_WEIGHT,
 )
 
 
 class FakeInventoryProvider(FilamentInventoryProvider):
-    TRACKS_WEIGHT = True
-    RECORDS_USAGE = True
-    PROFILE_BINDINGS = True
+    """In-memory provider. `capabilities` is per-instance so tests can build providers that lack any capability."""
 
-    def __init__(self, filaments: list[Filament] | None = None, spools: list[Spool] | None = None) -> None:
-        self.filaments = {f.ref: f for f in (filaments or [])}
+    def __init__(self, materials: list[InvMaterial] | None = None, spools: list[InvSpool] | None = None,
+                 capabilities=frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE})) -> None:
+        self.capabilities = frozenset(capabilities)
+        self.materials = {m.ref: m for m in (materials or [])}
         self.spools = {s.ref: s for s in (spools or [])}
-        self.usage: list[tuple[str, float]] = []
+        self.writes: list[tuple[str, float]] = []
         self.calls: list[str] = []
-        self.fail_with: InventoryProviderError | None = None
+        self.fail_with: Exception | None = None
 
     def _enter(self, name: str) -> None:
         self.calls.append(name)
@@ -30,37 +36,37 @@ class FakeInventoryProvider(FilamentInventoryProvider):
         self._enter("test_connection")
         return {"version": "fake"}
 
-    async def list_filaments(self) -> list[Filament]:
-        self._enter("list_filaments")
-        return list(self.filaments.values())
+    async def list_materials(self) -> list[InvMaterial]:
+        self._enter("list_materials")
+        return list(self.materials.values())
 
-    async def get_filament(self, ref: str) -> Filament:
-        self._enter("get_filament")
-        try:
-            return self.filaments[ref]
-        except KeyError:
-            raise InventoryProviderError(f"Filament {ref} not found", code="404", status=404)
-
-    async def list_spools(self) -> list[Spool]:
+    async def list_spools(self) -> list[InvSpool]:
         self._enter("list_spools")
         return list(self.spools.values())
 
-    async def record_usage(self, spool_ref: str, grams: float) -> None:
-        self._enter("record_usage")
+    async def get_spool(self, spool_ref: str) -> InvSpool | None:
+        self._enter("get_spool")
+        return self.spools.get(spool_ref)
+
+    async def set_remaining(self, spool_ref: str, remaining_g: float) -> None:
+        if WRITE_WEIGHT not in self.capabilities:
+            raise NotSupported(WRITE_WEIGHT)
+        self._enter("set_remaining")
         if spool_ref not in self.spools:
             raise InventoryProviderError(f"Spool {spool_ref} not found", code="404", status=404)
-        self.usage.append((spool_ref, grams))
-        spool = self.spools[spool_ref]
-        if spool.remaining_weight is not None:
-            spool.remaining_weight = max(0.0, spool.remaining_weight - grams)
+        self.writes.append((spool_ref, remaining_g))
+        self.spools[spool_ref].remaining_g = remaining_g
 
-    async def get_profile_bindings(self, filament_ref: str) -> dict[str, list[str]]:
-        return (await self.get_filament(filament_ref)).profile_bindings
-
-    async def set_profile_bindings(self, filament_ref: str, bindings: dict[str, list[str]]) -> Filament:
-        fil = await self.get_filament(filament_ref)
-        fil.profile_bindings = {k: list(v) for k, v in bindings.items()}
-        return fil
+    async def set_profile_links(self, material_ref: str, links: dict[str, list[str]]) -> InvMaterial:
+        if PROFILE_LINKS_WRITE not in self.capabilities:
+            raise NotSupported(PROFILE_LINKS_WRITE)
+        self._enter("set_profile_links")
+        try:
+            material = self.materials[material_ref]
+        except KeyError:
+            raise InventoryProviderError(f"Material {material_ref} not found", code="404", status=404)
+        material.profile_links = {k: list(v) for k, v in links.items()}
+        return material
 
 
 # ---- slicing ----

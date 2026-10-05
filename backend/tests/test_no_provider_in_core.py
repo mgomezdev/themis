@@ -19,14 +19,16 @@ LOCAL_INVENTORY = re.compile(r"local[_-]?inv(entory)?", re.IGNORECASE)
 # Paths relative to app/. Entries for migrations, models, auth scopes and printer_manager's preserved keys are
 # permanent (spec §6); the rest are removed as phase 1c/2d move them behind the plugin.
 SPOOLMAN_ALLOWLIST = {
+    # still wired through core: the deprecated alias routes + settings alias (move into the plugin's router in BIZ-217)
+    "api/routes/spoolman.py", "api/routes/settings.py",
+    # the per-slot / per-job refs and the legacy slot key (`spoolman_spool_id`, `filament_id`): BIZ-217 / cleanup
     "api/routes/jobs.py", "api/routes/laminus.py", "api/routes/projects.py", "api/routes/queue.py",
-    "api/routes/settings.py", "api/routes/spoolman.py",
-    "auth.py", "main.py", "models.py",
-    "migrations/runner.py", "migrations/v020_spoolman_sync_status.py", "migrations/v026_spool_low_stock.py",
     "services/catalog_service.py", "services/catalog_utils.py", "services/job_costs.py", "services/printer_manager.py",
-    "services/providers/__init__.py", "services/providers/filament_inventory.py",
-    "services/providers/spoolman/__init__.py", "services/providers/spoolman/adapter.py",
-    "services/queue_engine.py", "services/spool_alerts.py", "services/spool_check.py", "services/spoolman_sync.py",
+    "services/queue_engine.py", "services/providers/__init__.py", "services/inventory/refs.py",
+    # permanent (spec §6): scopes, migrations, the legacy table's model, the bundled-plugin list
+    "auth.py", "main.py", "models.py", "plugins/__init__.py",
+    "migrations/runner.py", "migrations/v020_spoolman_sync_status.py", "migrations/v026_spool_low_stock.py",
+    "migrations/v035_inventory_core.py",
 }
 PLUGIN_HOMES = {"spoolman": "plugins/spoolman/", "local_inventory": "plugins/local_inventory/"}
 
@@ -63,7 +65,7 @@ def test_the_allowlist_only_shrinks():
 
 def test_the_plugin_host_itself_is_provider_agnostic():
     for path, rel in _files(APP / "plugins"):
-        if rel.startswith(("spoolman/", "local_inventory/")):
+        if rel.startswith(("spoolman/", "local_inventory/")) or rel == "__init__.py":     # __init__ holds BUNDLED_MODULES
             continue
         text = path.read_text(encoding="utf-8")
         assert not SPOOLMAN.search(text) and not LOCAL_INVENTORY.search(text), rel

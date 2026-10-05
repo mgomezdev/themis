@@ -15,7 +15,7 @@ logging.basicConfig(
 logging.getLogger("app").setLevel(logging.INFO)
 
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import APIKeyHeader
 from fastapi.staticfiles import StaticFiles
 
@@ -40,13 +40,15 @@ from .api.routes.queue import router as queue_router
 from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.spoolman import router as spoolman_router
+from .api.routes.inventory import router as inventory_router
+from .api.routes.plugins import router as plugins_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
 from .services.printer_manager import printer_manager
 from .services.queue_engine import QueueEngine, queue_engine
 from .services.slicer_service import SlicerService
-from .services.spoolman_sync import spoolman_sync_loop
+from .services.inventory.sync import inventory_sync_loop
 from .version import get_git_sha, get_version
 
 _default_static = Path(__file__).parent.parent.parent / "frontend" / "dist"
@@ -123,8 +125,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
 
-    spoolman_sync_loop.configure(SessionLocal)
-    await spoolman_sync_loop.start()
+    inventory_sync_loop.configure(SessionLocal)
+    await inventory_sync_loop.start()
 
     # Warn early if the sidecar is configured but unreachable; then warm the
     # catalog cache in the background so the first user request is fast.
@@ -144,7 +146,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    await spoolman_sync_loop.stop()
+    await inventory_sync_loop.stop()
     await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
@@ -196,6 +198,23 @@ app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(spoolman_router)
+app.include_router(inventory_router)
+app.include_router(plugins_router)
+
+# Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
+from .plugins import load_bundled, registered_plugins  # noqa: E402
+from .services.inventory.provider import CapabilityUnavailable  # noqa: E402
+
+load_bundled()
+for _manifest in registered_plugins():
+    for _router in _manifest.routers:
+        app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
+
+
+@app.exception_handler(CapabilityUnavailable)
+async def _capability_unavailable(_: Request, exc: CapabilityUnavailable) -> JSONResponse:
+    """A feature needs a plugin kind/capability that is not available: 409 with a machine-readable body."""
+    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "kind": exc.kind, "capability": exc.capability})
 app.include_router(tags_router)
 
 

@@ -2,8 +2,9 @@
 from tests.catalog_helpers import catalog_from_dict, cached_raw, prime_catalog
 from app.services import catalog_service
 from app.services.providers.slicing import SlicingProviderError
-from app.services.providers.filament_inventory import Filament
+from app.plugins.kinds.filament_inventory import InvMaterial
 from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
+from tests.inventory_helpers import use_provider
 import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -353,20 +354,20 @@ async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client:
         "created_at": 0,
     }
 
-    inventory = FakeInventoryProvider(filaments=[Filament(ref="5", name="Red PLA")])
-    with _inventory(inventory):
-        resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
-            "sync_id": "spoolman-only",
-            "resolutions": {
-                "printers": [], "jobs": [],
-                "spoolman_filaments": [{
-                    "printer_preset": "Bambu X1C 0.4 nozzle",
-                    "stale_name": "Old PLA",
-                    "new_name": None,
-                    "affected_filament_ids": [5],
-                }]
-            }
-        })
+    inventory = FakeInventoryProvider(materials=[InvMaterial(ref="5", name="Red PLA")])
+    await use_provider(inventory)
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
+        "sync_id": "spoolman-only",
+        "resolutions": {
+            "printers": [], "jobs": [],
+            "spoolman_filaments": [{
+                "printer_preset": "Bambu X1C 0.4 nozzle",
+                "stale_name": "Old PLA",
+                "new_name": None,
+                "affected_filament_ids": [5],
+            }]
+        }
+    })
 
     assert resp.status_code == 200
     assert catalog_service._pending_sync is None
@@ -529,80 +530,78 @@ def _spoolman_entry(*ids, preset="Bambu X1C 0.4 nozzle", stale="Old PLA"):
 
 
 def _bound(ref, bindings):
-    return Filament(ref=str(ref), name=f"fil{ref}", profile_bindings={k: list(v) for k, v in bindings.items()})
+    return InvMaterial(ref=str(ref), name=f"fil{ref}", profile_links={k: list(v) for k, v in bindings.items()})
 
 
-def _inventory(provider):
-    return patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=provider))
+def _links(provider, ref):
+    return provider.materials[str(ref)].profile_links
 
 
 async def test_confirm_remap_rewrites_filament_bindings_and_reports_the_ones_that_failed(client):
     preset = "Bambu X1C 0.4 nozzle"
-    inventory = FakeInventoryProvider(filaments=[
+    inventory = FakeInventoryProvider(materials=[
         _bound(5, {preset: ["Old PLA", "Keep A"], "Other Printer": ["Old PLA"]}),
         _bound(6, {preset: ["Old PLA"]}),
         _bound(7, {preset: ["Old PLA"]}),
     ])
-    real_get = inventory.get_profile_bindings
+    real_set = inventory.set_profile_links
 
-    async def flaky_get(ref):
+    async def flaky_set(ref, links):
         if ref == "7":
             raise RuntimeError("spoolman down")
-        return await real_get(ref)
+        return await real_set(ref, links)
 
-    inventory.get_profile_bindings = flaky_get
+    inventory.set_profile_links = flaky_set
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, 7)]))
-    with _inventory(inventory):
-        resp = await _confirm(client, sync, spoolman=[
-            {"printer_preset": preset, "stale_name": "Old PLA", "new_name": "New PLA"}])
+    await use_provider(inventory)
+    resp = await _confirm(client, sync, spoolman=[
+        {"printer_preset": preset, "stale_name": "Old PLA", "new_name": "New PLA"}])
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["applied"]["spoolman_filaments"] == 2
     assert body["spoolman_failures"] == ["filament 7: spoolman down"]
     # re-read: stale name swapped for the new one on this preset only; other presets and other names untouched
-    assert (await real_get("5")) == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
-    assert (await real_get("6")) == {preset: ["New PLA"]}
-    assert (await real_get("7")) == {preset: ["Old PLA"]}          # the failed one is left as it was
+    assert _links(inventory, 5) == {preset: ["Keep A", "New PLA"], "Other Printer": ["Old PLA"]}
+    assert _links(inventory, 6) == {preset: ["New PLA"]}
+    assert _links(inventory, 7) == {preset: ["Old PLA"]}          # the failed one is left as it was
     assert cached_raw() == _NEW_CATALOG and catalog_service._pending_sync is None  # a Spoolman failure never blocks the commit
 
 
 async def test_confirm_remap_without_a_replacement_removes_the_stale_name_and_drops_an_emptied_preset(client):
     preset = "Bambu X1C 0.4 nozzle"
-    inventory = FakeInventoryProvider(filaments=[_bound(5, {preset: ["Old PLA"]})])
+    inventory = FakeInventoryProvider(materials=[_bound(5, {preset: ["Old PLA"]})])
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with _inventory(inventory):
-        resp = await _confirm(client, sync, spoolman=[{"printer_preset": preset, "stale_name": "Old PLA", "new_name": None}])
+    await use_provider(inventory)
+    resp = await _confirm(client, sync, spoolman=[{"printer_preset": preset, "stale_name": "Old PLA", "new_name": None}])
 
     assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 1
-    assert await inventory.get_profile_bindings("5") == {}  # the preset key is removed rather than left as an empty list
+    assert _links(inventory, 5) == {}  # the preset key is removed rather than left as an empty list
 
 
 async def test_confirm_remap_skips_spoolman_entirely_when_it_is_not_configured(client):
     sync = _park(_pending(spoolman=[_spoolman_entry(5)]))
-    with patch("app.api.routes.laminus.get_inventory_provider", AsyncMock(return_value=None)) as accessor:
-        resp = await _confirm(client, sync)
+    resp = await _confirm(client, sync)                           # no inventory provider is active at all
 
     assert resp.status_code == 200
     assert resp.json()["applied"]["spoolman_filaments"] == 0
-    accessor.assert_awaited_once()
     assert catalog_service._pending_sync is None
 
 
 async def test_confirm_remap_skips_the_binding_rewrite_for_a_provider_without_profile_bindings(client):
-    inventory = FakeInventoryProvider(filaments=[_bound(5, {"P": ["Old PLA"]})])
-    inventory.PROFILE_BINDINGS = False
+    inventory = FakeInventoryProvider(materials=[_bound(5, {"P": ["Old PLA"]})])
+    inventory.capabilities = frozenset()
 
     sync = _park(_pending(spoolman=[_spoolman_entry(5, preset="P")]))
-    with _inventory(inventory):
-        resp = await _confirm(client, sync)
+    await use_provider(inventory)
+    resp = await _confirm(client, sync)
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["applied"]["spoolman_filaments"] == 0 and resp.json()["spoolman_failures"] == []
     assert inventory.calls == []                                   # nothing read or written
-    assert inventory.filaments["5"].profile_bindings == {"P": ["Old PLA"]}
+    assert inventory.materials["5"].profile_links == {"P": ["Old PLA"]}
     assert cached_raw() == _NEW_CATALOG                            # the catalog commit still happens
 
 
@@ -634,3 +633,21 @@ async def test_catalog_status_memoizes_provider_health_for_thirty_seconds(client
         catalog_service._health_memo_at -= catalog_service._HEALTH_MEMO_TTL + 1
         await client.get("/api/v1/laminus/catalog/status")
     assert [c[0] for c in fake.calls].count("catalog_health") == 2
+
+
+async def test_confirm_remap_reads_the_inventory_once_and_sees_its_own_writes_across_entries(client):
+    """One `list_materials` for the whole remap (not one per filament), and two entries touching the same material
+    compose: the second rewrite starts from the first one's result."""
+    preset = "Bambu X1C 0.4 nozzle"
+    inventory = FakeInventoryProvider(materials=[_bound(5, {preset: ["Old A", "Old B"]}), _bound(6, {preset: ["Old A"]})])
+    await use_provider(inventory)
+    sync = _park(_pending(spoolman=[_spoolman_entry(5, 6, stale="Old A"), _spoolman_entry(5, stale="Old B")]))
+
+    resp = await _confirm(client, sync, spoolman=[
+        {"printer_preset": preset, "stale_name": "Old A", "new_name": "New A"},
+        {"printer_preset": preset, "stale_name": "Old B", "new_name": "New B"}])
+
+    assert resp.status_code == 200 and resp.json()["applied"]["spoolman_filaments"] == 3
+    assert inventory.calls.count("list_materials") == 1
+    assert _links(inventory, 5) == {preset: ["New A", "New B"]}
+    assert _links(inventory, 6) == {preset: ["New A"]}
