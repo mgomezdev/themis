@@ -260,6 +260,17 @@ def spoolman_upstream():
 
 
 @pytest.fixture(autouse=True)
+def _restore_spoolman_mock_state():
+    """tests/spoolman_mock.py keeps module-level state that write endpoints mutate; no test may leak it to the next one."""
+    import copy
+    from tests import spoolman_mock
+    saved = (copy.deepcopy(spoolman_mock._FILAMENTS), copy.deepcopy(spoolman_mock._SPOOLS))
+    yield
+    spoolman_mock._FILAMENTS[:] = saved[0]
+    spoolman_mock._SPOOLS[:] = saved[1]
+
+
+@pytest.fixture(autouse=True)
 def _reset_slice_cache_fingerprints():
     """slice_cache memoises sidecar fingerprints in a module dict; never let one test's answer leak into another."""
     from app.services import slice_cache

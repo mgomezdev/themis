@@ -68,7 +68,7 @@ async def test_materials_and_spools_use_the_neutral_shape_and_never_expose_raw(c
 
     assert (materials["provider"], materials["stale"]) == ("fake_inventory", False) and materials["as_of"]
     assert materials["items"] == [{"ref": "1", "name": "PLA White", "material": "PLA", "color_hex": "#FFFFFF", "vendor": "Elegoo",
-                                   "density": None, "diameter": None, "profile_links": None}]
+                                   "density": None, "diameter": None, "profile_links": None, "archived": False}]
     (s,) = spools["items"]
     assert (s["ref"], s["material_ref"], s["remaining_g"], s["location"], s["label"], s["archived"], s["url"]) == (
         "7", "1", 250.0, "Shelf A", "Elegoo PLA White", False, None)

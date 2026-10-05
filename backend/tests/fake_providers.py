@@ -195,3 +195,118 @@ def fake_packer(packed: bytes) -> FakeSlicingProvider:
     fake = FakeSlicingProvider()
     fake.pack_models = MagicMock(return_value=packed)
     return fake
+
+
+# ---- a provider that owns its library (what Local inventory is) ----
+
+from app.plugins.kinds.filament_inventory import (  # noqa: E402
+    LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, MATERIAL_FIELDS, SPOOL_FIELDS, MaterialDraft, SpoolDraft,
+)
+
+
+class FakeLibraryProvider(FakeInventoryProvider):
+    """In-memory provider with library management: create/update/archive materials and spools, weights, labels."""
+
+    def __init__(self, **kw) -> None:
+        kw.setdefault("capabilities", frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE,
+                                                 LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS}))
+        super().__init__(**kw)
+        self._next = 100
+
+    def _new_ref(self) -> str:
+        self._next += 1
+        return str(self._next)
+
+    def _material(self, ref: str) -> InvMaterial:
+        try:
+            return self.materials[ref]
+        except KeyError:
+            raise InventoryProviderError(f"Material {ref} not found", code="404", status=404)
+
+    def _spool(self, ref: str) -> InvSpool:
+        try:
+            return self.spools[ref]
+        except KeyError:
+            raise InventoryProviderError(f"Spool {ref} not found", code="404", status=404)
+
+    @staticmethod
+    def _check(patch: dict, allowed: tuple[str, ...]) -> None:
+        bad = sorted(set(patch) - set(allowed))
+        if bad:
+            raise InventoryProviderError(f"cannot change {bad}", code="422", status=422)
+
+    async def create_material(self, draft: MaterialDraft) -> InvMaterial:
+        if MANAGE_MATERIALS not in self.capabilities:
+            raise NotSupported(MANAGE_MATERIALS)
+        self._enter("create_material")
+        if not draft.name.strip():
+            raise InventoryProviderError("a material needs a name", code="422", status=422)
+        m = InvMaterial(ref=self._new_ref(), name=draft.name, material=draft.material, color_hex=draft.color_hex,
+                        vendor=draft.vendor, density=draft.density, diameter=draft.diameter, profile_links={})
+        self.materials[m.ref] = m
+        return m
+
+    async def update_material(self, ref: str, patch: dict) -> InvMaterial:
+        if MANAGE_MATERIALS not in self.capabilities:
+            raise NotSupported(MANAGE_MATERIALS)
+        self._enter("update_material")
+        self._check(patch, MATERIAL_FIELDS)
+        m = self._material(ref)
+        for k, v in patch.items():
+            setattr(m, k, v)
+        return m
+
+    async def archive_material(self, ref: str, archived: bool = True) -> InvMaterial:
+        if MANAGE_MATERIALS not in self.capabilities:
+            raise NotSupported(MANAGE_MATERIALS)
+        self._enter("archive_material")
+        m = self._material(ref)
+        m.archived = archived
+        return m
+
+    def _own(self, spool: InvSpool) -> InvSpool:
+        m = self.materials.get(spool.material_ref or "")
+        spool.material = m
+        spool.label = spool.label or (" ".join(p for p in (m.vendor if m else None, m.name if m else None) if p) or f"spool {spool.ref}")
+        return spool
+
+    async def create_spool(self, draft: SpoolDraft) -> InvSpool:
+        if MANAGE_SPOOLS not in self.capabilities:
+            raise NotSupported(MANAGE_SPOOLS)
+        self._enter("create_spool")
+        self._material(draft.material_ref)
+        remaining = draft.remaining_g if draft.remaining_g is not None else draft.initial_g
+        s = self._own(InvSpool(ref=self._new_ref(), material_ref=draft.material_ref, remaining_g=remaining,
+                               location=draft.location, label=draft.label or ""))
+        self.spools[s.ref] = s
+        return s
+
+    async def update_spool(self, ref: str, patch: dict) -> InvSpool:
+        if MANAGE_SPOOLS not in self.capabilities:
+            raise NotSupported(MANAGE_SPOOLS)
+        self._enter("update_spool")
+        self._check(patch, SPOOL_FIELDS)
+        s = self._spool(ref)
+        for k, v in patch.items():
+            setattr(s, k, v)
+        return s
+
+    async def archive_spool(self, ref: str, archived: bool = True) -> InvSpool:
+        if MANAGE_SPOOLS not in self.capabilities:
+            raise NotSupported(MANAGE_SPOOLS)
+        self._enter("archive_spool")
+        s = self._spool(ref)
+        s.archived = archived
+        return s
+
+    async def get_spool(self, spool_ref: str) -> InvSpool | None:
+        s = await super().get_spool(spool_ref)
+        return self._own(s) if s is not None else None
+
+    async def list_spools(self) -> list[InvSpool]:
+        return [self._own(s) for s in await super().list_spools()]
+
+    def parse_label(self, text: str) -> str | None:
+        import re
+        m = re.search(r"themis:s-(\d+)", text or "") or re.fullmatch(r"\s*(\d+)\s*", text or "")
+        return m.group(1) if m else None

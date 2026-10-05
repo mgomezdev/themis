@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...plugins.kinds.filament_inventory import (
-    LABEL_SCAN, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, InventoryProviderError, InvMaterial, InvSpool,
+    LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
+    InventoryProviderError, InvMaterial, InvSpool, MaterialDraft, NotSupported, SpoolDraft,
 )
 from ...services.inventory import config as inventory_config, provider as inventory_provider, sync as inventory_sync
 
@@ -46,24 +47,24 @@ def _envelope(pid: str, items: list) -> dict:
 @router.get("/materials", summary="List materials of the active inventory provider",
             responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable"}},
             dependencies=[Depends(require_scope("inventory:read"))])
-async def list_materials():
+async def list_materials(include_archived: bool = False):
     pid = inventory_provider.require()
     result = await inventory_provider.call("list_materials")
     if not result.ok:
         raise _unavailable(result)
-    return _envelope(pid, [material_out(m) for m in result.value])
+    return _envelope(pid, [material_out(m) for m in result.value if include_archived or not m.archived])
 
 
 @router.get("/spools", summary="List spools of the active inventory provider",
             responses={409: {"description": "No inventory provider is active"}, 503: {"description": "Provider unreachable"}},
             dependencies=[Depends(require_scope("inventory:read"))])
-async def list_spools():
+async def list_spools(include_archived: bool = False):
     pid = inventory_provider.require()
     result = await inventory_provider.call("list_spools")
     if not result.ok:
         raise _unavailable(result)
     provider = inventory_provider.active_provider()
-    return _envelope(pid, [spool_out(s, provider.spool_url(s.ref)) for s in result.value])
+    return _envelope(pid, [spool_out(s, provider.spool_url(s.ref)) for s in result.value if include_archived or not s.archived])
 
 
 @router.post("/sync-now", summary="Refresh from the provider now",
@@ -84,6 +85,137 @@ async def sync_status():
     provider = inventory_provider.active_provider()
     caps = sorted(provider.capabilities) if provider else []
     return {"provider": pid, "capabilities": caps, **inventory_sync.status(pid)}
+
+
+# --- library management (capability-gated: only providers that own their library) -----------------------------------------
+
+_HEX = r"^#?[0-9A-Fa-f]{6}$"
+
+
+class MaterialIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    material: str | None = Field(default=None, max_length=50)
+    color_hex: str | None = Field(default=None, pattern=_HEX)
+    vendor: str | None = Field(default=None, max_length=200)
+    density: float | None = Field(default=None, gt=0, le=100)
+    diameter: float | None = Field(default=None, gt=0, le=100)
+
+
+class MaterialPatch(BaseModel):
+    """Partial update: only the fields sent change; `null` clears an optional one."""
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    material: str | None = Field(default=None, max_length=50)
+    color_hex: str | None = Field(default=None, pattern=_HEX)
+    vendor: str | None = Field(default=None, max_length=200)
+    density: float | None = Field(default=None, gt=0, le=100)
+    diameter: float | None = Field(default=None, gt=0, le=100)
+
+
+class SpoolIn(BaseModel):
+    material_ref: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=200)
+    location: str | None = Field(default=None, max_length=200)
+    initial_g: float | None = Field(default=None, ge=0, le=100_000)
+    remaining_g: float | None = Field(default=None, ge=0, le=100_000)
+
+
+class SpoolPatch(BaseModel):
+    label: str | None = Field(default=None, max_length=200)
+    location: str | None = Field(default=None, max_length=200)
+
+
+class ArchiveBody(BaseModel):
+    archived: bool = True
+
+
+class RemainingBody(BaseModel):
+    remaining_g: float = Field(ge=0, le=100_000)
+
+
+def _hex(value: str | None) -> str | None:
+    return None if value is None else "#" + value.lstrip("#").upper()
+
+
+def _patch(body: BaseModel) -> dict:
+    changes = body.model_dump(exclude_unset=True)
+    if "color_hex" in changes:
+        changes["color_hex"] = _hex(changes["color_hex"])
+    if not changes:
+        raise HTTPException(status_code=422, detail="Nothing to change")
+    if "name" in changes and changes["name"] is None:
+        raise HTTPException(status_code=422, detail="A material needs a name")
+    return changes
+
+
+async def _write(method: str, *args):
+    """A contained provider write; maps NotSupported -> 409 and the provider's own status (404/422) through."""
+    result = await inventory_provider.call(method, *args)
+    if result.ok:
+        return result.value
+    exc = result.exception
+    if isinstance(exc, NotSupported):
+        raise inventory_provider.CapabilityUnavailable(exc.capability)
+    if isinstance(exc, InventoryProviderError) and exc.status:
+        raise HTTPException(status_code=exc.status, detail=inventory_provider.describe_failure(result)[1])
+    raise _unavailable(result)
+
+
+_LIBRARY_RESPONSES = {409: {"description": "The provider does not manage its own library"},
+                      404: {"description": "Unknown ref"}, 422: {"description": "Invalid input"}}
+
+
+@router.post("/materials", status_code=201, summary="Create a material", responses=_LIBRARY_RESPONSES,
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def create_material(body: MaterialIn):
+    inventory_provider.require(MANAGE_MATERIALS)
+    draft = MaterialDraft(**{**body.model_dump(), "color_hex": _hex(body.color_hex)})
+    return material_out(await _write("create_material", draft))
+
+
+@router.patch("/materials/{ref}", summary="Update a material", responses=_LIBRARY_RESPONSES,
+              dependencies=[Depends(require_scope("inventory:write"))])
+async def update_material(ref: str, body: MaterialPatch):
+    inventory_provider.require(MANAGE_MATERIALS)
+    return material_out(await _write("update_material", ref, _patch(body)))
+
+
+@router.post("/materials/{ref}/archive", summary="Archive (or restore) a material", responses=_LIBRARY_RESPONSES,
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def archive_material(ref: str, body: ArchiveBody | None = None):
+    inventory_provider.require(MANAGE_MATERIALS)
+    return material_out(await _write("archive_material", ref, (body or ArchiveBody()).archived))
+
+
+@router.post("/spools", status_code=201, summary="Create a spool", responses=_LIBRARY_RESPONSES,
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def create_spool(body: SpoolIn):
+    inventory_provider.require(MANAGE_SPOOLS)
+    return spool_out(await _write("create_spool", SpoolDraft(**body.model_dump())))
+
+
+@router.patch("/spools/{ref}", summary="Update a spool's label / storage location", responses=_LIBRARY_RESPONSES,
+              dependencies=[Depends(require_scope("inventory:write"))])
+async def update_spool(ref: str, body: SpoolPatch):
+    inventory_provider.require(MANAGE_SPOOLS)
+    return spool_out(await _write("update_spool", ref, _patch(body)))
+
+
+@router.post("/spools/{ref}/archive", summary="Archive (or restore) a spool", responses=_LIBRARY_RESPONSES,
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def archive_spool(ref: str, body: ArchiveBody | None = None):
+    inventory_provider.require(MANAGE_SPOOLS)
+    return spool_out(await _write("archive_spool", ref, (body or ArchiveBody()).archived))
+
+
+@router.put("/spools/{ref}/remaining", summary="Set a spool's remaining weight (absolute grams)", responses=_LIBRARY_RESPONSES,
+            dependencies=[Depends(require_scope("inventory:write"))])
+async def set_remaining(ref: str, body: RemainingBody):
+    inventory_provider.require(WRITE_WEIGHT)
+    await _write("set_remaining", ref, body.remaining_g)
+    spool = await _write("get_spool", ref)
+    if spool is None:
+        raise HTTPException(status_code=404, detail=f"Spool {ref} not found")
+    return spool_out(spool)
 
 
 class LabelBody(BaseModel):
