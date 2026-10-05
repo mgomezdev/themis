@@ -39,6 +39,17 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA journal_mode=WAL"))
         await run_migrations(conn)
+    # Plugin-owned tables: a separate transaction after core has committed, and fully contained — a broken
+    # plugin (import error, failing migration) is reported to the plugin host, never fatal.
+    import logging
+    try:
+        from .plugins import load_bundled
+        from .plugins.migrations import run_plugin_migrations
+        load_bundled()
+        async with engine.begin() as conn:
+            await run_plugin_migrations(conn)
+    except Exception:
+        logging.getLogger("app").exception("Plugin migrations could not run; continuing without them")
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

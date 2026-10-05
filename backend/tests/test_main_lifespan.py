@@ -38,6 +38,11 @@ def boot(session_factory, tmp_path, monkeypatch):
     monkeypatch.setattr(main.spoolman_sync_loop, "start", spies.spoolman_start)
     monkeypatch.setattr(main.spoolman_sync_loop, "stop", spies.spoolman_stop)
 
+    from app.plugins.host import plugin_host
+    spies.plugin_start, spies.plugin_stop = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(plugin_host, "start", spies.plugin_start)
+    monkeypatch.setattr(plugin_host, "stop", spies.plugin_stop)
+
     saved = {k: getattr(printer_manager, k) for k in
              ("_loop", "_on_state_broadcast", "_on_job_complete", "_session_factory")}
     yield spies
@@ -73,6 +78,10 @@ async def test_startup_wires_the_printer_manager_queue_engine_and_background_ser
         boot.engine_start.assert_awaited_once()
         boot.spoolman_configure.assert_called_once_with(session_factory)
         boot.spoolman_start.assert_awaited_once()
+        from app.plugins.host import plugin_host
+        assert plugin_host._session_factory is session_factory           # the plugin host is wired and started at boot
+        boot.plugin_start.assert_awaited_once()
+        boot.plugin_stop.assert_not_awaited()
         boot.engine_stop.assert_not_awaited()
 
 
@@ -96,6 +105,7 @@ async def test_shutdown_stops_background_services_and_disconnects_every_printer(
 
     boot.engine_stop.assert_awaited_once()
     boot.spoolman_stop.assert_awaited_once()
+    boot.plugin_stop.assert_awaited_once()
     client.disconnect.assert_called_once()
     assert printer_manager.get_all_printer_ids() == []
 
@@ -173,3 +183,10 @@ async def test_no_slicing_provider_means_no_health_probe_and_no_warmup(boot, mon
         await asyncio.sleep(0)
 
     warm.assert_not_awaited()
+
+
+async def test_a_plugin_host_that_fails_to_start_does_not_stop_themis_booting(boot, session_factory):
+    boot.plugin_start.side_effect = RuntimeError("plugin tables unreadable")
+    async with main.lifespan(main.app):
+        boot.engine_start.assert_awaited_once()
+        boot.spoolman_start.assert_awaited_once()
