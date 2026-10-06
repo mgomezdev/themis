@@ -30,6 +30,13 @@ async def stage(b: bytes, name="plugin.zip"):
     return await installer.stage_upload(_bytes(b), name)
 
 
+async def stage_commit(b: bytes, session_factory, name="plugin.zip"):
+    """The whole pipeline: static checks at stage, the import check at commit (after the admin's confirmation)."""
+    staged = await stage(b, name)
+    async with session_factory() as s:
+        return await installer.commit(s, staged.token, actor="a")
+
+
 def assert_clean(data_dir):
     """Nothing installed and nothing left in staging."""
     plugins = data_dir / "plugins"
@@ -134,10 +141,12 @@ REJECTS = [
 
 
 @pytest.mark.parametrize("label,build,message", REJECTS, ids=[r[0] for r in REJECTS])
-async def test_rejected_archives_leave_nothing_behind(data_dir, label, build, message):
+async def test_rejected_archives_leave_nothing_behind(data_dir, session_factory, label, build, message):
     with pytest.raises(InstallError, match=message):
-        await stage(build())
+        await stage_commit(build(), session_factory)
     assert_clean(data_dir)
+    async with session_factory() as s:
+        assert (await s.execute(select(InstalledPlugin))).first() is None
 
 
 async def test_limits(data_dir, monkeypatch):
@@ -161,6 +170,31 @@ async def test_limits(data_dir, monkeypatch):
     assert_clean(data_dir)
 
 
+async def test_directory_entries_and_oversized_headers_count_against_the_limits(data_dir, monkeypatch):
+    import io
+    monkeypatch.setattr(installer, "MAX_FILES", 5)
+    dirs = [tarfile.TarInfo(f"d{i}") for i in range(10)]
+    for d in dirs:
+        d.type = tarfile.DIRTYPE
+    with pytest.raises(InstallError, match="more than 5 files"):
+        await stage(pb.make_tgz(pb.files(), extra=dirs))
+    zbuf = pb.make_zip_raw([(zipfile.ZipInfo(f"d{i}/"), b"") for i in range(10)])
+    with pytest.raises(InstallError, match="more than 5 files"):
+        await stage(zbuf)
+    monkeypatch.setattr(installer, "MAX_FILES", 3000)
+    # a PAX record is header data, not file bytes: the decompressed cap still catches an archive that is mostly headers
+    monkeypatch.setattr(installer, "MAX_UNCOMPRESSED_BYTES", 1024 * 1024)
+    info = tarfile.TarInfo("themis-plugin.toml")
+    info.pax_headers = {"comment": "x" * (6 * 1024 * 1024)}
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz", format=tarfile.PAX_FORMAT) as tf:
+        tf.addfile(info, io.BytesIO(b""))
+    assert len(buf.getvalue()) < 100_000                                    # tiny on the wire, 6 MB of header once decompressed
+    with pytest.raises(InstallError, match="expands to more than"):
+        await stage(buf.getvalue())
+    assert_clean(data_dir)
+
+
 async def test_a_header_that_lies_about_size_cannot_bypass_the_cap(data_dir, monkeypatch):
     """The cap is enforced on bytes actually written, not on the sizes an archive declares."""
     monkeypatch.setattr(installer, "MAX_UNCOMPRESSED_BYTES", 1000)
@@ -170,17 +204,36 @@ async def test_a_header_that_lies_about_size_cannot_bypass_the_cap(data_dir, mon
     assert_clean(data_dir)
 
 
-async def test_dry_run_does_not_touch_this_process(data_dir):
+async def test_dry_run_does_not_touch_this_process(data_dir, session_factory):
     import sys
     before = list(sys.path)
-    await stage(pb.make_zip(pb.files()))
+    await stage_commit(pb.make_zip(pb.files()), session_factory)
     assert sys.path == before and "acme_inv" not in sys.modules
 
 
-async def test_vendor_dir_is_on_the_dry_run_path(data_dir):
+async def test_a_preview_runs_none_of_the_packages_code_only_the_confirmed_commit_does(data_dir, session_factory):
+    """Previews (and update checks) must not execute code the admin has not agreed to trust yet."""
+    marker = data_dir / "ran.txt"
+    code = f"open({str(marker)!r}, 'w').write('x')\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
+    staged = await stage(pb.make_zip(pb.files(code=code)))
+    assert not marker.exists()                                  # staged + validated + previewed: nothing ran
+    async with session_factory() as s:
+        await installer.commit(s, staged.token, actor="a")
+    assert marker.exists()                                      # the import check at commit is the first execution
+
+
+async def test_a_package_that_fails_its_import_check_at_commit_is_dropped(data_dir, session_factory):
+    staged = await stage(pb.make_zip(pb.files(code="raise RuntimeError('boom')\n")))     # statically fine, so the preview shows
+    async with session_factory() as s:
+        with pytest.raises(InstallError, match="boom"):
+            await installer.commit(s, staged.token, actor="a")
+    assert_clean(data_dir)
+
+
+async def test_vendor_dir_is_on_the_dry_run_path(data_dir, session_factory):
     code = "import vendored_lib\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
-    staged = await stage(pb.make_zip({**pb.files(code=code), "vendor/vendored_lib.py": "X = 1\n"}))
-    assert staged.toml.id == "acme_inv"
+    row = await stage_commit(pb.make_zip({**pb.files(code=code), "vendor/vendored_lib.py": "X = 1\n"}), session_factory)
+    assert row.plugin_id == "acme_inv"
 
 
 # ---- commit / upgrade / rollback / uninstall ---------------------------------------------------------------------------
@@ -191,15 +244,88 @@ async def _install(session_factory, version="1.0.0", **kw):
         return await installer.commit(s, staged.token, actor="a")
 
 
-async def test_upgrade_keeps_the_previous_version_and_prunes_older_ones(data_dir, session_factory):
+async def test_upgrade_keeps_the_running_version_and_prunes_the_rest(data_dir, session_factory):
     await _install(session_factory, "1.0.0")
+    async with session_factory() as s:                                     # the restart happened: 1.0.0 is running
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
     row = await _install(session_factory, "1.1.0")
     assert (row.version, row.previous_version, row.status) == ("1.1.0", "1.0.0", "pending_restart")
+    # a second upgrade BEFORE the restart: 1.1.0 never ran, so the running 1.0.0 must stay (code it imported, rollback target)
     row = await _install(session_factory, "1.2.0")
-    assert row.previous_version == "1.1.0"
-    assert sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir()) == ["1.1.0", "1.2.0"]
+    assert (row.version, row.previous_version) == ("1.2.0", "1.0.0")
+    assert sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir()) == ["1.0.0", "1.2.0"]
     async with session_factory() as s:
         assert [r.action for r in (await s.execute(select(AuditLog))).scalars()] == ["plugin.install", "plugin.upgrade", "plugin.upgrade"]
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"       # restarted again
+        await s.commit()
+    row = await _install(session_factory, "1.3.0")
+    assert (row.previous_version, sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir())) == ("1.2.0", ["1.2.0", "1.3.0"])
+
+
+async def test_upgrading_a_never_started_install_leaves_no_dead_version(data_dir, session_factory):
+    await _install(session_factory, "1.0.0")
+    row = await _install(session_factory, "1.1.0")                         # 1.0.0 never ran: nothing to keep for rollback
+    assert row.previous_version is None
+    assert sorted(p.name for p in (data_dir / "plugins/acme_inv").iterdir()) == ["1.1.0"]
+
+
+async def test_a_failed_commit_leaves_no_directory_and_no_row_and_the_version_can_be_retried(data_dir, session_factory, monkeypatch):
+    import shutil
+    from app.services import audit
+    real_move = shutil.move
+    real_record = audit.record
+
+    def partial_move(src, dst):                                            # disk full midway: the target exists but is incomplete
+        import os
+        os.makedirs(dst)
+        raise OSError(28, "No space left on device")
+    staged = await stage(pb.make_zip(pb.files()))
+    monkeypatch.setattr(installer.shutil, "move", partial_move)
+    async with session_factory() as s:
+        with pytest.raises(InstallError, match="could not install"):
+            await installer.commit(s, staged.token, actor="a")
+    monkeypatch.setattr(installer.shutil, "move", real_move)
+    assert_clean(data_dir)
+    # a DB failure after the move also removes the moved directory
+    staged = await stage(pb.make_zip(pb.files()))
+    async def boom(*a, **k):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(audit, "record", boom)
+    async with session_factory() as s:
+        with pytest.raises(RuntimeError, match="db down"):
+            await installer.commit(s, staged.token, actor="a")
+    assert_clean(data_dir)
+    async with session_factory() as s:
+        assert (await s.execute(select(InstalledPlugin))).first() is None
+    monkeypatch.setattr(audit, "record", real_record)                      # (not monkeypatch.undo(): that would also drop the data_dir env)
+    assert (await _install(session_factory)).version == "1.0.0"            # "already installed" never wedges the version
+
+
+async def test_two_confirmations_of_one_token_install_once_and_the_loser_gets_a_clean_error(data_dir, session_factory):
+    import asyncio
+    staged = await stage(pb.make_zip(pb.files()))
+
+    async def go():
+        async with session_factory() as s:
+            return await installer.commit(s, staged.token, actor="a")
+    results = await asyncio.gather(go(), go(), return_exceptions=True)
+    assert sum(isinstance(r, InstalledPlugin) for r in results) == 1
+    loser = next(r for r in results if not isinstance(r, InstalledPlugin))
+    assert isinstance(loser, InstallError) and "unknown or expired" in str(loser)
+
+
+async def test_abandoned_previews_expire(data_dir):
+    import os
+    import time
+    old = await stage(pb.make_zip(pb.files("old_one")))
+    fresh = await stage(pb.make_zip(pb.files("new_one")))
+    stale = time.time() - installer.STAGING_TTL_S - 60
+    os.utime(data_dir / "plugins/.staging" / old.token, (stale, stale))
+    await stage(pb.make_zip(pb.files("third_one")))                       # any new staging sweeps the expired ones
+    with pytest.raises(InstallError, match="unknown or expired"):
+        installer.load_staged(old.token)
+    assert installer.load_staged(fresh.token).toml.id == "new_one"
 
 
 async def test_same_version_is_refused_and_leaves_the_original_intact(data_dir, session_factory):
@@ -221,8 +347,16 @@ async def test_commit_rejects_unknown_tokens_and_a_mismatched_expected_id(data_d
             await installer.commit(s, staged.token, actor="a", expect_id="other_inv")
 
 
+async def _started(session_factory, plugin_id="acme_inv"):
+    """The restart happened: the installed version is running (so an upgrade keeps it as the rollback target)."""
+    async with session_factory() as s:
+        (await s.get(InstalledPlugin, plugin_id)).status = "active"
+        await s.commit()
+
+
 async def test_rollback_swaps_versions_and_refuses_across_a_migration(data_dir, session_factory):
     await _install(session_factory, "1.0.0")
+    await _started(session_factory)
     await _install(session_factory, "1.1.0")
     async with session_factory() as s:
         row = await installer.rollback(s, "acme_inv", actor="a")
@@ -238,6 +372,7 @@ async def test_rollback_swaps_versions_and_refuses_across_a_migration(data_dir, 
 
 async def test_rollback_needs_a_previous_version(data_dir, session_factory):
     await _install(session_factory)
+    await _started(session_factory)
     async with session_factory() as s:
         with pytest.raises(InstallError, match="no previous version"):
             await installer.rollback(s, "acme_inv", actor="a")
@@ -341,6 +476,8 @@ async def test_check_for_updates_compares_the_ref_with_the_recorded_commit_and_u
     staged = await installer.stage_github("https://github.com/acme/inv", "main")
     async with session_factory() as s:
         row = await installer.commit(s, staged.token, actor="a")
+        row.status = "active"
+        await s.commit()
         assert await installer.check_update(row) == {"update_available": False, "ref": "main", "current_commit": SHA1, "latest_commit": SHA1}
         gh.heads["main"] = SHA2
         info = await installer.check_update(row)

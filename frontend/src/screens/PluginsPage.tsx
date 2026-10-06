@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  checkPluginUpdates, fetchRestartStatus, previewUpgrade, restartThemis, rollbackPlugin, uninstallPlugin, updatePlugin, usePlugins,
+  checkPluginUpdates, fetchRestartStatus, waitForRestart, previewUpgrade, restartThemis, rollbackPlugin, uninstallPlugin, updatePlugin, usePlugins,
   type InstallPreview, type PluginSummary,
 } from '../api/plugins';
 import { PluginInstallDialog } from '../components/PluginInstallDialog';
@@ -21,6 +21,9 @@ export function PluginsPage() {
   const [restarting, setRestarting] = useState(false);
   const [restartError, setRestartError] = useState('');
 
+  const reconnect = useRef<AbortController | null>(null);
+  useEffect(() => () => reconnect.current?.abort(), []);        // leaving the page stops waiting for the restart
+
   const say = (id: string, msg: string) => setNotice(n => ({ ...n, [id]: msg }));
   const fail = (id: string) => (e: unknown) => say(id, e instanceof Error ? e.message : 'That did not work');
 
@@ -33,7 +36,11 @@ export function PluginsPage() {
     setRestartError('');
     try {
       const r = await restartThemis(force);
-      if (r.restarting) setRestarting(true); else setRestart({ printing: r.printing ?? [] });
+      if (r.restarting) {
+        setRestarting(true);
+        reconnect.current = new AbortController();
+        void waitForRestart(reconnect.current.signal).then(back => { if (back) window.location.reload(); });
+      } else setRestart({ printing: r.printing ?? [] });
     } catch (e) { setRestartError(e instanceof Error ? e.message : 'Restart failed'); }
   }
   async function checkUpdates(p: PluginSummary) {

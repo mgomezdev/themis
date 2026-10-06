@@ -49,7 +49,8 @@ standard library, a Themis dependency, or another plugin).
 
 Settings → Plugins → **Install plugin**: upload a `.zip` / `.tar.gz` / `.tgz`, or give a **public GitHub repository** (URL, optional
 ref — tag, branch or commit — and optional subdirectory for monorepos). The dialog shows the source, publisher (unverified), the
-archive's SHA-256 and a full-trust warning; you confirm explicitly. Nothing is active until you **restart**.
+archive's SHA-256 and a full-trust warning; you confirm explicitly. **No code from the package runs until you confirm**
+(previews and "Check for updates" only extract and read the toml). Nothing is active until you **restart**.
 
 Pipeline (`app/plugins/installer.py`), the same for both sources:
 
@@ -57,22 +58,26 @@ Pipeline (`app/plugins/installer.py`), the same for both sources:
    commit's tarball is downloaded from codeload — the moving ref is never installed. No `git` binary involved.
 2. **Safe extract** into `<data>/plugins/.staging/<token>/`: absolute paths, `..`, backslashes, symlinks, hard links, device files
    and encrypted entries are rejected; at most 3000 files and 80 MB expanded (counted as bytes are written, so a lying header
-   cannot bypass it).
+   cannot bypass it). Tar decompression is capped too (headers and directory entries are not file bytes), and every entry
+   counts toward the file limit. The upload route refuses an oversized or length-less body (413) before it is read; staged
+   previews that are never confirmed expire after an hour.
 3. **Validate** the toml (id format, reserved ids, semver, `host_api`, known kind, entry shape and file, `min_themis`, name clash).
-4. **Dry-run import in a subprocess** (clean environment, throwaway data dir, `vendor/` after Themis's own path): import errors,
-   missing dependencies and a MANIFEST that disagrees with the toml fail here, without touching the live process.
-5. **Commit:** move to `<data>/plugins/<id>/<version>/`, write the `installed_plugins` row (`pending_restart`), audit-log it. A
-   failure at any step removes the staging directory and leaves no row.
+4. **On confirmation — dry-run import in a subprocess** (clean environment, throwaway data dir, `vendor/` after Themis's own
+   path): import errors, missing dependencies and a MANIFEST that disagrees with the toml fail here, without touching the live
+   process. This is the first time any of the package's code runs, and only after the admin has accepted the trust warning.
+5. **Commit** (one at a time): move to `<data>/plugins/<id>/<version>/`, write the `installed_plugins` row (`pending_restart`),
+   audit-log it. A failure at any step removes the staging directory and anything moved, and leaves no row.
 
-Installing a **different version of an installed id** is an upgrade: the old version stays on disk as `previous_version` (older
-ones are pruned). Re-installing the *same* version is refused — bump `version`.
+Installing a **different version of an installed id** is an upgrade: the version that is *running* stays on disk as
+`previous_version` (older ones are pruned). Upgrading again before a restart keeps that running version, not the staged one that
+never ran. Re-installing the *same* version is refused — bump `version`.
 
 ### Restart (always the admin's call)
 
 Install, upgrade, rollback and uninstall only **stage** their change (disk + `installed_plugins`). Changes stack; the Plugins page
 shows one banner — "Restart Themis to apply N pending changes" — and one **Restart** button, which warns when a printer is
 printing. `POST /api/v1/system/restart` exits the process cleanly; Docker's `restart: unless-stopped` (set in
-`docker-compose.yml`) brings it back. On a bare-metal dev run, restart it yourself. Because staging is durable, a crash or an
+`docker-compose.yml`) brings it back; the page waits for Themis to drop and return, then reloads. On a bare-metal dev run, restart it yourself. Because staging is durable, a crash or an
 unrelated restart applies the same batch.
 
 ### Startup loading (`app/plugins/loader.py`)
@@ -91,7 +96,8 @@ provider. After migrations, each row becomes `active` or `error`; `pending_remov
   the previous version does not ship (it would run against a newer schema); upgrade forward instead.
 * **Uninstall** disables the plugin now, marks `pending_removal`, and deletes the code at the restart. Its data (prefixed tables,
   settings, queued writes) is **kept** unless you tick "also delete this plugin's data" (`?remove_data=true`: runs its migrations'
-  `down()`, newest first, and drops its settings row and provider slot). Bundled plugins can be disabled, never uninstalled.
+  `down()`, newest first, and drops its settings row and provider slot, in one transaction with the audit row; refused when the
+  plugin is not loaded, since its migrations are then unavailable). Bundled plugins can be disabled, never uninstalled.
 
 ### API (admin session only)
 
@@ -110,7 +116,7 @@ POST   /api/v1/system/restart                      {force?}; 409 {error:"printin
 
 **Installing a plugin means trusting it fully.** It runs as the Themis process (root in the container): it can read the database,
 every secret and API key, the OrcaSlicer config, the network, and command printers. There is no sandbox, and the dry-run
-subprocess only protects the live process from import-time crashes, not from malicious code. Mitigations that are in place:
+subprocess (run only after you confirm) only protects the live process from import-time crashes, not from malicious code. Mitigations that are in place:
 
 * Every action above needs an **interactive admin**: the keyless local admin, the bootstrap key, or an admin login session. An API
   key — even with `settings:write` — gets 403, so a leaked automation key cannot install code (`auth.require_admin_session`).

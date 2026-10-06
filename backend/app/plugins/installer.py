@@ -7,6 +7,7 @@ Plugins are trusted code (spec D17): this is validation and hygiene, not a sandb
 from __future__ import annotations
 
 import asyncio
+import gzip
 import hashlib
 import importlib.util
 import json
@@ -17,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tarfile
+import time
 import uuid
 import zipfile
 from dataclasses import asdict, dataclass
@@ -193,17 +195,31 @@ def _extract_zip(path: Path, dest: Path) -> None:
                 raise InstallError(f"links and special files are not allowed in a plugin archive: {info.filename!r}")
             if not rel.parts:
                 continue
+            budget.file()
             if info.is_dir():
                 dest.joinpath(*rel.parts).mkdir(parents=True, exist_ok=True)
                 continue
-            budget.file()
             with zf.open(info) as src:
                 _write(dest, rel, src, budget)
 
 
+class _Limited:
+    """Read-through wrapper that refuses to hand out more than `limit` decompressed bytes: tar headers (GNU long names, PAX
+    records, directory entries) are not file bytes, so the per-file budget alone cannot bound them."""
+    def __init__(self, raw: IO[bytes], limit: int) -> None:
+        self.raw, self.left = raw, limit
+
+    def read(self, n: int = -1) -> bytes:
+        data = self.raw.read(n)
+        self.left -= len(data)
+        if self.left < 0:
+            raise InstallError(f"archive expands to more than {MAX_UNCOMPRESSED_BYTES // (1024 * 1024)} MB")
+        return data
+
+
 def _extract_tar(path: Path, dest: Path) -> None:
     budget = _Budget()
-    with tarfile.open(path, "r:gz") as tf:
+    with gzip.open(path, "rb") as gz, tarfile.open(fileobj=_Limited(gz, MAX_UNCOMPRESSED_BYTES + 4 * 1024 * 1024), mode="r|") as tf:
         for m in tf:                                     # streamed, member by member; never `extractall`
             rel = _rel(m.name)
             if m.issym() or m.islnk() or m.isdev() or m.isfifo():
@@ -211,6 +227,7 @@ def _extract_tar(path: Path, dest: Path) -> None:
             if not rel.parts:
                 continue
             if m.isdir():
+                budget.file()                            # entries count too: a tgz of millions of empty dirs is a bomb
                 dest.joinpath(*rel.parts).mkdir(parents=True, exist_ok=True)
             elif m.isreg():
                 budget.file()
@@ -234,7 +251,7 @@ def extract_archive(archive: Path, dest: Path) -> None:
             _extract_tar(archive, dest)
         else:
             raise InstallError("not a .zip, .tar.gz or .tgz archive")
-    except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError) as e:
+    except (zipfile.BadZipFile, tarfile.TarError, EOFError, OSError, gzip.BadGzipFile) as e:
         if isinstance(e, InstallError):
             raise
         raise InstallError(f"the archive is corrupt or unreadable: {e}") from e
@@ -309,7 +326,9 @@ def dry_run(root: Path, t: PluginToml) -> dict:
     return info
 
 
-def validate_package(root: Path) -> tuple[PluginToml, dict]:
+def validate_package(root: Path) -> PluginToml:
+    """Static checks only. NOTHING from the package is imported or run here: previews (and update checks) must not execute
+    code the admin has not yet agreed to trust. The import happens in `commit`, after the explicit confirmation."""
     try:
         t = read_toml(root, reserved_ids=bundled_ids())
         if not entry_file_exists(root, t):
@@ -321,7 +340,7 @@ def validate_package(root: Path) -> tuple[PluginToml, dict]:
         raise
     except PluginError as e:                              # toml validation errors are the admin's to read: same type
         raise InstallError(str(e)) from e
-    return t, dry_run(root, t)
+    return t
 
 
 async def _stage(archive: Path, token: str, sha256: str, **source) -> Staged:
@@ -333,8 +352,8 @@ async def _stage(archive: Path, token: str, sha256: str, **source) -> Staged:
         shutil.move(str(root), str(tdir / "pkg"))
         shutil.rmtree(extracted, ignore_errors=True)
         archive.unlink(missing_ok=True)
-        t, info = await asyncio.to_thread(validate_package, tdir / "pkg")
-        staged = Staged(token=token, toml=t, archive_sha256=sha256, migrations=tuple(info["migrations"]), **source)
+        t = await asyncio.to_thread(validate_package, tdir / "pkg")
+        staged = Staged(token=token, toml=t, archive_sha256=sha256, **source)
         _save_meta(staged)
         return staged
     except BaseException:
@@ -342,7 +361,23 @@ async def _stage(archive: Path, token: str, sha256: str, **source) -> Staged:
         raise
 
 
+STAGING_TTL_S = 3600
+
+
+def _sweep_staging() -> None:
+    """Previews nobody confirmed or discarded (closed tab) expire after an hour."""
+    base = staging_dir()
+    cutoff = time.time() - STAGING_TTL_S
+    for d in base.iterdir() if base.is_dir() else []:
+        try:
+            if d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def new_token_dir() -> tuple[str, Path]:
+    _sweep_staging()
     token = uuid.uuid4().hex
     d = staging_dir() / token
     d.mkdir(parents=True, exist_ok=False)
@@ -463,44 +498,67 @@ def _prune(plugin_id: str, keep: set[str]) -> None:
             shutil.rmtree(d, ignore_errors=True)
 
 
+_commit_lock = asyncio.Lock()          # one commit at a time: two confirmations of one token cannot race on the move
+
+
 async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: str | None = None) -> InstalledPlugin:
-    """Move a staged package into place and record it. New id = install; existing id = upgrade (the old version
-    stays on disk as `previous_version`). The plugin only loads at the next restart."""
-    staged = load_staged(token)
-    t = staged.toml
-    if expect_id is not None and t.id != expect_id:
-        raise InstallError(f"the package is plugin {t.id!r}, not {expect_id!r}")
-    row = await session.get(InstalledPlugin, t.id)
-    if row is not None and row.status == "pending_removal":
-        raise InstallError(f"{t.id!r} is waiting to be uninstalled; restart Themis first")
-    target = version_dir(t.id, t.version)
-    if target.exists():
-        raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    (staged.root / INFO_FILE).write_text(json.dumps({"migrations": list(staged.migrations)}), encoding="utf-8")
-    await asyncio.to_thread(shutil.move, str(staged.root), str(target))
-    try:
-        action = "plugin.install" if row is None else "plugin.upgrade"
-        previous = None if row is None else row.version
-        if row is None:
-            row = InstalledPlugin(plugin_id=t.id)
-            session.add(row)
-        row.version, row.name, row.kind, row.publisher = t.version, t.name, t.kind, t.publisher
-        row.source, row.source_url, row.ref, row.subdir = staged.source, staged.source_url, staged.ref, staged.subdir
-        row.commit_sha, row.archive_sha256, row.installed_at = staged.commit_sha, staged.archive_sha256, _now()
-        row.status, row.error, row.previous_version = "pending_restart", None, previous
-        await audit.record(session, actor, action, t.id, {
-            "version": t.version, "previous_version": previous, "source": staged.source, "source_url": staged.source_url,
-            "commit_sha": staged.commit_sha, "archive_sha256": staged.archive_sha256})
-        await session.commit()
-    except BaseException:
-        await session.rollback()
-        shutil.rmtree(target, ignore_errors=True)
-        raise
-    finally:
-        shutil.rmtree(staging_dir() / token, ignore_errors=True)
-    _prune(t.id, {t.version} | ({previous} if previous else set()))
-    return row
+    """Import-check, then move a staged package into place and record it. New id = install; existing id = upgrade (the
+    version that is running stays on disk as `previous_version`). The plugin only loads at the next restart."""
+    async with _commit_lock:
+        staged = load_staged(token)
+        t = staged.toml
+        try:
+            if expect_id is not None and t.id != expect_id:
+                raise InstallError(f"the package is plugin {t.id!r}, not {expect_id!r}")
+            row = await session.get(InstalledPlugin, t.id)
+            if row is not None and row.status == "pending_removal":
+                raise InstallError(f"{t.id!r} is waiting to be uninstalled; restart Themis first")
+            target = version_dir(t.id, t.version)
+            if target.exists():
+                raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
+            info = await asyncio.to_thread(dry_run, staged.root, t)            # first time any of its code runs: after consent
+            staged.migrations = tuple(info["migrations"])
+        except BaseException:
+            shutil.rmtree(staging_dir() / token, ignore_errors=True)            # a refused package is not kept
+            raise
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            (staged.root / INFO_FILE).write_text(json.dumps({"migrations": list(staged.migrations)}), encoding="utf-8")
+            await asyncio.to_thread(shutil.move, str(staged.root), str(target))
+            action = "plugin.install" if row is None else "plugin.upgrade"
+            # The version that is actually RUNNING is what a rollback must return to and what must not be deleted. A row
+            # still `pending_restart` has not run yet: the running one is whatever it recorded as `previous_version`.
+            if row is None:
+                previous = None
+            elif row.status == "pending_restart":
+                previous = row.previous_version
+            else:
+                previous = row.version
+            if row is None:
+                row = InstalledPlugin(plugin_id=t.id)
+                session.add(row)
+            row.version, row.name, row.kind, row.publisher = t.version, t.name, t.kind, t.publisher
+            row.source, row.source_url, row.ref, row.subdir = staged.source, staged.source_url, staged.ref, staged.subdir
+            row.commit_sha, row.archive_sha256, row.installed_at = staged.commit_sha, staged.archive_sha256, _now()
+            row.status, row.error, row.previous_version = "pending_restart", None, previous
+            await audit.record(session, actor, action, t.id, {
+                "version": t.version, "previous_version": previous, "source": staged.source, "source_url": staged.source_url,
+                "commit_sha": staged.commit_sha, "archive_sha256": staged.archive_sha256})
+            await session.commit()
+        except BaseException as e:
+            await session.rollback()
+            shutil.rmtree(target, ignore_errors=True)                           # nothing half-installed stays behind
+            try:
+                target.parent.rmdir()                                           # the id's folder too, unless it holds a live version
+            except OSError:
+                pass
+            if isinstance(e, OSError):
+                raise InstallError(f"could not install the package: {e}") from e
+            raise
+        finally:
+            shutil.rmtree(staging_dir() / token, ignore_errors=True)
+        _prune(t.id, {t.version} | ({previous} if previous else set()))
+        return row
 
 
 async def rollback(session: AsyncSession, plugin_id: str, *, actor: str) -> InstalledPlugin:

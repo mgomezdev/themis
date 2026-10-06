@@ -151,6 +151,24 @@ export async function uninstallPlugin(id: string, removeData: boolean): Promise<
 }
 export const fetchRestartStatus = (): Promise<{ pending: { plugin_id: string; version: string; status: string }[]; printing: string[] }> =>
   request('/api/v1/system/restart');
+/** How the restart screen waits for Themis to come back (a mutable object so tests can shorten it). */
+export const RECONNECT = { pollMs: 1500 };
+
+/** Poll `/api/v1/health` until Themis has gone down and come back up; resolves true then, false if `signal` aborts first. */
+export async function waitForRestart(signal: AbortSignal): Promise<boolean> {
+  let wentDown = false;
+  for (let i = 0; i < 400 && !signal.aborted; i++) {            // ~10 minutes at the default interval
+    await new Promise(r => setTimeout(r, RECONNECT.pollMs));
+    if (signal.aborted) break;
+    try {
+      const r = await apiFetch('/api/v1/health');
+      if (r.ok && wentDown) return true;
+    } catch { wentDown = true; continue; }
+    if (!wentDown && i >= 3) return true;                       // never saw it drop (a fast restart): assume it is back
+  }
+  return false;
+}
+
 /** Restart Themis (applies every pending change). Resolves `{printing}` instead of restarting when printers are busy and `force` is false. */
 export async function restartThemis(force: boolean): Promise<{ restarting: boolean; printing?: string[] }> {
   const resp = await apiFetch('/api/v1/system/restart', json('POST', { force }));

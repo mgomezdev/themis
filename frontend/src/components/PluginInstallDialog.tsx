@@ -44,10 +44,15 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
     if (!preview) return;
     setError(''); setBusy(true);
     try { await commitInstall(preview.token); onInstalled(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Install failed'); setBusy(false); }
+    catch (e) {
+      // The staged package is spent (a refused or failed commit discards it): go back to choosing a source, with the reason.
+      setPreview(null); setTrust(false);
+      setError(e instanceof Error ? e.message : 'Install failed'); setBusy(false);
+    }
   }
 
   function close() {
+    if (busy) return;                                          // a commit in flight must not be discarded under itself
     if (preview) void discardInstall(preview.token);          // an unconfirmed package is not kept
     onClose();
   }
@@ -60,7 +65,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
       <div className="card" role="dialog" aria-label="Install plugin" style={{ width: 520, maxWidth: '92vw', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div className="row between" style={{ alignItems: 'center' }}>
           <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600 }}>{initial ? 'Upgrade plugin' : 'Install plugin'}</h3>
-          <button className="btn ghost icon sm" aria-label="Close" onClick={close}>&#x2715;</button>
+          <button className="btn ghost icon sm" aria-label="Close" disabled={busy} onClick={close}>&#x2715;</button>
         </div>
 
         {!preview && (
@@ -122,7 +127,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
         {error && <div role="alert" className="small" style={{ color: 'var(--err, #d44)' }}>{error}</div>}
 
         <div className="row gap-2" style={{ justifyContent: 'flex-end' }}>
-          <button className="btn" onClick={close}>Cancel</button>
+          <button className="btn" disabled={busy} onClick={close}>Cancel</button>
           {!preview
             ? <button className="btn primary" disabled={busy} onClick={() => void review()}>{busy ? 'Checking…' : 'Review'}</button>
             : <button className="btn primary" disabled={busy || !trust} onClick={() => void install()}>{busy ? 'Installing…' : existing ? 'Upgrade' : 'Install'}</button>}

@@ -223,6 +223,18 @@ for _manifest in registered_plugins():
         app.include_router(_router)
 
 
+@app.middleware("http")
+async def _cap_plugin_upload(request: Request, call_next):
+    """The multipart body of a plugin upload is parsed before authentication runs, so refuse an oversized or length-less one
+    up front (the installer enforces the exact cap again while streaming)."""
+    if request.method == "POST" and request.url.path == "/api/v1/plugins/install":
+        from .plugins import installer as _installer
+        length = request.headers.get("content-length", "")
+        if not length.isdigit() or int(length) > _installer.MAX_ARCHIVE_BYTES + 1024 * 1024:
+            return JSONResponse(status_code=413, content={"detail": "Plugin archive is too large (or has no Content-Length)"})
+    return await call_next(request)
+
+
 @app.exception_handler(CapabilityUnavailable)
 async def _capability_unavailable(_: Request, exc: CapabilityUnavailable) -> JSONResponse:
     """A feature needs a plugin kind/capability that is not available: 409 with a machine-readable body."""

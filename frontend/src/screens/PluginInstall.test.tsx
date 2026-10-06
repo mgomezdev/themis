@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginsPage } from './PluginsPage';
 import { Reply, stubFetch, type Call } from '../test/fetchStub';
 import { mkPlugin } from '../test/inventoryFixtures';
-import { resetPluginStore, type InstallPreview, type PluginInstall, type PluginSummary } from '../api/plugins';
+import { RECONNECT, resetPluginStore, type InstallPreview, type PluginInstall, type PluginSummary } from '../api/plugins';
 
 const preview = (over: Partial<InstallPreview> = {}): InstallPreview => ({
   token: 'tok1', id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', kind: 'filament_inventory', publisher: 'Acme',
@@ -24,7 +24,13 @@ const show = () => render(<MemoryRouter><PluginsPage /></MemoryRouter>);
 const GH = 'https://github.com/acme/inv';
 
 describe('plugin installation UI', () => {
-  beforeEach(() => resetPluginStore());
+  const reload = vi.fn();
+  beforeEach(() => {
+    resetPluginStore();
+    reload.mockReset();
+    RECONNECT.pollMs = 5;
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, reload } });
+  });
   afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
 
   it('upload: review shows source, publisher, sha256 and the full-trust warning; Install needs the trust checkbox; then commits', async () => {
@@ -239,5 +245,51 @@ describe('plugin installation UI', () => {
     stubFetch({ 'GET /api/v1/plugins': list([installed({ version: '1.0.0', install: install({ status: 'pending_restart', version: '1.1.0', previous_version: '1.0.0', can_rollback: true }) })]) });
     show();
     expect((await screen.findByTestId('plugin-source-acme_inv')).textContent).toContain('v1.1.0 after restart');
+  });
+
+  it('after a restart it waits for Themis to go down and come back, then reloads the page', async () => {
+    let health = 0;
+    stubFetch({
+      'GET /api/v1/plugins': list([], [{ plugin_id: 'a_b_c', name: 'ABC', version: '1.0.0', change: 'install' }]),
+      'GET /api/v1/system/restart': { pending: [], printing: [] },
+      'POST /api/v1/system/restart': { restarting: true },
+      'GET /api/v1/health': () => { health += 1; if (health <= 2) throw new Error('connection refused'); return { status: 'ok' }; },
+    });
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Restart Themis' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Restart now' }));
+    expect((await screen.findByTestId('restart-banner')).textContent).toContain('Restarting Themis');
+    expect(reload).not.toHaveBeenCalled();                                  // still down
+    await waitFor(() => expect(reload).toHaveBeenCalledTimes(1));
+    expect(health).toBe(3);                                                 // two failed polls, then the one that came back
+  });
+
+  it('a failed install returns to the source step with the reason (the staged package is spent); Cancel/close are inert while it is in flight', async () => {
+    let release: (v: unknown) => void = () => {};
+    const gate = new Promise(r => { release = r; });
+    const api = stubFetch({
+      'GET /api/v1/plugins': list([]),
+      'POST /api/v1/plugins/install-from-github': { preview: preview() },
+      'POST /api/v1/plugins/install/tok1/commit': new Reply(400, { detail: 'the plugin failed to import: boom' }),
+      'DELETE /api/v1/plugins/install/tok1': new Reply(204, null),
+    });
+    const inner = globalThis.fetch as (u: string, i?: RequestInit) => Promise<Response>;
+    vi.stubGlobal('fetch', (u: string, i?: RequestInit) => (u.endsWith('/commit') ? gate.then(() => inner(u, i)) : inner(u, i)));   // hold the commit open
+    show();
+    await userEvent.click(await screen.findByRole('button', { name: 'Install plugin' }));
+    await userEvent.click(screen.getByRole('button', { name: 'GitHub repository' }));
+    await userEvent.type(screen.getByLabelText('Repository URL'), GH);
+    await userEvent.click(screen.getByRole('button', { name: 'Review' }));
+    await screen.findByTestId('install-preview');
+    await userEvent.click(screen.getByRole('checkbox'));
+    await userEvent.click(screen.getByRole('button', { name: 'Install' }));
+    const cancel = await screen.findByRole('button', { name: 'Cancel' }) as HTMLButtonElement;
+    expect(cancel.disabled).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(api.to('DELETE', '/api/v1/plugins/install/tok1')).toEqual([]);     // not discarded under the in-flight commit
+    release(null);
+    expect(await screen.findByText('the plugin failed to import: boom')).toBeTruthy();
+    expect(screen.queryByTestId('install-preview')).toBeNull();               // back to choosing a source
+    expect(screen.getByLabelText('Repository URL')).toBeTruthy();
   });
 });

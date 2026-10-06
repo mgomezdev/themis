@@ -127,6 +127,9 @@ async def test_a_rejected_upload_is_a_400_with_the_reason_and_leaves_nothing(adm
 
 async def test_upload_of_a_newer_version_is_an_upgrade_with_rollback(admin, session_factory, data_dir):
     await admin.post("/api/v1/plugins/install", files=upload(pb.make_zip(pb.files("acme_inv", "1.0.0"))))
+    async with session_factory() as s:                                   # restarted: 1.0.0 is the running version
+        (await s.get(InstalledPlugin, "acme_inv")).status = "active"
+        await s.commit()
     r = await admin.post("/api/v1/plugins/install", files=upload(pb.make_zip(pb.files("acme_inv", "1.1.0"))))
     assert (r.json()["version"], r.json()["install"]["previous_version"]) == ("1.1.0", "1.0.0")
     assert (await admin.get("/api/v1/plugins")).json()["pending"][0]["change"] == "update"
@@ -134,6 +137,27 @@ async def test_upload_of_a_newer_version_is_an_upgrade_with_rollback(admin, sess
     assert (r.status_code, r.json()["version"], r.json()["install"]["previous_version"]) == (200, "1.0.0", "1.1.0")
     assert [a for a, *_ in await audit_rows(session_factory)] == ["plugin.install", "plugin.upgrade", "plugin.rollback"]
     assert (await admin.post("/api/v1/plugins/spoolman/rollback")).status_code == 400
+
+
+async def test_the_keyless_local_admin_may_install_and_restart(client, session_factory, data_dir, exited, monkeypatch):
+    monkeypatch.setenv("THEMIS_LOCAL_NETWORKS", "127.0.0.0/8")
+    """Not only login sessions: the local-network admin (no key, `id is None`) is an interactive admin too."""
+    async with AsyncClient(transport=ASGITransport(app=app, client=("127.0.0.1", 5000)), base_url="http://test") as local:
+        r = await local.post("/api/v1/plugins/install", files=upload(pb.make_zip(pb.files("acme_inv"))))
+        assert r.status_code == 200, r.text
+        assert (await local.post("/api/v1/system/restart")).status_code == 200
+    assert [(a, actor) for a, _, actor in await audit_rows(session_factory)] == [("plugin.install", "local-admin"), ("system.restart", "local-admin")]
+
+
+async def test_an_oversized_or_length_less_upload_is_refused_before_the_body_is_read(admin, client, data_dir, monkeypatch):
+    monkeypatch.setattr(installer, "MAX_ARCHIVE_BYTES", 100)
+    big = upload(b"x" * (1024 * 1024 + 500))
+    for c in (admin, client):                                            # admin or not: the size gate comes first
+        r = await c.post("/api/v1/plugins/install", files=big)
+        assert r.status_code == 413, r.text
+    r = await admin.post("/api/v1/plugins/install", content=b"abc", headers={"content-type": "multipart/form-data; boundary=x", "content-length": "nope"})
+    assert r.status_code == 413
+    assert_clean(data_dir)
 
 
 async def test_github_install_check_updates_and_upgrade(admin, session_factory, data_dir, monkeypatch):
@@ -201,6 +225,37 @@ def exited(monkeypatch):
     calls = []
     monkeypatch.setattr(plugin_install, "exit_process", lambda: calls.append(1))
     return calls
+
+
+async def test_remove_data_is_refused_for_a_plugin_that_is_not_loaded_and_changes_nothing(admin, session_factory, data_dir):
+    async with session_factory() as s:
+        s.add(InstalledPlugin(plugin_id="broken_one", version="1.0.0", source="upload", archive_sha256="x", installed_at="t",
+                              status="error", error="ImportError"))
+        await s.commit()
+    r = await admin.delete("/api/v1/plugins/broken_one?remove_data=true")
+    assert r.status_code == 400 and "not loaded" in r.json()["detail"]
+    async with session_factory() as s:
+        assert (await s.get(InstalledPlugin, "broken_one")).status == "error"        # not marked, not audited
+    assert await audit_rows(session_factory) == []
+    r = await admin.delete("/api/v1/plugins/broken_one")                             # keeping the data is still fine
+    assert (r.status_code, r.json()["status"]) == (200, "pending_removal")
+
+
+async def test_a_failure_while_removing_data_rolls_everything_back(admin, session_factory, data_dir, monkeypatch):
+    async with session_factory() as s:
+        s.add(PluginConfig(plugin_id="acme_inv", enabled=True, settings={"url": "x"}))
+        s.add(InstalledPlugin(plugin_id="acme_inv", version="1.0.0", source="upload", archive_sha256="x", installed_at="t", status="active"))
+        await s.commit()
+    _REGISTRY["acme_inv"] = make_manifest("acme_inv")
+    async def explode(*a, **k):
+        raise RuntimeError("down() failed")
+    monkeypatch.setattr(plugin_install.plugin_migrations, "rollback_plugin_migration", explode)
+    r = await admin.delete("/api/v1/plugins/acme_inv?remove_data=true")
+    assert r.status_code == 500 and "nothing was changed" in r.json()["detail"]
+    async with session_factory() as s:
+        assert (await s.get(InstalledPlugin, "acme_inv")).status == "active"
+        assert await s.get(PluginConfig, "acme_inv") is not None
+    assert await audit_rows(session_factory) == []
 
 
 async def test_restart_status_lists_every_pending_change(admin, data_dir):

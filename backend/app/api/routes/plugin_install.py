@@ -127,26 +127,22 @@ async def rollback(plugin_id: str, key: ApiKey | None = _admin, session: AsyncSe
         raise _fail(e)
 
 
-async def _remove_data(plugin_id: str) -> None:
-    """Drop the plugin's own tables (its migrations' down(), newest first), its settings row and its provider slot."""
+async def _remove_data(session: AsyncSession, plugin_id: str) -> None:
+    """Drop the plugin's own tables (its migrations' down(), newest first), its settings row and its provider slot — on the
+    caller's session and WITHOUT committing, so it lands in one transaction with the uninstall mark and its audit row."""
     from ...models import ExtensionSlot, PluginConfig
     manifest = get_plugin(plugin_id)
-    sf = plugin_host.session_factory
-    assert sf is not None
-    if manifest is not None:
-        async with sf() as s:
-            conn = await s.connection()
-            while await plugin_migrations.rollback_plugin_migration(conn, manifest) is not None:
-                pass
-            await s.commit()
-    async with sf() as s:
-        cfg = await s.get(PluginConfig, plugin_id)
-        if cfg is not None:
-            await s.delete(cfg)
-        for slot in (await s.execute(select(ExtensionSlot).where(ExtensionSlot.plugin_id == plugin_id))).scalars():
-            slot.plugin_id = None
-        await s.commit()
-    await plugin_host.reload()
+    if manifest is None:
+        raise installer.InstallError("this plugin is not loaded, so its data cannot be removed (its migrations are not "
+                                     "available); uninstall it and keep the data, or fix the plugin so it loads first")
+    conn = await session.connection()
+    while await plugin_migrations.rollback_plugin_migration(conn, manifest) is not None:
+        pass
+    cfg = await session.get(PluginConfig, plugin_id)
+    if cfg is not None:
+        await session.delete(cfg)
+    for slot in (await session.execute(select(ExtensionSlot).where(ExtensionSlot.plugin_id == plugin_id))).scalars():
+        slot.plugin_id = None
 
 
 @router.delete("/plugins/{plugin_id}", summary="Uninstall at the next restart (data is kept unless remove_data=true)")
@@ -156,13 +152,24 @@ async def uninstall(plugin_id: str, remove_data: bool = False, key: ApiKey | Non
         raise HTTPException(status_code=409, detail="Bundled plugins can be disabled, not uninstalled")
     try:
         await installer.get_row(session, plugin_id)
+        if remove_data and get_plugin(plugin_id) is None:
+            raise installer.InstallError("this plugin is not loaded, so its data cannot be removed (its migrations are not "
+                                         "available); uninstall it and keep the data, or fix the plugin so it loads first")
         if get_plugin(plugin_id) is not None:
             await plugin_host.update_config(plugin_id, enabled=False)      # stop it now; the code goes at the restart
         if remove_data:
-            await _remove_data(plugin_id)
-        return _result(await installer.mark_uninstall(session, plugin_id, actor=audit.actor_of(key), removed_data=remove_data))
+            await _remove_data(session, plugin_id)
+        result = _result(await installer.mark_uninstall(session, plugin_id, actor=audit.actor_of(key), removed_data=remove_data))
     except PluginError as e:
+        await session.rollback()
         raise _fail(e)
+    except Exception:
+        await session.rollback()
+        logger.exception("Uninstalling plugin %s failed", plugin_id)
+        raise HTTPException(status_code=500, detail="Uninstall failed; nothing was changed")
+    if remove_data:
+        await plugin_host.reload()
+    return result
 
 
 # --- restart ---------------------------------------------------------------------------------------------------------
