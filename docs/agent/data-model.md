@@ -498,3 +498,8 @@ CLI: `cd backend && python -m app.migrations.migrate up|down` (v001 imports `app
 
 None of these shapes are shared via codegen — every TS type mirroring a backend response is hand-kept
 in sync. See `backend-review.md`/`frontend-review.md` §1 before changing a field on either side.
+
+
+### installed_plugins, audit_log  (v039 — BIZ-223)
+
+`installed_plugins{plugin_id PK, version, name, kind, publisher, source upload|github, source_url, ref, subdir, commit_sha, archive_sha256, installed_at, status pending_restart|active|error|pending_removal, error, previous_version}`: one row per **non-bundled** plugin (bundled ones have none); the code lives in `<data>/plugins/<id>/<version>/` (+ a `.themis-installed.json` listing the migrations that version ships). `status` is written by the installer (`pending_*`) and by `plugins/loader.reconcile` after each start (`active`/`error`). `audit_log{id, at, actor, action, target, detail JSON}` is append-only: `plugin.install|upgrade|rollback|uninstall`, `system.restart`; the actor is `session:<key id>` or `local-admin`; rows commit in the same transaction as the change they describe.

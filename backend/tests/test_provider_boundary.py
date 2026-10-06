@@ -45,6 +45,7 @@ HTTPX_ALLOWED = {
     "app.services.snapmaker_client": "Moonraker printer API",
     "app.services.notification_service": "ntfy/Discord notifications",
     "app.services.webhook_service": "outbound webhooks",
+    "app.plugins.installer": "GitHub plugin download",
 }
 
 

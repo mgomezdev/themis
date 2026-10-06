@@ -5,7 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from ...auth import require_scope
+from ...database import get_session
+from ...models import InstalledPlugin
 from ...plugins import PluginError, get_plugin, registered_plugins
 from ...plugins.host import plugin_host
 from ...plugins.manifest import PluginManifest
@@ -19,10 +24,21 @@ def _ui(m: PluginManifest) -> dict:
             "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer} for t in u.tabs]}
 
 
-def _summary(m: PluginManifest) -> dict:
+def install_info(row: InstalledPlugin | None) -> dict | None:
+    """What the installer knows about a non-bundled plugin (None for bundled ones)."""
+    if row is None:
+        return None
+    return {"status": row.status, "version": row.version, "previous_version": row.previous_version, "publisher": row.publisher,
+            "source_url": row.source_url, "ref": row.ref, "commit_sha": row.commit_sha, "archive_sha256": row.archive_sha256,
+            "installed_at": row.installed_at, "error": row.error, "can_rollback": bool(row.previous_version),
+            "can_check_updates": row.source == "github"}
+
+
+def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
     return {
         "id": m.id, "name": m.name, "kind": m.kind, "version": m.version, "description": m.description,
-        "docs_url": m.docs_url, "source": "bundled", "capabilities": sorted(m.capabilities), "ui": _ui(m),
+        "docs_url": m.docs_url, "source": row.source if row else "bundled", "loaded": True, "install": install_info(row),
+        "capabilities": sorted(m.capabilities), "ui": _ui(m),
         "enabled": plugin_host.is_enabled(m.id),
         "active": plugin_host.active(m.kind) is not None and plugin_host.slot(m.kind) == m.id,
         "error": plugin_host.build_error(m.id) or plugin_host.state(m.id).get("last_error"),
@@ -52,9 +68,24 @@ def _get_or_404(plugin_id: str) -> PluginManifest:
 
 @router.get("/plugins", summary="List plugins (manifests, UI contributions, capabilities, enabled/active)",
             dependencies=[Depends(require_scope("settings:read"))])
-async def list_plugins():
-    kinds = sorted({m.kind for m in registered_plugins()})
-    return {"plugins": [_summary(m) for m in registered_plugins()], "slots": {k: plugin_host.slot(k) for k in kinds}}
+async def list_plugins(session: AsyncSession = Depends(get_session)):
+    rows = {r.plugin_id: r for r in (await session.execute(select(InstalledPlugin))).scalars()}
+    loaded = registered_plugins()
+    plugins = [_summary(m, rows.get(m.id)) for m in loaded]
+    # Installed packages that are not running: staged for the next restart, or failed to load (shown with their error).
+    for r in sorted(rows.values(), key=lambda r: r.plugin_id):
+        if get_plugin(r.plugin_id) is None:
+            plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "kind": r.kind, "version": r.version,
+                            "description": "", "docs_url": None, "source": r.source, "loaded": False,
+                            "install": install_info(r), "capabilities": [],
+                            "ui": {"mode": "section", "nav_label": r.name or r.plugin_id, "nav_placement": "settings",
+                                   "nav_icon": None, "tabs": []},
+                            "enabled": False, "active": False, "error": r.error})
+    pending = [{"plugin_id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
+                "change": "uninstall" if r.status == "pending_removal" else ("install" if not r.previous_version else "update")}
+               for r in sorted(rows.values(), key=lambda r: r.plugin_id) if r.status in ("pending_restart", "pending_removal")]
+    kinds = sorted({m.kind for m in loaded})
+    return {"plugins": plugins, "slots": {k: plugin_host.slot(k) for k in kinds}, "pending": pending}
 
 
 @router.get("/plugins/{plugin_id}", summary="One plugin: settings (secrets as set/unset), schema and state",

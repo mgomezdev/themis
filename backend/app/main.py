@@ -41,6 +41,7 @@ from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
+from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
 from .database import SessionLocal, init_db
@@ -77,6 +78,11 @@ async def _remove_placeholder_printer_from_db() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    try:
+        from .plugins import loader as _loader, migrations as _plugin_migrations
+        await _loader.reconcile(SessionLocal, _loader.last_report, dict(_plugin_migrations.failed))
+    except Exception:
+        logging.getLogger("app").exception("Could not record installed-plugin status; continuing")
 
     await _remove_placeholder_printer_from_db()
 
@@ -197,6 +203,7 @@ app.include_router(public_router)
 app.include_router(queue_router)
 app.include_router(settings_router)
 app.include_router(inventory_router)
+app.include_router(plugin_install_router)
 app.include_router(plugins_router)
 
 # Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
@@ -204,11 +211,28 @@ from .plugins import load_bundled, registered_plugins  # noqa: E402
 from .services.inventory.provider import CapabilityUnavailable  # noqa: E402
 
 load_bundled()
+from . import config as _cfg  # noqa: E402
+from .database import _data_dir as _data_dir_for_plugins  # noqa: E402
+from .plugins.loader import load_installed  # noqa: E402
+
+load_installed(_cfg.get_plugins_dir(), Path(_data_dir_for_plugins) / "themis.db")      # installed packages; failures are contained
 for _manifest in registered_plugins():
     for _router in _manifest.routers:
         app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
     for _router in _manifest.alias_routers:                  # deprecated aliases keep their historical absolute paths
         app.include_router(_router)
+
+
+@app.middleware("http")
+async def _cap_plugin_upload(request: Request, call_next):
+    """The multipart body of a plugin upload is parsed before authentication runs, so refuse an oversized or length-less one
+    up front (the installer enforces the exact cap again while streaming)."""
+    if request.method == "POST" and request.url.path == "/api/v1/plugins/install":
+        from .plugins import installer as _installer
+        length = request.headers.get("content-length", "")
+        if not length.isdigit() or int(length) > _installer.MAX_ARCHIVE_BYTES + 1024 * 1024:
+            return JSONResponse(status_code=413, content={"detail": "Plugin archive is too large (or has no Content-Length)"})
+    return await call_next(request)
 
 
 @app.exception_handler(CapabilityUnavailable)
