@@ -52,4 +52,4 @@ where = ["."]
 include = ["app*"]
 
 [tool.setuptools.package-data]
-"app.plugins.*" = ["themis-plugin.toml"]
+app = ["plugins/*/themis-plugin.toml"]
