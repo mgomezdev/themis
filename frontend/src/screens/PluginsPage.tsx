@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { usePlugins } from '../api/plugins';
+import { updatePlugin, usePlugins } from '../api/plugins';
 import { PageHeader } from '../components/settingsUi';
 import { PluginSettingsPage } from '../components/PluginSettingsPage';
 
@@ -27,7 +27,9 @@ export function PluginsPage() {
                 <span className={`pill ${p.error ? 'err' : p.active ? 'ok' : p.enabled ? 'info' : 'idle'}`}>
                   <span className="dot" />{p.error ? 'Problem' : p.active ? 'Active' : p.enabled ? 'Enabled' : 'Disabled'}
                 </span>
-                {p.ui.mode === 'page'
+                {!p.enabled
+                  ? <button className="btn sm" onClick={() => { void updatePlugin(p.id, { enabled: true }); }}>Enable</button>
+                  : p.ui.mode === 'page'
                   ? <Link className="btn sm" to={`/plugins/${p.id}`}>Open</Link>
                   : <button className="btn sm" aria-expanded={open === p.id} onClick={() => setOpen(o => (o === p.id ? null : p.id))}>
                       {open === p.id ? 'Hide' : 'Settings'}

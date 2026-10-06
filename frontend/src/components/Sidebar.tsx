@@ -4,6 +4,7 @@ import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
 import { InventoryStatusChip } from './InventoryStatusChip';
 import { usePlugins } from '../api/plugins';
+import { CAP, useInventory } from '../api/inventory';
 import { useBuildInfo, shortSha } from '../api/version';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
@@ -50,6 +51,8 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
 
 export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 0, alarmWorst = null, collapsed = false, onToggle = () => {} }: SidebarProps) {
   const { plugins } = usePlugins();
+  const inventory = useInventory();
+  const hasLibrary = inventory.has(CAP.MANAGE_MATERIALS) || inventory.has(CAP.MANAGE_SPOOLS);   // the active provider owns its library
   // A plugin that asks for its own page gets a sidebar entry only while it is enabled.
   const pluginPages = plugins.filter(p => p.enabled && p.ui.mode === 'page');
   const items = [
@@ -63,6 +66,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
     { to: '/alarms',    label: 'Alarms',      icon: Icons.alert },
     { to: '/history',   label: 'History',     icon: Icons.clock },
     { to: '/analytics', label: 'Analytics',   icon: Icons.chart },
+    ...(hasLibrary ? [{ to: '/library', label: 'Filament library', icon: Icons.spool }] : []),
     ...pluginPages.filter(p => p.ui.nav_placement === 'main').map(p => ({
       to: `/plugins/${p.id}`, label: p.ui.nav_label,
       icon: (p.ui.nav_icon ? (Icons as Record<string, React.ReactElement>)[p.ui.nav_icon] : undefined) ?? Icons.layers,

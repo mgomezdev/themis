@@ -1,5 +1,5 @@
 import { Navigate, NavLink, useParams } from 'react-router-dom';
-import { usePlugins } from '../api/plugins';
+import { updatePlugin, usePlugins } from '../api/plugins';
 import { PluginSettingsPage } from '../components/PluginSettingsPage';
 import { SchemaTab } from '../components/SchemaTab';
 import { COMPONENT_TABS } from '../plugins/registry';
@@ -15,7 +15,8 @@ export function PluginPage() {
   if (!plugin.enabled) {
     return (
       <div className="card" style={{ padding: 24 }} data-testid="plugin-disabled">
-        <div className="small muted">{plugin.name} is disabled. Enable it from Settings → Plugins to use its pages.</div>
+        <div className="small muted" style={{ marginBottom: 10 }}>{plugin.name} is disabled, so it has no pages and no navigation entry.</div>
+        <button className="btn sm" onClick={() => { void updatePlugin(plugin.id, { enabled: true }); }}>Enable {plugin.name}</button>
       </div>
     );
   }

@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -90,10 +90,12 @@ describe('PluginPage', () => {
   });
 
   it('a disabled plugin has no pages, and an unknown one says so', async () => {
-    withPlugin(mkPlugin({ id: 'demo', enabled: false, active: false }));
+    const api = withPlugin(mkPlugin({ id: 'demo', enabled: false, active: false }), { 'PUT /api/v1/plugins/demo': { id: 'demo' } });
     show('/plugins/demo');
     expect(await screen.findByTestId('plugin-disabled')).toBeTruthy();
     expect(screen.queryByTestId('plugin-page')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Enable demo' }));            // not a dead end: it can be switched back on
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo')[0].body).toEqual({ enabled: true }));
 
     resetPluginStore();
     show('/plugins/ghost');
@@ -113,7 +115,7 @@ describe('PluginsPage (Settings → Plugins)', () => {
   afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
 
   it('lists every plugin with its state; a page plugin links out, a section plugin expands in place', async () => {
-    const small = mkPlugin({ id: 'small_one', name: 'Small', enabled: false, active: false, ui: { mode: 'section', nav_label: 'Small', nav_placement: 'settings', nav_icon: null, tabs: [] } });
+    const small = mkPlugin({ id: 'small_one', name: 'Small', enabled: true, active: false, ui: { mode: 'section', nav_label: 'Small', nav_placement: 'settings', nav_icon: null, tabs: [] } });
     const big = mkPlugin({ id: 'big_one', name: 'Big', ui: tabs(['c', 'C', 'default']) });
     stubFetch({
       'GET /api/v1/plugins': { plugins: [big, small], slots: { filament_inventory: 'big_one' } },
@@ -122,13 +124,23 @@ describe('PluginsPage (Settings → Plugins)', () => {
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
 
     expect((await screen.findByTestId('plugin-big_one')).textContent).toContain('Active');
-    expect(screen.getByTestId('plugin-small_one').textContent).toContain('Disabled');
+    expect(screen.getByTestId('plugin-small_one').textContent).toContain('Enabled');
     expect(screen.getByRole('link', { name: 'Open' }).getAttribute('href')).toBe('/plugins/big_one');
 
     await userEvent.click(screen.getByRole('button', { name: 'Settings' }));
     expect(await screen.findByTestId('plugin-page')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Hide' }));
     expect(screen.queryByTestId('plugin-page')).toBeNull();
+  });
+
+  it('a disabled plugin is offered an Enable button instead of a page link (never a dead end)', async () => {
+    const off = mkPlugin({ id: 'off_one', name: 'Off', enabled: false, active: false, ui: tabs(['c', 'C', 'default']) });
+    const api = stubFetch({ 'GET /api/v1/plugins': { plugins: [off], slots: {} }, 'PUT /api/v1/plugins/off_one': { id: 'off_one' } });
+    render(<MemoryRouter><PluginsPage /></MemoryRouter>);
+    expect((await screen.findByTestId('plugin-off_one')).textContent).toContain('Disabled');
+    expect(screen.queryByRole('link', { name: 'Open' })).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: 'Enable' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/off_one')[0].body).toEqual({ enabled: true }));
   });
 
   it('says so when nothing is installed', async () => {

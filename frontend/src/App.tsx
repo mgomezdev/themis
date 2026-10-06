@@ -12,6 +12,8 @@ import { apiFetch } from './api/client';
 import { getSession, type Role } from './auth/session';
 import { CustomerPortal } from './screens/CustomerPortal';
 import { PluginPage } from './screens/PluginPage';
+import { FilamentLibraryScreen } from './screens/FilamentLibraryScreen';
+import { CAP, useInventory } from './api/inventory';
 import { InventoryBanner } from './components/InventoryBanner';
 import { LEGACY_REDIRECTS } from './plugins/registry';
 
@@ -98,11 +100,14 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
   const navigate = useNavigate();
   const path = '/' + location.pathname.split('/').filter(Boolean)[0];
   const total = queueCounts.active + queueCounts.pending + queueCounts.blocked;
+  const inventory = useInventory();
+  const moreItems = inventory.has(CAP.MANAGE_MATERIALS) || inventory.has(CAP.MANAGE_SPOOLS)
+    ? [...MORE_NAV_ITEMS, { to: '/library', label: 'Filament library', icon: 'spool' as const }] : MORE_NAV_ITEMS;
   return (
     <>
     {moreOpen && (
       <div className="more-sheet" role="menu" aria-label="More destinations">
-        {MORE_NAV_ITEMS.map(item => (
+        {moreItems.map(item => (
           <button key={item.to} role="menuitem" className={`more-sheet-item ${path === item.to ? 'active' : ''}`}
                   onClick={() => navigate(item.to)}>
             {Icons[item.icon]}
@@ -125,7 +130,7 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
           <span>{item.label}</span>
         </button>
       ))}
-      <button className={`bottom-nav-item ${moreOpen || MORE_NAV_ITEMS.some(i => i.to === path) ? 'active' : ''}`}
+      <button className={`bottom-nav-item ${moreOpen || moreItems.some(i => i.to === path) ? 'active' : ''}`}
               aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen(o => !o)}>
         {Icons.more}
         <span>More</span>
@@ -197,6 +202,7 @@ function AppShell() {
     '/customers/detail': { title: 'Customer',  crumbs: ['Workshop', { label: 'Customers', to: '/customers' }] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
     '/analytics':  { title: 'Analytics',         crumbs: ['Workshop'] },
+    '/library':    { title: 'Filament library',  crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
@@ -260,6 +266,7 @@ function AppShell() {
             <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/analytics"      element={<AnalyticsScreen />} />
+            <Route path="/library"        element={<FilamentLibraryScreen />} />
             {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={to} replace />} />)}
             <Route path="/plugins/:id"      element={<PluginPage />} />
             <Route path="/plugins/:id/:tab" element={<PluginPage />} />

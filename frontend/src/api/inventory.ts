@@ -100,8 +100,10 @@ const json = (method: string, body?: unknown): RequestInit => ({
 
 const BASE = '/api/v1/inventory';
 
-export const fetchMaterialList = (): Promise<InventoryList<InvMaterial>> => request(`${BASE}/materials`);
-export const fetchSpoolList = (): Promise<InventoryList<InvSpool>> => request(`${BASE}/spools`);
+export const fetchMaterialList = (includeArchived = false): Promise<InventoryList<InvMaterial>> =>
+  request(`${BASE}/materials${includeArchived ? '?include_archived=true' : ''}`);
+export const fetchSpoolList = (includeArchived = false): Promise<InventoryList<InvSpool>> =>
+  request(`${BASE}/spools${includeArchived ? '?include_archived=true' : ''}`);
 export const fetchMaterials = async (): Promise<InvMaterial[]> => (await fetchMaterialList()).items;
 export const fetchSpools = async (): Promise<InvSpool[]> => (await fetchSpoolList()).items;
 
@@ -116,6 +118,26 @@ export const saveInventorySettings = (patch: { deduct_on_complete?: boolean; low
 export async function resolveLabel(text: string): Promise<string | null> {
   return (await request<{ spool_ref: string | null }>(`${BASE}/resolve-label`, json('POST', { text }))).spool_ref;
 }
+
+// ---- library management (providers that own their library: MANAGE_MATERIALS / MANAGE_SPOOLS / WRITE_WEIGHT) ----
+
+export interface MaterialInput {
+  name: string; material?: string | null; vendor?: string | null; color_hex?: string | null; density?: number | null; diameter?: number | null;
+}
+export interface SpoolInput { material_ref: string; label?: string | null; location?: string | null; initial_g?: number | null; remaining_g?: number | null }
+
+export const createMaterial = (body: MaterialInput): Promise<InvMaterial> => request(`${BASE}/materials`, json('POST', body));
+export const updateMaterial = (ref: string, patch: Partial<MaterialInput>): Promise<InvMaterial> =>
+  request(`${BASE}/materials/${encodeURIComponent(ref)}`, json('PATCH', patch));
+export const archiveMaterial = (ref: string, archived: boolean): Promise<InvMaterial> =>
+  request(`${BASE}/materials/${encodeURIComponent(ref)}/archive`, json('POST', { archived }));
+export const createSpool = (body: SpoolInput): Promise<InvSpool> => request(`${BASE}/spools`, json('POST', body));
+export const updateSpool = (ref: string, patch: { label?: string | null; location?: string | null }): Promise<InvSpool> =>
+  request(`${BASE}/spools/${encodeURIComponent(ref)}`, json('PATCH', patch));
+export const archiveSpool = (ref: string, archived: boolean): Promise<InvSpool> =>
+  request(`${BASE}/spools/${encodeURIComponent(ref)}/archive`, json('POST', { archived }));
+export const setSpoolWeight = (ref: string, remainingG: number): Promise<InvSpool> =>
+  request(`${BASE}/spools/${encodeURIComponent(ref)}/remaining`, json('PUT', { remaining_g: remainingG }));
 
 export const setProfileLinks = (materialRef: string, links: Record<string, string[]>): Promise<InvMaterial> =>
   request(`${BASE}/materials/${encodeURIComponent(materialRef)}/profile-links`, json('PATCH', { links }));

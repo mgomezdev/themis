@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { resetPluginStore } from '../api/plugins';
@@ -348,5 +348,27 @@ describe('Inventory status chip in the sidebar', () => {
     const chip = await screen.findByTestId('inventory-chip');
     expect(chip.getAttribute('data-tone')).toBe('success');
     expect(chip.textContent).toContain('ready');
+  });
+});
+
+
+describe('Filament library nav entry', () => {
+  it.each([
+    ['a provider that owns its library', ['MANAGE_SPOOLS'], true],
+    ['a provider that owns materials only', ['MANAGE_MATERIALS'], true],
+    ['a provider whose library lives elsewhere', ['TRACKS_WEIGHT', 'REMOTE'], false],
+  ])('%s', async (_n, capabilities, shown) => {
+    withPlugins([mkPlugin({ id: 'any_provider', capabilities })]);
+    renderOnFleet(0, 0, 0);
+    await screen.findByText('Settings');
+    await waitFor(() => expect(!!screen.queryByRole('link', { name: 'Filament library' })).toBe(shown));
+    if (shown) expect(screen.getByRole('link', { name: 'Filament library' }).getAttribute('href')).toBe('/library');
+  });
+
+  it('is absent with no provider', async () => {
+    withPlugins([]);
+    renderOnFleet(0, 0, 0);
+    await screen.findByText('Settings');
+    expect(screen.queryByRole('link', { name: 'Filament library' })).toBeNull();
   });
 });
