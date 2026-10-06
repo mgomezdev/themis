@@ -150,6 +150,13 @@ describe('FilamentLibraryScreen', () => {
     expect(screen.queryByLabelText('Remaining weight')).toBeNull();
   });
 
+  it('a materials-only provider opens on Materials (no blank pane)', async () => {
+    boot(['MANAGE_MATERIALS']);
+    render(<FilamentLibraryScreen />);
+    expect(await screen.findByRole('button', { name: 'Add material' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Spools' })).toBeNull();
+  });
+
   it.each([
     ['no provider', null],
     ['a provider whose library lives elsewhere', mkPlugin({ id: 'p', capabilities: ['TRACKS_WEIGHT', 'REMOTE'] })],

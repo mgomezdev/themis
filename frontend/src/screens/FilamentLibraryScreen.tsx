@@ -78,7 +78,8 @@ export function FilamentLibraryScreen() {
   const canMaterials = inventory.has(CAP.MANAGE_MATERIALS);
   const canSpools = inventory.has(CAP.MANAGE_SPOOLS);
   const canWeigh = inventory.has(CAP.WRITE_WEIGHT);
-  const [tab, setTab] = useState<Tab>('spools');
+  const [chosen, setTab] = useState<Tab>('spools');
+  const tab: Tab = chosen === 'spools' && !canSpools && canMaterials ? 'materials' : chosen;   // a materials-only provider opens on its only section
   const [showArchived, setShowArchived] = useState(false);
   const [materials, setMaterials] = useState<InvMaterial[]>([]);
   const [spools, setSpools] = useState<InvSpool[]>([]);

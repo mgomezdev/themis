@@ -28,7 +28,7 @@ export function PluginsPage() {
                   <span className="dot" />{p.error ? 'Problem' : p.active ? 'Active' : p.enabled ? 'Enabled' : 'Disabled'}
                 </span>
                 {!p.enabled
-                  ? <button className="btn sm" onClick={() => { void updatePlugin(p.id, { enabled: true }); }}>Enable</button>
+                  ? <button className="btn sm" onClick={() => { updatePlugin(p.id, { enabled: true }).catch((e) => window.alert(e instanceof Error ? e.message : 'Could not enable the plugin')); }}>Enable</button>
                   : p.ui.mode === 'page'
                   ? <Link className="btn sm" to={`/plugins/${p.id}`}>Open</Link>
                   : <button className="btn sm" aria-expanded={open === p.id} onClick={() => setOpen(o => (o === p.id ? null : p.id))}>

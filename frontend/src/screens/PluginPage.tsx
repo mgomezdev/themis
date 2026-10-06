@@ -16,7 +16,7 @@ export function PluginPage() {
     return (
       <div className="card" style={{ padding: 24 }} data-testid="plugin-disabled">
         <div className="small muted" style={{ marginBottom: 10 }}>{plugin.name} is disabled, so it has no pages and no navigation entry.</div>
-        <button className="btn sm" onClick={() => { void updatePlugin(plugin.id, { enabled: true }); }}>Enable {plugin.name}</button>
+        <button className="btn sm" onClick={() => { updatePlugin(plugin.id, { enabled: true }).catch((e) => window.alert(e instanceof Error ? e.message : 'Could not enable the plugin')); }}>Enable {plugin.name}</button>
       </div>
     );
   }
