@@ -37,7 +37,7 @@ const PRINTER = {
 const JOB = {
   id: 1, uploaded_file_id: 1, plate_number: 1, order_id: 1, project_id: 1, assigned_printer_id: 1, queue_position: 1, status: 1,
   overrides: 1, block_reason: 1, actual_filament_grams: 1, actual_seconds: 1, actual_filament_breakdown: 1,
-  deduction_skipped: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
+  deduction_skipped: 1, deduction_note: 1, estimate_status: 1, estimate_seconds: 1, estimate_filament_grams: 1,
   estimate_filament_breakdown: 1, estimate_preset_label: 1, created_at: 1, updated_at: 1, materials: 1,
   eligible_printers: 1, model_targets: 1, low_stock_warning: 1, filament_cost: 1, not_before: 1,
   save_slice: 1, save_slice_name: 1, allow_cached_slice: 1, sliced_version_id: 1, slice_cache_info: 1,
@@ -58,7 +58,7 @@ const PROJECT = {
 
 const PROJECT_ITEM = {
   id: 1, project_id: 1, file_id: 1, file_name: 1, quantity: 1, quantity_completed: 1, quantity_failed: 1,
-  filament_type: 1, filament_color: 1, filament_id: 1, sort_order: 1,
+  filament_type: 1, filament_color: 1, filament_id: 1, material_provider: 1, material_ref: 1, sort_order: 1,
 } satisfies Record<keyof ProjectItem, 1>;
 
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;

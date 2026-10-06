@@ -27,7 +27,7 @@ async def test_init_db_applies_core_then_registered_plugin_migrations(db):
     assert {"printers", "plugin_configs", "dummy_one_items"} <= tables           # core AND plugin tables, fresh DB
     await database.init_db()                                                      # restart: idempotent
     async with db.connect() as c:
-        assert (await c.execute(text("SELECT count(*) FROM plugin_schema_versions"))).scalar_one() == 1
+        assert (await c.execute(text("SELECT count(*) FROM plugin_schema_versions WHERE plugin_id = 'dummy_one'"))).scalar_one() == 1
 
 
 async def test_a_failing_plugin_migration_leaves_core_migrated_and_is_reported(db):

@@ -20,7 +20,7 @@ function jsonResponse(data: unknown) {
 const mockFetch = vi.fn((input: unknown) => {
   const url = String(input);
   if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
-  if (url === '/api/v1/settings/spoolman') return jsonResponse({ enabled: false });
+  if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], slots: {} });
   if (url === '/api/v1/printers') return jsonResponse(PRINTERS);
   return jsonResponse({});
 });
@@ -114,7 +114,7 @@ describe('ProjectBuilderScreen draft stage', () => {
                   filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0 }],
       });
       if (url.startsWith('/api/v1/files')) return jsonResponse(FILES);
-      if (url === '/api/v1/settings/spoolman') return jsonResponse({ enabled: false });
+      if (url === '/api/v1/plugins') return jsonResponse({ plugins: [], slots: {} });
       return jsonResponse([]);
     });
     render(

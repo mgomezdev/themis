@@ -7645,7 +7645,7 @@
         "tags": [
           "inventory"
         ],
-        "summary": "List materials of the active inventory provider",
+        "summary": "List materials of the active inventory provider (last-known data when it is unreachable)",
         "operationId": "list_materials_api_v1_inventory_materials_get",
         "parameters": [
           {
@@ -7672,7 +7672,7 @@
             "description": "No inventory provider is active"
           },
           "503": {
-            "description": "Provider unreachable"
+            "description": "Provider unreachable and nothing cached"
           },
           "422": {
             "description": "Validation Error",
@@ -7728,7 +7728,8 @@
         "tags": [
           "inventory"
         ],
-        "summary": "List spools of the active inventory provider",
+        "summary": "List spools of the active inventory provider (last-known data when it is unreachable)",
+        "description": "`remaining_g` is the *effective* weight: the newest queued (unsynced) write replaces what the provider reported, and `unsynced` says so.",
         "operationId": "list_spools_api_v1_inventory_spools_get",
         "parameters": [
           {
@@ -7755,7 +7756,7 @@
             "description": "No inventory provider is active"
           },
           "503": {
-            "description": "Provider unreachable"
+            "description": "Provider unreachable and nothing cached"
           },
           "422": {
             "description": "Validation Error",
@@ -8590,6 +8591,58 @@
         }
       }
     },
+    "/api/v1/plugins/{plugin_id}/ui/{tab_id}": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "The schema a `schema` tab is rendered from",
+        "operationId": "get_tab_schema_api_v1_plugins__plugin_id__ui__tab_id__get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "tab_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tab Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown plugin, or the tab is not a schema tab"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/{plugin_id}/test": {
       "post": {
         "tags": [
@@ -8668,6 +8721,65 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/local_inventory/weight-log": {
+      "get": {
+        "tags": [
+          "local_inventory"
+        ],
+        "summary": "Audit log of spool weight changes (newest first)",
+        "operationId": "weight_log_api_v1_plugins_local_inventory_weight_log_get",
+        "parameters": [
+          {
+            "name": "spool_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Spool Ref"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",

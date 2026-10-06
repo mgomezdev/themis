@@ -35,7 +35,20 @@ export interface LoadedFilament {
   type: string;
   color: string;
   filament_profile?: string | null;    // OrcaSlicer filament preset used to slice with this filament
-  spoolman_spool_id?: string | null;   // optional mapped Spoolman spool id
+  /** The inventory spool loaded here: `{provider, spool_ref}` (null = unbound). Write this one. */
+  inventory?: { provider: string; spool_ref: string } | null;
+  spoolman_spool_id?: string | null;   // legacy mirror of `inventory.spool_ref` (read-only here; the server keeps it in sync)
+}
+
+/** The provider every pre-namespacing row (a bare numeric `filament_id`, a `spoolman_spool_id`) belongs to. */
+export const LEGACY_PROVIDER = 'spoolman';
+
+/** What a slot is bound to: the `inventory` pair, else the legacy mirror (an older server / row that predates it). */
+export function slotBinding(slot: Pick<LoadedFilament, 'inventory' | 'spoolman_spool_id'>): { provider: string; ref: string } | null {
+  if (slot.inventory === null) return null;                     // explicitly unbound (the legacy mirror may still be echoed)
+  if (slot.inventory?.spool_ref) return { provider: slot.inventory.provider, ref: slot.inventory.spool_ref };
+  if (slot.spoolman_spool_id) return { provider: LEGACY_PROVIDER, ref: String(slot.spoolman_spool_id) };
+  return null;
 }
 
 export interface ApiPrinter {
@@ -272,4 +285,10 @@ export function discoverPrinters(ranges: string[]): Promise<DiscoveryResult> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ranges }),
   });
+}
+
+/** The material a stored ask (job config, project item, order part) names: its provider-namespaced pair, else a bare legacy numeric id. */
+export function askBinding(ask: { filament_id?: number | null; material_provider?: string | null; material_ref?: string | null }): { provider: string; ref: string } | null {
+  if (ask.material_ref) return { provider: ask.material_provider || LEGACY_PROVIDER, ref: ask.material_ref };
+  return ask.filament_id != null ? { provider: LEGACY_PROVIDER, ref: String(ask.filament_id) } : null;
 }

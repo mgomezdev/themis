@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import type { ApiFilament } from '../api/spoolman';
-import { filamentDisplayName } from '../api/spoolman';
+import { askRef, materialAsk, materialDisplayName, useInventory, type InvMaterial } from '../api/inventory';
 import { Icons } from './icons';
 
 const FILAMENT_TYPES = ['any', 'PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylon', 'PC', 'HIPS', 'CF', 'GF'];
@@ -8,28 +7,30 @@ const FILAMENT_TYPES = ['any', 'PLA', 'PLA+', 'PETG', 'ABS', 'ASA', 'TPU', 'Nylo
 export interface FilamentRequirement {
   filament_type: string;    // "any" | "PLA" | ...
   filament_color: string;   // "any" | "#RRGGBB"
-  filament_id: number | null;
+  filament_id: number | null;          // legacy numeric id (echoed from older rows); a new pick sets the pair below instead
+  material_provider?: string | null;
+  material_ref?: string | null;
 }
 
 interface Props {
   value: FilamentRequirement;
   onChange: (v: FilamentRequirement) => void;
-  spoolmanFilaments: ApiFilament[];
-  spoolmanEnabled: boolean;
+  /** The active inventory's materials (empty when there is none). */
+  materials: InvMaterial[];
+  /** An inventory provider is active, so a specific material can be picked. */
+  catalogEnabled: boolean;
 }
 
-export function FilamentRequirementPicker({ value, onChange, spoolmanFilaments, spoolmanEnabled }: Props) {
-  const [showSpoolman, setShowSpoolman] = useState(false);
+export function FilamentRequirementPicker({ value, onChange, materials, catalogEnabled }: Props) {
+  const [showCatalog, setShowCatalog] = useState(false);
+  const providerId = useInventory().id;
 
-  const selectedFilament = value.filament_id != null
-    ? spoolmanFilaments.find(f => f.id === value.filament_id)
-    : null;
+  const ref = askRef(value, providerId);
+  const selectedFilament = ref != null ? materials.find(f => f.ref === ref) : null;
 
-  // Spoolman specific filament is selected — show compact pill
+  // A specific catalog material is selected — show compact pill
   if (selectedFilament) {
-    const swatch = selectedFilament.color_hex
-      ? `#${selectedFilament.color_hex.replace(/^#/, '')}`
-      : undefined;
+    const swatch = selectedFilament.color_hex || undefined;
     return (
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {swatch && (
@@ -41,13 +42,13 @@ export function FilamentRequirementPicker({ value, onChange, spoolmanFilaments, 
         )}
         <span style={{ fontSize: 12, color: 'var(--text-1)', flex: 1, overflow: 'hidden',
                        textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              title={filamentDisplayName(selectedFilament)}>
-          {filamentDisplayName(selectedFilament)}
+              title={materialDisplayName(selectedFilament)}>
+          {materialDisplayName(selectedFilament)}
         </span>
         <button
           className="btn ghost icon sm"
           title="Clear specific filament"
-          onClick={() => onChange({ filament_type: 'any', filament_color: 'any', filament_id: null })}
+          onClick={() => onChange({ filament_type: 'any', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null })}
           style={{ padding: '0 4px', flexShrink: 0 }}
         >
           {Icons.x}
@@ -56,7 +57,7 @@ export function FilamentRequirementPicker({ value, onChange, spoolmanFilaments, 
     );
   }
 
-  // Type + color selectors (with optional Spoolman picker)
+  // Type + color selectors (with optional catalog picker)
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -103,41 +104,40 @@ export function FilamentRequirementPicker({ value, onChange, spoolmanFilaments, 
           </div>
         )}
 
-        {/* Spoolman picker toggle */}
-        {spoolmanEnabled && spoolmanFilaments.length > 0 && (
+        {/* Catalog picker toggle */}
+        {catalogEnabled && materials.length > 0 && (
           <button
             className="btn ghost sm"
             style={{ fontSize: 11, whiteSpace: 'nowrap', padding: '0 8px', flexShrink: 0 }}
-            title="Pick a specific filament from Spoolman"
-            onClick={() => setShowSpoolman(s => !s)}
+            title="Pick a specific material from the inventory"
+            onClick={() => setShowCatalog(s => !s)}
           >
-            {showSpoolman ? 'cancel' : 'pick…'}
+            {showCatalog ? 'cancel' : 'pick…'}
           </button>
         )}
       </div>
 
-      {/* Spoolman filament list */}
-      {showSpoolman && (
+      {/* Material list */}
+      {showCatalog && (
         <select
           className="select"
           style={{ fontSize: 12 }}
           defaultValue=""
           onChange={e => {
-            const id = parseInt(e.target.value);
-            if (!isNaN(id)) {
-              const f = spoolmanFilaments.find(x => x.id === id);
+            const f = materials.find(x => x.ref === e.target.value);
+            if (f) {
               onChange({
-                filament_type: f?.material ?? 'any',
-                filament_color: f?.color_hex ? `#${f.color_hex.replace(/^#/, '')}` : 'any',
-                filament_id: id,
+                filament_type: f.material ?? 'any',
+                filament_color: f.color_hex ? `#${f.color_hex.replace(/^#/, '')}` : 'any',
+                ...materialAsk(f, providerId),
               });
-              setShowSpoolman(false);
+              setShowCatalog(false);
             }
           }}
         >
-          <option value="">— select Spoolman filament —</option>
-          {spoolmanFilaments.map(f => (
-            <option key={f.id} value={f.id}>{filamentDisplayName(f)} ({f.material})</option>
+          <option value="">— select material —</option>
+          {materials.filter(f => !f.archived).map(f => (
+            <option key={f.ref} value={f.ref}>{materialDisplayName(f)} ({f.material})</option>
           ))}
         </select>
       )}

@@ -11,6 +11,11 @@ import { AuthGate } from './auth/AuthGate';
 import { apiFetch } from './api/client';
 import { getSession, type Role } from './auth/session';
 import { CustomerPortal } from './screens/CustomerPortal';
+import { PluginPage } from './screens/PluginPage';
+import { FilamentLibraryScreen } from './screens/FilamentLibraryScreen';
+import { CAP, useInventory } from './api/inventory';
+import { InventoryBanner } from './components/InventoryBanner';
+import { LEGACY_REDIRECTS } from './plugins/registry';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -95,11 +100,14 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
   const navigate = useNavigate();
   const path = '/' + location.pathname.split('/').filter(Boolean)[0];
   const total = queueCounts.active + queueCounts.pending + queueCounts.blocked;
+  const inventory = useInventory();
+  const moreItems = inventory.has(CAP.MANAGE_MATERIALS) || inventory.has(CAP.MANAGE_SPOOLS)
+    ? [...MORE_NAV_ITEMS, { to: '/library', label: 'Filament library', icon: 'spool' as const }] : MORE_NAV_ITEMS;
   return (
     <>
     {moreOpen && (
       <div className="more-sheet" role="menu" aria-label="More destinations">
-        {MORE_NAV_ITEMS.map(item => (
+        {moreItems.map(item => (
           <button key={item.to} role="menuitem" className={`more-sheet-item ${path === item.to ? 'active' : ''}`}
                   onClick={() => navigate(item.to)}>
             {Icons[item.icon]}
@@ -122,7 +130,7 @@ function BottomNav({ queueCounts }: { queueCounts: { active: number; pending: nu
           <span>{item.label}</span>
         </button>
       ))}
-      <button className={`bottom-nav-item ${moreOpen || MORE_NAV_ITEMS.some(i => i.to === path) ? 'active' : ''}`}
+      <button className={`bottom-nav-item ${moreOpen || moreItems.some(i => i.to === path) ? 'active' : ''}`}
               aria-expanded={moreOpen} aria-haspopup="menu" onClick={() => setMoreOpen(o => !o)}>
         {Icons.more}
         <span>More</span>
@@ -194,12 +202,15 @@ function AppShell() {
     '/customers/detail': { title: 'Customer',  crumbs: ['Workshop', { label: 'Customers', to: '/customers' }] },
     '/history':    { title: 'History',           crumbs: ['Workshop'] },
     '/analytics':  { title: 'Analytics',         crumbs: ['Workshop'] },
+    '/library':    { title: 'Filament library',  crumbs: ['Workshop'] },
     '/settings':   { title: 'Settings',          crumbs: [] },
   };
 
   const segments = location.pathname.split('/').filter(Boolean);
   const path = segments[0] === 'settings'
     ? '/settings'                       // every settings sub-page shares one top-bar config
+    : segments[0] === 'plugins'
+    ? '/settings'                       // plugin pages are settings pages too
     : segments[0] === 'orders' && segments[2] === 'edit'
     ? '/orders/edit'
     : segments[0] === 'jobs' && segments[2] === 'edit'
@@ -230,6 +241,7 @@ function AppShell() {
       <BottomNav queueCounts={queueCounts} />
         <Topbar title={cfg.title} crumbs={cfg.crumbs} actions={cfg.actions} />
         <div className="content" data-density="balanced">
+          <InventoryBanner />
           <TopbarOverrideContext.Provider value={setTopbarOverride}>
           <Routes>
             <Route path="/"             element={<Navigate to="/queue" replace />} />
@@ -254,6 +266,10 @@ function AppShell() {
             <Route path="/customers/:id"  element={<CustomerDetailScreen />} />
             <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/analytics"      element={<AnalyticsScreen />} />
+            <Route path="/library"        element={<FilamentLibraryScreen />} />
+            {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={to} replace />} />)}
+            <Route path="/plugins/:id"      element={<PluginPage />} />
+            <Route path="/plugins/:id/:tab" element={<PluginPage />} />
             {/* Customers used to live under Settings. */}
             <Route path="/settings/customers" element={<Navigate to="/customers" replace />} />
             <Route path="/settings/*"     element={<SettingsScreen />} />

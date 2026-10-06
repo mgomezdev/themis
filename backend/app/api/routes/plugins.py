@@ -63,6 +63,18 @@ async def get_plugin_detail(plugin_id: str):
     return _detail(_get_or_404(plugin_id))
 
 
+@router.get("/plugins/{plugin_id}/ui/{tab_id}", summary="The schema a `schema` tab is rendered from",
+            responses={404: {"description": "Unknown plugin, or the tab is not a schema tab"}},
+            dependencies=[Depends(require_scope("settings:read"))])
+async def get_tab_schema(plugin_id: str, tab_id: str):
+    m = _get_or_404(plugin_id)
+    tab = next((t for t in m.ui.tabs if t.id == tab_id and t.renderer == "schema"), None)
+    schema = m.ui_schema(tab_id) if tab is not None and m.ui_schema is not None else None
+    if schema is None:
+        raise HTTPException(status_code=404, detail=f"{plugin_id!r} has no schema tab {tab_id!r}")
+    return schema
+
+
 class PluginUpdate(BaseModel):
     enabled: bool | None = None
     settings: dict | None = None

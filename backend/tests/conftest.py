@@ -26,8 +26,12 @@ def _schema_template(tmp_path_factory):
 
     async def build():
         engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+        from app.plugins import load_bundled
+        from app.plugins.migrations import run_plugin_migrations
+        load_bundled()
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await run_plugin_migrations(conn)                  # bundled plugins' own tables (e.g. Local inventory's)
         await engine.dispose()
 
     asyncio.run(build())

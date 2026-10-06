@@ -31,7 +31,7 @@ function Where() { return <div data-testid="where">{useLocation().pathname}</div
 function open(path: string, over: Record<string, unknown> = {}) {
   const api = stubFetch({
     'GET /api/v1/files': FILES,
-    'GET /api/v1/settings/spoolman': { enabled: false },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'GET /api/v1/printers': PRINTERS,
     'GET /api/v1/printers/1/profiles': { print_profiles: ['0.20mm Standard', '0.12mm Fine'], filament_profiles: [] },
     'GET /api/v1/printers/2/profiles': { print_profiles: ['0.20mm Standard', '0.28mm Draft'], filament_profiles: [] },
@@ -95,7 +95,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
       price: null, customer_id: null,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
-      file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 0,
+      file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({
       eligible_printer_ids: [1, 2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
@@ -253,10 +253,10 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
       'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate',
     ]);
     expect(api.to('PUT', '/api/v1/projects/7/items/50')[0].body).toEqual({
-      quantity: 5, filament_type: 'PLA', filament_color: 'any', filament_id: null, sort_order: 0,
+      quantity: 5, filament_type: 'PLA', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
-      file_id: 2, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: 1,
+      file_id: 2, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 1,
     });
     expect(where()).toBe('/projects/7/edit');
   });

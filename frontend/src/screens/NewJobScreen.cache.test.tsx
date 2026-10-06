@@ -29,7 +29,7 @@ function open(versions: unknown[] = [], over: Record<string, unknown> = {}) {
     'GET /api/v1/printers': [PRINTER],
     'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
-    'GET /api/v1/settings/spoolman': { enabled: false, url: '', has_api_key: false, sync_interval_minutes: 15 },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: true },
     'POST /api/v1/files/upload': { id: 42, original_filename: 'model.3mf', folder: '/Prints' },
     'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates: [plate(1)] },
@@ -110,7 +110,7 @@ describe('NewJobScreen — cached sliced versions', () => {
     expect(jobPosts(api)).toEqual([{
       uploaded_file_id: 77, plate_number: 1, project_id: null, overrides: null, printer_configs: [],
       model_targets: [{
-        machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null,
+        machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
         filament_type: 'PETG', filament_color: '#112233',
       }],
     }]);

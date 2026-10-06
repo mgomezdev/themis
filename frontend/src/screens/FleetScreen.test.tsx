@@ -4,6 +4,8 @@ import { FleetScreen } from './FleetScreen';
 import type { FleetPrinter } from '../api/fleet';
 import type { MaintenanceStatusRow } from '../api/maintenance';
 import * as printersApi from '../api/printers';
+import { mkPlugin, mkSpool, pluginsBody } from '../test/inventoryFixtures';
+import { resetPluginStore } from '../api/plugins';
 
 // ── Mock WebSocket ──────────────────────────────────────────────────────────
 class MockWS {
@@ -333,12 +335,10 @@ const SPOOL_INTEGRATION: FleetPrinter = {
   fan_box: 0,
 };
 
-const MOCK_SPOOL = {
-  id: 3,
-  remaining_weight: 500,
-  used_weight: 0,
-  filament: { id: 20, vendor: { name: 'ELEGOO' }, name: 'Space Grey PLA', material: 'PLA', color_hex: 'AAAAAA' },
-};
+const MOCK_SPOOL = mkSpool('3', {
+  remaining_g: 500,
+  material: { vendor: 'ELEGOO', name: 'Space Grey PLA', material: 'PLA', color_hex: '#AAAAAA' },
+});
 
 const MOCK_API_PRINTER = {
   id: 2, name: 'Atlas', printer_type: 'elegoo_centauri', enabled: true,
@@ -358,17 +358,15 @@ function makeIntegrationFetch(
     if (url === '/api/v1/fleet') {
       return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
     }
-    // Spoolman config
-    if (url === '/api/v1/settings/spoolman') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ enabled: true, url: 'http://spoolman.local', has_api_key: false }) });
+    // The active inventory provider, its spools and materials
+    if (url === '/api/v1/plugins') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(pluginsBody(mkPlugin({ id: 'spoolman' }))) });
     }
-    // Spoolman spools
-    if (url === '/api/v1/spoolman/spools') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([MOCK_SPOOL]) });
+    if (url === '/api/v1/inventory/spools') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [MOCK_SPOOL] }) });
     }
-    // Spoolman filaments
-    if (url === '/api/v1/spoolman/filaments') {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    if (url === '/api/v1/inventory/materials') {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ provider: 'spoolman', stale: false, as_of: '2026-01-01T00:00:00Z', items: [] }) });
     }
     // Printer types
     if (url.includes('/api/v1/printers/types')) {
@@ -398,6 +396,7 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
   let calls: Array<[string, RequestInit | undefined]>;
 
   beforeEach(() => {
+    resetPluginStore();
     calls = [];
     MockWS.instances = [];
     vi.stubGlobal('WebSocket', MockWS);
@@ -435,7 +434,7 @@ describe('FleetScreen FilamentPicker + SlotSpoolPicker integration', () => {
     expect(patchCall).toBeTruthy();
     const body = JSON.parse(patchCall![1]!.body as string);
     const slot = body.loaded_filaments[0];
-    expect(slot.spoolman_spool_id).toBe('3');
+    expect(slot.inventory).toEqual({ provider: 'spoolman', spool_ref: '3' });
     expect(slot.type).toBe('PLA');
     expect(slot.color).toBe('#AAAAAA');
   });
@@ -620,5 +619,52 @@ describe('FleetScreen — ready-for-work gate and reconnect', () => {
     render(<FleetScreen />);
     fireEvent.click(await screen.findByText('Forge'));
     expect(screen.queryByRole('button', { name: /reconnect/i })).toBeNull();
+  });
+});
+
+describe('FleetScreen — inventory capability gating', () => {
+  afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  function boot(plugins: ReturnType<typeof mkPlugin>[], slot: string | null) {
+    resetPluginStore();
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const reply = (body: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+      if (url === '/api/v1/fleet') return reply([SPOOL_INTEGRATION]);
+      if (url === '/api/v1/plugins') return reply({ plugins, slots: { filament_inventory: slot } });
+      if (url === '/api/v1/inventory/spools') return reply({ provider: 'p', stale: false, as_of: 'x', items: [MOCK_SPOOL] });
+      if (url === '/api/v1/inventory/materials') return reply({ provider: 'p', stale: false, as_of: 'x', items: [] });
+      if (url.includes('types') || url.includes('catalog')) return reply([]);
+      if (url.match(/\/api\/v1\/printers\/\d+\/profiles/)) return reply({ print_profiles: [], filament_profiles: [] });
+      if (url.match(/\/api\/v1\/printers\/\d+$/)) return reply(MOCK_API_PRINTER);
+      return reply({});
+    }));
+    render(<FleetScreen />);
+  }
+
+  it('no provider: no Scan spool button', async () => {
+    boot([], null);
+    await screen.findByText('Atlas');
+    await waitFor(() => expect(screen.queryByRole('button', { name: /scan spool/i })).toBeNull());
+  });
+
+  it('a provider without LABEL_SCAN: no Scan spool button', async () => {
+    boot([mkPlugin({ id: 'p', capabilities: ['TRACKS_WEIGHT'] })], 'p');
+    await screen.findByText('Atlas');
+    await new Promise(r => setTimeout(r, 30));
+    expect(screen.queryByRole('button', { name: /scan spool/i })).toBeNull();
+  });
+
+  it('a provider with LABEL_SCAN: the button is offered', async () => {
+    boot([mkPlugin({ id: 'p', capabilities: ['LABEL_SCAN'] })], 'p');
+    expect(await screen.findByRole('button', { name: /scan spool/i })).toBeTruthy();
+  });
+
+  it('no provider: the slot editor offers only manual type/colour, no spool picker', async () => {
+    boot([], null);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByRole('button', { name: /change/i }));
+    expect(await screen.findByPlaceholderText('Type (e.g. PLA)')).toBeTruthy();
+    expect(screen.queryByPlaceholderText('Search spools…')).toBeNull();
   });
 });

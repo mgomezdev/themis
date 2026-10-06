@@ -51,6 +51,8 @@ class PluginManifest:
     capabilities: frozenset[str] = frozenset()
     secret_fields: frozenset[str] = frozenset()   # write-only; never returned by any API
     ui: UiContribution = field(default_factory=UiContribution)
+    # `schema` tabs: tab id -> the JSON the frontend renders (forms and tables over the plugin's own routes); None = no such tab
+    ui_schema: Callable[[str], dict | None] | None = None
     routers: tuple[APIRouter, ...] = ()       # mounted under /api/v1/plugins/{id}/...
     alias_routers: tuple[APIRouter, ...] = () # deprecated aliases that keep their historical ABSOLUTE paths (mounted as-is)
     migrations: tuple[ModuleType, ...] = ()   # plugin-owned tables, see plugins/migrations.py
@@ -72,6 +74,8 @@ class PluginManifest:
         for tab in self.ui.tabs:
             if tab.renderer not in RENDERERS:
                 raise PluginError(f"plugin {self.id!r}: tab {tab.id!r} has unknown renderer {tab.renderer!r}")
+            if tab.renderer == "schema" and self.ui_schema is None:
+                raise PluginError(f"plugin {self.id!r}: schema tab {tab.id!r} needs a ui_schema provider")
         for mod in self.migrations:
             for attr in ("version", "name", "up", "down"):
                 if not hasattr(mod, attr):

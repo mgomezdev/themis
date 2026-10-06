@@ -1,15 +1,14 @@
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerPrinterConfig, defaultPerPrinterCfg } from './PerPrinterConfig';
-import * as spoolman from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
 
-// Mock spoolman hooks so they don't fire real HTTP requests
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn().mockReturnValue({ config: null, refetch: vi.fn() }),
-  useFilaments: vi.fn().mockReturnValue([]),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
-  parseOrcaProfiles: vi.fn(() => ({})),
+// Mock the inventory hooks so they don't fire real HTTP requests
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(() => ({ plugin: null, id: null, has: () => false })),
+  useMaterials: vi.fn(() => []),
 }));
 
 // Mock getPrinterProfiles so it doesn't fire real HTTP requests
@@ -49,7 +48,7 @@ const MODEL_FILAMENTS_3 = [
 describe('PerPrinterConfig', () => {
   it('defaultPerPrinterCfg is all-null (defer)', () => {
     expect(defaultPerPrinterCfg()).toEqual({
-      printProfile: null, filamentProfile: null, filamentId: null,
+      printProfile: null, filamentProfile: null, filamentId: null, materialProvider: null, materialRef: null,
       filamentType: null, filamentColor: null, toolIndex: null, filamentMap: null,
     });
   });
@@ -122,23 +121,19 @@ describe('PerPrinterConfig', () => {
 });
 
 const MOCK_FILAMENTS = [
-  { id: 7,  name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
-  { id: 19, name: 'White',    vendor: { id: 3, name: 'Sunlu'  }, material: 'PETG', color_hex: 'FFFFFF' },
+  mkMaterial({ ref: '7',  name: 'Sky Blue', vendor: 'ELEGOO', material: 'PLA',  color_hex: '#5B9BD5' }),
+  mkMaterial({ ref: '19', name: 'White',    vendor: 'Sunlu',  material: 'PETG', color_hex: '#FFFFFF' }),
 ];
 
-function mockSpoolman(enabled: boolean) {
-  vi.mocked(spoolman.useSpoolmanConfig).mockReturnValue(
-    enabled
-      ? { config: { enabled: true, url: 'http://artemis:7912', has_api_key: false, sync_interval_minutes: 15 }, refetch: vi.fn() }
-      : { config: null, refetch: vi.fn() },
-  );
-  vi.mocked(spoolman.useFilaments).mockReturnValue(enabled ? MOCK_FILAMENTS as never : []);
+function mockSpoolman(enabled: boolean, id = 'spoolman') {
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(enabled ? activeInventory(id) : noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue(enabled ? MOCK_FILAMENTS : []);
 }
 
 describe('PerPrinterConfig — multi-material unified dropdown', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('slot-only: renders optgroup "Slots" but no "Catalog" when spoolman off', async () => {
+  it('slot-only: renders optgroup "Slots" but no "Catalog" when no inventory is active', async () => {
     mockSpoolman(false);
     renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
     const sel1 = await screen.findByTestId('map-tool-1');
@@ -147,7 +142,7 @@ describe('PerPrinterConfig — multi-material unified dropdown', () => {
     expect(html).not.toContain('Catalog');
   });
 
-  it('renders "Catalog" optgroup when spoolman is on', async () => {
+  it('renders "Catalog" optgroup when an inventory is active', async () => {
     mockSpoolman(true);
     renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
     const sel1 = await screen.findByTestId('map-tool-1');
@@ -215,5 +210,42 @@ describe('PerPrinterConfig — multi-material unified dropdown', () => {
     renderCfg(MULTI, cfgNoMatch as any, MODEL_FILAMENTS_3);
     const badge = await screen.findByText(/will block at slice/i);
     expect(badge).toBeTruthy();
+  });
+});
+
+describe('PerPrinterConfig — material asks belong to their provider', () => {
+  beforeEach(() => vi.clearAllMocks());
+  const stored = (provider: string | null, ref: string) => ({
+    ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentColor: '#5B9BD5', materialProvider: provider, materialRef: ref,
+  });
+
+  it('shows a stored pick of the active provider as selected, and re-saving it emits nothing', async () => {
+    mockSpoolman(true);
+    const onChange = renderCfg(SINGLE, stored('spoolman', '7'));
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-catalog-select') as HTMLSelectElement).value).toBe('ELEGOO Sky Blue');
+    expect(onChange).not.toHaveBeenCalledWith(expect.objectContaining({ materialRef: expect.anything() }));
+  });
+
+  it('does not treat another provider\'s material 7 as this provider\'s material 7', async () => {
+    mockSpoolman(true, 'local_inv');                                  // local_inv also has a material with ref "7"
+    renderCfg(SINGLE, stored('spoolman', '7'));
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-type-input') as HTMLInputElement).value).toBe('PLA');   // not a catalog pick here: it falls back to the manual type
+    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
+  });
+
+  it('a bare legacy numeric id is a legacy-provider material, so it is not matched under another provider', async () => {
+    mockSpoolman(true, 'local_inv');
+    renderCfg(SINGLE, { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentId: 7 });
+    fireEvent.change(await screen.findByTestId('filament-mode'), { target: { value: 'type-color' } });
+    expect((await screen.findByTestId('filament-type-input') as HTMLInputElement).value).toBe('PLA');   // not a catalog pick here: it falls back to the manual type
+    expect(screen.queryByTestId('filament-catalog-select')).toBeNull();
+  });
+
+  it('the per-model-filament Catalog group only exists for the provider whose ids the map stores', async () => {
+    mockSpoolman(true, 'local_inv');
+    renderCfg(MULTI, defaultPerPrinterCfg(), MODEL_FILAMENTS_3);
+    expect((await screen.findByTestId('map-tool-1')).innerHTML).not.toContain('Catalog');
   });
 });

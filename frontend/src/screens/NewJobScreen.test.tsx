@@ -5,34 +5,30 @@ import { MemoryRouter } from 'react-router-dom';
 import { NewJobScreen } from './NewJobScreen';
 import * as queueApi from '../api/queue';
 
-// ── Spoolman mock helpers ─────────────────────────────────────────────────────
+// ── Inventory mock helpers ─────────────────────────────────────────────────────
 
 const MOCK_FILAMENTS = [
-  { id: 7, name: 'Sky Blue', vendor: { id: 2, name: 'ELEGOO' }, material: 'PLA',  color_hex: '5B9BD5' },
-  { id: 19, name: 'White',   vendor: { id: 3, name: 'Sunlu'  }, material: 'PLA+', color_hex: 'FFFFFF' },
+  mkMaterial({ ref: '7', name: 'Sky Blue', vendor: 'ELEGOO', material: 'PLA', color_hex: '#5B9BD5' }),
+  mkMaterial({ ref: '19', name: 'White', vendor: 'Sunlu', material: 'PLA+', color_hex: '#FFFFFF' }),
 ];
 
-vi.mock('../api/spoolman', () => ({
-  useSpoolmanConfig: vi.fn(),
-  useFilaments:      vi.fn(),
-  filamentDisplayName: vi.fn((f: { vendor?: { name: string }; name: string }) =>
-    f.vendor ? `${f.vendor.name} ${f.name}` : f.name),
-  parseOrcaProfiles: vi.fn(() => ({})),
+vi.mock('../api/inventory', async importOriginal => ({
+  ...(await importOriginal<typeof import('../api/inventory')>()),
+  useInventory: vi.fn(),
+  useMaterials: vi.fn(),
 }));
 
-import * as spoolmanApi from '../api/spoolman';
+import * as inventoryApi from '../api/inventory';
+import { activeInventory, mkMaterial, noInventory } from '../test/inventoryFixtures';
 
 function mockSpoolmanConnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({
-    config: { enabled: true, url: 'http://artemis:7912', has_api_key: false, sync_interval_minutes: 15 },
-    refetch: vi.fn(),
-  });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue(MOCK_FILAMENTS as never);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(activeInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue(MOCK_FILAMENTS);
 }
 
 function mockSpoolmanDisconnected() {
-  vi.mocked(spoolmanApi.useSpoolmanConfig).mockReturnValue({ config: null, refetch: vi.fn() });
-  vi.mocked(spoolmanApi.useFilaments).mockReturnValue([]);
+  vi.mocked(inventoryApi.useInventory).mockReturnValue(noInventory());
+  vi.mocked(inventoryApi.useMaterials).mockReturnValue([]);
 }
 
 // ── API mocks ─────────────────────────────────────────────────────────────────
@@ -224,7 +220,7 @@ describe('Filament input — Spoolman connected', () => {
     expect(options).toContain('Enter manually…');
   });
 
-  it('submits job with filament_id, filament_type, filament_color from catalog selection', async () => {
+  it('submits the picked material as a provider-namespaced ref, with its type and colour', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);
@@ -241,13 +237,15 @@ describe('Filament input — Spoolman connected', () => {
     await waitFor(() => expect(vi.mocked(queueApi.createJob)).toHaveBeenCalled());
 
     const cfg = vi.mocked(queueApi.createJob).mock.calls[0][0].printer_configs[0];
-    expect(cfg.filament_id).toBe(19);
+    expect(cfg.material_provider).toBe('spoolman');
+    expect(cfg.material_ref).toBe('19');
+    expect(cfg.filament_id).toBeNull();                 // the legacy numeric id is the server's mirror, not the client's to send
     expect(cfg.filament_type).toBe('PLA+');
     expect(cfg.filament_color).toBe('#FFFFFF');
     expect(cfg.filament_profile).toBe('Sunlu White');
   });
 
-  it('switching to manual clears filament_id', async () => {
+  it('switching to manual clears the material pick', async () => {
     const user = userEvent.setup();
     render(<NewJobScreen />, { wrapper });
     await uploadAndExpand(user);

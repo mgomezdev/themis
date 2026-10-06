@@ -496,7 +496,7 @@ describe('ProjectDetailScreen - parts, jobs and estimates', () => {
     expect(screen.getByText('Parts (3)')).toBeTruthy();
     expect(screen.getByText('PLA / #ff0000')).toBeTruthy();
     expect(screen.getByText('PETG / any')).toBeTruthy();
-    expect(screen.getByText('Spoolman #12')).toBeTruthy();                // a specific spool wins over type/colour
+    expect(screen.getByText('Material #12')).toBeTruthy();                // a specific material wins over type/colour
     expect(screen.getByText('3/5 · 1 failed')).toBeTruthy();
     expect(screen.getByText('2/2')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();                            // Bracket: nothing printed yet

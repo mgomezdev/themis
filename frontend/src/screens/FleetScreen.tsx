@@ -7,7 +7,7 @@ import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
-import { useSpoolmanConfig, useSpools, useFilaments } from '../api/spoolman';
+import { CAP, useInventory, useSpools } from '../api/inventory';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
@@ -375,16 +375,14 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 
 // Multi-slot filament editor. A printer can have N manually-defined slots
 // (e.g. the Snapmaker U1 has 4 tools); each maps to a tool index Tn and carries
-// its own type/color/name + OrcaSlicer filament profile + optional Spoolman spool.
+// its own type/color/name + OrcaSlicer filament profile + optional inventory spool.
 function FilamentPicker({ printerId, onClose, onSaved }: {
   printerId: number;
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const { config } = useSpoolmanConfig();
-  const spoolmanActive = !!(config?.enabled && config?.url);
-  const spools = useSpools(spoolmanActive);
-  const filaments = useFilaments(spoolmanActive);
+  const inventory = useInventory();
+  const spools = useSpools(!!inventory.plugin);
   const [machinePreset, setMachinePreset] = useState<string | null>(null);
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [slots, setSlots] = useState<LoadedFilament[]>([]);
@@ -449,8 +447,8 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
             <SlotSpoolPicker
               slot={s}
               printerPreset={machinePreset}
+              provider={inventory.id ?? ''}
               spools={spools}
-              filaments={filaments}
               filamentProfiles={filamentProfiles}
               onChange={patch => updateSlot(i, patch)}
             />
@@ -1155,8 +1153,7 @@ export function FleetScreen() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [scanning, setScanning] = useState(false);
-  const { config: spoolmanConfig } = useSpoolmanConfig();
-  const spoolmanOn = !!(spoolmanConfig?.enabled && spoolmanConfig?.url);
+  const canScan = useInventory().has(CAP.LABEL_SCAN);
   const [printerTypes, setPrinterTypes] = useState<PrinterType[]>([]);
   const [snapshotIntervalMs, setSnapshotIntervalMs] = useState<number>(2000);
   const { rows: maintenanceRows, refetch: refetchMaintenance } = useMaintenanceStatus();
@@ -1218,7 +1215,7 @@ export function FleetScreen() {
         <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
           {!narrow && <LayoutToggle value={layout} onChange={setLayout} />}
           <button className="btn sm" style={{ whiteSpace: 'nowrap' }}>{Icons.refresh} Sync now</button>
-          {spoolmanOn && (
+          {canScan && (
             <button className="btn sm" style={{ whiteSpace: 'nowrap' }} onClick={() => setScanning(true)}>
               {Icons.spool} Scan spool
             </button>

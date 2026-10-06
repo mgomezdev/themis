@@ -9,7 +9,10 @@ const SPEC = JSON.parse(openapiRaw) as { paths: Record<string, Record<string, un
 const METHODS = ['get', 'post', 'put', 'patch', 'delete'];
 
 /** Calls that are intentionally not in openapi.json. Keep this list empty unless a route is genuinely absent. */
-const ALLOWLIST: Record<string, string> = {};
+const ALLOWLIST: Record<string, string> = {
+  // schema tabs call routes the plugin itself named at runtime (`GET /plugins/{id}/ui/{tab}` says which), so no fixed path exists
+  'plugins.ts: GET /api/v1/plugins/{}/{}': 'plugin-owned routes named by a tab schema',
+};
 
 const norm = (path: string) => path.replace(/\{[^}]+\}/g, '{}');
 

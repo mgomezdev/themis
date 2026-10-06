@@ -475,7 +475,9 @@ export function JobDetailScreen() {
               )}
               {job.deduction_skipped && (
                 <div style={{ marginTop: 10, color: 'var(--warn, #f59e0b)', fontWeight: 500, fontSize: 13 }}>
-                  Print was aborted — please manually update your Spoolman inventory.
+                  {job.deduction_note
+                    ? `Filament usage was not recorded: ${job.deduction_note}.`
+                    : 'Print was aborted — please manually update your filament inventory.'}
                 </div>
               )}
             </div>

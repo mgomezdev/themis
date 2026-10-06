@@ -87,6 +87,8 @@ export function buildEligibility(
       print_profile: pp.printProfile ?? '',   // gcode jobs have none
       filament_profile: pp.filamentProfile ?? null,
       filament_id: pp.filamentId ?? null,
+      material_provider: pp.materialProvider ?? null,
+      material_ref: pp.materialRef ?? null,
       filament_type: pp.filamentType ?? 'any',
       filament_color: pp.filamentColor ?? 'any',
     };

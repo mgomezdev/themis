@@ -21,7 +21,7 @@ function open(plates = [plate(1)], over: Record<string, unknown> = {}, entry = '
     'GET /api/v1/printers': [PRINTER],
     'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
-    'GET /api/v1/settings/spoolman': { enabled: false, url: '', has_api_key: false, sync_interval_minutes: 15 },
+    'GET /api/v1/plugins': { plugins: [], slots: {} },
     'POST /api/v1/files/upload': { id: 42, original_filename: 'model.3mf' },
     'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates },
     'GET /api/v1/files/42/model-filaments': [],
@@ -153,7 +153,7 @@ describe('NewJobScreen - creating the job', () => {
     expect(jobPosts(api).map(c => c.body)).toEqual([{
       uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
-        printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_id: null,
+        printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
         filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
       }],
       model_targets: [],
@@ -177,7 +177,7 @@ describe('NewJobScreen - creating the job', () => {
       printer_configs: [],
       model_targets: [{
         machine_profile: 'Elegoo Centauri Carbon', print_profile: PROFILE, filament_profile: null,
-        filament_id: null, filament_type: 'any', filament_color: 'any',
+        filament_id: null, material_provider: null, material_ref: null, filament_type: 'any', filament_color: 'any',
       }],
     }]);
   });
@@ -196,7 +196,7 @@ describe('NewJobScreen - creating the job', () => {
     expect(jobPosts(api).map(c => c.body)).toEqual([{
       uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
-        printer_id: 1, print_profile: '', filament_profile: null, filament_id: null,
+        printer_id: 1, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
         filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
       }],
       model_targets: [],

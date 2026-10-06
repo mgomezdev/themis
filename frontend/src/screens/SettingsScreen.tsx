@@ -1,16 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { CostSettings } from '../components/CostSettings';
 import { useLocation, useNavigate } from 'react-router-dom';
-import {
-  getSpoolmanConfig, saveSpoolmanConfig, testSpoolmanConnection, syncSpoolman, useSpools, useFilaments,
-  useSpoolmanConfig, useSpoolmanSyncStatus, spoolmanSyncTone, type SpoolmanSyncStatus,
-} from '../api/spoolman';
-import { LowStockSettings } from '../components/LowStockSettings';
 import { getQueueConfig, saveQueueConfig, type QueueConfig } from '../api/queue';
 import { rescanProfiles } from '../api/printers';
 import { useTags, createTag, updateTag, deleteTag, type Tag } from '../api/tags';
 import { getOrcaCatalogStatus, type OrcaCatalogStatus } from '../api/orca';
-import { refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
+import { appliedRemapTotal, refreshCatalog, rescanCatalog, type SyncResponse, type PendingRemaps, type ConfirmResult } from '../api/laminus';
 import { RemapModal } from '../components/RemapModal';
 import { downloadFleetBackup, importFleetBackup, getWebhookConfig, saveWebhookConfig, type FleetImportReport } from '../api/settings';
 import {
@@ -18,7 +13,10 @@ import {
   type NotificationConfig, type NtfyConfig, type DiscordConfig, type EmailConfig,
 } from '../api/notifications';
 import { Icons, Icon } from '../components/icons';
-import { SpoolmanMappingsPage } from './SpoolmanMappingsPage';
+import { FieldRow, PageHeader, Toggle } from '../components/settingsUi';
+import { FilamentInventoryPage } from './FilamentInventoryPage';
+import { PluginsPage } from './PluginsPage';
+import { usePlugins } from '../api/plugins';
 import {
   MaintenanceItemForm, TRIGGER_LABEL, triggerChipText,
   emptyDraft, draftFromTemplate, type ItemDraft,
@@ -45,7 +43,7 @@ const SettingsIcons = {
   tag:      <Icon paths={["M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 12.9V3h9.9l7.7 7.7a2 2 0 0 1 0 2.7z","M7 7h.01"]} />,
   backup:   <Icon paths={["M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-6","M21 12a9 9 0 0 0-15.36-6.36L3 8","M3 4v4h4","M12 8v8","M9 13l3 3 3-3"]} />,
   info:     <Icon paths={["M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z","M12 16v-4","M12 8h.01"]} />,
-  spoolman: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
+  inventory: <Icon paths={["M5 5h14","M5 19h14","M5 5v14","M19 5v14","M9 8h6","M9 16h6","M9 8v8","M15 8v8"]} />,
   webhook:  <Icon paths={["M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6","M15 3h6v6","M10 14L21 3"]} />,
   maintenance: <Icon paths={["M14.7 6.3a1 1 0 0 0 1.4 0l1.6-1.6a1 1 0 0 0 0-1.4l-1.6-1.6a1 1 0 0 0-1.4 0L13.1 3.3a1 1 0 0 0 0 1.4z","M9.6 11.4 4 17a2 2 0 0 0-.6 1.4V21h2.6a2 2 0 0 0 1.4-.6l5.6-5.6"]} />,
   apikey: <Icon d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />,
@@ -54,63 +52,6 @@ const SettingsIcons = {
 // =========================================================================
 // Shared layout helpers
 // =========================================================================
-
-function PageHeader({ title, sub, actions }: { title: string; sub?: string; actions?: React.ReactNode }) {
-  return (
-    <div className="row between" style={{ marginBottom: 18, alignItems: 'flex-start' }}>
-      <div>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>{title}</h2>
-        {sub && <div className="muted small" style={{ marginTop: 4 }}>{sub}</div>}
-      </div>
-      {actions && <div className="row gap-2">{actions}</div>}
-    </div>
-  );
-}
-
-function FieldRow({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
-  return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24,
-      padding: '16px 0',
-      borderBottom: '1px solid var(--border-1)',
-      alignItems: 'flex-start',
-    }}>
-      <div style={{ paddingTop: 4 }}>
-        <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--text-1)' }}>{label}</div>
-        {hint && <div className="tiny muted" style={{ marginTop: 4, lineHeight: 1.5, maxWidth: 480 }}>{hint}</div>}
-      </div>
-      <div style={{ minWidth: 0 }}>{children}</div>
-    </div>
-  );
-}
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      role="switch"
-      aria-checked={checked}
-      onClick={() => onChange(!checked)}
-      style={{
-        width: 38, height: 22, borderRadius: 999,
-        background: checked ? 'var(--accent)' : 'var(--bg-3)',
-        border: `1px solid ${checked ? 'var(--accent)' : 'var(--border-2)'}`,
-        position: 'relative',
-        cursor: 'pointer',
-        boxShadow: checked ? '0 0 0 3px var(--accent-glow)' : 'none',
-        transition: 'background 120ms, border-color 120ms',
-        padding: 0,
-        flexShrink: 0,
-      }}>
-      <div style={{
-        position: 'absolute', top: 2, left: checked ? 18 : 2,
-        width: 16, height: 16, borderRadius: '50%',
-        background: 'white',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.3)',
-        transition: 'left 120ms',
-      }}/>
-    </button>
-  );
-}
 
 // =========================================================================
 // Tags page
@@ -683,391 +624,13 @@ function PrintDefaultsPage() {
         payload={pendingRemap}
         onDone={(result: ConfirmResult) => {
           setPendingRemap(null);
-          const total = result.applied.printers + result.applied.jobs + result.applied.spoolman_filaments;
+          const total = appliedRemapTotal(result);
           setCatalogMsg(`Remapping applied — ${total} reference${total !== 1 ? 's' : ''} updated.`);
           doLoadCatalogStatus();
         }}
         onCancel={() => {
           setPendingRemap(null);
           setCatalogMsg('Remap cancelled — stale references unchanged.');
-        }}
-      />
-    )}
-    </>
-  );
-}
-
-// =========================================================================
-// Spoolman page
-// =========================================================================
-
-type ConnectionStatus = 'connected' | 'connecting' | 'error' | 'disconnected';
-
-interface SpoolmanSettings {
-  enabled: boolean;
-  url: string;
-  apiKey: string;
-  apiKeyTouched: boolean;
-  hasApiKey: boolean;
-  connectionStatus: ConnectionStatus;
-  lastSyncedAt: string | null;
-  syncInterval: number;
-  syncOnEvents: boolean;
-  deductFromSpoolman: boolean;
-  pullVendorMaterials: boolean;
-  autoCreateSpools: boolean;
-  syncLocation: string;
-  syncLot: boolean;
-}
-
-function ConnectionPill({ status }: { status: ConnectionStatus }) {
-  const map: Record<ConnectionStatus, { label: string; tone: string }> = {
-    connected:    { label: 'Connected',          tone: 'ok'   },
-    connecting:   { label: 'Connecting…',        tone: 'info' },
-    error:        { label: "Can't reach server", tone: 'err'  },
-    disconnected: { label: 'Not connected',      tone: 'idle' },
-  };
-  const { label, tone } = map[status];
-  return <span className={`pill ${tone}`}><span className="dot" />{label}</span>;
-}
-
-function SpoolmanMark() {
-  return (
-    <div style={{
-      width: 44, height: 44, borderRadius: 10,
-      background: 'linear-gradient(135deg, #f59e0b, #b45309)',
-      border: '1px solid var(--border-2)',
-      boxShadow: '0 0 16px rgba(245,158,11,0.25)',
-      display: 'grid', placeItems: 'center',
-      color: 'white', flexShrink: 0,
-    }}>
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none"
-           stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="9" />
-        <circle cx="12" cy="12" r="5" />
-        <circle cx="12" cy="12" r="2" fill="currentColor" />
-      </svg>
-    </div>
-  );
-}
-
-function SpoolStat({ label, value, tone }: { label: string; value: number; tone?: string }) {
-  const color = tone === 'warn' ? 'var(--warn)' : tone === 'idle' ? 'var(--text-3)' : 'var(--text-1)';
-  return (
-    <div style={{ flex: '1 1 0', minWidth: 110, padding: '12px 14px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10 }}>
-      <div className="tag-key">{label}</div>
-      <div className="num" style={{ fontSize: 22, fontWeight: 600, color, marginTop: 4, letterSpacing: '-0.02em' }}>{value}</div>
-    </div>
-  );
-}
-
-function SyncDetails({ status }: { status: SpoolmanSyncStatus }) {
-  const tone = spoolmanSyncTone(status);
-  const toneColor = tone === 'success' ? 'var(--ok)' : tone === 'fail' ? 'var(--err)' : 'var(--warn)';
-  const toneLabel = tone === 'success' ? 'Synced' : tone === 'fail' ? 'Sync failing' : 'Stale';
-
-  return (
-    <div style={{ padding: '20px 0', borderBottom: '1px solid var(--border-1)' }}>
-      <div className="row between" style={{ alignItems: 'center', marginBottom: 10 }}>
-        <div style={{ fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
-          Sync status
-        </div>
-        <span className="row gap-1" style={{ alignItems: 'center', fontSize: 12, fontWeight: 500, color: toneColor }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: toneColor, flexShrink: 0 }} />
-          {toneLabel}
-        </span>
-      </div>
-      <div className="small muted">
-        Last successful sync: {status.last_sync_at ? new Date(status.last_sync_at).toLocaleString() : 'never'}
-      </div>
-      {status.last_error && (
-        <div className="small" style={{ color: 'var(--err)', marginTop: 4 }}>
-          Last attempt ({status.last_attempt_at ? new Date(status.last_attempt_at).toLocaleString() : 'unknown time'}) failed
-          {status.last_error_code ? ` [${status.last_error_code}]` : ''}: {status.last_error}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SpoolmanPage() {
-  const [s, set] = useState<SpoolmanSettings>({
-    enabled: false,
-    url: '',
-    apiKey: '',
-    apiKeyTouched: false,
-    hasApiKey: false,
-    connectionStatus: 'disconnected',
-    lastSyncedAt: null,
-    syncInterval: 15,
-    syncOnEvents: true,
-    deductFromSpoolman: true,
-    pullVendorMaterials: true,
-    autoCreateSpools: false,
-    syncLocation: 'Workshop',
-    syncLot: false,
-  });
-  const update = (patch: Partial<SpoolmanSettings>) => set(prev => ({ ...prev, ...patch }));
-
-  const [testing, setTesting] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMsg, setSyncMsg] = useState<string | null>(null);
-  const [spoolmanPendingRemap, setSpoolmanPendingRemap] = useState<PendingRemaps | null>(null);
-
-  useEffect(() => {
-    let alive = true;
-    getSpoolmanConfig()
-      .then(async cfg => {
-        if (!alive) return;
-        update({
-          enabled: cfg.enabled, url: cfg.url ?? '', hasApiKey: cfg.has_api_key,
-          syncInterval: cfg.sync_interval_minutes,
-        });
-        // A saved config doesn't mean Spoolman is still reachable — verify on
-        // load so the pill reflects reality instead of defaulting to
-        // "disconnected" (and hiding the stats/sync-details panels) on every
-        // page refresh even though the backend's own periodic sync is fine.
-        if (cfg.enabled && cfg.url) {
-          update({ connectionStatus: 'connecting' });
-          try {
-            await testSpoolmanConnection(cfg.url, undefined);
-            if (alive) update({ connectionStatus: 'connected' });
-          } catch {
-            if (alive) update({ connectionStatus: 'error' });
-          }
-        }
-      })
-      .catch(console.error);
-    return () => { alive = false; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const { status: syncStatus, refetch: refetchSyncStatus } = useSpoolmanSyncStatus();
-  const spools = useSpools(s.connectionStatus === 'connected');
-  const filaments = useFilaments(s.connectionStatus === 'connected');
-
-  const stats = useMemo(() => ({
-    spools: spools.length,
-    materials: new Set(spools.map(sp => sp.filament.material)).size,
-    vendors: new Set(spools.map(sp => sp.filament.vendor?.name ?? '').filter(Boolean)).size,
-    lowSpools: spools.filter(sp => sp.remaining_weight < 100).length,
-  }), [spools]);
-
-  async function saveConfig() {
-    setSaving(true);
-    try {
-      const cfg = await saveSpoolmanConfig({
-        enabled: s.enabled,
-        url: s.url,
-        api_key: s.apiKeyTouched ? s.apiKey : undefined,
-        sync_interval_minutes: s.syncInterval,
-      });
-      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false, syncInterval: cfg.sync_interval_minutes });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function testConnection() {
-    if (!s.url.trim()) return;
-    setTesting(true);
-    update({ connectionStatus: 'connecting' });
-    try {
-      const apiKeyForSave = s.apiKeyTouched ? s.apiKey : undefined;
-      const cfg = await saveSpoolmanConfig({
-        enabled: s.enabled, url: s.url, api_key: apiKeyForSave, sync_interval_minutes: s.syncInterval,
-      });
-      update({ hasApiKey: cfg.has_api_key, apiKey: '', apiKeyTouched: false });
-      const result = await testSpoolmanConnection(s.url, apiKeyForSave);
-      if (result.status === 'pending_remaps') {
-        setSpoolmanPendingRemap(result);
-        update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
-      } else {
-        update({ connectionStatus: 'connected', lastSyncedAt: new Date().toISOString() });
-      }
-    } catch {
-      update({ connectionStatus: 'error' });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  async function disconnect() {
-    update({ enabled: false, connectionStatus: 'disconnected', lastSyncedAt: null });
-    await saveSpoolmanConfig({ enabled: false }).catch(console.error);
-  }
-
-  async function handleSyncNow() {
-    setSyncing(true);
-    setSyncMsg(null);
-    try {
-      const result = await syncSpoolman();
-      setSyncMsg(`Synced — ${result.filament_count} filaments, ${result.spool_count} spools`);
-      setTimeout(() => setSyncMsg(null), 3000);
-    } catch (e) {
-      setSyncMsg(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setSyncing(false);
-      refetchSyncStatus();
-    }
-  }
-
-  const isConnected = s.connectionStatus === 'connected';
-
-  return (
-    <>
-    <div className="col gap-3">
-      <div className="card" style={{ padding: 28 }}>
-        <div className="row between" style={{ marginBottom: 18, alignItems: 'flex-start' }}>
-          <div className="row gap-3" style={{ alignItems: 'center' }}>
-            <SpoolmanMark />
-            <div>
-              <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, letterSpacing: '-0.01em' }}>Spoolman</h2>
-              <div className="muted small" style={{ marginTop: 4, maxWidth: 540, lineHeight: 1.5 }}>
-                Open-source filament & spool tracker. Themis can pull your spool inventory and push usage automatically as jobs complete.
-              </div>
-            </div>
-          </div>
-          <ConnectionPill status={s.connectionStatus} />
-        </div>
-
-        <FieldRow label="Enable Spoolman sync"
-                  hint="When off, Themis ignores Spoolman entirely. Local filament library still works.">
-          <Toggle checked={s.enabled} onChange={v => update({ enabled: v })} />
-        </FieldRow>
-
-        <div style={{ opacity: s.enabled ? 1 : 0.5, pointerEvents: s.enabled ? 'auto' : 'none', transition: 'opacity 120ms' }}>
-          <FieldRow label="Server URL"
-                    hint="The address your Spoolman instance listens on. Common default: http://spoolman.local:7912.">
-            <div className="row gap-2">
-              <input className="input" value={s.url}
-                     onChange={e => update({ url: e.target.value, connectionStatus: 'disconnected' })}
-                     placeholder="http://spoolman.local:7912"
-                     style={{ flex: 1 }} />
-            </div>
-          </FieldRow>
-
-          <FieldRow label="API key"
-                    hint={s.hasApiKey && !s.apiKeyTouched
-                      ? 'A key is saved. Leave blank to keep it, or type a new one to replace it.'
-                      : "Optional. Required only if you've enabled Spoolman API authentication."}>
-            <div className="row gap-2" style={{ flex: 1 }}>
-              <input className="input" type="password" value={s.apiKey}
-                     onChange={e => update({ apiKey: e.target.value, apiKeyTouched: true })}
-                     placeholder={s.hasApiKey && !s.apiKeyTouched ? '••••••••' : 'Leave blank if auth is off'}
-                     style={{ flex: 1 }} />
-            </div>
-          </FieldRow>
-
-          <div style={{ padding: '16px 0', borderBottom: '1px solid var(--border-1)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-            <button className="btn primary sm" disabled={!s.url.trim() || testing || saving} onClick={testConnection}>
-              {testing ? 'Connecting…' : <>{Icons.link} Test connection</>}
-            </button>
-            <button className="btn sm" disabled={saving || testing} onClick={saveConfig}>
-              {saving ? 'Saving…' : <>{Icons.check} Save</>}
-            </button>
-            {isConnected && (
-              <>
-                <button className="btn sm" onClick={handleSyncNow} disabled={syncing}>{syncing ? 'Syncing…' : <>{Icons.refresh} Sync now</>}</button>
-                <button className="btn ghost sm" onClick={disconnect} style={{ color: 'var(--err)' }}>Disconnect</button>
-              </>
-            )}
-            {syncMsg && (
-              <span className={`small ${syncMsg.includes('failed') ? 'muted' : ''}`} style={{ color: syncMsg.includes('failed') ? 'var(--err)' : 'var(--ok)' }}>
-                {syncMsg}
-              </span>
-            )}
-          </div>
-
-          {isConnected && (
-            <div style={{ padding: '20px 0', borderBottom: '1px solid var(--border-1)' }}>
-              <div className="row gap-3" style={{ flexWrap: 'wrap' }}>
-                <SpoolStat label="Spools"     value={stats.spools} />
-                <SpoolStat label="Materials"  value={stats.materials} />
-                <SpoolStat label="Vendors"    value={stats.vendors} />
-                <SpoolStat label="Low spools" value={stats.lowSpools} tone={stats.lowSpools > 0 ? 'warn' : 'idle'} />
-              </div>
-            </div>
-          )}
-
-          {isConnected && <LowStockSettings filaments={filaments} />}
-
-          {s.enabled && syncStatus && <SyncDetails status={syncStatus} />}
-
-          <div style={{ marginTop: 24, marginBottom: 4, fontSize: 11, color: 'var(--text-4)', textTransform: 'uppercase', letterSpacing: '0.08em', fontWeight: 500 }}>
-            Sync behavior
-          </div>
-
-          <FieldRow label="Sync interval" hint="How often Themis pulls fresh spool data from Spoolman.">
-            <div className="row gap-3" style={{ alignItems: 'center' }}>
-              <input type="range" min="1" max="60" step="1"
-                     value={s.syncInterval}
-                     onChange={e => update({ syncInterval: Number(e.target.value) })}
-                     style={{ flex: 1 }} />
-              <span className="num" style={{ minWidth: 84, color: 'var(--text-1)', fontSize: 14, textAlign: 'right' }}>
-                every {s.syncInterval}m
-              </span>
-            </div>
-          </FieldRow>
-
-          <FieldRow label="Push usage on job events"
-                    hint="When a job completes, immediately tell Spoolman how many grams to deduct.">
-            <Toggle checked={s.syncOnEvents} onChange={v => update({ syncOnEvents: v })} />
-          </FieldRow>
-          <FieldRow label="Deduct grams from spools"
-                    hint="If off, Themis reads from Spoolman but never writes weight changes back.">
-            <Toggle checked={s.deductFromSpoolman} onChange={v => update({ deductFromSpoolman: v })} />
-          </FieldRow>
-          <FieldRow label="Mirror vendor & material catalog"
-                    hint="Keep Themis's manufacturer + material-type fields in sync with Spoolman's catalog.">
-            <Toggle checked={s.pullVendorMaterials} onChange={v => update({ pullVendorMaterials: v })} />
-          </FieldRow>
-          <FieldRow label="Auto-create spools"
-                    hint="If you add a new filament in Themis and Spoolman doesn't know about it, push a new spool record automatically.">
-            <Toggle checked={s.autoCreateSpools} onChange={v => update({ autoCreateSpools: v })} />
-          </FieldRow>
-
-          <FieldRow label="Location label"
-                    hint="Tag every spool record this Themis instance writes with a location.">
-            <input className="input" value={s.syncLocation}
-                   onChange={e => update({ syncLocation: e.target.value })}
-                   placeholder="Workshop" style={{ width: '100%' }} />
-          </FieldRow>
-
-          <FieldRow label="Send lot numbers"
-                    hint="Include the manufacturer's lot/batch number in synced records when known.">
-            <Toggle checked={s.syncLot} onChange={v => update({ syncLot: v })} />
-          </FieldRow>
-        </div>
-
-        <div style={{ marginTop: 28, padding: '14px 16px', background: 'var(--bg-1)', border: '1px solid var(--border-1)', borderRadius: 10, display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-          <div style={{ color: 'var(--accent-hi)', paddingTop: 2 }}>
-            {React.cloneElement(SettingsIcons.info, { size: 16 } as React.SVGProps<SVGSVGElement>)}
-          </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="small" style={{ fontWeight: 500, color: 'var(--text-1)' }}>First time setting up?</div>
-            <div className="tiny muted" style={{ marginTop: 4, lineHeight: 1.5, maxWidth: 580 }}>
-              Spoolman runs as a Docker container or a Python service. Once it's up, add the URL above, hit <strong>Test connection</strong>, then choose what you want Themis to sync.
-            </div>
-            <div className="row gap-2" style={{ marginTop: 10 }}>
-              <a className="btn ghost sm" href="https://github.com/Donkie/Spoolman" target="_blank" rel="noreferrer">
-                {React.cloneElement(Icons.external, { size: 12 } as React.SVGProps<SVGSVGElement>)} Spoolman on GitHub
-              </a>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-    {spoolmanPendingRemap && (
-      <RemapModal
-        payload={spoolmanPendingRemap}
-        onDone={(result: ConfirmResult) => {
-          setSpoolmanPendingRemap(null);
-          const total = result.applied.printers + result.applied.jobs + result.applied.spoolman_filaments;
-          console.info(`[Spoolman] Remap applied — ${total} reference${total !== 1 ? 's' : ''} updated.`);
-        }}
-        onCancel={() => {
-          setSpoolmanPendingRemap(null);
         }}
       />
     )}
@@ -1261,7 +824,9 @@ function FleetBackupPage() {
 // Webhook page
 // =========================================================================
 
-const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
+// Raised by the inventory host: spool tracking suspended/restored, a remote provider unreachable/back.
+const INVENTORY_EVENTS = ['inventory.tracking_unavailable', 'inventory.tracking_restored', 'inventory.disconnected', 'inventory.reconnected'];
+const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm', ...INVENTORY_EVENTS];
 
 function WebhookPage() {
   const [url, setUrl] = useState('');
@@ -1356,7 +921,7 @@ function WebhookPage() {
 // Notifications page
 // =========================================================================
 
-const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm'];
+const ALL_NOTIFICATION_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm', ...INVENTORY_EVENTS];
 
 function EventCheckboxes({ events, onToggle }: { events: string[]; onToggle: (ev: string) => void }) {
   return (
@@ -2123,7 +1688,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'spoolman' | 'spoolman-mappings' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'inventory' | 'plugins' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -2137,7 +1702,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'spoolman', 'spoolman-mappings', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'inventory', 'plugins', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -2149,8 +1714,9 @@ export function SettingsScreen() {
   const navigate = useNavigate();
   const activePage = pageFromPath(location.pathname);
   const setActivePage = (id: PageId) => navigate(`/settings/${id}`);
-  const { config: spoolmanCfg } = useSpoolmanConfig();
-  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
+  const { plugins } = usePlugins();
+  // A plugin that asks for its own page gets a sidebar entry only while it is enabled.
+  const pluginPages = plugins.filter(p => p.enabled && p.ui.mode === 'page' && p.ui.nav_placement === 'settings');
 
   const sections: NavSection[] = [
     {
@@ -2165,8 +1731,8 @@ export function SettingsScreen() {
     {
       label: 'Integrations',
       items: [
-        { id: 'spoolman',          label: 'Spoolman',         icon: SettingsIcons.spoolman, sub: 'Sync filament inventory' },
-        ...(spoolmanEnabled ? [{ id: 'spoolman-mappings' as PageId, label: 'Filament Mappings', icon: SettingsIcons.spoolman, sub: 'orca_profiles per printer model' }] : []),
+        { id: 'inventory' as PageId, label: 'Filament inventory', icon: SettingsIcons.inventory, sub: 'Provider, deduction & low-stock alerts' },
+        { id: 'plugins' as PageId,   label: 'Plugins',            icon: Icons.layers,           sub: 'Installed plugins & their settings' },
         { id: 'webhook' as PageId, label: 'Webhooks',          icon: SettingsIcons.webhook,  sub: 'Job state notifications' },
         { id: 'notifications' as PageId, label: 'Notifications', icon: Icons.bell, sub: 'ntfy, Discord & email alerts' },
       ],
@@ -2196,6 +1762,11 @@ export function SettingsScreen() {
     <div>
       {/* mobile tab bar */}
       <nav className="settings-tabs" style={{ gap: 4, overflowX: 'auto', paddingBottom: 12, marginBottom: 8 }}>
+        {pluginPages.map(p => (
+          <button key={p.id} onClick={() => navigate(`/plugins/${p.id}`)} className="settings-tab" style={{ whiteSpace: 'nowrap' }}>
+            {p.ui.nav_label}
+          </button>
+        ))}
         {sections.flatMap(s => s.items).map(item => (
           <button key={item.id}
                   onClick={() => setActivePage(item.id)}
@@ -2211,8 +1782,8 @@ export function SettingsScreen() {
       {activePage === 'print'             && <PrintDefaultsPage />}
       {activePage === 'costs'             && <CostSettings />}
       {activePage === 'maintenance'        && <MaintenancePage />}
-      {activePage === 'spoolman'          && <SpoolmanPage />}
-      {activePage === 'spoolman-mappings' && <SpoolmanMappingsPage />}
+      {activePage === 'inventory'         && <FilamentInventoryPage />}
+      {activePage === 'plugins'           && <PluginsPage />}
       {activePage === 'webhook'           && <WebhookPage />}
       {activePage === 'notifications'     && <NotificationsPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}

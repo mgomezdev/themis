@@ -1,8 +1,10 @@
+import type React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
-import { SpoolmanStatusChip } from './SpoolmanStatusChip';
-import { useSpoolmanConfig } from '../api/spoolman';
+import { InventoryStatusChip } from './InventoryStatusChip';
+import { usePlugins } from '../api/plugins';
+import { CAP, useInventory } from '../api/inventory';
 import { useBuildInfo, shortSha } from '../api/version';
 
 interface QueueCounts { active: number; pending: number; blocked: number; }
@@ -48,6 +50,11 @@ function QueueBadges({ counts }: { counts: QueueCounts }) {
 }
 
 export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 0, alarmWorst = null, collapsed = false, onToggle = () => {} }: SidebarProps) {
+  const { plugins } = usePlugins();
+  const inventory = useInventory();
+  const hasLibrary = inventory.has(CAP.MANAGE_MATERIALS) || inventory.has(CAP.MANAGE_SPOOLS);   // the active provider owns its library
+  // A plugin that asks for its own page gets a sidebar entry only while it is enabled.
+  const pluginPages = plugins.filter(p => p.enabled && p.ui.mode === 'page');
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
@@ -59,21 +66,25 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
     { to: '/alarms',    label: 'Alarms',      icon: Icons.alert },
     { to: '/history',   label: 'History',     icon: Icons.clock },
     { to: '/analytics', label: 'Analytics',   icon: Icons.chart },
+    ...(hasLibrary ? [{ to: '/library', label: 'Filament library', icon: Icons.spool }] : []),
+    ...pluginPages.filter(p => p.ui.nav_placement === 'main').map(p => ({
+      to: `/plugins/${p.id}`, label: p.ui.nav_label,
+      icon: (p.ui.nav_icon ? (Icons as Record<string, React.ReactElement>)[p.ui.nav_icon] : undefined) ?? Icons.layers,
+    })),
   ];
 
   const location = useLocation();
-  const isSettingsRoute = location.pathname.startsWith('/settings');
-  const { config: spoolmanCfg } = useSpoolmanConfig();
+  const isSettingsRoute = location.pathname.startsWith('/settings') || location.pathname.startsWith('/plugins');
   const build = useBuildInfo();
-  const spoolmanEnabled = !!(spoolmanCfg?.enabled && spoolmanCfg?.url);
 
   const settingsSubItems = [
     { to: '/settings/tags',             label: 'Tags' },
     { to: '/settings/print',            label: 'Print defaults' },
     { to: '/settings/costs',            label: 'Costs' },
     { to: '/settings/maintenance',       label: 'Maintenance' },
-    { to: '/settings/spoolman',         label: 'Spoolman' },
-    ...(spoolmanEnabled ? [{ to: '/settings/spoolman-mappings', label: 'Filament Mappings' }] : []),
+    { to: '/settings/inventory',        label: 'Filament inventory' },
+    { to: '/settings/plugins',          label: 'Plugins' },
+    ...pluginPages.filter(p => p.ui.nav_placement === 'settings').map(p => ({ to: `/plugins/${p.id}`, label: p.ui.nav_label })),
     { to: '/settings/webhook',          label: 'Webhooks' },
     { to: '/settings/notifications',    label: 'Notifications' },
     { to: '/settings/fleet-backup',     label: 'Fleet backup' },
@@ -143,7 +154,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
           </div>
         )}
         <LaminusStatusChip />
-        <SpoolmanStatusChip />
+        <InventoryStatusChip />
       </div>
 
       {!collapsed && build && (

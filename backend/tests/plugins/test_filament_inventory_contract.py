@@ -1,7 +1,7 @@
 """Contract suite for every `filament_inventory` provider (spec §6): a new provider has to pass it.
 
-Parametrized over the in-memory fake (a weight-tracking provider WITHOUT label scanning) and the Spoolman plugin (backed
-by the real tests/spoolman_mock.py app). Local inventory joins the parameter list in its own phase."""
+Parametrized over the in-memory fakes, the Spoolman plugin (backed by the real tests/spoolman_mock.py app) and the Local
+inventory plugin (backed by the real test database)."""
 from __future__ import annotations
 
 import copy
@@ -9,11 +9,15 @@ import json
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from app.plugins.kinds.filament_inventory import (
     ALL_CAPABILITIES, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
     WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft, NotSupported, SpoolDraft,
 )
+from app.plugins.local_inventory import MANIFEST as LOCAL_MANIFEST
+from app.plugins.local_inventory.provider import LocalInventoryProvider
+from app.plugins.local_inventory.settings import LocalInventorySettings
 from app.plugins.spoolman import MANIFEST as SPOOLMAN_MANIFEST
 from app.plugins.spoolman.provider import SpoolmanProvider
 from app.plugins.spoolman.settings import SpoolmanSettings
@@ -47,8 +51,23 @@ def _spoolman() -> SpoolmanProvider:
     return SpoolmanProvider(SpoolmanSettings(url="http://spoolman.test", api_key="key"))
 
 
-@pytest.fixture(params=["fake", "fake_library", "spoolman"])
-def provider(request, spoolman_upstream) -> FilamentInventoryProvider:
+async def _local(session_factory) -> LocalInventoryProvider:
+    """The same two materials / two spools the other providers start with (refs 1 and 2)."""
+    async with session_factory() as s:
+        for name, color in (("PLA White", "#FFFFFF"), ("PLA Black", "#000000")):
+            await s.execute(text("INSERT INTO local_inv_materials (name, material, vendor, color_hex, created_at, updated_at) "
+                                 "VALUES (:n, 'PLA', 'Elegoo', :c, 'x', 'x')"), {"n": name, "c": color})
+        for mat, label, g in ((1, "Elegoo PLA White", 800.0), (2, "Elegoo PLA Black", 500.0)):
+            await s.execute(text("INSERT INTO local_inv_spools (material_id, label, initial_g, remaining_g, created_at, updated_at) "
+                                 "VALUES (:m, :l, 1000, :g, 'x', 'x')"), {"m": mat, "l": label, "g": g})
+        await s.commit()
+    return LocalInventoryProvider(LocalInventorySettings())
+
+
+@pytest.fixture(params=["fake", "fake_library", "spoolman", "local"])
+async def provider(request, spoolman_upstream, session_factory) -> FilamentInventoryProvider:
+    if request.param == "local":
+        return await _local(session_factory)
     return {"fake": _fake, "fake_library": _fake_library, "spoolman": _spoolman}[request.param]()
 
 
@@ -58,6 +77,8 @@ async def test_capabilities_are_a_known_subset_and_the_bundled_manifest_declares
     assert provider.capabilities <= ALL_CAPABILITIES
     if isinstance(provider, SpoolmanProvider):
         assert SPOOLMAN_MANIFEST.capabilities == provider.capabilities
+    if isinstance(provider, LocalInventoryProvider):
+        assert LOCAL_MANIFEST.capabilities == provider.capabilities
 
 
 async def test_test_connection_returns_an_info_dict(provider):
