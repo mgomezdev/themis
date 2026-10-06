@@ -606,6 +606,40 @@ class PluginSchemaVersion(Base):
     applied_at: Mapped[str] = mapped_column(String(32), server_default=text("(strftime('%Y-%m-%dT%H:%M:%S', 'now'))"))
 
 
+class InstalledPlugin(Base):
+    """An installed (non-bundled) plugin package: `/data/plugins/<id>/<version>/`. Bundled plugins have no row.
+    status: pending_restart | active | error | pending_removal (see plugins/installer.py)."""
+    __tablename__ = "installed_plugins"
+
+    plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[str] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200), default="")
+    kind: Mapped[str] = mapped_column(String(64), default="")
+    publisher: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    source: Mapped[str] = mapped_column(String(16))                       # upload | github
+    source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    subdir: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
+    commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    archive_sha256: Mapped[str] = mapped_column(String(64))
+    installed_at: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(24))
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    previous_version: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class AuditLog(Base):
+    """Who did what to the instance itself (plugin install/upgrade/uninstall, restart). Append-only."""
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    at: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(64))
+    action: Mapped[str] = mapped_column(String(64))
+    target: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    detail: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
 class InventoryConfig(Base):
     """Provider-agnostic inventory settings (singleton id=1). Low-stock keys are namespaced `"<provider>:<ref>"`."""
     __tablename__ = "inventory_config"

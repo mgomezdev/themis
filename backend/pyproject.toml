@@ -41,7 +41,7 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 88
+fail_under = 89
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -50,3 +50,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.plugins.*" = ["themis-plugin.toml"]

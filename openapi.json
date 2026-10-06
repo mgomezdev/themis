@@ -8484,13 +8484,35 @@
         }
       }
     },
-    "/api/v1/plugins": {
-      "get": {
+    "/api/v1/plugins/install": {
+      "post": {
         "tags": [
-          "plugins"
+          "plugin-install"
         ],
-        "summary": "List plugins (manifests, UI contributions, capabilities, enabled/active)",
-        "operationId": "list_plugins_api_v1_plugins_get",
+        "summary": "Install a plugin from an uploaded .zip/.tar.gz/.tgz (preview=true stages only)",
+        "operationId": "install_upload_api_v1_plugins_install_post",
+        "parameters": [
+          {
+            "name": "preview",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Preview"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_install_upload_api_v1_plugins_install_post"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -8499,11 +8521,320 @@
                 "schema": {}
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install-from-github": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Install a plugin from a public GitHub repo (ref resolved to a commit)",
+        "operationId": "install_github_api_v1_plugins_install_from_github_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GithubBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install/{token}/commit": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Commit a previewed (staged) install or upgrade",
+        "operationId": "commit_staged_api_v1_plugins_install__token__commit_post",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/install/{token}": {
+      "delete": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Discard a previewed (staged) install",
+        "operationId": "discard_staged_api_v1_plugins_install__token__delete",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/updates": {
+      "get": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Check a GitHub-installed plugin for a newer commit",
+        "operationId": "check_updates_api_v1_plugins__plugin_id__updates_get",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/upgrade": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Upgrade a GitHub-installed plugin to the latest commit of its ref",
+        "operationId": "upgrade_api_v1_plugins__plugin_id__upgrade_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/UpgradeBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/rollback": {
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Go back to the previous version at the next restart",
+        "operationId": "rollback_api_v1_plugins__plugin_id__rollback_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       }
     },
     "/api/v1/plugins/{plugin_id}": {
+      "delete": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Uninstall at the next restart (data is kept unless remove_data=true)",
+        "operationId": "uninstall_api_v1_plugins__plugin_id__delete",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "remove_data",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Remove Data"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "get": {
         "tags": [
           "plugins"
@@ -8585,6 +8916,88 @@
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/restart": {
+      "get": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "What a restart would apply, and whether anything is printing",
+        "operationId": "restart_status_api_v1_system_restart_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "plugin-install"
+        ],
+        "summary": "Restart Themis (applies every pending plugin change); warns if printing",
+        "operationId": "restart_api_v1_system_restart_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RestartBody"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins": {
+      "get": {
+        "tags": [
+          "plugins"
+        ],
+        "summary": "List plugins (manifests, UI contributions, capabilities, enabled/active)",
+        "operationId": "list_plugins_api_v1_plugins_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           }
@@ -9427,6 +9840,20 @@
         ],
         "title": "Body_fleet_import_api_v1_settings_fleet_import_post"
       },
+      "Body_install_upload_api_v1_plugins_install_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_install_upload_api_v1_plugins_install_post"
+      },
       "Body_upload_file_api_v1_files_upload_post": {
         "properties": {
           "file": {
@@ -10029,6 +10456,46 @@
         },
         "type": "object",
         "title": "GenerateRequest"
+      },
+      "GithubBody": {
+        "properties": {
+          "repo_url": {
+            "type": "string",
+            "title": "Repo Url"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "subdir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subdir"
+          },
+          "preview": {
+            "type": "boolean",
+            "title": "Preview",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "repo_url"
+        ],
+        "title": "GithubBody"
       },
       "HTTPValidationError": {
         "properties": {
@@ -12814,6 +13281,17 @@
         "type": "object",
         "title": "ResolveBody"
       },
+      "RestartBody": {
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "title": "Force",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "RestartBody"
+      },
       "ResumeBody": {
         "properties": {
           "remaining_g": {
@@ -13289,6 +13767,17 @@
           "triggers"
         ],
         "title": "TriggersReplace"
+      },
+      "UpgradeBody": {
+        "properties": {
+          "preview": {
+            "type": "boolean",
+            "title": "Preview",
+            "default": false
+          }
+        },
+        "type": "object",
+        "title": "UpgradeBody"
       },
       "ValidationError": {
         "properties": {

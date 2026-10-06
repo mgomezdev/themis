@@ -18,7 +18,11 @@ export interface PluginSummary {
   version: string;
   description: string;
   docs_url: string | null;
-  source: string;
+  source: string;                 // bundled | upload | github
+  /** False for an installed package that is not running (staged for the next restart, or failed to load). */
+  loaded?: boolean;
+  /** What the installer knows about a non-bundled plugin; null/absent for bundled ones. */
+  install?: PluginInstall | null;
   capabilities: string[];
   ui: PluginUi;
   /** The plugin's own switch (it also has to be the selected provider of its kind to be in use). */
@@ -47,7 +51,24 @@ export interface JsonSchemaProperty {
 }
 export interface JsonSchema { properties?: Record<string, JsonSchemaProperty>; required?: string[] }
 
-export interface PluginList { plugins: PluginSummary[]; slots: Record<string, string | null> }
+export interface PluginInstall {
+  status: 'pending_restart' | 'active' | 'error' | 'pending_removal';
+  version: string;
+  previous_version: string | null;
+  publisher: string | null;
+  source_url: string | null;
+  ref: string | null;
+  commit_sha: string | null;
+  archive_sha256: string;
+  installed_at: string;
+  error: string | null;
+  can_rollback: boolean;
+  can_check_updates: boolean;
+}
+
+export interface PendingChange { plugin_id: string; name: string; version: string; change: 'install' | 'update' | 'uninstall' }
+
+export interface PluginList { plugins: PluginSummary[]; slots: Record<string, string | null>; pending?: PendingChange[] }
 
 export interface PluginUpdate {
   enabled?: boolean;
@@ -91,6 +112,56 @@ export async function setExtensionSlot(kind: string, pluginId: string | null): P
   return r;
 }
 
+// ---- installation (admin session only) ----
+
+export interface InstallPreview {
+  token: string; id: string; name: string; version: string; kind: string; publisher: string | null; description: string;
+  source: 'upload' | 'github'; source_url: string | null; ref: string | null; commit_sha: string | null; archive_sha256: string;
+  min_themis: string | null;
+}
+export interface GithubSource { repo_url: string; ref?: string; subdir?: string }
+
+export async function previewUpload(file: File): Promise<InstallPreview> {
+  const body = new FormData();
+  body.append('file', file);
+  return (await request<{ preview: InstallPreview }>('/api/v1/plugins/install?preview=true', { method: 'POST', body })).preview;
+}
+export async function previewGithub(src: GithubSource): Promise<InstallPreview> {
+  return (await request<{ preview: InstallPreview }>('/api/v1/plugins/install-from-github', json('POST', { ...src, preview: true }))).preview;
+}
+export async function commitInstall(token: string): Promise<void> {
+  await request(`/api/v1/plugins/install/${encodeURIComponent(token)}/commit`, { method: 'POST' });
+  invalidatePlugins();
+}
+export async function discardInstall(token: string): Promise<void> {
+  await apiFetch(`/api/v1/plugins/install/${encodeURIComponent(token)}`, { method: 'DELETE' });
+}
+export const checkPluginUpdates = (id: string): Promise<{ update_available: boolean; ref: string; current_commit: string | null; latest_commit: string }> =>
+  request(`/api/v1/plugins/${encodeURIComponent(id)}/updates`);
+export async function previewUpgrade(id: string): Promise<InstallPreview> {
+  return (await request<{ preview: InstallPreview }>(`/api/v1/plugins/${encodeURIComponent(id)}/upgrade`, json('POST', { preview: true }))).preview;
+}
+export async function rollbackPlugin(id: string): Promise<void> {
+  await request(`/api/v1/plugins/${encodeURIComponent(id)}/rollback`, { method: 'POST' });
+  invalidatePlugins();
+}
+export async function uninstallPlugin(id: string, removeData: boolean): Promise<void> {
+  await request(`/api/v1/plugins/${encodeURIComponent(id)}?remove_data=${removeData}`, { method: 'DELETE' });
+  invalidatePlugins();
+}
+export const fetchRestartStatus = (): Promise<{ pending: { plugin_id: string; version: string; status: string }[]; printing: string[] }> =>
+  request('/api/v1/system/restart');
+/** Restart Themis (applies every pending change). Resolves `{printing}` instead of restarting when printers are busy and `force` is false. */
+export async function restartThemis(force: boolean): Promise<{ restarting: boolean; printing?: string[] }> {
+  const resp = await apiFetch('/api/v1/system/restart', json('POST', { force }));
+  if (resp.status === 409) {
+    const body = await resp.json().catch(() => ({}));
+    return { restarting: false, printing: body?.detail?.printers ?? [] };
+  }
+  if (!resp.ok) throw new Error(`${resp.status}`);
+  return { restarting: true };
+}
+
 // ---- a tiny shared store: every hook sees the same list, and a change (provider switch, enable toggle) refreshes all ----
 
 interface Store { data: PluginList | null; loaded: boolean }
@@ -122,10 +193,10 @@ function subscribe(l: () => void) {
   return () => { listeners.delete(l); };
 }
 
-export function usePlugins(): { plugins: PluginSummary[]; slots: Record<string, string | null>; loaded: boolean; refresh: () => void } {
+export function usePlugins(): { plugins: PluginSummary[]; slots: Record<string, string | null>; pending: PendingChange[]; loaded: boolean; refresh: () => void } {
   const s = useSyncExternalStore(subscribe, () => store);
   const refresh = useCallback(() => invalidatePlugins(), []);
-  return { plugins: s.data?.plugins ?? [], slots: s.data?.slots ?? {}, loaded: s.loaded, refresh };
+  return { plugins: s.data?.plugins ?? [], slots: s.data?.slots ?? {}, pending: s.data?.pending ?? [], loaded: s.loaded, refresh };
 }
 
 /** The plugin currently in use for `kind` (selected and enabled), or null. */

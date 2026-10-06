@@ -76,3 +76,8 @@ def get_laminus_sidecar_url() -> str | None:
     """Base URL of the laminus sidecar service (e.g. 'http://localhost:5000').
     Returns None when LAMINUS_SIDECAR_URL is not set (direct CLI mode)."""
     return os.environ.get("LAMINUS_SIDECAR_URL")
+
+
+def get_plugins_dir() -> Path:
+    """Installed plugin packages (`<id>/<version>/`) and the install staging area. Not created here: the installer does."""
+    return _resolve_data_dir() / "plugins"

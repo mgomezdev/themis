@@ -156,3 +156,17 @@ async def require_customer(key: ApiKey | None = Depends(require_scope("customer"
     if key is None or key.customer_id is None:
         raise HTTPException(403, "Customer account required")
     return key.customer_id
+
+
+def require_admin_session(scope: str):
+    """Instance-level actions (installing code, restarting): the scope AND an interactive admin — the keyless local admin,
+    the bootstrap key, or an admin login session. A scoped API key is refused even with the scope, so a leaked
+    automation key cannot install code (plugin spec D17)."""
+    base = require_scope(scope)
+
+    async def _dep(key: ApiKey | None = Depends(base)) -> ApiKey | None:
+        if key is not None and key.id is not None and not key.admin_session:
+            raise HTTPException(403, "Admin sign-in required: this cannot be done with an API key")
+        return key
+
+    return _dep

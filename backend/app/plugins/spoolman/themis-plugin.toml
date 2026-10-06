@@ -1,0 +1,7 @@
+id = "spoolman"
+name = "Spoolman"
+version = "1.0.0"
+kind = "filament_inventory"
+host_api = 1
+entry = "app.plugins.spoolman:MANIFEST"
+publisher = "Themis"
