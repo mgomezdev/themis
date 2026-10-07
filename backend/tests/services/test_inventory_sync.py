@@ -104,7 +104,7 @@ def fetched():
 async def test_tick_does_nothing_with_no_provider_a_disabled_one_or_a_non_remote_one(session_factory, fetched):
     await _loop_for(session_factory)._tick()                                  # nothing configured
     await plugin_host.update_config("spoolman", settings={"url": URL}, enabled=False)
-    await plugin_host.set_slot("filament_inventory", "spoolman")
+    await plugin_host.set_provider("inventory.filament", "spoolman")
     await plugin_host.update_config("spoolman", enabled=False)                # selected but disabled
     await _loop_for(session_factory)._tick()
     local = FakeInventoryProvider(capabilities=frozenset({TRACKS_WEIGHT}))   # active but not REMOTE: nothing to sync

@@ -217,8 +217,11 @@ from .plugins.loader import load_installed  # noqa: E402
 
 load_installed(_cfg.get_plugins_dir(), Path(_data_dir_for_plugins) / "themis.db")      # installed packages; failures are contained
 for _manifest in registered_plugins():
-    for _router in _manifest.routers:
-        app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
+    _mounted: set[int] = set()
+    for _router in (*_manifest.routers, *(r for p in _manifest.provides.values() for r in p.routers)):
+        if id(_router) not in _mounted:
+            _mounted.add(id(_router))
+            app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
     for _router in _manifest.alias_routers:                  # deprecated aliases keep their historical absolute paths
         app.include_router(_router)
 
@@ -238,7 +241,7 @@ async def _cap_plugin_upload(request: Request, call_next):
 @app.exception_handler(CapabilityUnavailable)
 async def _capability_unavailable(_: Request, exc: CapabilityUnavailable) -> JSONResponse:
     """A feature needs a plugin kind/capability that is not available: 409 with a machine-readable body."""
-    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "kind": exc.kind, "capability": exc.capability})
+    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "capability": exc.capability_id, "feature": exc.feature})
 app.include_router(tags_router)
 
 

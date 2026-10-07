@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...plugins.host import plugin_host
-from ...plugins.capabilities.filament_inventory import KIND, REMOTE, TRACKS_WEIGHT, InventoryProviderError
+from ...plugins.capabilities.filament_inventory import CAPABILITY, REMOTE, TRACKS_WEIGHT, InventoryProviderError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -27,7 +27,7 @@ DEFAULT_INTERVAL_MINUTES = 15
 
 def status(plugin_id: str | None = None) -> dict:
     """Sync health for the status chip / settings page. Never raises; works with no provider at all."""
-    pid = plugin_id or plugin_host.slot(KIND)
+    pid = plugin_id or plugin_host.selected(CAPABILITY)
     cfg_settings, state = (plugin_host.settings(pid), plugin_host.state(pid)) if pid else ({}, {})
     return {
         "enabled": bool(pid and plugin_host.is_enabled(pid)),

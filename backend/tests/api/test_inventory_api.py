@@ -47,7 +47,7 @@ def _fake(caps=frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFI
 async def test_routes_that_need_a_provider_answer_409_when_none_is_active(client, method, path, body):
     resp = await client.request(method, path, json=body)
     assert resp.status_code == 409
-    assert (resp.json()["error"], resp.json()["kind"]) == ("capability_unavailable", "filament_inventory")
+    assert (resp.json()["error"], resp.json()["capability"]) == ("capability_unavailable", "inventory.filament")
 
 
 async def test_sync_status_and_settings_never_fail_without_a_provider(client):
@@ -91,7 +91,7 @@ async def test_a_failing_provider_is_a_503_with_its_message_and_never_a_500(clie
 async def test_sync_now_needs_a_remote_provider(client):
     await use_provider(_fake())                                           # not REMOTE: nothing to sync
     resp = await client.post("/api/v1/inventory/sync-now")
-    assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory", "capability": REMOTE}
+    assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "capability": "inventory.filament", "feature": REMOTE}
 
 
 async def test_resolve_label_needs_label_scan(client):

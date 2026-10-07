@@ -52,6 +52,7 @@ async def test_zip_and_tgz_install_end_to_end(data_dir, session_factory):
     for make, name in ((pb.make_zip, "a.zip"), (pb.make_tgz, "a.tgz")):
         staged = await stage(make(pb.files("acme_inv")), name)
         assert staged.preview()["publisher"] == "Acme" and len(staged.archive_sha256) == 64
+        assert staged.preview()["provides"] == [{"capability": "inventory.filament", "version": 1}] and "kind" not in staged.preview()
         async with session_factory() as s:
             row = await installer.commit(s, staged.token, actor="local-admin")
         assert (row.status, row.version, row.source) == ("pending_restart", "1.0.0", "upload")
@@ -126,7 +127,9 @@ REJECTS = [
     ("bad id", lambda: pb.make_zip(pb.files("A-b")), "must match"),
     ("reserved bundled id", lambda: pb.make_zip(pb.files("spoolman")), "reserved"),
     ("host_api mismatch", lambda: pb.make_zip(pb.files(host_api=2, mhost=1)), "host_api 2"),
-    ("unknown kind", lambda: pb.make_zip(pb.files(kind="printer_vendor")), "unknown kind"),
+    ("kind is no longer a toml key", lambda: pb.make_zip({**pb.files(), "themis-plugin.toml": pb.files()["themis-plugin.toml"] + 'kind = "filament_inventory"\n'}), "unknown keys"),
+    ("bad capability id", lambda: pb.make_zip(pb.files(provides='["nodot"]')), "not a capability id"),
+    ("toml provides disagrees with MANIFEST", lambda: pb.make_zip(pb.files(provides='["inventory.filament@2"]', mprov=1)), "provides"),
     ("bad version", lambda: pb.make_zip(pb.files(version="../1")), "semver"),
     ("unknown toml key", lambda: pb.make_zip({**pb.files(), "themis-plugin.toml": pb.files()["themis-plugin.toml"] + "evil = 1\n"}), "unknown keys"),
     ("bad entry", lambda: pb.make_zip({**pb.files(), "themis-plugin.toml": pb.files()["themis-plugin.toml"].replace("acme_inv:MANIFEST", "nocolon")}), "entry"),
@@ -214,7 +217,7 @@ async def test_dry_run_does_not_touch_this_process(data_dir, session_factory):
 async def test_a_preview_runs_none_of_the_packages_code_only_the_confirmed_commit_does(data_dir, session_factory):
     """Previews (and update checks) must not execute code the admin has not agreed to trust yet."""
     marker = data_dir / "ran.txt"
-    code = f"open({str(marker)!r}, 'w').write('x')\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
+    code = f"open({str(marker)!r}, 'w').write('x')\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, mprov=1, tab="default", extra="")
     staged = await stage(pb.make_zip(pb.files(code=code)))
     assert not marker.exists()                                  # staged + validated + previewed: nothing ran
     async with session_factory() as s:
@@ -231,7 +234,7 @@ async def test_a_package_that_fails_its_import_check_at_commit_is_dropped(data_d
 
 
 async def test_vendor_dir_is_on_the_dry_run_path(data_dir, session_factory):
-    code = "import vendored_lib\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
+    code = "import vendored_lib\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, mprov=1, tab="default", extra="")
     row = await stage_commit(pb.make_zip({**pb.files(code=code), "vendor/vendored_lib.py": "X = 1\n"}), session_factory)
     assert row.plugin_id == "acme_inv"
 

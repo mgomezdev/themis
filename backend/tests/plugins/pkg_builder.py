@@ -8,32 +8,32 @@ import zipfile
 TOML = """id = "{id}"
 name = "{name}"
 version = "{version}"
-kind = "{kind}"
+provides = {provides}
 host_api = {host_api}
 entry = "{pkg}:MANIFEST"
 publisher = "Acme"
 """
 
 CODE = '''from pydantic import BaseModel
-from app.plugins import PluginManifest, UiContribution, UiTab
-from app.plugins.capabilities.filament_inventory import KIND
+from app.plugins import PluginManifest, Provide, UiContribution, UiTab
+from app.plugins.capabilities.filament_inventory import CAPABILITY
 
 
 class Settings(BaseModel):
     url: str = ""
 
 
-MANIFEST = PluginManifest(id="{id}", name="{name}", kind=KIND, version="{mversion}", host_api={mhost}, settings_model=Settings,
-                          factory=lambda s: None, ui=UiContribution(mode="section", tabs=(UiTab("default", "Settings", "{tab}"),)){extra})
+MANIFEST = PluginManifest(id="{id}", name="{name}", version="{mversion}", host_api={mhost}, settings_model=Settings,
+                          factory=lambda s: None, provides={{CAPABILITY: Provide(version={mprov})}}, ui=UiContribution(mode="section", tabs=(UiTab("default", "Settings", "{tab}"),)){extra})
 '''
 
 
-def files(id="acme_inv", version="1.0.0", *, name="Acme inventory", kind="filament_inventory", host_api=1, pkg=None,
+def files(id="acme_inv", version="1.0.0", *, name="Acme inventory", provides='["inventory.filament@1"]', mprov=1, host_api=1, pkg=None,
           mversion=None, mhost=None, tab="default", extra="", code=None, toml=None) -> dict[str, str]:
     pkg = pkg or id
     return {
-        "themis-plugin.toml": toml if toml is not None else TOML.format(id=id, name=name, version=version, kind=kind, host_api=host_api, pkg=pkg),
-        f"{pkg}/__init__.py": code if code is not None else CODE.format(id=id, name=name, mversion=mversion or version,
+        "themis-plugin.toml": toml if toml is not None else TOML.format(id=id, name=name, version=version, provides=provides, host_api=host_api, pkg=pkg),
+        f"{pkg}/__init__.py": code if code is not None else CODE.format(id=id, name=name, mversion=mversion or version, mprov=mprov,
                                                                         mhost=mhost if mhost is not None else host_api, tab=tab, extra=extra),
         "README.md": "# plugin\n",
     }

@@ -58,7 +58,7 @@ async def test_material_management_needs_manage_materials(client, method, path, 
     await use_provider(FakeInventoryProvider())                               # reads and weights, but no library
     resp = await client.request(method, BASE + path, json=body)
     assert resp.status_code == 409
-    assert resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory", "capability": MANAGE_MATERIALS}
+    assert resp.json() == {"error": "capability_unavailable", "capability": "inventory.filament", "feature": MANAGE_MATERIALS}
 
 
 @pytest.mark.parametrize("method, path, body", [

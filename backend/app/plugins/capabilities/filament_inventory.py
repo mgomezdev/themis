@@ -15,7 +15,6 @@ from typing import ClassVar
 from .definition import CapabilityDef
 
 CAPABILITY = "inventory.filament"
-KIND = "filament_inventory"   # legacy kind string, transitional: removed in Task 4
 
 TRACKS_WEIGHT = "TRACKS_WEIGHT"            # spools report a remaining weight
 WRITE_WEIGHT = "WRITE_WEIGHT"              # set_remaining() works

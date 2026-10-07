@@ -27,8 +27,8 @@ async def _tables(conn) -> set[str]:
 
 async def test_creates_both_tables_and_the_plugin_id_is_unique(migrated):
     assert {"installed_plugins", "audit_log"} <= await _tables(migrated)
-    ins = text("INSERT INTO installed_plugins (plugin_id, version, name, kind, source, archive_sha256, installed_at, status) "
-               "VALUES ('acme_inv', '1.0.0', 'A', 'k', 'upload', 'x', 't', 'pending_restart')")
+    ins = text("INSERT INTO installed_plugins (plugin_id, version, name, source, archive_sha256, installed_at, status) "
+               "VALUES ('acme_inv', '1.0.0', 'A', 'upload', 'x', 't', 'pending_restart')")
     await migrated.execute(ins)
     with pytest.raises(IntegrityError, match="UNIQUE"):
         await migrated.execute(ins)
