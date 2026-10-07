@@ -588,12 +588,14 @@ class PluginConfig(Base):
     updated_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
 
 
-class ExtensionSlot(Base):
-    """Which plugin fills a single-provider kind. A provider is *active* iff the slot names it AND it is enabled."""
-    __tablename__ = "extension_slots"
+class CapabilitySelection(Base):
+    """Which plugin serves a capability. `explicit` = the user chose (including "None"); False = auto-selected because it was
+    the only enabled provider. A provider is *active* iff the row names it AND it is enabled AND its requirements are met."""
+    __tablename__ = "capability_selections"
 
-    kind: Mapped[str] = mapped_column(String(64), primary_key=True)
+    capability: Mapped[str] = mapped_column(String(96), primary_key=True)
     plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    explicit: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class PluginSchemaVersion(Base):
@@ -614,7 +616,6 @@ class InstalledPlugin(Base):
     plugin_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     version: Mapped[str] = mapped_column(String(64))
     name: Mapped[str] = mapped_column(String(200), default="")
-    kind: Mapped[str] = mapped_column(String(64), default="")
     publisher: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     source: Mapped[str] = mapped_column(String(16))                       # upload | github
     source_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
