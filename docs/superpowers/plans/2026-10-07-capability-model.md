@@ -39,15 +39,9 @@ Failure modes the spec implies that no single task's happy path covers (each has
 
 ## Preconditions (do before Task 1)
 
-- [ ] **P1: Base the work on the unmerged plugin-docs/Windows-fix commits.** This branch was cut from `develop`, but the docs guide + sample (`docs/plugin development/`, commit `9894aa3`) and the Windows installer fix (`267ac6d`, makes 22 installer tests pass on Windows) live only on `feature/fix-plugin-dryrun-windows-env` (unpushed, unmerged). Tasks 2, 4 and 9 depend on them.
+- [ ] **P1: Base is `develop`, as-is** (user decision). `feature/capability-model` was cut from `develop`; do NOT merge `feature/fix-plugin-dryrun-windows-env`. Consequences: (a) the docs guide + sample plugin (`docs/plugin development/`) do not exist on this base, so Task 9 only updates the docs that do exist and does not create a guide or sample; (b) the installer dry-run subprocess lacks the `SYSTEMROOT` fix, so on Windows the ~22 installer tests that spawn the dry-run (in `tests/plugins/test_installer.py` / `test_plugin_install_routes.py`) fail on `develop` already. Treat those as the known baseline: record the exact failing test ids in P2 and require only that the set does not grow. (They pass on Linux CI.)
 
-```bash
-git merge --no-ff feature/fix-plugin-dryrun-windows-env -m "Merge feature/fix-plugin-dryrun-windows-env into capability-model branch"
-```
-
-Expected: clean merge (only that branch's 4 commits). If the user prefers a different base (e.g. wait for that branch's PR to land in `develop`), stop and ask.
-
-- [ ] **P2: Baseline.** From `backend/` with the venv active: `pytest -q -x -p no:cacheprovider` -> all pass (about 2383). From `frontend/`: `npx vitest run` -> about 978 pass. Record the counts; they are the regression baseline.
+- [ ] **P2: Baseline.** From `backend/` with the venv active: `pytest -q -p no:cacheprovider` and save the list of failing test ids (`pytest -q -rf | grep ^FAILED | sort > ../baseline-failures.txt`, outside the repo or gitignored). Expect about 2383 passing plus the Windows-only installer failures from P1. From `frontend/`: `npx vitest run` -> about 978 pass. These are the regression baselines; "green" in later tasks means "no failures beyond the recorded set".
 
 ---
 
@@ -69,7 +63,7 @@ Expected: clean merge (only that branch's 4 commits). If the user prefers a diff
 
 **Frontend modify:** `api/{plugins,inventory}.ts`, `components/{PluginSettingsPage,PluginInstallDialog}.tsx`, `screens/{FilamentInventoryPage,SettingsScreen,PluginsPage}.tsx`, `test/inventoryFixtures.ts`, and the tests the grep in Task 7 lists.
 
-**Docs:** `docs/plugin development/{README.md,sample/acme_inventory/**}`, `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`.
+**Docs:** `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`.
 
 **Test cadence note:** Tasks 2-4 change the plugin API shape underneath the host and core. Between them, run only the scoped tests named in each task. The full backend suite is green again at the end of Task 5; the full frontend suite at the end of Task 8. Commit on the feature branch after each task regardless.
 
@@ -1384,33 +1378,34 @@ describe('CapabilitiesPage', () => {
 
 ---
 
-### Task 9: Sample plugin, docs, guards, regeneration
+### Task 9: Docs, guards, regeneration
+
+(No guide or sample plugin exists on this base - see P1. Cover the capability model in the docs that do exist.)
 
 **Files:**
-- Modify: `docs/plugin development/sample/acme_inventory/{themis-plugin.toml,acme_inventory/__init__.py,acme_inventory/provider.py,acme_inventory/routes.py}`, `docs/plugin development/README.md`, `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`, `CLAUDE.md` (the "Slicing & inventory providers" paragraph: kinds -> capabilities; the Database list: `extension_slots` -> `capability_selections`; migrations `v001-v039` -> `v001-v040`), `openapi.json`
-- Create: `backend/tests/plugins/test_sample_plugin.py` (the sample is "tested" - the guide says so; check how: `grep -rn "acme_inventory" backend/tests`; if the guide's test lives elsewhere, extend it instead)
+- Modify: `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`, `CLAUDE.md` ("Slicing & inventory providers" paragraph: kinds -> capabilities, `plugins/kinds/` -> `plugins/capabilities/`; Database list: `extension_slots` -> `capability_selections`; migrations `v001-v039` -> `v001-v040`), `openapi.json`
+- Modify (if the ratchet requires): `backend/tests/test_no_provider_in_core.py`
 
-- [ ] **Step 1: Failing test.** `test_sample_plugin.py` loads the sample from `docs/plugin development/sample/acme_inventory` via `loader._load_one`-style import (put the dir on `sys.path`, import `acme_inventory.MANIFEST`), runs `check_matches(read_toml(dir), MANIFEST)`, asserts `MANIFEST.provides` contains `inventory.filament` **and** `acme_inventory.notes`, `MANIFEST.defines[0].id == "acme_inventory.notes"` with `required_methods == ("add_note", "list_notes")`, `MANIFEST.requires == ()` and `optional` lists `inventory.filament`... Decide the demo shape here: the sample provides `inventory.filament` (as today), **defines** `acme_inventory.notes` (spool notes; methods `list_notes`, `add_note`; served by `instance.notes` via `Provide(attr="notes", routers=(router,))`), and **requires** `inventory.filament@1` is NOT used (a plugin cannot require what it provides); instead add a short second sample module note in the README showing a consumer manifest with `requires=(Requirement("acme_inventory.notes"),)` (code block only, covered by a unit test in the same file that builds that manifest and checks the host reports "waiting" until the sample is selected).
-
-- [ ] **Step 2: Run to verify failure** `pytest tests/plugins/test_sample_plugin.py -v` -> FAIL.
-
-- [ ] **Step 3: Implement.** Sample `__init__.py`: remove `kind`/`capabilities`; add
-```python
-from app.plugins.capabilities.filament_inventory import CAPABILITY
-from app.plugins import CapabilityDef, Provide
-NOTES = "acme_inventory.notes"
-...
-    provides={CAPABILITY: Provide(version=1, features=AcmeProvider.capabilities),
-              NOTES: Provide(version=1, attr="notes", routers=(router,))},
-    defines=(CapabilityDef(NOTES, 1, "Spool notes", "Free-text notes attached to a spool ref.",
-                           required_methods=("list_notes", "add_note")),),
+- [ ] **Step 1: Find every stale statement.** From the repo root:
+```bash
+grep -rn "kind\b\|extension_slots\|extension-slots\|slot\b\|plugins_of_kind\|plugins/kinds\|useActivePlugin\|set_slot" docs/plugins.md docs/provider-interfaces.md docs/agent CLAUDE.md
 ```
-  (export `CapabilityDef` from `app/plugins/__init__.py`'s `__all__` too - small addition in this task.) `AcmeProvider.notes` returns a small `Notes` object with `async list_notes()`/`async add_note(spool_ref, note)` using the plugin's table through `app.database` session factory. Toml: drop `kind`, add `provides = ["inventory.filament@1", "acme_inventory.notes@1"]`, `defines = ["acme_inventory.notes"]`. README rewrite (sections 1, 2, 3, 4, 5, 6 and the checklist): replace the "kind" mental model with capabilities (definition, provide, require/optional, define, selection and auto-select rules, waiting state, dormant), update both sequence diagrams (`extension_slots` -> `capability_selections`, `set_slot` -> `set_provider`, `active(kind)` -> `active(cap)`), document `/api/v1/capabilities/...` dispatch, and the duck-typing contract. `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/*.md`: apply the same terminology (use `grep -n "kind\|slot\|extension" <file>` to find every spot; each hit is either rewritten or confirmed unrelated, e.g. `artifact_kind`).
-  Guards: `tests/test_no_provider_in_core.py` allowlist unchanged unless a moved file now mentions Spoolman/Local inventory; fix per its ratchet rule (an allowlisted file that no longer mentions it must be removed from the list).
+Each hit is rewritten or confirmed unrelated (e.g. `artifact_kind`, printer "slots"). Record unrelated ones mentally; do not edit them.
 
-- [ ] **Step 4: Verify** `pytest tests/plugins/test_sample_plugin.py -v` PASS; then `python scripts/export_openapi.py` (repo root) and `git diff --stat openapi.json` shows only the capabilities/plugins changes; `grep -rn "extension_slots\|extension-slots\|plugins_of_kind\|\bset_slot\b\|useActivePlugin\|setExtensionSlot" backend/app frontend/src docs "docs/plugin development" CLAUDE.md` returns only historical references in `docs/superpowers/` and migrations v034/v035/v040.
+- [ ] **Step 2: Rewrite.** Content requirements:
+  - `docs/plugins.md`: capability concept (named, versioned contract; one provider per capability; features), manifest fields `provides/requires/optional/defines`, toml keys (`provides = ["cap@N"]` etc.), selection rules (auto-select only when exactly one enabled provider and no stored row; never displaced; explicit None remembered), "waiting on" state, dormant selections, REST (`/api/v1/plugins/<id>/...` and `/api/v1/capabilities/<cap>/...`, 409 `capability_unavailable`), `GET /capabilities` / `PUT /capabilities/{cap}/provider`, the Settings -> Capabilities page, duck-typed plugin-defined contracts (`required_methods`, checked when the instance is built), and that installed plugins keep the `default`/`schema`-tab-only and no-`alias_routers` limits. Note `host_api` stays 1 and there is no `kind`.
+  - `docs/provider-interfaces.md`: the inventory section names the capability `inventory.filament` v1 and the module `app/plugins/capabilities/filament_inventory.py`.
+  - `docs/agent/backend.md`: plugin host API (`active/has/part/call/selected/set_provider/status`), the v040 table, the new route modules; `docs/agent/data-model.md`: `capability_selections` replaces `extension_slots`, `installed_plugins` loses `kind`, migration list to v040; `docs/agent/frontend.md`: `useCapabilityProvider` / `useFeature` / `setCapabilityProvider`, the Capabilities page.
 
-- [ ] **Step 5: Commit** `docs(plugins): capability model in the guide, sample and agent docs`
+- [ ] **Step 3: Guards.** Run `pytest tests/test_no_provider_in_core.py tests/test_provider_boundary.py -v`. If a moved/renamed file now mentions Spoolman or Local inventory outside the allowlist, or an allowlisted file no longer mentions it, fix the allowlist per the ratchet rule in that file (it only ever shrinks).
+
+- [ ] **Step 4: Regenerate and verify.** `python scripts/export_openapi.py` (repo root) and `git diff --stat openapi.json` shows only capabilities/plugins changes; then
+```bash
+grep -rn "extension_slots\|extension-slots\|plugins_of_kind\|\bset_slot\b\|useActivePlugin\|setExtensionSlot\|plugins/kinds" backend/app frontend/src docs CLAUDE.md
+```
+returns only historical references (`docs/superpowers/`, migrations v034/v035/v040, the v040 tests).
+
+- [ ] **Step 5: Commit** `docs(plugins): capability model in plugin docs and agent references`
 
 ---
 
@@ -1428,7 +1423,7 @@ NOTES = "acme_inventory.notes"
 
 ## Self-Review
 
-**Spec coverage:** §1 capability model -> Tasks 1, 2 (defs, `defines`, prefix rule, catalog, `Provide`), required-method check -> Task 3 (`_check_contract`; *clarification of the spec*: it runs when the instance is built, because duck-typing needs an instance); §2 manifest/toml -> Task 2 (+ installer in Task 4); §3 host/selection/migration -> Task 3; §4 REST list/PUT/dispatcher -> Tasks 5, 6 (spike gate in Task 6 Step 1); §5 UI -> Tasks 7, 8; §6 refactor/docs -> Tasks 4, 9; §7 testing -> inside each task, regeneration in Tasks 5, 9; §8 delivery -> Preconditions + Task 10. Spec says "regenerate `contracts/response-keys.json`": the file has no plugin/capability keys today (`grep -n plugin contracts/response-keys.json` is empty), so no entries are added; nothing else to regenerate.
+**Spec coverage:** §1 capability model -> Tasks 1, 2 (defs, `defines`, prefix rule, catalog, `Provide`), required-method check -> Task 3 (`_check_contract`; *clarification of the spec*: it runs when the instance is built, because duck-typing needs an instance); §2 manifest/toml -> Task 2 (+ installer in Task 4); §3 host/selection/migration -> Task 3; §4 REST list/PUT/dispatcher -> Tasks 5, 6 (spike gate in Task 6 Step 1); §5 UI -> Tasks 7, 8; §6 refactor/docs -> Tasks 4, 9 (the guide + sample are out of scope: not on `develop`, see P1 and the spec's Out of scope); §7 testing -> inside each task, regeneration in Tasks 5, 9; §8 delivery -> Preconditions + Task 10. Spec says "regenerate `contracts/response-keys.json`": the file has no plugin/capability keys today (`grep -n plugin contracts/response-keys.json` is empty), so no entries are added; nothing else to regenerate.
 
 **Placeholder scan:** all test bodies are written out; remaining `...` are excerpts of existing files ("keep the rest"). The `test_capability_routes_*`/Task 5 list items not shown in full are one-assertion HTTP checks fully specified by their JSON contracts above. No TBD/TODO.
 

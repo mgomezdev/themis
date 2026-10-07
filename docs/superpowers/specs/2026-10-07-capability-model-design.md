@@ -67,9 +67,9 @@ and lets the user pick which plugin serves each one when providers overlap.
 
 ### 6. Refactor and docs
 - Bundled `spoolman` and `local_inventory` become `provides={"inventory.filament": ...}`.
-- The docs sample (`docs/plugin development/sample/acme_inventory/`) is refactored the same way and gains a second capability
-  demonstrating `defines` and `requires`.
-- Update `docs/plugin development/README.md`, `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`.
+- The docs guide and sample plugin (`docs/plugin development/`) live on an unmerged branch and are out of scope here; they get
+  refactored to capabilities when that branch lands.
+- Update `docs/plugins.md`, `docs/provider-interfaces.md`, `docs/agent/{backend,data-model,frontend}.md`.
 
 ### 7. Testing
 Every behavior change gets a test that fails without it. Cover: host selection, auto-select, dependency and cycle rules; the v040 migration
@@ -91,4 +91,5 @@ router mounting, `models.py` (`ExtensionSlot`), migrations v034/v035. Frontend: 
 ## Out of scope
 - Backward compatibility with `kind` manifests or `host_api` bumps.
 - Multiple simultaneous providers for one capability.
+- The plugin development guide + sample (not on `develop`; update when that branch lands).
 - The BIZ-202 manual verification checklist (re-run after this lands).
