@@ -7,7 +7,8 @@ import types
 from pydantic import BaseModel
 
 from app.plugins import PluginManifest, UiContribution, UiTab
-from app.plugins.manifest import HOST_API
+from app.plugins.capabilities.definition import CapabilityDef
+from app.plugins.manifest import HOST_API, Provide
 
 
 class DummySettings(BaseModel):
@@ -53,9 +54,14 @@ def migration(version: int, sql_up: str, sql_down: str, name: str = "m"):
     return mod
 
 
-def make_manifest(plugin_id: str = "dummy_one", kind: str = "dummy_kind", capabilities=frozenset({"PING"}), **over) -> PluginManifest:
-    fields = dict(id=plugin_id, name="Dummy", kind=kind, version="1.0.0", host_api=HOST_API,
-                  settings_model=DummySettings, factory=DummyProvider, capabilities=capabilities,
+def make_manifest(plugin_id: str = "dummy_one", cap: str | None = None, features=frozenset({"PING"}), **over) -> PluginManifest:
+    """A manifest providing (and, when the id prefix fits, defining) `cap` (default `<plugin_id>.ping`)."""
+    cap = cap or f"{plugin_id}.ping"
+    own = cap.startswith(f"{plugin_id}.")
+    fields = dict(id=plugin_id, name="Dummy", version="1.0.0", host_api=HOST_API,
+                  settings_model=DummySettings, factory=DummyProvider,
+                  provides={cap: Provide(features=frozenset(features))},
+                  defines=(CapabilityDef(cap, 1, "Dummy ping", required_methods=("ping",)),) if own else (),
                   secret_fields=frozenset({"token"}),
                   ui=UiContribution(mode="page", nav_label="Dummy", tabs=(UiTab("main", "Main"),)))
     fields.update(over)

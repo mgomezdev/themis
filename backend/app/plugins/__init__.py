@@ -1,16 +1,17 @@
 """Plugin registry: a plain dict filled at startup from bundled plugins (and, later, installed ones).
 
 Core never imports a specific plugin; it asks the host (`plugins.host.plugin_host`) for the active provider of a
-kind. See docs/agent/backend.md and the design spec (Linear, BIZ-202)."""
+capability. See docs/agent/backend.md and the design spec (Linear, BIZ-202)."""
 from __future__ import annotations
 
 import importlib
 import importlib.util
 
-from .manifest import HOST_API, PluginError, PluginManifest, UiContribution, UiTab
+from .capabilities.definition import CapabilityDef
+from .manifest import HOST_API, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
 
-__all__ = ["HOST_API", "PluginError", "PluginManifest", "UiContribution", "UiTab", "register_plugin", "get_plugin",
-           "plugins_of_kind", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
+__all__ = ["HOST_API", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
+           "register_plugin", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:
     """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `capabilities`, the contracts). They
@@ -37,8 +38,23 @@ def get_plugin(plugin_id: str) -> PluginManifest | None:
     return _REGISTRY.get(plugin_id)
 
 
-def plugins_of_kind(kind: str) -> list[PluginManifest]:
-    return sorted((m for m in _REGISTRY.values() if m.kind == kind), key=lambda m: m.id)
+def providers_of(cap_id: str) -> list[PluginManifest]:
+    return sorted((m for m in _REGISTRY.values() if cap_id in m.provides), key=lambda m: m.id)
+
+
+def capability_catalog() -> dict[str, CapabilityDef]:
+    """Core definitions plus the `defines` of every registered plugin."""
+    from .capabilities import CORE
+    out = dict(CORE)
+    for m in _REGISTRY.values():
+        for d in m.defines:
+            out[d.id] = d
+    return out
+
+
+def definer_of(cap_id: str) -> str | None:
+    """The plugin that defines `cap_id`, or None for a core (or unknown) capability."""
+    return next((m.id for m in _REGISTRY.values() if any(d.id == cap_id for d in m.defines)), None)
 
 
 def registered_plugins() -> list[PluginManifest]:

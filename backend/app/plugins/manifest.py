@@ -11,6 +11,9 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from .capabilities import CORE
+from .capabilities.definition import CAP_ID_RE, CapabilityDef
+
 HOST_API = 1
 ID_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
 RENDERERS = ("default", "schema", "component")
@@ -40,15 +43,45 @@ class UiContribution:
 
 
 @dataclass(frozen=True)
+class Provide:
+    """How a plugin serves one capability. `attr` names the attribute of the plugin's instance that serves it (None = the
+    instance itself); `features` are the capability's feature flags this provider supports; `routers` are mounted under
+    /api/v1/plugins/{id}/... AND dispatched at /api/v1/capabilities/{cap}/... to whichever plugin is active."""
+    version: int = 1
+    attr: str | None = None
+    features: frozenset[str] = frozenset()
+    routers: tuple[APIRouter, ...] = ()
+
+
+@dataclass(frozen=True)
+class Requirement:
+    capability: str
+    min_version: int = 1
+
+    @classmethod
+    def parse(cls, text: str) -> "Requirement":
+        cap, _, ver = text.partition("@")
+        if not CAP_ID_RE.match(cap):
+            raise PluginError(f"{text!r}: not a capability id")
+        if "@" in text:
+            if not ver.isdigit() or int(ver) < 1:
+                raise PluginError(f"{text!r}: the minimum version after '@' must be a positive integer")
+            return cls(cap, int(ver))
+        return cls(cap, 1)
+
+
+@dataclass(frozen=True)
 class PluginManifest:
     id: str                                   # stable, persisted, never renamed
     name: str
-    kind: str                                 # e.g. "filament_inventory"
     version: str
     host_api: int
     settings_model: type[BaseModel]           # validation + generated settings form (JSON schema)
     factory: Callable[[BaseModel], Any]       # settings -> provider instance
-    capabilities: frozenset[str] = frozenset()
+    provides: dict[str, Provide] = field(default_factory=dict)       # capability id -> how this plugin serves it
+    requires: tuple[Requirement, ...] = ()                            # unmet => the plugin waits and offers nothing
+    optional: tuple[Requirement, ...] = ()                            # resolved at call time
+    defines: tuple[CapabilityDef, ...] = ()                           # capabilities this plugin introduces (ids start "<id>.")
     secret_fields: frozenset[str] = frozenset()   # write-only; never returned by any API
     ui: UiContribution = field(default_factory=UiContribution)
     # `schema` tabs: tab id -> the JSON the frontend renders (forms and tables over the plugin's own routes); None = no such tab
@@ -76,6 +109,23 @@ class PluginManifest:
                 raise PluginError(f"plugin {self.id!r}: tab {tab.id!r} has unknown renderer {tab.renderer!r}")
             if tab.renderer == "schema" and self.ui_schema is None:
                 raise PluginError(f"plugin {self.id!r}: schema tab {tab.id!r} needs a ui_schema provider")
+        for cap, p in self.provides.items():
+            if not CAP_ID_RE.match(cap):
+                raise PluginError(f"plugin {self.id!r}: provides {cap!r}, which is not a capability id")
+            if p.version < 1:
+                raise PluginError(f"plugin {self.id!r}: provides {cap!r} with version {p.version}; versions start at 1")
+        seen: set[str] = set()
+        for d in self.defines:
+            if d.id in CORE:
+                raise PluginError(f"plugin {self.id!r}: cannot redefine the core capability {d.id!r}")
+            if not d.id.startswith(f"{self.id}."):
+                raise PluginError(f"plugin {self.id!r}: defined capability {d.id!r} must start with '{self.id}.'")
+            if not CAP_ID_RE.match(d.id) or d.version < 1 or d.id in seen:
+                raise PluginError(f"plugin {self.id!r}: bad or duplicate defined capability {d.id!r}")
+            seen.add(d.id)
+        for r in (*self.requires, *self.optional):
+            if r.capability in self.provides:
+                raise PluginError(f"plugin {self.id!r}: lists {r.capability!r} as required or optional, which it provides itself")
         for mod in self.migrations:
             for attr in ("version", "name", "up", "down"):
                 if not hasattr(mod, attr):
