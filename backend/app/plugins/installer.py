@@ -315,6 +315,8 @@ def dry_run(root: Path, t: PluginToml) -> dict:
     scratch.mkdir(exist_ok=True)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
            "THEMIS_DATA_DIR": str(scratch), "HOME": str(scratch), "PYTHONDONTWRITEBYTECODE": "1"}
+    if os.name == "nt":                                                    # Winsock (asyncio) won't initialise without it
+        env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
     try:
         proc = subprocess.run([sys.executable, "-P", "-c", _DRYRUN, str(root), str(root / "vendor"), t.module, t.attr],
                               capture_output=True, text=True, timeout=DRYRUN_TIMEOUT_S, env=env, cwd=scratch)
