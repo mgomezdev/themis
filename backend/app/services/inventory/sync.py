@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...plugins.host import plugin_host
-from ...plugins.kinds.filament_inventory import KIND, REMOTE, TRACKS_WEIGHT, InventoryProviderError
+from ...plugins.capabilities.filament_inventory import KIND, REMOTE, TRACKS_WEIGHT, InventoryProviderError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 

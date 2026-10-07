@@ -11,7 +11,7 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from app.plugins.kinds.filament_inventory import (
+from app.plugins.capabilities.filament_inventory import (
     ALL_CAPABILITIES, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
     WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft, NotSupported, SpoolDraft,
 )

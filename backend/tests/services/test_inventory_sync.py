@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import REMOTE, TRACKS_WEIGHT, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT, InventoryProviderError
 from app.services.inventory import provider as inventory_provider, sync as inventory_sync
 from app.services.inventory.sync import InventorySyncLoop, record_sync, status
 from tests.fake_providers import FakeInventoryProvider

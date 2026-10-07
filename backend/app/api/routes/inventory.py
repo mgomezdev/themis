@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...plugins.kinds.filament_inventory import (
+from ...plugins.capabilities.filament_inventory import (
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     InventoryProviderError, InvMaterial, InvSpool, MaterialDraft, NotSupported, SpoolDraft,
 )

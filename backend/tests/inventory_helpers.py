@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from app import plugins
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import KIND, InvMaterial, InvSpool
+from app.plugins.capabilities.filament_inventory import KIND, InvMaterial, InvSpool
 from app.plugins.manifest import HOST_API, PluginManifest
 from pydantic import BaseModel
 

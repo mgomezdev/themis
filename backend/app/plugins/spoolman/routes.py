@@ -19,7 +19,7 @@ from ...services.inventory import config as inventory_config, provider as invent
 from ...services.inventory import sync as inventory_sync
 from ..host import plugin_host
 from ..manifest import PluginError
-from ..kinds.filament_inventory import KIND, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, InventoryProviderError
+from ..capabilities.filament_inventory import KIND, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, InventoryProviderError
 
 router = APIRouter(prefix="/api/v1/spoolman", tags=["spoolman"])
 settings_router = APIRouter(prefix="/api/v1/settings/spoolman", tags=["settings"])

@@ -16,7 +16,7 @@ publisher = "Acme"
 
 CODE = '''from pydantic import BaseModel
 from app.plugins import PluginManifest, UiContribution, UiTab
-from app.plugins.kinds.filament_inventory import KIND
+from app.plugins.capabilities.filament_inventory import KIND
 
 
 class Settings(BaseModel):

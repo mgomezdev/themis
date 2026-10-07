@@ -12,7 +12,7 @@ from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
 from ...services.model_targets import target_dicts_by_job
-from ...plugins.kinds.filament_inventory import InvSpool
+from ...plugins.capabilities.filament_inventory import InvSpool
 from ...services.inventory import read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 

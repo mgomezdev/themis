@@ -1,4 +1,4 @@
-from app.plugins.kinds.filament_inventory import InvMaterial, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import InvMaterial, InventoryProviderError
 from tests.catalog_helpers import cached_raw, prime_catalog
 from tests.fake_providers import FakeInventoryProvider
 from app.services import catalog_service

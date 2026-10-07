@@ -11,7 +11,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...services import catalog_service
 from ...services.catalog_service import CatalogUnavailable
-from ...plugins.kinds.filament_inventory import PROFILE_LINKS_READ, PROFILE_LINKS_WRITE
+from ...plugins.capabilities.filament_inventory import PROFILE_LINKS_READ, PROFILE_LINKS_WRITE
 from ...services.inventory import provider as inventory_provider
 from ...services.providers.slicing import Catalog
 

@@ -6,7 +6,7 @@ import httpx
 import pytest
 from httpx import AsyncClient
 
-from app.plugins.kinds.filament_inventory import InvMaterial, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import InvMaterial, InventoryProviderError
 from tests import spoolman_mock
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import use_provider

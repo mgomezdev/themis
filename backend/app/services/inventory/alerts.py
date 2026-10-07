@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...models import NotificationConfig, WebhookConfig
-from ...plugins.kinds.filament_inventory import InvSpool
+from ...plugins.capabilities.filament_inventory import InvSpool
 from .. import notification_service, webhook_service
 from . import config as inv_config
 

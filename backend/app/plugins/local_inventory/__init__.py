@@ -2,7 +2,7 @@
 database (plugin-owned `local_inv_*` tables). An ordinary plugin: nothing in core knows it (spec §3.6, D3/D7/D8)."""
 from __future__ import annotations
 
-from ..kinds.filament_inventory import KIND
+from ..capabilities.filament_inventory import KIND
 from ..manifest import HOST_API, PluginManifest, UiContribution, UiTab
 from .migrations import v001_tables
 from .provider import LocalInventoryProvider

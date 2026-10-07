@@ -1,7 +1,7 @@
 """The Spoolman plugin: a `filament_inventory` provider (bundled; spec §3.9 D9 — it owns every Spoolman call)."""
 from __future__ import annotations
 
-from ..kinds.filament_inventory import KIND
+from ..capabilities.filament_inventory import KIND
 from ..manifest import HOST_API, PluginManifest, UiContribution, UiTab
 from .provider import SpoolmanProvider
 from .routes import router as alias_router, settings_router as alias_settings_router

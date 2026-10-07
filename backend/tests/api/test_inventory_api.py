@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from app.auth import SCOPES
 from app.main import app
 from app.models import ApiKey, InventoryConfig
-from app.plugins.kinds.filament_inventory import (
+from app.plugins.capabilities.filament_inventory import (
     LABEL_SCAN, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT, InvMaterial,
 )
 from app.services.api_key_service import generate_key, hash_key

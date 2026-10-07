@@ -13,11 +13,11 @@ __all__ = ["HOST_API", "PluginError", "PluginManifest", "UiContribution", "UiTab
            "plugins_of_kind", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:
-    """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `kinds`, the contracts). They
+    """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `capabilities`, the contracts). They
     ship in the image and cannot be uninstalled. Discovery by directory keeps this module from naming any plugin."""
     import pkgutil
     return tuple(f"{__name__}.{m.name}" for m in pkgutil.iter_modules(__path__)
-                 if m.ispkg and not m.name.startswith("_") and m.name != "kinds")
+                 if m.ispkg and not m.name.startswith("_") and m.name != "capabilities")
 
 
 # Modules (dotted paths) that export `MANIFEST`.

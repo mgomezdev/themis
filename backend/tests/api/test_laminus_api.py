@@ -2,7 +2,7 @@
 from tests.catalog_helpers import catalog_from_dict, cached_raw, prime_catalog
 from app.services import catalog_service
 from app.services.providers.slicing import SlicingProviderError
-from app.plugins.kinds.filament_inventory import InvMaterial
+from app.plugins.capabilities.filament_inventory import InvMaterial
 from tests.fake_providers import FakeInventoryProvider, FakeSlicingProvider
 from tests.inventory_helpers import use_provider
 import json

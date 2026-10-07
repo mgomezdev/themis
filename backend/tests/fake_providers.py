@@ -1,7 +1,7 @@
 """In-memory provider fakes for tests that need to swap a provider without touching HTTP."""
 from __future__ import annotations
 
-from app.plugins.kinds.filament_inventory import (
+from app.plugins.capabilities.filament_inventory import (
     ALL_CAPABILITIES,
     FilamentInventoryProvider,
     InventoryProviderError,
@@ -199,7 +199,7 @@ def fake_packer(packed: bytes) -> FakeSlicingProvider:
 
 # ---- a provider that owns its library (what Local inventory is) ----
 
-from app.plugins.kinds.filament_inventory import (  # noqa: E402
+from app.plugins.capabilities.filament_inventory import (  # noqa: E402
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, MATERIAL_FIELDS, SPOOL_FIELDS, MaterialDraft, SpoolDraft,
 )
 

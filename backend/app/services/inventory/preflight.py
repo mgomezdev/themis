@@ -2,7 +2,7 @@
 `InvSpool` from the active provider) and the needed-grams figure."""
 from __future__ import annotations
 
-from ...plugins.kinds.filament_inventory import InvSpool
+from ...plugins.capabilities.filament_inventory import InvSpool
 
 
 def _spool_label(spool: InvSpool) -> str:

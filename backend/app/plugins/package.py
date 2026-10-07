@@ -7,7 +7,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from .kinds.filament_inventory import KIND as FILAMENT_INVENTORY
+from .capabilities.filament_inventory import KIND as FILAMENT_INVENTORY
 from .manifest import HOST_API, ID_RE, PluginError, PluginManifest
 
 TOML_NAME = "themis-plugin.toml"

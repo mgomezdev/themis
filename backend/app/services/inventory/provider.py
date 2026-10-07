@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from ...plugins.host import CallResult, plugin_host
-from ...plugins.kinds.filament_inventory import KIND, FilamentInventoryProvider
+from ...plugins.capabilities.filament_inventory import KIND, FilamentInventoryProvider
 
 logger = logging.getLogger("app")
 

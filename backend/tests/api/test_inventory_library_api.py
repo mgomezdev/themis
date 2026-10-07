@@ -2,7 +2,7 @@
 capability-gated (409 for providers that do not own their library, e.g. Spoolman) and never provider-specific."""
 import pytest
 
-from app.plugins.kinds.filament_inventory import MANAGE_MATERIALS, MANAGE_SPOOLS, TRACKS_WEIGHT, WRITE_WEIGHT
+from app.plugins.capabilities.filament_inventory import MANAGE_MATERIALS, MANAGE_SPOOLS, TRACKS_WEIGHT, WRITE_WEIGHT
 from tests.api.test_inventory_api import _client_with
 from tests.fake_providers import FakeInventoryProvider, FakeLibraryProvider
 from tests.inventory_helpers import use_provider
@@ -141,7 +141,7 @@ async def test_a_failing_provider_is_a_503_never_a_500_on_every_write_path(clien
 
 
 async def test_provider_statuses_pass_through_only_for_404_409_422_everything_else_is_503(client, lib):
-    from app.plugins.kinds.filament_inventory import InventoryProviderError
+    from app.plugins.capabilities.filament_inventory import InventoryProviderError
     for status, expected in [(422, 422), (404, 404), (409, 409), (401, 503), (403, 503), (500, 503), (502, 503)]:
         lib.fail_with = InventoryProviderError(f"upstream said {status}", code=str(status), status=status)
         resp = await client.post(f"{BASE}/materials", json={"name": "x"})
@@ -153,7 +153,7 @@ async def test_provider_statuses_pass_through_only_for_404_409_422_everything_el
 
 
 async def test_a_provider_that_advertises_a_capability_but_refuses_the_call_is_a_409_capability_error(client, lib):
-    from app.plugins.kinds.filament_inventory import NotSupported
+    from app.plugins.capabilities.filament_inventory import NotSupported
     lib.fail_with = NotSupported(MANAGE_MATERIALS)
     resp = await client.post(f"{BASE}/materials", json={"name": "x"})
     assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory",

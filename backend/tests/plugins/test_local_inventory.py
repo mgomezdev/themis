@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.plugins import get_plugin
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import (
+from app.plugins.capabilities.filament_inventory import (
     KIND, REMOTE, InventoryProviderError, MaterialDraft, SpoolDraft,
 )
 from app.plugins.local_inventory import MANIFEST
