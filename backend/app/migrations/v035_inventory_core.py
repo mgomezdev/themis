@@ -67,6 +67,8 @@ async def up(conn) -> None:
                 if await _table_exists(conn, "extension_slots"):
                     await conn.execute(text("INSERT OR IGNORE INTO extension_slots (kind, plugin_id) VALUES ('filament_inventory', 'spoolman')"))
                 else:                                       # a re-run after v040 replaced the slot table
+                    await conn.execute(text("CREATE TABLE IF NOT EXISTS capability_selections (capability VARCHAR(96) PRIMARY KEY, "
+                                            "plugin_id VARCHAR(64), explicit BOOLEAN NOT NULL DEFAULT 0)"))     # (v040 down dropped it)
                     await conn.execute(text("INSERT OR IGNORE INTO capability_selections (capability, plugin_id, explicit) "
                                             "VALUES ('inventory.filament', 'spoolman', 1)"))
             overrides = {f"spoolman:{k}": float(v) for k, v in _loads(row["low_stock_overrides"], {}).items()}

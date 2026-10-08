@@ -57,3 +57,16 @@ async def test_down_only_removes_the_selection_table_and_up_restores_it(migrated
     assert "capability_selections" not in await _tables(migrated) and "extension_slots" not in await _tables(migrated)
     await v040_capability_selections.up(migrated)
     assert "capability_selections" in await _tables(migrated)
+
+
+async def test_rolling_back_past_v035_and_migrating_up_again_boots(tmp_path):
+    from app.migrations.runner import rollback_last
+    path = await build_v032_fixture_db(tmp_path / "v032.db")          # carries a Spoolman URL, so v035 selects spoolman
+    engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
+    async with engine.begin() as conn:
+        await run_migrations(conn)
+        for _ in range(6):                                              # v040 .. v035
+            await rollback_last(conn)
+        await run_migrations(conn)                                      # must not crash on the missing slot / selection tables
+        assert (await conn.execute(text("SELECT plugin_id FROM capability_selections WHERE capability='inventory.filament'"))).scalar() == "spoolman"
+    await engine.dispose()

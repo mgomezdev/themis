@@ -136,3 +136,11 @@ async def test_a_bundled_provider_is_reachable_through_its_capability(client):
     assert (await client.get("/api/v1/plugins/local_inventory/weight-log")).json() == via_capability.json()
     await plugin_host.set_provider("inventory.filament", None)
     assert (await client.get("/api/v1/capabilities/inventory.filament/weight-log")).status_code == 409
+
+
+async def test_the_dispatcher_needs_a_key_whether_or_not_a_provider_is_active(client, dispatch_plugins):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as anon:
+        assert (await anon.get(f"/api/v1/capabilities/{CAP}/echo")).status_code == 401          # nothing selected: no 409 for strangers
+        await plugin_host.set_provider(CAP, "dummy_one")
+        assert (await anon.get(f"/api/v1/capabilities/{CAP}/echo")).status_code == 401          # selected: still 401 up front
+        assert (await anon.get("/api/v1/capabilities/nope.nothing/x")).status_code == 401

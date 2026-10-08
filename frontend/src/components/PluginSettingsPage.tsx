@@ -81,7 +81,11 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   const save = () => run('Saved', () => updatePlugin(pluginId_, patchBody()));
   const setEnabled = (enabled: boolean) => run(enabled ? 'Enabled' : 'Disabled', () => updatePlugin(pluginId_, { enabled }));
-  const makeActive = (capability: string) => run('Selected as the active provider', async () => { await setCapabilityProvider(capability, pluginId_); refresh(); });
+  const makeActive = (capability: string) => run('Selected as the active provider', async () => {
+    await setCapabilityProvider(capability, pluginId_);
+    refresh();
+    return fetchPlugin(pluginId_);                    // the page reads its selection state from the detail: re-adopt it
+  });
 
   async function test() {
     setBusy(true); setTestMsg(null);

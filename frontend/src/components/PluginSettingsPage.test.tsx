@@ -193,4 +193,22 @@ describe('PluginSettingsPage', () => {
     expect(await screen.findByText('demo_inv.report: waiting on demo_inv.notes')).toBeTruthy();
     expect(screen.queryByTestId('inventory-panel')).toBeNull();
   });
+
+  it('after "Use", the page reflects the new selection without navigating away', async () => {
+    let selected = false;
+    const make = () => detail({ active: selected, provides: mkPlugin({ id: 'demo_inv', active: selected }).provides });
+    stubFetch(routes(detail({ active: false }), {
+      'GET /api/v1/plugins/demo_inv': () => make(),
+      'GET /api/v1/plugins': () => ({ plugins: [make()], selections: { 'inventory.filament': selected ? 'demo_inv' : 'someone_else' } }),
+      'PUT /api/v1/capabilities/inventory.filament/provider': () => { selected = true; return { capability: 'inventory.filament', plugin_id: 'demo_inv', explicit: true }; },
+    }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByText('Enabled, not selected')).toBeTruthy();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Use Demo inventory' }));
+
+    await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Active'));
+    expect(screen.queryByRole('button', { name: 'Use Demo inventory' })).toBeNull();
+    expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
+  });
 });

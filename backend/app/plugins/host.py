@@ -85,6 +85,7 @@ class PluginHost:
         self._configs: dict[str, _Snapshot] = {}
         self._instances: dict[str, Any] = {}
         self._build_errors: dict[str, str] = {}
+        self._rejected: dict[str, dict[str, str]] = {}     # plugin id -> {capability: why that provide entry was refused}
         self._fingerprints: dict[str, tuple] = {}
         # Async callbacks `(plugin_id)` run when a *running* plugin's settings/secrets change (its instance is replaced), so a
         # kind's services can drop anything derived from the old configuration (e.g. a cache of a different server's data).
@@ -140,6 +141,7 @@ class PluginHost:
             await self._close(self._instances.pop(plugin_id), plugin_id)
             self._fingerprints.pop(plugin_id, None)
         self._build_errors = {k: v for k, v in self._build_errors.items() if k in wanted}
+        self._rejected = {k: v for k, v in self._rejected.items() if k in wanted}
         for plugin_id in sorted(wanted):
             cfg = configs[plugin_id]
             fingerprint = (repr(sorted(cfg.settings.items())), repr(sorted(cfg.secrets.items())),
@@ -184,22 +186,25 @@ class PluginHost:
         return tuple(out)
 
     @staticmethod
-    def _check_contract(manifest: PluginManifest, instance: Any) -> None:
-        """Duck-typing check for what the instance serves: the named part exists, the contract version matches the definition
-        and the definition's required async methods are there."""
-        catalog = capability_catalog()
+    def _check_contract(manifest: PluginManifest, instance: Any) -> dict[str, str]:
+        """Duck-typing check per provide entry: the named part exists, the contract version matches the definition and the
+        definition's required async methods are there. Returns {capability: reason} for the entries that fail; the others keep
+        working (a plugin serving several capabilities is not taken down by one bad entry)."""
+        catalog, rejected = capability_catalog(), {}
         for cap, prov in manifest.provides.items():
             d = catalog.get(cap)
             part = _part_of(instance, prov)
             if part is None:
-                raise PluginError(f"provides {cap} through attribute {prov.attr!r}, which the instance does not have")
-            if d is None:
+                rejected[cap] = f"provides {cap} through attribute {prov.attr!r}, which the instance does not have"
+            elif d is None:
                 continue                                    # definer not registered: nothing to verify yet
-            if d.version != prov.version:
-                raise PluginError(f"provides {cap} v{prov.version} but this Themis knows v{d.version}")
-            missing = [n for n in d.required_methods if not inspect.iscoroutinefunction(getattr(part, n, None))]
-            if missing:
-                raise PluginError(f"{cap}: missing async method(s) {', '.join(missing)}")
+            elif d.version != prov.version:
+                rejected[cap] = f"provides {cap} v{prov.version} but this Themis knows v{d.version}"
+            else:
+                missing = [n for n in d.required_methods if not inspect.iscoroutinefunction(getattr(part, n, None))]
+                if missing:
+                    rejected[cap] = f"{cap}: missing async method(s) {', '.join(missing)}"
+        return rejected
 
     async def _close(self, instance: Any, plugin_id: str) -> None:
         closer = getattr(instance, "aclose", None)
@@ -228,14 +233,16 @@ class PluginHost:
                 raise PluginError(migration_error)
             settings = manifest.settings_model(**{**cfg.settings, **cfg.secrets})
             built = manifest.factory(settings)
-            self._check_contract(manifest, built)
+            rejected = self._check_contract(manifest, built)
         except Exception as e:                          # contained: a bad config must not stop Themis
             message = self._redact(plugin_id, f"could not build provider: {self._describe(e)}")
             logger.warning("Plugin %s could not be built: %s", plugin_id, message)
             self._instances.pop(plugin_id, None)
+            self._rejected.pop(plugin_id, None)
             self._build_errors[plugin_id] = message
             await self._record(plugin_id, last_error=message, last_error_at=_now())
         else:
+            self._rejected[plugin_id] = rejected
             self._instances[plugin_id] = built          # swap first, then close the old one: no window where a closed instance is active
             self._build_errors.pop(plugin_id, None)
             await self._record(plugin_id, last_error=None)
@@ -257,6 +264,8 @@ class PluginHost:
         prov = m.provides.get(cap) if m else None
         inst = self._instances.get(pid) if pid else None
         if m is None or prov is None or inst is None or cap not in capability_catalog() or not self._is_enabled(pid):
+            return None
+        if cap in self._rejected.get(pid, {}):
             return None
         return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
 
@@ -294,6 +303,8 @@ class PluginHost:
             return CapabilityStatus("waiting", pid, waiting_on=missing)
         if self._build_errors.get(pid):
             return CapabilityStatus("error", pid, error=self._build_errors[pid])
+        if cap in self._rejected.get(pid, {}):
+            return CapabilityStatus("error", pid, error=self._rejected[pid][cap])
         return CapabilityStatus("serving", pid) if self.active(cap) else CapabilityStatus("error", pid)
 
     def build_error(self, plugin_id: str) -> str | None:
@@ -353,7 +364,7 @@ class PluginHost:
     def _reset(self) -> None:
         """Forget everything in memory (tests; the DB is untouched)."""
         self._selections, self._explicit, self._configs, self._instances = {}, {}, {}, {}
-        self._build_errors, self._fingerprints = {}, {}
+        self._build_errors, self._fingerprints, self._rejected = {}, {}, {}
         # Fresh locks: a lock is bound to the event loop that first contended it, and a task killed mid-hold when a
         # test's loop closes would leave it locked forever for the next test.
         self._lock, self._state_lock = asyncio.Lock(), asyncio.Lock()

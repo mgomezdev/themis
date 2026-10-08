@@ -6,7 +6,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.routing import Match
 
-from ...auth import require_scope
+from ...auth import require_any_key, require_scope
 from ...plugins import PluginError, capability_catalog, definer_of, providers_of, registered_plugins
 from ...plugins.capabilities.definition import CapabilityDef
 from ...plugins.host import plugin_host
@@ -98,11 +98,14 @@ async def _run(route, scope: dict, request: Request) -> Response:
     return Response(content=bytes(body), status_code=start.get("status", 500), headers=headers)
 
 
-@router.api_route("/capabilities/{cap}/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+# Any valid key gets in; the inner route then enforces its own scope. Without this, anonymous callers could probe which
+# capabilities are active (the route is hidden from OpenAPI, so tests/test_route_auth.py cannot catch the gap).
+@router.api_route("/capabilities/{cap}/{rest:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False,
+                  dependencies=[Depends(require_any_key)])
 async def dispatch(cap: str, rest: str, request: Request):
     active = plugin_host.active(cap)
     if active is None:
-        return JSONResponse(status_code=409, content={"error": "capability_unavailable", "capability": cap})
+        return JSONResponse(status_code=409, content={"error": "capability_unavailable", "capability": cap, "feature": None})
     if ".." in rest.split("/"):
         raise HTTPException(status_code=404)
     plugin_id = active.manifest.id

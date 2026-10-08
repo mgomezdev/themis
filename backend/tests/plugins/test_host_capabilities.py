@@ -209,3 +209,15 @@ async def test_two_enabled_providers_with_no_stored_choice_are_not_auto_selected
     await host.start()
     assert host.selected("shared.ping") is None and host.active("shared.ping") is None
     assert host.status("shared.ping").state == "no_provider" or host.status("shared.ping").state == "none_selected"
+
+
+async def test_one_bad_provide_entry_does_not_take_down_the_plugins_other_capabilities(host):
+    reg(definer(), make_manifest("multi", provides={"shared.ping": Provide(version=2), "multi.ok": Provide()},
+                                 defines=(CapabilityDef("multi.ok", 1, "Fine"),)))
+    await host.start()
+    await host.set_provider("multi.ok", "multi")
+    await host.set_provider("shared.ping", "multi")
+    assert host.status("multi.ok").state == "serving" and host.active("multi.ok") is not None
+    bad = host.status("shared.ping")
+    assert bad.state == "error" and "v2" in (bad.error or "") and host.active("shared.ping") is None
+    assert host.build_error("multi") is None                            # the plugin itself built fine
