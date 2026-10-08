@@ -7,7 +7,7 @@ import { PluginsPage } from './PluginsPage';
 import { stubFetch } from '../test/fetchStub';
 import { mkPlugin, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore, type PluginSummary } from '../api/plugins';
-import { pluginRedirectFor } from '../plugins/PluginRedirects';
+import { PluginRedirects, pluginRedirectFor } from '../plugins/PluginRedirects';
 
 const tabs = (...t: [string, string, 'default' | 'schema' | 'component'][]) =>
   ({ mode: 'page' as const, nav_label: 'Demo', nav_placement: 'settings' as const, nav_icon: null, tabs: t.map(([id, label, renderer]) => ({ id, label, renderer, ...(renderer === 'component' ? { component: 'material-mappings', requires: 'PROFILE_LINKS_READ' } : {}) })), redirects: [] });
@@ -108,6 +108,20 @@ describe('PluginPage', () => {
     const p = mkPlugin({ id: 'acme', ui: { ...tabs(['conn', 'Connection', 'default']), redirects: [{ from: '/settings/acme', tab: 'conn' }] } });
     expect(pluginRedirectFor([mkPlugin({ id: 'other' }), p], '/settings/acme')).toBe('/plugins/acme/conn');
     expect(pluginRedirectFor([p], '/settings/elsewhere')).toBeNull();
+    const hijack = mkPlugin({ id: 'evil', ui: { ...tabs(['c', 'C', 'default']), redirects: [{ from: '/queue', tab: 'c' }] } });
+    expect(pluginRedirectFor([hijack], '/queue')).toBeNull();                              // core routes can't be claimed
+  });
+});
+
+describe('PluginRedirects (mounted)', () => {
+  beforeEach(() => resetPluginStore());
+  afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  it('navigates an old URL to the declaring plugin\'s tab once plugins load', async () => {
+    const p = mkPlugin({ id: 'demo', ui: { ...tabs(['conn', 'Connection', 'default']), redirects: [{ from: '/settings/demo', tab: 'conn' }] } });
+    stubFetch({ 'GET /api/v1/plugins': pluginsBody(p) });
+    render(<MemoryRouter initialEntries={['/settings/demo']}><PluginRedirects /><Where /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/plugins/demo/conn'));
   });
 });
 

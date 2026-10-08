@@ -8,7 +8,8 @@ const SPOOLMAN = {
     features: ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'REMOTE', 'LABEL_SCAN', 'PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE'] }],
   enabled: true, active: true, error: null,
   ui: { mode: 'page', nav_label: 'Spoolman', nav_placement: 'settings', nav_icon: null,
-        tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }, { id: 'mappings', label: 'Filament mappings', renderer: 'component' }] },
+        tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }, { id: 'mappings', label: 'Filament mappings', renderer: 'component', component: 'material-mappings', requires: 'PROFILE_LINKS_READ' }],
+        redirects: [{ from: '/settings/spoolman', tab: 'connection' }, { from: '/settings/spoolman-mappings', tab: 'mappings' }] },
 };
 const LOCAL = { ...SPOOLMAN, id: 'local_inv', name: 'Local', enabled: false, active: false,
   provides: [{ capability: 'inventory.filament', version: 1, selected: false, status: 'not_selected', waiting_on: [], features: ['TRACKS_WEIGHT'] }],

@@ -20,7 +20,7 @@ logger = logging.getLogger("app.laminus")
 _catalog: Catalog | None = None        # parsed catalog for internal callers (printers, jobs, projects)
 _catalog_bytes: bytes | None = None    # pre-serialised legacy JSON for the HTTP response
 _catalog_fetched_at: float | None = None
-# Holds {sync_id, raw, catalog, pending, created_at}. raw=None signals a inventory-only pending
+# Holds {sync_id, raw, catalog, pending, created_at}. raw=None signals an inventory-only pending
 # (no catalog swap on confirm).
 _pending_sync: dict | None = None
 
