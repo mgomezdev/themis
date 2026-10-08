@@ -52,6 +52,10 @@ def _router(answer: str) -> APIRouter:
             yield b"two"
         return StreamingResponse(chunks())
 
+    @r.get("/boom")
+    async def boom():
+        raise RuntimeError("route failed before responding")
+
     @r.put("/provider")
     async def shadowed():
         return {"reached": "plugin"}
@@ -219,3 +223,29 @@ async def test_a_plugin_put_provider_route_is_not_exposed_because_it_would_be_sh
     r = await client.put(f"/api/v1/capabilities/{CAP}/provider", json={"plugin_id": "dummy_one"})
     assert r.json().get("reached") is None and r.json()["plugin_id"] == "dummy_one"          # the selection route answered
     assert (await client.put("/api/v1/plugins/dummy_one/provider")).json() == {"reached": "plugin"}   # still mounted by id
+
+
+async def test_a_route_that_raises_before_responding_does_not_hang_the_dispatcher(client, dispatch_plugins, session_factory):
+    await plugin_host.set_provider(CAP, "dummy_one")
+    raw, prefix = generate_key()
+    async with session_factory() as s:
+        s.add(ApiKey(name="boom", key_prefix=prefix, key_hash=hash_key(raw), scopes=["settings:read"], enabled=True,
+                     created_at="2026-01-01T00:00:00"))
+        await s.commit()
+    path = f"/api/v1/capabilities/{CAP}/boom"
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http", "path": path,
+             "raw_path": path.encode(), "root_path": "", "query_string": b"", "server": ("test", 80), "client": ("t", 1),
+             "headers": [(b"x-api-key", raw.encode()), (b"host", b"test")]}
+    sent = []
+
+    async def receive():
+        await asyncio.sleep(3600)
+
+    async def send(message):
+        sent.append(message)
+
+    try:
+        await asyncio.wait_for(app(scope, receive, send), 5)         # a hang here is the failure
+    except RuntimeError:
+        pass                                                         # the server-error middleware re-raises after answering
+    assert sent and sent[0]["status"] == 500

@@ -104,7 +104,7 @@ async def _forward(scope: dict, request: Request) -> Response:
     validation apply exactly as for /api/v1/plugins/{id}/...) and relay its response: headers verbatim (repeats such as
     several Set-Cookie survive) and the body chunk by chunk, so a streaming route streams."""
     started = asyncio.Event()
-    chunks: asyncio.Queue[bytes | None] = asyncio.Queue()
+    chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=16)      # bounded: a slow client slows the route down
     start: dict = {}
 
     async def send(message) -> None:
