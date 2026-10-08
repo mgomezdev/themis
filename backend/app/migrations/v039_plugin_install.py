@@ -12,7 +12,6 @@ async def up(conn) -> None:
             plugin_id VARCHAR(64) PRIMARY KEY,
             version VARCHAR(64) NOT NULL,
             name VARCHAR(200) NOT NULL DEFAULT '',
-            kind VARCHAR(64) NOT NULL DEFAULT '',
             publisher VARCHAR(200),
             source VARCHAR(16) NOT NULL,
             source_url VARCHAR(500),

@@ -1,4 +1,7 @@
-"""Capability selections (replaces extension_slots) and drop installed_plugins.kind (capability model)."""
+"""Capability selections (replaces extension_slots) and drop installed_plugins.kind (capability model).
+
+`down` only removes capability_selections: it does not resurrect the legacy slot table or `kind` column (the prerelease capability
+model does not support running pre-capability code against a downgraded database)."""
 from __future__ import annotations
 from sqlalchemy import text
 
@@ -29,11 +32,4 @@ async def up(conn) -> None:
 
 
 async def down(conn) -> None:
-    await conn.execute(text("CREATE TABLE IF NOT EXISTS extension_slots (kind VARCHAR(64) PRIMARY KEY, plugin_id VARCHAR(64))"))
-    back = {v: k for k, v in _LEGACY.items()}
-    if await _has_table(conn, "capability_selections"):
-        for cap, plugin_id in (await conn.execute(text("SELECT capability, plugin_id FROM capability_selections"))).fetchall():
-            await conn.execute(text("INSERT OR IGNORE INTO extension_slots (kind, plugin_id) VALUES (:k, :p)"), {"k": back.get(cap, cap), "p": plugin_id})
-        await conn.execute(text("DROP TABLE capability_selections"))
-    if not await _has_column(conn, "installed_plugins", "kind"):
-        await conn.execute(text("ALTER TABLE installed_plugins ADD COLUMN kind VARCHAR(64) NOT NULL DEFAULT ''"))
+    await conn.execute(text("DROP TABLE IF EXISTS capability_selections"))

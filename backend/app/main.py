@@ -41,6 +41,7 @@ from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
+from .api.routes.capabilities import router as capabilities_router
 from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
@@ -205,6 +206,7 @@ app.include_router(settings_router)
 app.include_router(inventory_router)
 app.include_router(plugin_install_router)
 app.include_router(plugins_router)
+app.include_router(capabilities_router)
 
 # Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
 from .plugins import load_bundled, registered_plugins  # noqa: E402

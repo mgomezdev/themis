@@ -97,14 +97,14 @@ async def test_sync_now_needs_a_remote_provider(client):
 async def test_resolve_label_needs_label_scan(client):
     await use_provider(_fake())
     resp = await client.post("/api/v1/inventory/resolve-label", json={"text": "s-1"})
-    assert resp.status_code == 409 and resp.json()["capability"] == LABEL_SCAN
+    assert resp.status_code == 409 and resp.json()["feature"] == LABEL_SCAN
 
 
 async def test_profile_links_need_the_write_capability_and_round_trip_with_it(client):
     fake = _fake(caps=frozenset({TRACKS_WEIGHT}))
     await use_provider(fake)
     denied = await client.patch("/api/v1/inventory/materials/1/profile-links", json={"links": {"P": ["x"]}})
-    assert denied.status_code == 409 and denied.json()["capability"] == PROFILE_LINKS_WRITE and fake.materials["1"].profile_links is None
+    assert denied.status_code == 409 and denied.json()["feature"] == PROFILE_LINKS_WRITE and fake.materials["1"].profile_links is None
 
     fake2 = _fake()
     await use_provider(fake2)
@@ -176,7 +176,7 @@ async def test_low_stock_thresholds_are_stored_namespaced_and_scoped_to_the_acti
 async def test_low_stock_thresholds_need_a_provider_that_tracks_weight(client, session_factory):
     await use_provider(_fake(caps=frozenset()))
     resp = await client.put("/api/v1/inventory/settings", json={"low_stock": {"default_g": 10}})
-    assert resp.status_code == 409 and resp.json()["capability"] == TRACKS_WEIGHT
+    assert resp.status_code == 409 and resp.json()["feature"] == TRACKS_WEIGHT
     assert (await client.get("/api/v1/inventory/settings")).json()["low_stock"]["default_g"] is None
     ok = await client.put("/api/v1/inventory/settings", json={"deduct_on_complete": False})   # non-threshold settings still save
     assert ok.status_code == 200

@@ -109,7 +109,7 @@ async def test_a_failure_stops_that_plugins_later_versions(conn):
 # --- core v034 ---------------------------------------------------------------------------------------------------
 
 HOST_TABLES = {"plugin_configs", "capability_selections", "plugin_schema_versions"}
-V034_TABLES = {"plugin_configs", "extension_slots", "plugin_schema_versions"}      # v040 later replaces extension_slots
+V034_TABLES = {"plugin_configs", "plugin_schema_versions"}      # (v034 also made extension_slots; v040 replaced it)
 
 
 async def test_v034_is_idempotent_on_a_fresh_create_all_db_and_on_a_migrated_one_and_has_a_down(conn):

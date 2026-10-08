@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from app.database import Base
 from app.migrations import v035_inventory_core
 from app.migrations.runner import run_migrations
-from app.migrations import v040_capability_selections
+from tests.plugins.legacy_shape import restore_pre_040_shape
 from tests.v032_fixture import FIXTURE_FACTS, build_v032_fixture_db
 
 
@@ -19,7 +19,7 @@ async def migrated(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
     async with engine.begin() as conn:
         await run_migrations(conn)                       # v033 .. latest on top of the v032 database
-        await v040_capability_selections.down(conn)      # v035 is tested in the shape it ran in (before slots became selections)
+        await restore_pre_040_shape(conn)       # v035 is tested in the shape it ran in (before slots became selections)
     conn = await engine.connect()
     yield conn
     await conn.close()
@@ -95,7 +95,7 @@ async def _fresh_conn(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'fresh.db'}")
     conn = await engine.connect()
     await conn.run_sync(Base.metadata.create_all)
-    await v040_capability_selections.down(conn)          # v035 predates capability_selections: give it the extension_slots it expects
+    await restore_pre_040_shape(conn)              # v035 predates capability_selections: give it the extension_slots it expects
     return engine, conn
 
 

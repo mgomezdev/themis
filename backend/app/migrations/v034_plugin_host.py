@@ -17,12 +17,14 @@ async def up(conn) -> None:
             updated_at VARCHAR(32)
         )
     """))
-    await conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS extension_slots (
-            kind VARCHAR(64) PRIMARY KEY,
-            plugin_id VARCHAR(64)
-        )
-    """))
+    superseded = (await conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name='capability_selections'"))).first()
+    if not superseded:                       # v040 replaced the slot table; a re-run after it must not bring it back
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS extension_slots (
+                kind VARCHAR(64) PRIMARY KEY,
+                plugin_id VARCHAR(64)
+            )
+        """))
     await conn.execute(text("""
         CREATE TABLE IF NOT EXISTS plugin_schema_versions (
             plugin_id VARCHAR(64) NOT NULL,

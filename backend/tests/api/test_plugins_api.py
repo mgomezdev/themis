@@ -1,4 +1,4 @@
-"""`/api/v1/plugins` + `/api/v1/extension-slots/{kind}` (BIZ-215) and the legacy Spoolman alias interplay."""
+"""`/api/v1/plugins` + `/api/v1/capabilities/{cap}/provider` (BIZ-215) and the legacy Spoolman alias interplay."""
 import httpx
 import pytest
 
@@ -12,11 +12,14 @@ KEY = "hunter2-api-key"
 async def test_list_plugins_describes_manifests_ui_capabilities_and_state(client):
     body = (await client.get("/api/v1/plugins")).json()
 
-    assert body["slots"] == {"filament_inventory": None}
+    assert body["selections"] == {}
     (sm,) = [p for p in body["plugins"] if p["id"] == "spoolman"]
-    assert (sm["name"], sm["kind"], sm["source"], sm["enabled"], sm["active"], sm["error"]) == (
-        "Spoolman", "filament_inventory", "bundled", False, False, None)
-    assert {"TRACKS_WEIGHT", "WRITE_WEIGHT", "REMOTE", "LABEL_SCAN"} <= set(sm["capabilities"])
+    assert (sm["name"], sm["source"], sm["enabled"], sm["active"], sm["error"]) == ("Spoolman", "bundled", False, False, None)
+    assert "kind" not in sm and "capabilities" not in sm
+    (prov,) = sm["provides"]
+    assert (prov["capability"], prov["version"], prov["selected"], prov["status"]) == ("inventory.filament", 1, False, "not_selected")
+    assert {"TRACKS_WEIGHT", "WRITE_WEIGHT", "REMOTE", "LABEL_SCAN"} <= set(prov["features"])
+    assert (sm["requires"], sm["optional"], sm["defines"]) == ([], [], [])
     assert sm["ui"]["mode"] == "page" and [t["id"] for t in sm["ui"]["tabs"]] == ["connection", "mappings"]
     assert sm["ui"]["tabs"][1]["renderer"] == "component"
 
@@ -47,10 +50,10 @@ async def test_updating_a_plugin_validates_and_never_echoes_a_secret(client):
 
 
 async def test_selecting_a_provider_activates_it_and_it_can_be_disabled_and_cleared(client):
-    resp = await client.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": "spoolman"})
-    assert resp.json() == {"kind": "filament_inventory", "plugin_id": "spoolman"}
+    resp = await client.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": "spoolman"})
+    assert resp.json() == {"capability": "inventory.filament", "plugin_id": "spoolman", "explicit": True}
     listed = (await client.get("/api/v1/plugins")).json()
-    assert listed["slots"]["filament_inventory"] == "spoolman"
+    assert listed["selections"]["inventory.filament"] == "spoolman"
     sm = next(p for p in listed["plugins"] if p["id"] == "spoolman")
     assert sm["enabled"] is True and sm["active"] is False and sm["error"]       # selected + enabled, but no URL yet: reported
 
@@ -59,15 +62,15 @@ async def test_selecting_a_provider_activates_it_and_it_can_be_disabled_and_clea
 
     await client.put("/api/v1/plugins/spoolman", json={"enabled": False})
     after = (await client.get("/api/v1/plugins")).json()
-    assert after["slots"]["filament_inventory"] == "spoolman"                      # the choice survives
+    assert after["selections"]["inventory.filament"] == "spoolman"                 # the choice survives
     assert next(p for p in after["plugins"] if p["id"] == "spoolman")["active"] is False
 
-    assert (await client.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": None})).json()["plugin_id"] is None
+    assert (await client.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": None})).json()["plugin_id"] is None
 
 
-async def test_a_slot_only_accepts_a_plugin_of_its_own_kind(client):
-    assert (await client.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": "nope_nope"})).status_code == 422
-    assert (await client.put("/api/v1/extension-slots/printer_vendor", json={"plugin_id": "spoolman"})).status_code == 422
+async def test_a_selection_only_accepts_a_known_capability_and_a_plugin_that_provides_it(client):
+    assert (await client.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": "nope_nope"})).status_code == 422
+    assert (await client.put("/api/v1/capabilities/printer.vendor/provider", json={"plugin_id": "spoolman"})).status_code == 422
 
 
 async def test_test_connection_uses_unsaved_settings_and_saved_secrets_without_echoing_them(client, spoolman_upstream):
@@ -84,6 +87,10 @@ async def test_test_connection_uses_unsaved_settings_and_saved_secrets_without_e
     assert nourl.json() == {"ok": False, "message": "Spoolman URL is not set"}        # the provider refuses to build without one
 
 
+async def old_route_gone(c):
+    return (await c.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": None})).status_code
+
+
 async def test_the_plugin_routes_need_the_settings_scopes(client, session_factory):
     from tests.api.test_inventory_api import _client_with
     reader = await _client_with(session_factory, ["settings:read"])
@@ -91,7 +98,8 @@ async def test_the_plugin_routes_need_the_settings_scopes(client, session_factor
     async with reader, inventory_only:
         assert (await reader.get("/api/v1/plugins")).status_code == 200
         assert (await reader.put("/api/v1/plugins/spoolman", json={"enabled": True})).status_code == 403
-        assert (await reader.put("/api/v1/extension-slots/filament_inventory", json={"plugin_id": None})).status_code == 403
+        assert (await reader.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": None})).status_code == 403
+        assert (await old_route_gone(reader)) in (404, 405)
         assert (await inventory_only.get("/api/v1/plugins")).status_code == 403
 
 
@@ -99,13 +107,13 @@ async def test_the_plugin_routes_need_the_settings_scopes(client, session_factor
 
 async def test_the_legacy_settings_put_selects_spoolman_as_the_provider_and_disabling_keeps_the_choice(client):
     await client.put("/api/v1/settings/spoolman", json={"enabled": True, "url": "http://sm.test", "api_key": KEY})
-    assert (await client.get("/api/v1/plugins")).json()["slots"]["filament_inventory"] == "spoolman"
+    assert (await client.get("/api/v1/plugins")).json()["selections"]["inventory.filament"] == "spoolman"
     assert (await client.get("/api/v1/inventory/sync-status")).json()["provider"] == "spoolman"
 
     off = await client.put("/api/v1/settings/spoolman", json={"enabled": False})
     assert off.json() == {"enabled": False, "url": "http://sm.test", "has_api_key": True, "sync_interval_minutes": 15}
     assert (await client.get("/api/v1/inventory/sync-status")).json()["provider"] is None
-    assert (await client.get("/api/v1/plugins")).json()["slots"]["filament_inventory"] == "spoolman"
+    assert (await client.get("/api/v1/plugins")).json()["selections"]["inventory.filament"] == "spoolman"
 
 
 async def test_legacy_routes_answer_409_when_another_provider_is_active(client):
@@ -121,7 +129,7 @@ async def test_legacy_routes_answer_409_when_another_provider_is_active(client):
 async def test_enabling_spoolman_via_the_legacy_put_replaces_another_active_provider(client):
     await use_provider(FakeInventoryProvider(), plugin_id="other_inventory")
     await client.put("/api/v1/settings/spoolman", json={"enabled": True, "url": "http://sm.test"})
-    assert (await client.get("/api/v1/plugins")).json()["slots"]["filament_inventory"] == "spoolman"
+    assert (await client.get("/api/v1/plugins")).json()["selections"]["inventory.filament"] == "spoolman"
 
 
 async def test_a_candidate_secret_is_masked_in_a_failed_connection_test(client, spoolman_upstream):
@@ -140,14 +148,14 @@ async def test_a_candidate_secret_is_masked_in_a_failed_connection_test(client, 
 def _schema_plugin(ui_schema):
     from pydantic import BaseModel
     from app import plugins
-    from app.plugins.manifest import HOST_API, PluginManifest, UiContribution, UiTab
+    from app.plugins.manifest import HOST_API, PluginManifest, Provide, UiContribution, UiTab
 
     class _S(BaseModel):
         pass
 
     manifest = PluginManifest(
-        id="schema_demo", name="Schema demo", kind="filament_inventory", version="1", host_api=HOST_API, settings_model=_S,
-        factory=lambda _s: FakeInventoryProvider(), ui=UiContribution(mode="page", tabs=(
+        id="schema_demo", name="Schema demo", version="1", host_api=HOST_API, settings_model=_S,
+        factory=lambda _s: FakeInventoryProvider(), provides={"inventory.filament": Provide()}, ui=UiContribution(mode="page", tabs=(
             UiTab("library", "Library", "schema"), UiTab("conn", "Connection", "default"))), ui_schema=ui_schema)
     plugins.register_plugin(manifest)
     return manifest
