@@ -221,3 +221,56 @@ async def test_one_bad_provide_entry_does_not_take_down_the_plugins_other_capabi
     bad = host.status("shared.ping")
     assert bad.state == "error" and "v2" in (bad.error or "") and host.active("shared.ping") is None
     assert host.build_error("multi") is None                            # the plugin itself built fine
+
+
+async def test_a_provider_that_failed_to_build_leaves_its_consumer_waiting_and_recovers(host):
+    reg(make_manifest("plug_a", cap="plug_a.ping"), make_manifest("consumer", cap="consumer.use", requires=(Requirement("plug_a.ping"),)))
+    await host.start()
+    await host.set_provider("plug_a.ping", "plug_a")
+    await host.set_provider("consumer.use", "consumer")
+    assert host.status("consumer.use").state == "serving"
+    await host.update_config("plug_a", settings={"mode": "bad-config"})       # the required provider can no longer be built
+    st = host.status("consumer.use")
+    assert (st.state, st.waiting_on) == ("waiting", ("plug_a.ping",))
+    assert host.active("consumer.use") is None and host.status("plug_a.ping").state == "error"
+    await host.update_config("plug_a", settings={"mode": "ok"})
+    assert host.status("consumer.use").state == "serving"
+
+
+async def test_an_auto_selected_provider_that_is_gone_does_not_block_auto_select(host):
+    reg(definer(), provider("plug_a"))
+    await host.start()
+    await enable(host, "plug_a")
+    assert host.selected("shared.ping") == "plug_a" and not host.is_explicit("shared.ping")
+    plugins._REGISTRY.pop("plug_a")
+    reg(provider("plug_b"))
+    await enable(host, "plug_b")
+    assert host.selected("shared.ping") == "plug_b" and not host.is_explicit("shared.ping")
+    assert host.status("shared.ping").state == "serving"
+
+
+async def test_an_explicit_choice_of_a_provider_that_is_gone_is_kept(host):
+    reg(definer(), provider("plug_a"))
+    await host.start()
+    await host.set_provider("shared.ping", "plug_a")
+    plugins._REGISTRY.pop("plug_a")
+    reg(provider("plug_b"))
+    await enable(host, "plug_b")
+    assert host.selected("shared.ping") == "plug_a"               # the user's own choice is never replaced behind their back
+
+
+async def test_a_dormant_selection_can_be_cleared(host, session_factory):
+    from app.models import CapabilitySelection
+    m = make_manifest("plug_a", cap="plug_a.ping")
+    reg(m)
+    await host.start()
+    await host.set_provider("plug_a.ping", "plug_a")
+    plugins._REGISTRY.pop("plug_a")
+    await host.reload()
+    assert host.status("plug_a.ping").state == "dormant"
+    await host.set_provider("plug_a.ping", None)
+    assert host.selected("plug_a.ping") is None and "plug_a.ping" not in host.selections()
+    async with session_factory() as s:
+        assert await s.get(CapabilitySelection, "plug_a.ping") is None
+    with pytest.raises(PluginError, match="unknown capability"):
+        await host.set_provider("plug_a.ping", "plug_a")          # only clearing is allowed for a dormant choice

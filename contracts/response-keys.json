@@ -366,5 +366,47 @@
     "stale",
     "stale_reasons",
     "printable_now"
+  ],
+  "plugin_summary": [
+    "id",
+    "name",
+    "version",
+    "description",
+    "docs_url",
+    "source",
+    "loaded",
+    "install",
+    "provides",
+    "requires",
+    "optional",
+    "defines",
+    "ui",
+    "enabled",
+    "active",
+    "error"
+  ],
+  "plugin_provides": [
+    "capability",
+    "version",
+    "features",
+    "selected",
+    "status",
+    "waiting_on"
+  ],
+  "capability_info": [
+    "id",
+    "version",
+    "label",
+    "description",
+    "definer",
+    "features",
+    "required_methods",
+    "selected",
+    "explicit",
+    "status",
+    "waiting_on",
+    "error",
+    "providers",
+    "requires_by"
   ]
 }

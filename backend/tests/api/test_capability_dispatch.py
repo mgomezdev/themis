@@ -1,7 +1,10 @@
 """`/api/v1/capabilities/{cap}/...` dispatches to the active provider's exposed routes (same handlers, same dependencies,
 same scopes as `/api/v1/plugins/{id}/...`)."""
+import asyncio
+
 import pytest
 from fastapi import APIRouter, Depends
+from fastapi.responses import Response, StreamingResponse
 from httpx import ASGITransport, AsyncClient
 from pydantic import BaseModel
 
@@ -16,6 +19,7 @@ from app.services.api_key_service import generate_key, hash_key
 from tests.plugins.dummy_plugin import make_manifest
 
 CAP = "dummy_one.ping"
+STREAM_GATE: asyncio.Event | None = None      # the /stream route holds its second chunk until the test opens this
 
 
 class Item(BaseModel):
@@ -32,6 +36,25 @@ def _router(answer: str) -> APIRouter:
     @r.post("/items", status_code=201, dependencies=[Depends(require_scope("inventory:write"))])
     async def add(body: Item):
         return {"name": body.name}
+
+    @r.get("/cookies")
+    async def cookies():
+        resp = Response(content=b"{}", media_type="application/json")
+        resp.headers.append("set-cookie", "a=1")
+        resp.headers.append("set-cookie", "b=2")
+        return resp
+
+    @r.get("/stream")
+    async def stream():
+        async def chunks():
+            yield b"one"
+            await STREAM_GATE.wait()
+            yield b"two"
+        return StreamingResponse(chunks())
+
+    @r.put("/provider")
+    async def shadowed():
+        return {"reached": "plugin"}
 
     return r
 
@@ -86,9 +109,13 @@ async def test_404_when_the_active_provider_does_not_expose_the_path(client, dis
 
 async def test_path_traversal_cannot_reach_another_plugins_routes(client, dispatch_plugins):
     await plugin_host.set_provider(CAP, "dummy_one")
-    for rest in ("../dummy_two/echo", "%2e%2e/dummy_two/echo", "x/%2e%2e/%2e%2e/dummy_two/echo"):
+    # The client resolves a literal `../` itself, so that request lands on the (inactive, unknown) capability "dummy_two": 409.
+    # The encoded forms reach the dispatcher with `..` segments, which it refuses outright: 404.
+    expected = {"../dummy_two/echo": 409, "%2e%2e/dummy_two/echo": 404, "x/%2e%2e/%2e%2e/dummy_two/echo": 404}
+    for rest, status in expected.items():
         r = await client.get(f"/api/v1/capabilities/{CAP}/{rest}")
-        assert r.status_code in (404, 409) and "echo" not in r.text
+        assert r.status_code == status, (rest, r.status_code, r.text)
+        assert "echo" not in r.json() and r.json().get("error") in (None, "capability_unavailable")     # never a route's own answer
 
 
 async def test_scope_is_enforced_through_the_dispatcher(client, dispatch_plugins, session_factory):
@@ -144,3 +171,51 @@ async def test_the_dispatcher_needs_a_key_whether_or_not_a_provider_is_active(cl
         await plugin_host.set_provider(CAP, "dummy_one")
         assert (await anon.get(f"/api/v1/capabilities/{CAP}/echo")).status_code == 401          # selected: still 401 up front
         assert (await anon.get("/api/v1/capabilities/nope.nothing/x")).status_code == 401
+
+
+async def test_repeated_response_headers_survive_the_dispatcher(client, dispatch_plugins):
+    await plugin_host.set_provider(CAP, "dummy_one")
+    r = await client.get(f"/api/v1/capabilities/{CAP}/cookies")
+    assert r.status_code == 200 and r.headers.get_list("set-cookie") == ["a=1", "b=2"]
+
+
+async def test_a_streaming_route_is_streamed_not_buffered(client, dispatch_plugins, session_factory):
+    global STREAM_GATE
+    STREAM_GATE = asyncio.Event()
+    await plugin_host.set_provider(CAP, "dummy_one")
+    raw, prefix = generate_key()
+    async with session_factory() as s:
+        s.add(ApiKey(name="stream", key_prefix=prefix, key_hash=hash_key(raw), scopes=["settings:read"], enabled=True,
+                     created_at="2026-01-01T00:00:00"))
+        await s.commit()
+    path = f"/api/v1/capabilities/{CAP}/stream"
+    scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": "GET", "scheme": "http", "path": path,
+             "raw_path": path.encode(), "root_path": "", "query_string": b"", "server": ("test", 80), "client": ("t", 1),
+             "headers": [(b"x-api-key", raw.encode()), (b"host", b"test")]}
+    sent: asyncio.Queue = asyncio.Queue()
+
+    async def receive():
+        await asyncio.sleep(3600)
+
+    async def send(message):
+        await sent.put(message)
+
+    task = asyncio.create_task(app(scope, receive, send))
+    try:
+        assert (await asyncio.wait_for(sent.get(), 5))["status"] == 200
+        assert (await asyncio.wait_for(sent.get(), 5))["body"] == b"one"      # arrives while the route is still blocked
+        assert not task.done()
+        STREAM_GATE.set()
+        assert (await asyncio.wait_for(sent.get(), 5))["body"] == b"two"
+    finally:
+        STREAM_GATE.set()
+        task.cancel()
+
+
+async def test_a_plugin_put_provider_route_is_not_exposed_because_it_would_be_shadowed(client, dispatch_plugins):
+    assert capabilities_routes._EXPOSED[("dummy_one", CAP)] and all(
+        "PUT" not in methods or not regex.match("/api/v1/plugins/dummy_one/provider")
+        for regex, methods in capabilities_routes._EXPOSED[("dummy_one", CAP)])
+    r = await client.put(f"/api/v1/capabilities/{CAP}/provider", json={"plugin_id": "dummy_one"})
+    assert r.json().get("reached") is None and r.json()["plugin_id"] == "dummy_one"          # the selection route answered
+    assert (await client.put("/api/v1/plugins/dummy_one/provider")).json() == {"reached": "plugin"}   # still mounted by id

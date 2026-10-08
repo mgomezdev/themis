@@ -1,4 +1,4 @@
-"""The Spoolman plugin: a `filament_inventory` provider (bundled; spec §3.9 D9 — it owns every Spoolman call)."""
+"""The Spoolman plugin: a provider of the `inventory.filament` capability (bundled; spec §3.9 D9 — it owns every Spoolman call)."""
 from __future__ import annotations
 
 from ..capabilities.filament_inventory import CAPABILITY
