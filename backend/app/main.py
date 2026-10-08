@@ -41,6 +41,7 @@ from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
+from .api.routes import capabilities as capabilities_mod
 from .api.routes.capabilities import router as capabilities_router
 from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
@@ -219,13 +220,7 @@ from .plugins.loader import load_installed  # noqa: E402
 
 load_installed(_cfg.get_plugins_dir(), Path(_data_dir_for_plugins) / "themis.db")      # installed packages; failures are contained
 for _manifest in registered_plugins():
-    _mounted: set[int] = set()
-    for _router in (*_manifest.routers, *(r for p in _manifest.provides.values() for r in p.routers)):
-        if id(_router) not in _mounted:
-            _mounted.add(id(_router))
-            app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
-    for _router in _manifest.alias_routers:                  # deprecated aliases keep their historical absolute paths
-        app.include_router(_router)
+    capabilities_mod.mount_plugin(app, _manifest)
 
 
 @app.middleware("http")
