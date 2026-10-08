@@ -260,7 +260,7 @@ changed vs the stored slot (an edited `inventory` wins; otherwise an edited lega
 ### Deduction model  (v037 — BIZ-218)
 
 `job_spool_snapshots{job_id FK CASCADE, printer_id, provider, spool_ref, pre_weight_g?, source live|pending|cached|missing, taken_at}` UNIQUE(job, provider, spool).
-`inventory_pending_writes{provider, spool_ref, target_g, job_id?, printer_id?, source queue|manual_complete, created_at, attempts, last_attempt_at, last_error, status pending|applied|superseded|discarded}` — the outbox (absolute targets only; applied/superseded/discarded rows pruned after 30 days).
+`inventory_pending_writes{provider, spool_ref, target_g, job_id?, printer_id?, source queue|manual_complete, created_at, attempts, last_attempt_at, last_error, status pending|conflict|applied|superseded|discarded, pre_weight_g?, conflict_current_g?}` (v041) — the outbox (absolute targets only; applied/superseded/discarded rows pruned after 30 days). `pre_weight_g` = the weight the target was computed from: before sending, the flush reads the spool and HOLDS the write as `conflict` (+ `conflict_current_g`, event `inventory.weight_conflict`) if the provider's weight is none of the expected ones (chain start, any chain target; ±0.5 g); null = legacy row, no check.
 `inventory_spool_status{provider, spool_ref PK, tracking suspended, reason, since, job_id?}`. `jobs.deduction_note TEXT?` says why `deduction_skipped` is true. Events `inventory.tracking_unavailable` / `inventory.tracking_restored` (webhook + notification channels, like `spool.low`).
 
 ### Local inventory tables  (plugin migration v001 of `local_inventory` — BIZ-222)

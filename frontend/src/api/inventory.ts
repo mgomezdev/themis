@@ -76,8 +76,11 @@ export interface LowStockConfig {
 export interface PendingWrite {
   id: number; provider: string; spool_ref: string; target_g: number; job_id: number | null; printer_id: number | null;
   source: 'queue' | 'manual_complete'; created_at: string; attempts: number; last_attempt_at: string | null;
-  last_error: string | null; status: 'pending' | 'applied' | 'superseded' | 'discarded';
+  last_error: string | null; status: 'pending' | 'conflict' | 'applied' | 'superseded' | 'discarded';
+  /** The weight this target was computed from, and (status `conflict`) the weight found in the inventory instead. */
+  pre_weight_g: number | null; conflict_current_g: number | null;
 }
+export type ConflictChoice = 'themis' | 'provider' | 'subtract';
 
 export interface SuspendedSpool { spool_ref: string; reason: string; since: string; job_id: number | null }
 
@@ -145,6 +148,8 @@ export const setProfileLinks = (materialRef: string, links: Record<string, strin
 export const listPendingWrites = (): Promise<{ provider: string | null; items: PendingWrite[] }> => request(`${BASE}/pending-writes`);
 export const flushPendingWrites = (): Promise<{ applied: number }> => request(`${BASE}/pending-writes/flush`, json('POST'));
 export const discardPendingWrite = (id: number): Promise<PendingWrite> => request(`${BASE}/pending-writes/${id}/discard`, json('POST'));
+export const resolveWeightConflict = (id: number, choice: ConflictChoice): Promise<PendingWrite> =>
+  request(`${BASE}/pending-writes/${id}/resolve-conflict`, json('POST', { choice }));
 export const resolvePendingWrite = (id: number, targetG?: number): Promise<PendingWrite> =>
   request(`${BASE}/pending-writes/${id}/resolve`, json('POST', targetG === undefined ? {} : { target_g: targetG }));
 export const listSuspended = (): Promise<{ provider: string | null; items: SuspendedSpool[] }> => request(`${BASE}/tracking`);

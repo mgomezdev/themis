@@ -72,7 +72,8 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
     if snap.pre_weight_g is None:
         await suspend(session, pid, spool_ref, NOTE_NO_WEIGHT, job)
         return Plan("skipped")
-    outbox.enqueue(session, pid, spool_ref, snap.pre_weight_g - grams, job_id=job.id, printer_id=printer_id, source=source)
+    outbox.enqueue(session, pid, spool_ref, snap.pre_weight_g - grams, job_id=job.id, printer_id=printer_id, source=source,
+                   pre_weight_g=snap.pre_weight_g)
     return Plan("enqueued", pid, spool_ref, job.id, printer_id, grams, source)
 
 
@@ -101,7 +102,7 @@ async def complete_deferred(factory: async_sessionmaker[AsyncSession], plan: Pla
             await session.commit()
             return
         outbox.enqueue(session, plan.provider, plan.spool_ref, pre - plan.grams, job_id=plan.job_id,
-                       printer_id=plan.printer_id, source=plan.source)
+                       printer_id=plan.printer_id, source=plan.source, pre_weight_g=pre)
         await session.commit()
     await outbox.flush(factory)
 

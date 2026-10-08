@@ -69,6 +69,12 @@ a host task flushes it with `set_remaining` (newest per spool; older rows → `s
 host task at completion. A spool with no obtainable starting weight is **suspended** (`inventory_spool_status`): the write is skipped,
 the job gets `deduction_skipped` + `deduction_note`, one `inventory.tracking_unavailable` event fires, later prints on it are skipped
 and flagged, until a user corrects the weight (`resume-tracking` / `PUT …/remaining`) → `inventory.tracking_restored`.
+**Conflict guard (BIZ-198).** Each row remembers `pre_weight_g`. Before a flush sends it, the spool's current weight is read: at the start
+weight (or any earlier target of the same chain) → write; already at the target → mark `applied` without a write; anything else (±0.5 g)
+means it was changed in the provider during the print, so the row is held as `conflict` (`inventory.weight_conflict` event) and later writes
+for that spool wait. The user chooses (`POST /inventory/pending-writes/{id}/resolve-conflict`): `themis` (write the computed target),
+`provider` (keep the provider's weight; the job is flagged `deduction_skipped`), `subtract` (write provider weight − the job's grams).
+A hand-set weight supersedes a held conflict. A weight that cannot be read leaves the row `pending` and it is retried.
 
 **Offline behaviour (REMOTE providers, BIZ-219).** `read.py` persists each successful list to `inventory_cache` and answers an unreachable
 provider from it (`stale`, `as_of`); effective remaining = newest pending outbox target, else the live/cached weight (preflight, low-stock

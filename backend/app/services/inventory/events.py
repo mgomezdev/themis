@@ -16,6 +16,7 @@ TRACKING_UNAVAILABLE = "inventory.tracking_unavailable"
 TRACKING_RESTORED = "inventory.tracking_restored"
 DISCONNECTED = "inventory.disconnected"
 RECONNECTED = "inventory.reconnected"
+WEIGHT_CONFLICT = "inventory.weight_conflict"
 
 
 async def emit(session: AsyncSession, event: str, payload: dict, title: str, message: str, job_id: int | None = None) -> bool:

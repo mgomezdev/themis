@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  CAP, INVENTORY_CAPABILITY, discardPendingWrite, listPendingWrites, listSuspended, resolvePendingWrite, resumeTracking, syncNow, syncTone,
-  useSyncStatus, type PendingWrite, type SuspendedSpool,
+  CAP, INVENTORY_CAPABILITY, discardPendingWrite, listPendingWrites, listSuspended, resolvePendingWrite, resolveWeightConflict, resumeTracking,
+  syncNow, syncTone, useSyncStatus, type PendingWrite, type SuspendedSpool,
 } from '../api/inventory';
 import { featuresOf, type PluginSummary } from '../api/plugins';
 
@@ -20,7 +20,7 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
   const [grams, setGrams] = useState<Record<string, string>>({});
 
   const reload = useCallback(() => {
-    if (remote) listPendingWrites().then(r => setWrites(Array.isArray(r.items) ? r.items : [])).catch(() => setWrites([]));
+    if (remote || tracksWeight) listPendingWrites().then(r => setWrites(Array.isArray(r.items) ? r.items : [])).catch(() => setWrites([]));
     if (tracksWeight) listSuspended().then(r => setSuspended(Array.isArray(r.items) ? r.items : [])).catch(() => setSuspended([]));
   }, [remote, tracksWeight]);
   useEffect(reload, [reload]);
@@ -31,6 +31,8 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
     reload(); refetch();
   }
 
+  const conflicts = writes.filter(w => w.status === 'conflict');
+  const queued = writes.filter(w => w.status === 'pending');
   const tone = status ? syncTone(status) : null;
   const toneColor = tone === 'success' ? 'var(--ok)' : tone === 'stale' ? 'var(--warn)' : 'var(--err)';
 
@@ -59,11 +61,38 @@ export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary,
         </div>
       )}
 
+      {conflicts.length > 0 && (
+        <div className="col gap-2" style={{ marginBottom: 16 }} data-testid="weight-conflicts">
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Spool weight changed during a print</div>
+          <div className="small muted">The weight in the inventory is not the one the print started from, so the deduction is on hold. Choose which weight to keep.</div>
+          {conflicts.map(w => {
+            const spent = Math.max(0, (w.pre_weight_g ?? 0) - w.target_g);
+            const found = w.conflict_current_g ?? 0;
+            return (
+              <div key={w.id} className="col gap-2" data-testid={`conflict-${w.id}`}>
+                <span style={{ fontSize: 13 }}>
+                  Spool #{w.spool_ref}: {w.pre_weight_g !== null ? `${Math.round(w.pre_weight_g)} g` : '?'} at print start, <span className="num">{Math.round(found)} g</span> now
+                  {w.job_id ? ` · job #${w.job_id} used ${Math.round(spent)} g` : ''}
+                </span>
+                <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+                  <button className="btn sm" aria-label={`Set spool ${w.spool_ref} to ${Math.round(w.target_g)} g`}
+                          onClick={() => act(() => resolveWeightConflict(w.id, 'themis'), 'Weight updated')}>Use {Math.round(w.target_g)} g</button>
+                  <button className="btn sm" aria-label={`Keep spool ${w.spool_ref} at ${Math.round(found)} g`}
+                          onClick={() => act(() => resolveWeightConflict(w.id, 'provider'), 'Kept the inventory weight')}>Keep {Math.round(found)} g</button>
+                  <button className="btn sm" aria-label={`Subtract the job's usage from spool ${w.spool_ref}`}
+                          onClick={() => act(() => resolveWeightConflict(w.id, 'subtract'), 'Weight updated')}>Subtract job usage → {Math.max(0, Math.round(found - spent))} g</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {remote && (
         <div className="col gap-2" style={{ marginBottom: 16 }} data-testid="pending-writes">
           <div style={{ fontSize: 13, fontWeight: 600 }}>Queued weight updates</div>
-          {writes.length === 0 && <div className="small muted">None — every deduction has reached the provider.</div>}
-          {writes.map(w => (
+          {queued.length === 0 && <div className="small muted">None — every deduction has reached the provider.</div>}
+          {queued.map(w => (
             <div key={w.id} className="row gap-2" data-testid={`pending-${w.id}`} style={{ alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 13 }}>Spool #{w.spool_ref} → <span className="num">{Math.round(w.target_g)} g</span></span>
               <span className="tiny muted">{w.source === 'manual_complete' ? 'manual completion' : 'job'}{w.job_id ? ` #${w.job_id}` : ''} · {w.attempts} attempt{w.attempts === 1 ? '' : 's'}</span>
