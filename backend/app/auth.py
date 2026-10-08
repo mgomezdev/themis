@@ -21,7 +21,7 @@ SCOPES: set[str] = {
     "projects:read", "projects:write", "projects:share",
     "laminus:read", "laminus:write",
     "settings:read", "settings:write",
-    "spoolman:read", "spoolman:write",
+    "spoolman:read", "spoolman:write",   # legacy, see LEGACY_SCOPES
     "inventory:read", "inventory:write",
     "tags:read", "tags:write",
     "maintenance:read", "maintenance:write",
@@ -29,6 +29,10 @@ SCOPES: set[str] = {
     "customers:read", "customers:write",
     "customer",  # customer login sessions: only the /api/v1/customer/* portal
 }
+
+# Scopes kept valid for existing keys but no longer offered in the UI: no route requires them, and migration v035 granted
+# their holders the `inventory:*` equivalents. Dropped with BIZ-221.
+LEGACY_SCOPES: frozenset[str] = frozenset({"spoolman:read", "spoolman:write"})
 
 _DEFAULT_LOCAL_NETWORKS = "192.168.0.0/16"
 

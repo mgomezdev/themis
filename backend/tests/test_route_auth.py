@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from app.auth import SCOPES
+from app.auth import LEGACY_SCOPES, SCOPES
 from app.main import app
 from app.models import ApiKey
 from app.services.api_key_service import generate_key, hash_key
@@ -90,9 +90,9 @@ async def test_a_key_gets_exactly_the_access_its_scope_names(client, session_fac
 
 def test_frontend_scope_list_mirrors_the_backend_registry():
     """frontend/src/api/apiKeys.ts hand-mirrors auth.SCOPES (no codegen). 'customer' is deliberately not
-    grantable from the UI: it is minted only by customer login."""
+    grantable from the UI: it is minted only by customer login. Legacy scopes are likewise no longer offered."""
     source = (Path(__file__).resolve().parents[2] / "frontend/src/api/apiKeys.ts").read_text(encoding="utf-8")
     block = source[source.index("export const SCOPES"):source.index("export const ALL_SCOPES")]
     frontend_scopes = re.findall(r"scope:\s*'([^']+)'", block)
     assert len(frontend_scopes) == len(set(frontend_scopes)), "duplicate scope in apiKeys.ts"
-    assert set(frontend_scopes) == SCOPES - {"customer"}
+    assert set(frontend_scopes) == SCOPES - {"customer"} - LEGACY_SCOPES

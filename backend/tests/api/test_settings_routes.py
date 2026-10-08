@@ -218,7 +218,7 @@ async def test_spoolman_test_connection_stale_name_returns_pending_remaps(client
         body = resp.json()
         assert body["status"] == "pending_remaps"
         assert "sync_id" in body
-        spool_entries = body["pending"]["spoolman_filaments"]
+        spool_entries = body["pending"]["inventory_filaments"]
         assert len(spool_entries) == 1
         entry = spool_entries[0]
         assert entry["printer_preset"] == "Bambu X1C 0.4 nozzle"

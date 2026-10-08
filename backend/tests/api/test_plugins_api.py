@@ -22,6 +22,9 @@ async def test_list_plugins_describes_manifests_ui_capabilities_and_state(client
     assert (sm["requires"], sm["optional"], sm["defines"]) == ([], [], [])
     assert sm["ui"]["mode"] == "page" and [t["id"] for t in sm["ui"]["tabs"]] == ["connection", "mappings"]
     assert sm["ui"]["tabs"][1]["renderer"] == "component"
+    assert (sm["ui"]["tabs"][1]["component"], sm["ui"]["tabs"][1]["requires"]) == ("material-mappings", "PROFILE_LINKS_READ")
+    assert sm["ui"]["redirects"] == [{"from": "/settings/spoolman", "tab": "connection"},
+                                     {"from": "/settings/spoolman-mappings", "tab": "mappings"}]
 
 
 async def test_plugin_detail_has_settings_secret_flags_and_schema_but_never_a_secret(client):

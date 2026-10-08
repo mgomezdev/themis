@@ -19,8 +19,6 @@ LOCAL_INVENTORY = re.compile(r"local[_-]?inv(entory)?", re.IGNORECASE)
 # Paths relative to app/. Entries for migrations, models, auth scopes and printer_manager's preserved keys are
 # permanent (spec §6); the rest are removed as phase 1c/2d move them behind the plugin.
 SPOOLMAN_ALLOWLIST = {
-    # response-contract keys the frontend reads (`spoolman_filaments`, `spoolman_error`): renamed with the frontend cutover
-    "api/routes/laminus.py", "services/catalog_service.py", "services/catalog_utils.py",
     # the legacy slot/ask key names + provider constant (the dual-write normalizer): removed by the cleanup release (BIZ-221)
     "services/inventory/refs.py",
     # permanent (spec §6): scopes, migrations, the legacy table's model

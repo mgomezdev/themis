@@ -10546,6 +10546,35 @@
         "type": "object",
         "title": "HomeBody"
       },
+      "InventoryResolutionEntry": {
+        "properties": {
+          "printer_preset": {
+            "type": "string",
+            "title": "Printer Preset"
+          },
+          "stale_name": {
+            "type": "string",
+            "title": "Stale Name"
+          },
+          "new_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "New Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "printer_preset",
+          "stale_name"
+        ],
+        "title": "InventoryResolutionEntry"
+      },
       "JobConfigsUpdate": {
         "properties": {
           "printer_configs": {
@@ -13239,12 +13268,12 @@
             "title": "Jobs",
             "default": []
           },
-          "spoolman_filaments": {
+          "inventory_filaments": {
             "items": {
-              "$ref": "#/components/schemas/SpoolmanResolutionEntry"
+              "$ref": "#/components/schemas/InventoryResolutionEntry"
             },
             "type": "array",
-            "title": "Spoolman Filaments",
+            "title": "Inventory Filaments",
             "default": []
           }
         },
@@ -13552,35 +13581,6 @@
           "sync_interval_minutes"
         ],
         "title": "SpoolmanConfigOut"
-      },
-      "SpoolmanResolutionEntry": {
-        "properties": {
-          "printer_preset": {
-            "type": "string",
-            "title": "Printer Preset"
-          },
-          "stale_name": {
-            "type": "string",
-            "title": "Stale Name"
-          },
-          "new_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "New Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "printer_preset",
-          "stale_name"
-        ],
-        "title": "SpoolmanResolutionEntry"
       },
       "SyncStatusResponse": {
         "properties": {

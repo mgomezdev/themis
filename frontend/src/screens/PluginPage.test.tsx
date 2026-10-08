@@ -7,10 +7,10 @@ import { PluginsPage } from './PluginsPage';
 import { stubFetch } from '../test/fetchStub';
 import { mkPlugin, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore, type PluginSummary } from '../api/plugins';
-import { LEGACY_REDIRECTS } from '../plugins/registry';
+import { pluginRedirectFor } from '../plugins/PluginRedirects';
 
 const tabs = (...t: [string, string, 'default' | 'schema' | 'component'][]) =>
-  ({ mode: 'page' as const, nav_label: 'Demo', nav_placement: 'settings' as const, nav_icon: null, tabs: t.map(([id, label, renderer]) => ({ id, label, renderer })) });
+  ({ mode: 'page' as const, nav_label: 'Demo', nav_placement: 'settings' as const, nav_icon: null, tabs: t.map(([id, label, renderer]) => ({ id, label, renderer, ...(renderer === 'component' ? { component: 'material-mappings', requires: 'PROFILE_LINKS_READ' } : {}) })), redirects: [] });
 
 function Where() { const l = useLocation(); return <div data-testid="where">{l.pathname}</div>; }
 
@@ -54,7 +54,9 @@ describe('PluginPage', () => {
   });
 
   it('a component tab renders the registered component, and says so when the build has none', async () => {
-    withPlugin(mkPlugin({ id: 'nocomp', ui: tabs(['x', 'X', 'component']) }));
+    const ui = tabs(['x', 'X', 'component']);
+    ui.tabs[0] = { ...ui.tabs[0], component: 'not-in-this-build', requires: undefined };
+    withPlugin(mkPlugin({ id: 'nocomp', ui }));
     show('/plugins/nocomp/x');
     expect((await screen.findByRole('alert')).textContent).toMatch(/needs a component that is not part of this build/);
   });
@@ -102,11 +104,10 @@ describe('PluginPage', () => {
     expect(await screen.findByText(/No plugin “ghost” is installed/)).toBeTruthy();
   });
 
-  it('the old settings URLs are redirected to their plugin pages', () => {
-    expect(LEGACY_REDIRECTS).toEqual({
-      '/settings/spoolman': '/plugins/spoolman/connection',
-      '/settings/spoolman-mappings': '/plugins/spoolman/mappings',
-    });
+  it('old URLs a plugin declares are redirected to that plugin\'s tab; others are left alone', () => {
+    const p = mkPlugin({ id: 'acme', ui: { ...tabs(['conn', 'Connection', 'default']), redirects: [{ from: '/settings/acme', tab: 'conn' }] } });
+    expect(pluginRedirectFor([mkPlugin({ id: 'other' }), p], '/settings/acme')).toBe('/plugins/acme/conn');
+    expect(pluginRedirectFor([p], '/settings/elsewhere')).toBeNull();
   });
 });
 
