@@ -6,7 +6,7 @@ import type { PendingRemaps } from '../api/laminus';
 import { Reply, stubFetch } from '../test/fetchStub';
 
 const CONFIRM = 'POST /api/v1/laminus/catalog/confirm-remap';
-const RESULT = { status: 'ok', applied: { printers: 3, jobs: 2, spoolman_filaments: 1 }, spoolman_failures: [] };
+const RESULT = { status: 'ok', applied: { printers: 3, jobs: 2, inventory_filaments: 1 }, inventory_failures: [] };
 
 function payload(over: Partial<PendingRemaps> = {}): PendingRemaps {
   return {
@@ -23,7 +23,7 @@ function payload(over: Partial<PendingRemaps> = {}): PendingRemaps {
         { field: 'print_profile', stale_value: 'Old Process', options_kind: 'process', required: false,
           affected_config_ids: [10], affected_file_names: ['bracket.3mf'] },
       ],
-      spoolman_filaments: [
+      inventory_filaments: [
         { printer_preset: 'New Machine A', stale_name: 'Old Spool PLA', required: false,
           affected_filament_ids: [5, 6], affected_filament_names: ['Red PLA', 'Blue PLA'] },
       ],
@@ -33,7 +33,7 @@ function payload(over: Partial<PendingRemaps> = {}): PendingRemaps {
       process: ['0.20mm New', '0.28mm Draft'],
       filament: ['Generic PLA @Test', 'Bambu PETG Basic', 'Polymaker PLA Pro', 'Bambu PLA Basic', 'Weird Thing'],
     },
-    spoolman_error: null,
+    inventory_error: null,
     ...over,
   };
 }
@@ -68,18 +68,18 @@ describe('RemapModal', () => {
     expect(screen.getByText('Forge')).toBeTruthy();                  // one printer: named
     expect(screen.getByText('bracket.3mf')).toBeTruthy();
     expect(screen.getByText('affects 2 filaments')).toBeTruthy();
-    expect(['Printers', 'Queued Jobs', 'Spoolman Filaments'].map(h => !!screen.getByRole('heading', { name: h }))).toEqual([true, true, true]);
+    expect(['Printers', 'Queued Jobs', 'Inventory Filaments'].map(h => !!screen.getByRole('heading', { name: h }))).toEqual([true, true, true]);
   });
 
-  it('omits sections that have nothing pending and shows the Spoolman warning when the check was partial', () => {
-    const p = payload({ spoolman_error: 'connection refused' });
+  it('omits sections that have nothing pending and shows the inventory warning when the check was partial', () => {
+    const p = payload({ inventory_error: 'connection refused' });
     p.pending.jobs = [];
-    p.pending.spoolman_filaments = [];
+    p.pending.inventory_filaments = [];
     renderModal(p);
 
     expect(screen.queryByRole('heading', { name: 'Queued Jobs' })).toBeNull();
-    expect(screen.queryByRole('heading', { name: 'Spoolman Filaments' })).toBeNull();
-    expect(screen.getByText(/Spoolman references could not be fully checked: connection refused/)).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Inventory Filaments' })).toBeNull();
+    expect(screen.getByText(/Inventory references could not be fully checked: connection refused/)).toBeTruthy();
   });
 
   it('blocks Confirm until every required printer entry names a replacement that exists in the new catalog', async () => {
@@ -99,7 +99,7 @@ describe('RemapModal', () => {
     await userEvent.clear(filament);
     await userEvent.type(filament, 'Bambu PETG Basic');
     expect(screen.queryByText('Required — choose from the list')).toBeNull();
-    expect(confirmButton().disabled).toBe(false);                      // optional job/Spoolman entries never block
+    expect(confirmButton().disabled).toBe(false);                      // optional job/inventory entries never block
   });
 
   it('a printer machine entry only accepts machine presets and a filament entry only filaments', async () => {
@@ -131,7 +131,7 @@ describe('RemapModal', () => {
           { field: 'filament_profile', stale_value: 'Old PLA', new_value: 'Generic PLA @Test' },
         ],
         jobs: [{ field: 'print_profile', stale_value: 'Old Process', new_value: null }],
-        spoolman_filaments: [{ printer_preset: 'New Machine A', stale_name: 'Old Spool PLA', new_name: null, affected_filament_ids: [5, 6] }],
+        inventory_filaments: [{ printer_preset: 'New Machine A', stale_name: 'Old Spool PLA', new_name: null, affected_filament_ids: [5, 6] }],
       },
     });
   });
@@ -150,11 +150,11 @@ describe('RemapModal', () => {
       [{ field: 'print_profile', stale_value: 'Old Process', new_value: '0.28mm Draft' }]);
   });
 
-  it('narrows Spoolman replacements by material, then brand, then search, and submits the picked name', async () => {
+  it('narrows inventory replacements by material, then brand, then search, and submits the picked name', async () => {
     const api = stubFetch({ [CONFIRM]: RESULT });
     renderModal();
     await resolveRequiredPrinters();
-    const spoolSection = within(screen.getByRole('heading', { name: 'Spoolman Filaments' }).closest('section') as HTMLElement);
+    const spoolSection = within(screen.getByRole('heading', { name: 'Inventory Filaments' }).closest('section') as HTMLElement);
     const [material] = spoolSection.getAllByRole('combobox');
 
     // materials are parsed out of the filament names; unknown ones fall under "Other"
@@ -172,12 +172,12 @@ describe('RemapModal', () => {
     await userEvent.click(confirmButton());
 
     await waitFor(() => expect(api.calls).toHaveLength(1));
-    expect((api.calls[0].body as any).resolutions.spoolman_filaments[0].new_name).toBe('Polymaker PLA Pro');
+    expect((api.calls[0].body as any).resolutions.inventory_filaments[0].new_name).toBe('Polymaker PLA Pro');
   });
 
   it('changing the material clears the brand and search choice', async () => {
     renderModal();
-    const section = within(screen.getByRole('heading', { name: 'Spoolman Filaments' }).closest('section') as HTMLElement);
+    const section = within(screen.getByRole('heading', { name: 'Inventory Filaments' }).closest('section') as HTMLElement);
     await userEvent.selectOptions(section.getAllByRole('combobox')[0], 'PLA');
     await userEvent.selectOptions(section.getAllByRole('combobox')[1], 'Bambu');
     await userEvent.type(section.getByPlaceholderText('Search PLA by Bambu…'), 'Bambu PLA');

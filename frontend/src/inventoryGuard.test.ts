@@ -14,10 +14,6 @@ const LOCAL_INVENTORY = /local[_-]?inv(entory)?/i;
 // Paths relative to src/. Why each remains:
 const SPOOLMAN_ALLOWLIST: Record<string, string> = {
   'api/printers.ts': 'the legacy slot key (`spoolman_spool_id`) a slot still carries; removed with the backend dual-write (BIZ-221)',
-  'api/laminus.ts': 'response-contract keys the backend still names (`spoolman_filaments`, `spoolman_error`)',
-  'components/RemapModal.tsx': 'renders those same laminus response keys',
-  'api/apiKeys.ts': 'the legacy `spoolman:*` API-key scopes, still granted and honoured',
-  'plugins/registry.ts': 'maps the bundled Spoolman plugin id to its component tab and its old URLs',
 };
 // Local inventory is an ordinary plugin: nothing outside its own pages may name it.
 const LOCAL_ALLOWLIST: Record<string, string> = {};

@@ -24,7 +24,7 @@ export interface JobPendingEntry {
   affected_file_names: string[];
 }
 
-export interface SpoolmanPendingEntry {
+export interface InventoryPendingEntry {
   printer_preset: string;
   stale_name: string;
   required: false;
@@ -38,14 +38,14 @@ export interface PendingRemaps {
   pending: {
     printers: PrinterPendingEntry[];
     jobs: JobPendingEntry[];
-    spoolman_filaments: SpoolmanPendingEntry[];
+    inventory_filaments: InventoryPendingEntry[];
   };
   options: {
     machine: string[];
     process: string[];
     filament: string[];
   };
-  spoolman_error: string | null;
+  inventory_error: string | null;
 }
 
 export type SyncResponse = SyncOk | PendingRemaps;
@@ -56,7 +56,7 @@ export interface ProfileResolution {
   new_value: string | null;
 }
 
-export interface SpoolmanResolution {
+export interface InventoryResolution {
   printer_preset: string;
   stale_name: string;
   new_name: string | null;
@@ -66,17 +66,17 @@ export interface SpoolmanResolution {
 export interface Resolutions {
   printers: ProfileResolution[];
   jobs: ProfileResolution[];
-  spoolman_filaments: SpoolmanResolution[];
+  inventory_filaments: InventoryResolution[];
 }
 
 export interface ConfirmResult {
   status: 'ok';
-  applied: { printers: number; jobs: number; spoolman_filaments: number };
-  spoolman_failures: string[];
+  applied: { printers: number; jobs: number; inventory_filaments: number };
+  inventory_failures: string[];
 }
 
 /** How many references a confirmed remap rewrote, whatever they were (printers, jobs, inventory materials). */
-export const appliedRemapTotal = (r: ConfirmResult): number => r.applied.printers + r.applied.jobs + r.applied.spoolman_filaments;
+export const appliedRemapTotal = (r: ConfirmResult): number => r.applied.printers + r.applied.jobs + r.applied.inventory_filaments;
 
 export async function refreshCatalog(): Promise<SyncResponse> {
   const r = await apiFetch('/api/v1/laminus/catalog/refresh', { method: 'POST' });

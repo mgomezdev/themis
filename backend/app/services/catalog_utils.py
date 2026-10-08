@@ -141,33 +141,33 @@ async def compute_drift(
 
     # Inventory filaments: check that the profile names bound to each filament still exist in the new catalog.
     # Bindings are {printer_preset: [filament_profile_name, ...]} — group stale names by (preset, name).
-    spoolman_groups: dict[tuple[str, str], dict] = {}
-    spoolman_error: str | None = None
+    inventory_groups: dict[tuple[str, str], dict] = {}
+    inventory_error: str | None = None
     if inventory_provider.has(PROFILE_LINKS_READ) and removed_filaments:
         fetched = await inventory_provider.call("list_materials")
         if fetched.ok:
-            spoolman_groups = stale_binding_groups(fetched.value, lambda name: name in removed_filaments)
+            inventory_groups = stale_binding_groups(fetched.value, lambda name: name in removed_filaments)
         else:
-            spoolman_error = inventory_provider.describe_failure(fetched)[1]
-            logger.warning("Inventory fetch failed during drift check: %s", spoolman_error)
+            inventory_error = inventory_provider.describe_failure(fetched)[1]
+            logger.warning("Inventory fetch failed during drift check: %s", inventory_error)
 
     all_printer = list(printer_groups.values())
     all_jobs = list(job_groups.values())
-    all_spoolman = list(spoolman_groups.values())
+    all_inventory = list(inventory_groups.values())
 
-    if not any([all_printer, all_jobs, all_spoolman]):
+    if not any([all_printer, all_jobs, all_inventory]):
         return None
 
     return {
         "pending": {
             "printers": all_printer,
             "jobs": all_jobs,
-            "spoolman_filaments": all_spoolman,
+            "inventory_filaments": all_inventory,
         },
         "options": {
             "machine": sorted(new_machines),
             "process": sorted(new_processes),
             "filament": sorted(new_filaments),
         },
-        "spoolman_error": spoolman_error,
+        "inventory_error": inventory_error,
     }

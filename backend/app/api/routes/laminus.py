@@ -22,7 +22,7 @@ class RemapResolutionEntry(BaseModel):
     new_value: str | None = None
 
 
-class SpoolmanResolutionEntry(BaseModel):
+class InventoryResolutionEntry(BaseModel):
     printer_preset: str
     stale_name: str
     new_name: str | None = None
@@ -31,7 +31,7 @@ class SpoolmanResolutionEntry(BaseModel):
 class RemapResolutions(BaseModel):
     printers: list[RemapResolutionEntry] = []
     jobs: list[RemapResolutionEntry] = []
-    spoolman_filaments: list[SpoolmanResolutionEntry] = []
+    inventory_filaments: list[InventoryResolutionEntry] = []
 
 
 class ConfirmRemapBody(BaseModel):
@@ -144,9 +144,9 @@ async def confirm_remap(
     job_res_map: dict[tuple[str, str], str | None] = {
         (r.field, r.stale_value): r.new_value for r in resolutions.jobs
     }
-    # Spoolman resolutions keyed by (printer_preset, stale_name) → new_name | None
-    spoolman_res_map: dict[tuple[str, str], str | None] = {
-        (r.printer_preset, r.stale_name): r.new_name for r in resolutions.spoolman_filaments
+    # Inventory resolutions keyed by (printer_preset, stale_name) → new_name | None
+    inventory_res_map: dict[tuple[str, str], str | None] = {
+        (r.printer_preset, r.stale_name): r.new_name for r in resolutions.inventory_filaments
     }
 
     # Validate all required printer entries have valid resolutions
@@ -219,19 +219,19 @@ async def confirm_remap(
     # Inventory binding rewrites — best-effort after DB commit
     # For each stale entry: remove the stale name from the printer_preset list in the filament's profile
     # bindings; optionally insert the new_name in its place. A provider without PROFILE_BINDINGS is skipped.
-    spoolman_failures: list[str] = []
-    applied_spoolman = 0
-    if pending.get("spoolman_filaments"):
+    inventory_failures: list[str] = []
+    applied_inventory = 0
+    if pending.get("inventory_filaments"):
         if inventory_provider.has(PROFILE_LINKS_READ) and inventory_provider.has(PROFILE_LINKS_WRITE):
             # One read for the whole remap (not one per filament); the local copy follows our own writes, so several
             # entries touching the same material see each other's changes.
             fetched = await inventory_provider.call("list_materials")
             materials = {m.ref: m for m in fetched.value} if fetched.ok else {}
             load_error = None if fetched.ok else inventory_provider.describe_failure(fetched)[1]
-            for entry in pending["spoolman_filaments"]:
+            for entry in pending["inventory_filaments"]:
                 printer_preset = entry["printer_preset"]
                 stale_name = entry["stale_name"]
-                new_name = spoolman_res_map.get((printer_preset, stale_name))
+                new_name = inventory_res_map.get((printer_preset, stale_name))
                 for fil_id in entry["affected_filament_ids"]:
                     try:
                         if load_error:
@@ -251,12 +251,12 @@ async def confirm_remap(
                         if not written.ok:
                             raise RuntimeError(inventory_provider.describe_failure(written)[1])
                         materials[str(fil_id)] = written.value
-                        applied_spoolman += 1
+                        applied_inventory += 1
                     except Exception as exc:
-                        spoolman_failures.append(f"filament {fil_id}: {exc}")
+                        inventory_failures.append(f"filament {fil_id}: {exc}")
                         logger.warning("Inventory profile-link rewrite failed for material %s: %s", fil_id, exc)
 
-    # Commit catalog only when raw is not None (Spoolman-only pending skips this)
+    # Commit catalog only when raw is not None (inventory-only pending skips this)
     if pending_sync.get("raw") is not None:
         catalog_service.commit_catalog(pending_sync["raw"], pending_sync["catalog"])
 
@@ -266,7 +266,7 @@ async def confirm_remap(
         "applied": {
             "printers": applied_printers,
             "jobs": applied_jobs,
-            "spoolman_filaments": applied_spoolman,
+            "inventory_filaments": applied_inventory,
         },
-        "spoolman_failures": spoolman_failures,
+        "inventory_failures": inventory_failures,
     }
