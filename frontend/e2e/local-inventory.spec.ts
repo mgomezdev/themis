@@ -20,8 +20,10 @@ function fakeBackend() {
   };
   const state = { slot: 'spoolman' as string | null, materials: [] as Mat[], spools: [] as Spool[], next: 1, defaultG: 1000 };
   const summary = (p: typeof plugins.spoolman) => ({
-    id: p.id, name: p.name, kind: 'filament_inventory', version: '1.0.0', description: `${p.name} test plugin`, docs_url: null, source: 'bundled',
-    capabilities: p.capabilities, enabled: p.enabled, active: p.enabled && state.slot === p.id, error: null,
+    id: p.id, name: p.name, version: '1.0.0', description: `${p.name} test plugin`, docs_url: null, source: 'bundled',
+    provides: [{ capability: 'inventory.filament', version: 1, features: p.capabilities, selected: state.slot === p.id,
+      status: p.enabled && state.slot === p.id ? 'serving' : 'not_selected', waiting_on: [] }], requires: [], optional: [], defines: [],
+    enabled: p.enabled, active: p.enabled && state.slot === p.id, error: null,
     ui: { mode: 'page', nav_label: p.label, nav_placement: 'settings', nav_icon: null, tabs: p.tabs },
   });
   const detail = (p: typeof plugins.spoolman) => ({
@@ -46,7 +48,7 @@ function fakeBackend() {
       const ok = (data: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) });
       let m: RegExpMatchArray | null;
 
-      if (path === '/plugins') return ok({ plugins: Object.values(plugins).map(summary), slots: { filament_inventory: state.slot } });
+      if (path === '/plugins') return ok({ plugins: Object.values(plugins).map(summary), selections: { 'inventory.filament': state.slot } });
       if ((m = path.match(/^\/plugins\/(\w+)$/)) && m[1] in plugins) {
         const p = plugins[m[1] as keyof typeof plugins];
         if (method === 'PUT') {
@@ -55,7 +57,7 @@ function fakeBackend() {
         }
         return ok(detail(p));
       }
-      if (path === '/extension-slots/filament_inventory' && method === 'PUT') { state.slot = body.plugin_id; return ok({ kind: 'filament_inventory', plugin_id: state.slot }); }
+      if (path === '/capabilities/inventory.filament/provider' && method === 'PUT') { state.slot = body.plugin_id; return ok({ capability: 'inventory.filament', plugin_id: state.slot, explicit: true }); }
 
       const a = active();
       if (path === '/inventory/sync-status') return ok({ provider: a && a.enabled ? a.id : null, capabilities: a && a.enabled ? a.capabilities : [], enabled: !!a?.enabled });

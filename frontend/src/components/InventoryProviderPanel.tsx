@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  CAP, discardPendingWrite, listPendingWrites, listSuspended, resolvePendingWrite, resumeTracking, syncNow, syncTone,
+  CAP, INVENTORY_CAPABILITY, discardPendingWrite, listPendingWrites, listSuspended, resolvePendingWrite, resumeTracking, syncNow, syncTone,
   useSyncStatus, type PendingWrite, type SuspendedSpool,
 } from '../api/inventory';
-import type { PluginSummary } from '../api/plugins';
+import { featuresOf, type PluginSummary } from '../api/plugins';
 
 const fmt = (iso: string | null) => (iso ? new Date(iso).toLocaleString() : 'never');
 
 /** Sync health, queued weight updates and suspended spools of the active inventory provider. The sync half only exists
  *  for REMOTE providers; the suspended-tracking list applies to any provider that deducts. */
-export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary, 'capabilities'> }) {
-  const remote = plugin.capabilities.includes(CAP.REMOTE);
-  const tracksWeight = plugin.capabilities.includes(CAP.TRACKS_WEIGHT);
+export function InventoryProviderPanel({ plugin }: { plugin: Pick<PluginSummary, 'provides'> }) {
+  const features = featuresOf(plugin, INVENTORY_CAPABILITY);
+  const remote = features.includes(CAP.REMOTE);
+  const tracksWeight = features.includes(CAP.TRACKS_WEIGHT);
   const { status, refetch } = useSyncStatus(remote);
   const [writes, setWrites] = useState<PendingWrite[]>([]);
   const [suspended, setSuspended] = useState<SuspendedSpool[]>([]);

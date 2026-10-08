@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile, WebhookConfig
-from app.plugins.kinds.filament_inventory import InventoryProviderError, TRACKS_WEIGHT
+from app.plugins.capabilities.filament_inventory import InventoryProviderError, TRACKS_WEIGHT
 from app.services.inventory import deduction, outbox, tasks
 from tests.api.test_inventory_api import _client_with
 from tests.fake_providers import FakeInventoryProvider

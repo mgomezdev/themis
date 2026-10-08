@@ -11,8 +11,8 @@ import httpx
 import pytest
 from sqlalchemy import text
 
-from app.plugins.kinds.filament_inventory import (
-    ALL_CAPABILITIES, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
+from app.plugins.capabilities.filament_inventory import (
+    ALL_CAPABILITIES, CAPABILITY, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
     WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft, NotSupported, SpoolDraft,
 )
 from app.plugins.local_inventory import MANIFEST as LOCAL_MANIFEST
@@ -76,9 +76,9 @@ async def provider(request, spoolman_upstream, session_factory) -> FilamentInven
 async def test_capabilities_are_a_known_subset_and_the_bundled_manifest_declares_the_same(provider):
     assert provider.capabilities <= ALL_CAPABILITIES
     if isinstance(provider, SpoolmanProvider):
-        assert SPOOLMAN_MANIFEST.capabilities == provider.capabilities
+        assert SPOOLMAN_MANIFEST.provides[CAPABILITY].features == provider.capabilities
     if isinstance(provider, LocalInventoryProvider):
-        assert LOCAL_MANIFEST.capabilities == provider.capabilities
+        assert LOCAL_MANIFEST.provides[CAPABILITY].features == provider.capabilities
 
 
 async def test_test_connection_returns_an_info_dict(provider):

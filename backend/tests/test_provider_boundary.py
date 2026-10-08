@@ -1,10 +1,10 @@
 """The provider boundary (BIZ-232, BIZ-202): Themis core talks to Laminus through `SlicingProvider` and to Spoolman only
-through the plugin host (`FilamentInventoryProvider` in `app/plugins/kinds/`).
+through the plugin host (`FilamentInventoryProvider` in `app/plugins/capabilities/`).
 
 Walks every module under `app/` and fails when code outside an adapter package (`app/services/providers/laminus/`,
 `app/plugins/spoolman/`) reaches past the interface: imports an adapter-internal module (the sidecar client, the Spoolman
 client, the Orca override/gcode/preset logic), names a vendor symbol, or opens its own `httpx` connection. To go through
-the seam, import from `app.services.providers.slicing` or `app.plugins.kinds.filament_inventory` and use
+the seam, import from `app.services.providers.slicing` or `app.plugins.capabilities.filament_inventory` and use
 `app.services.inventory`; to add a vendor, see docs/provider-interfaces.md.
 """
 from __future__ import annotations
@@ -169,7 +169,7 @@ def test_the_checker_flags_each_kind_of_violation(module, text, expected):
     ("app.plugins.spoolman", "from .provider import SpoolmanProvider", True),
     ("app.plugins.spoolman.provider", "from . import client\nimport httpx", False),
     ("app.api.routes.jobs", "from ...services.providers.slicing import Catalog, get_slicing_provider", False),
-    ("app.api.routes.jobs", "from ...plugins.kinds.filament_inventory import InvSpool", False),
+    ("app.api.routes.jobs", "from ...plugins.capabilities.filament_inventory import InvSpool", False),
     ("app.services.inventory.read", "from ...plugins.host import plugin_host", False),
     ("app.services.webhook_service", "import httpx", False),
 ])

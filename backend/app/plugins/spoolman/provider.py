@@ -6,7 +6,7 @@ import json
 
 import httpx
 
-from ..kinds.filament_inventory import (
+from ..capabilities.filament_inventory import (
     LABEL_SCAN, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError,
 )

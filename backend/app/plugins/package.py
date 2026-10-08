@@ -7,15 +7,14 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from .kinds.filament_inventory import KIND as FILAMENT_INVENTORY
-from .manifest import HOST_API, ID_RE, PluginError, PluginManifest
+from .manifest import HOST_API, ID_RE, PluginError, PluginManifest, Requirement
 
 TOML_NAME = "themis-plugin.toml"
-KNOWN_KINDS = frozenset({FILAMENT_INVENTORY})
 # Also the directory name an installed version lives in, so it must never be able to climb out of it.
 VERSION_RE = re.compile(r"^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.]{1,30})?$")
 ENTRY_RE = re.compile(r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*):([A-Za-z_]\w*)$")
-_ALLOWED = {"id", "name", "version", "kind", "host_api", "entry", "min_themis", "publisher", "permissions", "description"}
+_ALLOWED = {"id", "name", "version", "host_api", "entry", "min_themis", "publisher", "permissions", "description",
+            "provides", "requires", "optional", "defines"}
 
 
 @dataclass(frozen=True)
@@ -23,7 +22,6 @@ class PluginToml:
     id: str
     name: str
     version: str
-    kind: str
     host_api: int
     module: str          # dotted module of `entry`
     attr: str            # attribute (the MANIFEST) in it
@@ -31,6 +29,10 @@ class PluginToml:
     publisher: str | None = None
     permissions: tuple[str, ...] = ()     # reserved (BIZ-200): parsed, never enforced
     description: str = ""
+    provides: tuple[tuple[str, int], ...] = ()       # (capability id, contract version)
+    requires: tuple[tuple[str, int], ...] = ()       # (capability id, minimum version)
+    optional: tuple[tuple[str, int], ...] = ()
+    defines: tuple[str, ...] = ()                    # capability ids this plugin introduces
 
     @property
     def entry(self) -> str:
@@ -52,8 +54,18 @@ def _str(data: dict, key: str, required: bool = True, limit: int = 200) -> str |
     return v
 
 
+def _caps(data: dict, key: str) -> tuple[tuple[str, int], ...]:
+    raw = data.get(key, [])
+    if not isinstance(raw, list) or not all(isinstance(x, str) for x in raw) or len(raw) > 50:
+        raise PluginError(f"{TOML_NAME}: `{key}` must be a list of capability ids")
+    out = tuple((r.capability, r.min_version) for r in map(Requirement.parse, raw))
+    if len({c for c, _ in out}) != len(out):
+        raise PluginError(f"{TOML_NAME}: `{key}` lists a capability twice")
+    return out
+
+
 def parse_toml(text: str, *, reserved_ids: frozenset[str] = frozenset()) -> PluginToml:
-    """Validate the toml: id format (and not a reserved bundled id), semver version, host_api, known kind, entry shape."""
+    """Validate the toml: id format (and not a reserved bundled id), semver version, host_api, capability lists, entry shape."""
     try:
         data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
@@ -74,19 +86,20 @@ def parse_toml(text: str, *, reserved_ids: frozenset[str] = frozenset()) -> Plug
         raise PluginError(f"{TOML_NAME}: `host_api` must be an integer")
     if host_api != HOST_API:
         raise PluginError(f"{TOML_NAME}: targets host_api {host_api}; this Themis provides {HOST_API}")
-    kind = _str(data, "kind") or ""
-    if kind not in KNOWN_KINDS:
-        raise PluginError(f"{TOML_NAME}: unknown kind {kind!r} (this Themis knows {sorted(KNOWN_KINDS)})")
     m = ENTRY_RE.match(_str(data, "entry") or "")
     if not m:
         raise PluginError(f"{TOML_NAME}: `entry` must look like 'package.module:MANIFEST'")
     perms = data.get("permissions", [])
     if not isinstance(perms, list) or not all(isinstance(p, str) for p in perms):
         raise PluginError(f"{TOML_NAME}: `permissions` must be a list of strings")
-    return PluginToml(id=pid, name=_str(data, "name") or pid, version=version, kind=kind, host_api=host_api,
+    if any("@" in x for x in data.get("defines", []) if isinstance(x, str)):
+        raise PluginError(f"{TOML_NAME}: `defines` takes plain capability ids, no @version")
+    return PluginToml(id=pid, name=_str(data, "name") or pid, version=version, host_api=host_api,
                       module=m.group(1), attr=m.group(2), min_themis=_str(data, "min_themis", False, 40),
                       publisher=_str(data, "publisher", False), permissions=tuple(perms),
-                      description=_str(data, "description", False, 1000) or "")
+                      description=_str(data, "description", False, 1000) or "",
+                      provides=_caps(data, "provides"), requires=_caps(data, "requires"), optional=_caps(data, "optional"),
+                      defines=tuple(c for c, _ in _caps(data, "defines")))
 
 
 def read_toml(directory: Path, *, reserved_ids: frozenset[str] = frozenset()) -> PluginToml:
@@ -104,12 +117,21 @@ def entry_file_exists(root: Path, t: PluginToml) -> bool:
 
 
 def check_matches(t: PluginToml, manifest: object) -> None:
-    """The exported MANIFEST must be the one the toml describes (id, version, kind, host_api)."""
+    """The exported MANIFEST must be the one the toml describes (id, version, host_api, and its capability lists)."""
     if not isinstance(manifest, PluginManifest):
         raise PluginError(f"entry {t.entry} is not a PluginManifest")
-    for field in ("id", "version", "kind", "host_api"):
+    for field in ("id", "version", "host_api"):
         if getattr(manifest, field) != getattr(t, field):
             raise PluginError(f"{TOML_NAME} {field} {getattr(t, field)!r} != MANIFEST {field} {getattr(manifest, field)!r}")
+    got = {
+        "provides": sorted((c, p.version) for c, p in manifest.provides.items()),
+        "requires": sorted((r.capability, r.min_version) for r in manifest.requires),
+        "optional": sorted((r.capability, r.min_version) for r in manifest.optional),
+        "defines": sorted(d.id for d in manifest.defines),
+    }
+    for field, have in got.items():
+        if sorted(getattr(t, field)) != have:
+            raise PluginError(f"{TOML_NAME} {field} {sorted(getattr(t, field))!r} != MANIFEST {field} {have!r}")
 
 
 def _parts(v: str) -> tuple[int, ...] | None:

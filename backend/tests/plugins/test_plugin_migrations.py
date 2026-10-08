@@ -108,28 +108,31 @@ async def test_a_failure_stops_that_plugins_later_versions(conn):
 
 # --- core v034 ---------------------------------------------------------------------------------------------------
 
-HOST_TABLES = {"plugin_configs", "extension_slots", "plugin_schema_versions"}
+HOST_TABLES = {"plugin_configs", "capability_selections", "plugin_schema_versions"}
+V034_TABLES = {"plugin_configs", "plugin_schema_versions"}      # (v034 also made extension_slots; v040 replaced it)
 
 
 async def test_v034_is_idempotent_on_a_fresh_create_all_db_and_on_a_migrated_one_and_has_a_down(conn):
     await conn.run_sync(Base.metadata.create_all)               # a fresh install: v001 builds every model
     await run_migrations(conn)
     await run_migrations(conn)
-    assert HOST_TABLES <= await _tables(conn)
+    assert HOST_TABLES <= await _tables(conn) and "extension_slots" not in await _tables(conn)
 
     await v034_plugin_host.down(conn)
-    assert not HOST_TABLES & await _tables(conn)
+    assert not V034_TABLES & await _tables(conn)
     await v034_plugin_host.up(conn)                              # re-applies cleanly after a downgrade
     await v034_plugin_host.up(conn)
-    assert HOST_TABLES <= await _tables(conn)
+    assert V034_TABLES <= await _tables(conn)
 
 
-async def test_the_models_and_the_migration_agree_on_columns(conn):
+async def test_the_models_and_the_migrations_agree_on_columns(conn):
+    from app.migrations import v040_capability_selections
     await conn.run_sync(Base.metadata.create_all)
     from_models = {t: [r[1] for r in (await conn.execute(text(f"PRAGMA table_info({t})"))).fetchall()] for t in HOST_TABLES}
     for t in HOST_TABLES:
         await conn.execute(text(f"DROP TABLE {t}"))
     await v034_plugin_host.up(conn)
+    await v040_capability_selections.up(conn)
     from_migration = {t: [r[1] for r in (await conn.execute(text(f"PRAGMA table_info({t})"))).fetchall()] for t in HOST_TABLES}
     assert from_models == from_migration
 

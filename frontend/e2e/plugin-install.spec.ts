@@ -5,7 +5,7 @@ const json = (route: any, body: unknown, status = 200) =>
   route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 
 const PREVIEW = {
-  token: 'tok1', id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', kind: 'filament_inventory', publisher: 'Acme',
+  token: 'tok1', id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', provides: [{ capability: 'inventory.filament', version: 1 }], requires: [], optional: [], defines: [], publisher: 'Acme',
   description: 'Acme stock', source: 'github', source_url: 'https://github.com/acme/inv', ref: 'main',
   commit_sha: 'c0ffee'.padEnd(40, '0'), archive_sha256: 'ab'.repeat(32), min_themis: null,
 };
@@ -16,7 +16,7 @@ test.describe('Plugin installation', () => {
     let restartBody: unknown = null;
     await mockApi(page, {});
     await page.route('**/api/v1/plugins', route => json(route, {
-      plugins: [], slots: { filament_inventory: null },
+      plugins: [], selections: {},
       pending: committed ? [{ plugin_id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', change: 'install' }] : [],
     }));
     await page.route('**/api/v1/plugins/install-from-github', route => json(route, { preview: PREVIEW }));

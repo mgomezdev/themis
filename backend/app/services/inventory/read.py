@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from ...models import InventoryPendingWrite
 from ...plugins.host import plugin_host
-from ...plugins.kinds.filament_inventory import TRACKS_WEIGHT, InvMaterial, InvSpool
+from ...plugins.capabilities.filament_inventory import TRACKS_WEIGHT, InvMaterial, InvSpool
 from . import cache, provider
 
 logger = logging.getLogger("app")

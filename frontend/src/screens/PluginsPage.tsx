@@ -94,7 +94,7 @@ export function PluginsPage() {
             <div className="row between" style={{ alignItems: 'center' }}>
               <div className="col">
                 <div style={{ fontWeight: 600 }}>{p.name} <span className="muted small">v{p.version}</span></div>
-                <div className="muted small">{p.description || p.kind.replace(/_/g, ' ')}</div>
+                <div className="muted small">{p.description || p.provides.map(x => x.capability).join(', ')}</div>
                 {p.install && (
                   <div className="tiny muted" data-testid={`plugin-source-${p.id}`}>
                     {p.install.source_url ? `${p.source === 'github' ? 'GitHub' : 'Uploaded'}: ${p.install.source_url}` : p.source}

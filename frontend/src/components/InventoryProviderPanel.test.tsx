@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InventoryProviderPanel } from './InventoryProviderPanel';
 import { Reply, stubFetch } from '../test/fetchStub';
-import { ALL_CAPS, mkStatus } from '../test/inventoryFixtures';
+import { ALL_CAPS, mkPlugin, mkStatus } from '../test/inventoryFixtures';
 import type { PendingWrite } from '../api/inventory';
 
 const write = (id: number, over: Partial<PendingWrite> = {}): PendingWrite => ({
@@ -17,7 +17,7 @@ const routes = (over: Record<string, unknown> = {}) => ({
   'GET /api/v1/inventory/tracking': { provider: 'p', items: [] },
   ...over,
 });
-const caps = (c: string[]) => ({ capabilities: c });
+const caps = (c: string[]) => mkPlugin({ id: 'p', capabilities: c });
 
 describe('InventoryProviderPanel', () => {
   afterEach(() => vi.unstubAllGlobals());

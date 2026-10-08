@@ -85,13 +85,13 @@ def test_installed_plugin_loads_registers_and_goes_after_themis_on_sys_path(env)
 
 
 def test_vendor_dir_is_importable_by_the_plugin(env):
-    code = "import vend_lib\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
+    code = "import vend_lib\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, mprov=1, tab="default", extra="")
     env.put({**pb.files(code=code), "vendor/vend_lib.py": "X = 1\n"})
     assert env.load().loaded == {"acme_inv": "1.0.0"}
 
 
 def test_a_vendored_module_cannot_shadow_a_themis_dependency(env):
-    code = "import pydantic\nassert hasattr(pydantic, 'BaseModel')\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, tab="default", extra="")
+    code = "import pydantic\nassert hasattr(pydantic, 'BaseModel')\n" + pb.CODE.format(id="acme_inv", name="A", mversion="1.0.0", mhost=1, mprov=1, tab="default", extra="")
     env.put({**pb.files(code=code), "vendor/pydantic.py": "BaseModel = None\n"})
     assert env.load().loaded == {"acme_inv": "1.0.0"}
     import pydantic

@@ -6,7 +6,7 @@ import pytest
 
 from app.models import InventoryConfig, NotificationConfig, WebhookConfig
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import InvMaterial, InvSpool
+from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
 from app.services.inventory import alerts as spool_alerts
 from app.services.inventory.alerts import EVENT, find_low, threshold_for
 from app.services.inventory.sync import record_sync
@@ -206,7 +206,7 @@ async def test_thresholds_and_alert_state_are_scoped_to_the_provider(session_fac
 
 
 async def test_a_provider_that_does_not_track_weight_never_raises_low_stock_alerts(session_factory):
-    from app.plugins.kinds.filament_inventory import REMOTE
+    from app.plugins.capabilities.filament_inventory import REMOTE
     await _row(session_factory, low_stock_default_g=900)
     fake = FakeInventoryProvider(spools=[spool(1, 10)], capabilities=frozenset({REMOTE}))     # no TRACKS_WEIGHT
     await use_provider(fake)

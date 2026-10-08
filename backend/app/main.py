@@ -41,6 +41,8 @@ from .api.routes.session import router as session_router
 from .api.routes.settings import router as settings_router
 from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
+from .api.routes import capabilities as capabilities_mod
+from .api.routes.capabilities import router as capabilities_router
 from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
@@ -205,6 +207,7 @@ app.include_router(settings_router)
 app.include_router(inventory_router)
 app.include_router(plugin_install_router)
 app.include_router(plugins_router)
+app.include_router(capabilities_router)
 
 # Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
 from .plugins import load_bundled, registered_plugins  # noqa: E402
@@ -217,10 +220,7 @@ from .plugins.loader import load_installed  # noqa: E402
 
 load_installed(_cfg.get_plugins_dir(), Path(_data_dir_for_plugins) / "themis.db")      # installed packages; failures are contained
 for _manifest in registered_plugins():
-    for _router in _manifest.routers:
-        app.include_router(_router, prefix=f"/api/v1/plugins/{_manifest.id}")
-    for _router in _manifest.alias_routers:                  # deprecated aliases keep their historical absolute paths
-        app.include_router(_router)
+    capabilities_mod.mount_plugin(app, _manifest)
 
 
 @app.middleware("http")
@@ -238,7 +238,7 @@ async def _cap_plugin_upload(request: Request, call_next):
 @app.exception_handler(CapabilityUnavailable)
 async def _capability_unavailable(_: Request, exc: CapabilityUnavailable) -> JSONResponse:
     """A feature needs a plugin kind/capability that is not available: 409 with a machine-readable body."""
-    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "kind": exc.kind, "capability": exc.capability})
+    return JSONResponse(status_code=409, content={"error": "capability_unavailable", "capability": exc.capability_id, "feature": exc.feature})
 app.include_router(tags_router)
 
 

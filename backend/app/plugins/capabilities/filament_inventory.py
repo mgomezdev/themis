@@ -12,7 +12,9 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-KIND = "filament_inventory"
+from .definition import CapabilityDef
+
+CAPABILITY = "inventory.filament"
 
 TRACKS_WEIGHT = "TRACKS_WEIGHT"            # spools report a remaining weight
 WRITE_WEIGHT = "WRITE_WEIGHT"              # set_remaining() works
@@ -24,6 +26,11 @@ MANAGE_MATERIALS = "MANAGE_MATERIALS"      # create/update/archive materials (a 
 MANAGE_SPOOLS = "MANAGE_SPOOLS"            # create/update/archive spools
 ALL_CAPABILITIES = frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, LABEL_SCAN, REMOTE,
                               MANAGE_MATERIALS, MANAGE_SPOOLS})
+
+DEFINITION = CapabilityDef(
+    id=CAPABILITY, version=1, label="Filament inventory",
+    description="Where Themis looks up spools and materials, and keeps their weights up to date.",
+    features=ALL_CAPABILITIES)
 
 MATERIAL_FIELDS = ("name", "material", "color_hex", "vendor", "density", "diameter")     # what create/update_material accept
 SPOOL_FIELDS = ("label", "location")                                                    # what update_spool accepts (weight: set_remaining)

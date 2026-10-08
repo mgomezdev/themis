@@ -29,7 +29,7 @@ function open(versions: unknown[] = [], over: Record<string, unknown> = {}) {
     'GET /api/v1/printers': [PRINTER],
     'GET /api/v1/projects': [],
     'GET /api/v1/files': [],
-    'GET /api/v1/plugins': { plugins: [], slots: {} },
+    'GET /api/v1/plugins': { plugins: [], selections: {} },
     'GET /api/v1/settings/queue': { slice_cache_use_latest_settings: true },
     'POST /api/v1/files/upload': { id: 42, original_filename: 'model.3mf', folder: '/Prints' },
     'GET /api/v1/files/42/plates': { filename: 'model.3mf', plates: [plate(1)] },

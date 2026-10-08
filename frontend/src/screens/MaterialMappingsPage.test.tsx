@@ -35,7 +35,7 @@ describe('MaterialMappingsPage', () => {
 
   it.each([
     ['no inventory provider is active', inventoryRoutes({ plugin: null })['GET /api/v1/plugins']],
-    ['the provider cannot store preset links', { plugins: [mkPlugin({ id: 'p', capabilities: ALL_CAPS.filter(c => c !== 'PROFILE_LINKS_WRITE') })], slots: { filament_inventory: 'p' } }],
+    ['the provider cannot store preset links', { plugins: [mkPlugin({ id: 'p', capabilities: ALL_CAPS.filter(c => c !== 'PROFILE_LINKS_WRITE') })], selections: { 'inventory.filament': 'p' } }],
   ])('says so instead of showing mappings when %s', async (_why, plugins) => {
     const api = stubFetch(routes({ 'GET /api/v1/plugins': plugins }));
     render(<MaterialMappingsPage />);

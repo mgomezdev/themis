@@ -12,7 +12,7 @@ from sqlalchemy import delete
 
 from ...models import InventoryCache
 from ...plugins.host import plugin_host
-from ...plugins.kinds.filament_inventory import REMOTE, InvMaterial, InvSpool
+from ...plugins.capabilities.filament_inventory import REMOTE, InvMaterial, InvSpool
 from . import provider
 
 logger = logging.getLogger("app")

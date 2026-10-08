@@ -7,7 +7,7 @@ import pytest
 
 from app.models import InventoryPendingWrite, WebhookConfig
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT, InventoryProviderError
 from app.services.inventory import cache, outbox, read, snapshots, sync, tasks
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
@@ -44,7 +44,7 @@ async def test_a_live_read_is_cached_and_an_outage_serves_it_stale_with_its_age(
 
 
 async def test_materials_are_cached_too_and_without_any_cache_an_outage_is_a_503(client, session_factory):
-    from app.plugins.kinds.filament_inventory import InvMaterial
+    from app.plugins.capabilities.filament_inventory import InvMaterial
     fake = FakeInventoryProvider(materials=[InvMaterial(ref="9", name="PETG")], capabilities=REMOTE_CAPS)
     await use_provider(fake)
     fake.fail_with = DOWN

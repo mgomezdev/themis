@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.plugins import get_plugin
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import (
-    KIND, REMOTE, InventoryProviderError, MaterialDraft, SpoolDraft,
+from app.plugins.capabilities.filament_inventory import (
+    CAPABILITY, REMOTE, InventoryProviderError, MaterialDraft, SpoolDraft,
 )
 from app.plugins.local_inventory import MANIFEST
 from app.plugins.local_inventory.migrations import v001_tables
@@ -28,7 +28,7 @@ def local(session_factory) -> LocalInventoryProvider:
 
 async def _active(client):
     assert (await client.put("/api/v1/plugins/local_inventory", json={"enabled": True})).status_code == 200
-    assert (await client.put(f"/api/v1/extension-slots/{KIND}", json={"plugin_id": "local_inventory"})).status_code == 200
+    assert (await client.put(f"/api/v1/capabilities/{CAPABILITY}/provider", json={"plugin_id": "local_inventory"})).status_code == 200
 
 
 async def _rows(factory, sql, **p):
@@ -42,9 +42,9 @@ def test_the_bundled_manifest_declares_a_non_remote_page_plugin_with_its_own_pre
     from app.plugins import load_bundled
     load_bundled()
     assert get_plugin("local_inventory") is MANIFEST
-    assert REMOTE not in MANIFEST.capabilities and MANIFEST.table_prefix == "local_inv_"
+    assert REMOTE not in MANIFEST.provides[CAPABILITY].features and MANIFEST.table_prefix == "local_inv_"
     assert (MANIFEST.ui.mode, [(t.id, t.renderer) for t in MANIFEST.ui.tabs]) == ("page", [("settings", "default")])
-    assert MANIFEST.capabilities == LocalInventoryProvider.capabilities
+    assert MANIFEST.provides[CAPABILITY].features == LocalInventoryProvider.capabilities
 
 
 async def test_migration_runs_on_a_fresh_db_is_idempotent_stays_in_its_prefix_and_reverses(tmp_path):
@@ -159,7 +159,7 @@ async def test_the_weight_log_route_lists_newest_first_filters_by_spool_and_need
 
 async def test_the_whole_library_lifecycle_works_through_the_neutral_api_with_local_active(client):
     await _active(client)
-    assert (await client.get(f"{BASE}/sync-status")).json()["capabilities"] == sorted(MANIFEST.capabilities)
+    assert (await client.get(f"{BASE}/sync-status")).json()["capabilities"] == sorted(MANIFEST.provides[CAPABILITY].features)
 
     material = (await client.post(f"{BASE}/materials", json={"name": "PLA Red", "material": "PLA", "vendor": "Acme", "color_hex": "ff0000"})).json()
     assert (material["ref"], material["color_hex"], material["archived"]) == ("1", "#FF0000", False)
@@ -234,10 +234,10 @@ async def test_deduction_flows_through_the_outbox_into_the_audit_log(client, ses
 async def test_switching_away_removes_the_provider_but_keeps_its_data(client, session_factory, local):
     await _active(client)
     m = await local.create_material(MaterialDraft(name="PLA"))
-    await client.put(f"/api/v1/extension-slots/{KIND}", json={"plugin_id": None})
+    await client.put(f"/api/v1/capabilities/{CAPABILITY}/provider", json={"plugin_id": None})
     assert (await client.get(f"{BASE}/materials")).status_code == 409
     assert len(await _rows(session_factory, "SELECT * FROM local_inv_materials")) == 1          # data stays for next time
-    assert plugin_host.active(KIND) is None and m.ref == "1"
+    assert plugin_host.active(CAPABILITY) is None and m.ref == "1"
 
 
 @pytest.mark.parametrize("ref", ["²", "٣", "9" * 30, "-1", "1.5", " 1", ""])

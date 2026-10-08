@@ -25,7 +25,7 @@ job_model_targets   (job_id CASCADE; v031)
 gcode_files
 sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 plugin_configs      (plugin_id PK; enabled, settings, secrets, state JSON; v034)   — no FKs
-extension_slots     (kind PK → plugin_id NULL; v034)
+capability_selections (capability PK → plugin_id NULL, explicit; v040, replaced extension_slots)
 plugin_schema_versions (plugin_id, version PK; plugin-owned migrations; v034)
 inventory_config    (id=1 singleton; deduct_on_complete, low_stock_default_g, low_stock_overrides, low_stock_alerted; v035)
 queue_config        (singleton id=1: check_interval_minutes, operator_name, snapshot_interval_seconds,
@@ -229,18 +229,20 @@ on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both)
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).
 
-### plugin_configs / extension_slots / plugin_schema_versions  (v034 — plugin host, BIZ-205)
+### plugin_configs / capability_selections / plugin_schema_versions  (v034 plugin host BIZ-205; v040 selections)
 
 `plugin_configs{plugin_id PK, enabled, settings JSON, secrets JSON (write-only through every API), state JSON
-{last_error?, last_error_at?, last_ok_at?}, updated_at}`; `extension_slots{kind PK, plugin_id?}` — a provider is active iff
-its slot names it AND `enabled`; `plugin_schema_versions{plugin_id, version, name, applied_at}` PK(plugin_id, version).
+{last_error?, last_error_at?, last_ok_at?}, updated_at}`; `capability_selections{capability PK, plugin_id?, explicit}` (v040; replaced `extension_slots`, mapping
+`filament_inventory` → `inventory.filament`, old rows `explicit=1`) — a provider serves a capability iff the row names it, it is
+`enabled` and its requirements are met (`explicit=0` = auto-selected as the sole enabled provider; a NULL plugin with `explicit=1`
+is a remembered "None"). v040 also dropped `installed_plugins.kind`; its `down` only drops the selection table; `plugin_schema_versions{plugin_id, version, name, applied_at}` PK(plugin_id, version).
 Plugin-owned tables are prefixed with the plugin's `table_prefix`; they may FK *to* core tables, never the reverse.
 
 ### inventory_config  (v035 — provider-agnostic inventory settings, BIZ-215)
 
 Singleton `id=1`: `deduct_on_complete: bool = true`, `low_stock_default_g?: float`, `low_stock_overrides: {"<provider>:<material_ref>": grams}`,
 `low_stock_alerted: ["<provider>:<spool_ref>"]` (spools already alerted while below threshold). Created lazily on first use. v035 also moved
-the Spoolman integration onto the plugin host: `spoolman_config` → `plugin_configs('spoolman')` (+ `extension_slots`), thresholds re-keyed with the
+the Spoolman integration onto the plugin host: `spoolman_config` → `plugin_configs('spoolman')` (+ the provider selection), thresholds re-keyed with the
 `spoolman:` namespace, and `inventory:read/write` granted to every key holding the matching `spoolman:*`/`settings:*` scope. **`spoolman_config`
 is kept but no longer read or written** (dropped in a later cleanup release).
 
@@ -502,4 +504,4 @@ in sync. See `backend-review.md`/`frontend-review.md` §1 before changing a fiel
 
 ### installed_plugins, audit_log  (v039 — BIZ-223)
 
-`installed_plugins{plugin_id PK, version, name, kind, publisher, source upload|github, source_url, ref, subdir, commit_sha, archive_sha256, installed_at, status pending_restart|active|error|pending_removal, error, previous_version}`: one row per **non-bundled** plugin (bundled ones have none); the code lives in `<data>/plugins/<id>/<version>/` (+ a `.themis-installed.json` listing the migrations that version ships). `status` is written by the installer (`pending_*`) and by `plugins/loader.reconcile` after each start (`active`/`error`). `audit_log{id, at, actor, action, target, detail JSON}` is append-only: `plugin.install|upgrade|rollback|uninstall`, `system.restart`; the actor is `session:<key id>` or `local-admin`; rows commit in the same transaction as the change they describe.
+`installed_plugins{plugin_id PK, version, name, publisher, source upload|github, source_url, ref, subdir, commit_sha, archive_sha256, installed_at, status pending_restart|active|error|pending_removal, error, previous_version}`: one row per **non-bundled** plugin (bundled ones have none); the code lives in `<data>/plugins/<id>/<version>/` (+ a `.themis-installed.json` listing the migrations that version ships). `status` is written by the installer (`pending_*`) and by `plugins/loader.reconcile` after each start (`active`/`error`). `audit_log{id, at, actor, action, target, detail JSON}` is append-only: `plugin.install|upgrade|rollback|uninstall`, `system.restart`; the actor is `session:<key id>` or `local-admin`; rows commit in the same transaction as the change they describe.

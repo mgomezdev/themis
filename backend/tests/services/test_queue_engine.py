@@ -1246,7 +1246,7 @@ async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provide
 @pytest.mark.asyncio
 async def test_a_failing_provider_never_breaks_completion(db):
     from app.models import Job
-    from app.plugins.kinds.filament_inventory import InventoryProviderError
+    from app.plugins.capabilities.filament_inventory import InventoryProviderError
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
     from app.services.inventory import tasks as inventory_tasks

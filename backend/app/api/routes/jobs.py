@@ -25,7 +25,7 @@ from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.slicer_service import SliceError, SliceRequest
-from ...plugins.kinds.filament_inventory import InvSpool
+from ...plugins.capabilities.filament_inventory import InvSpool
 from ._materials import material_columns, stored
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency

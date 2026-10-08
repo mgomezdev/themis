@@ -9106,21 +9106,40 @@
         }
       }
     },
-    "/api/v1/extension-slots/{kind}": {
+    "/api/v1/capabilities": {
+      "get": {
+        "tags": [
+          "capabilities"
+        ],
+        "summary": "Every known capability, its providers and the selected one",
+        "operationId": "list_capabilities_api_v1_capabilities_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/capabilities/{cap}/provider": {
       "put": {
         "tags": [
-          "plugins"
+          "capabilities"
         ],
-        "summary": "Choose the provider for a plugin kind (null = none)",
-        "operationId": "set_slot_api_v1_extension_slots__kind__put",
+        "summary": "Choose the provider of a capability (null = none)",
+        "operationId": "set_provider_api_v1_capabilities__cap__provider_put",
         "parameters": [
           {
-            "name": "kind",
+            "name": "cap",
             "in": "path",
             "required": true,
             "schema": {
               "type": "string",
-              "title": "Kind"
+              "title": "Cap"
             }
           }
         ],
@@ -9129,7 +9148,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SlotBody"
+                "$ref": "#/components/schemas/ProviderBody"
               }
             }
           }
@@ -13022,6 +13041,23 @@
         ],
         "title": "ProjectShareOut"
       },
+      "ProviderBody": {
+        "properties": {
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          }
+        },
+        "type": "object",
+        "title": "ProviderBody"
+      },
       "QueueConfigIn": {
         "properties": {
           "check_interval_minutes": {
@@ -13337,23 +13373,6 @@
         },
         "type": "object",
         "title": "SettingsIn"
-      },
-      "SlotBody": {
-        "properties": {
-          "plugin_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Plugin Id"
-          }
-        },
-        "type": "object",
-        "title": "SlotBody"
       },
       "SpoolIn": {
         "properties": {

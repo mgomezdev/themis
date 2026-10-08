@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from app import plugins
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import KIND, InvMaterial, InvSpool
-from app.plugins.manifest import HOST_API, PluginManifest
+from app.plugins.capabilities.filament_inventory import CAPABILITY, InvMaterial, InvSpool
+from app.plugins.manifest import HOST_API, PluginManifest, Provide
 from pydantic import BaseModel
 
 
@@ -12,7 +12,7 @@ async def enable_spoolman(url: str = "http://spoolman.test", api_key: str | None
     """Select + enable the bundled Spoolman plugin (what `PUT /settings/spoolman {enabled: true, url}` does)."""
     await plugin_host.update_config("spoolman", settings={"url": url, **settings},
                                     secrets={"api_key": api_key} if api_key else None)
-    await plugin_host.set_slot(KIND, "spoolman")
+    await plugin_host.set_provider(CAPABILITY, "spoolman")
 
 
 class _NoSettings(BaseModel):
@@ -21,12 +21,13 @@ class _NoSettings(BaseModel):
 
 async def use_provider(provider, plugin_id: str = "spoolman") -> None:
     """Make `provider` (e.g. a FakeInventoryProvider) the active inventory provider."""
-    manifest = PluginManifest(id=plugin_id, name="Fake inventory", kind=KIND, version="0", host_api=HOST_API,
-                              settings_model=_NoSettings, factory=lambda _s: provider, capabilities=frozenset(provider.capabilities))
+    manifest = PluginManifest(id=plugin_id, name="Fake inventory", version="0", host_api=HOST_API,
+                              settings_model=_NoSettings, factory=lambda _s: provider,
+                              provides={CAPABILITY: Provide(features=frozenset(provider.capabilities))})
     plugins._REGISTRY.pop(plugin_id, None)               # a test may swap the provider more than once
     plugins.register_plugin(manifest)
     plugin_host._fingerprints.pop(plugin_id, None)       # force a rebuild even if this id already has a live instance
-    await plugin_host.set_slot(KIND, plugin_id)
+    await plugin_host.set_provider(CAPABILITY, plugin_id)
 
 
 def spool(ref: str, remaining_g: float | None = None, name: str = "", material: str | None = None, vendor: str | None = None,

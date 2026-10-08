@@ -1,7 +1,7 @@
 id = "local_inventory"
 name = "Local inventory"
 version = "1.0.0"
-kind = "filament_inventory"
+provides = ["inventory.filament@1"]
 host_api = 1
 entry = "app.plugins.local_inventory:MANIFEST"
 publisher = "Themis"

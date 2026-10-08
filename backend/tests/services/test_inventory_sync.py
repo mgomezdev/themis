@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.plugins.host import plugin_host
-from app.plugins.kinds.filament_inventory import REMOTE, TRACKS_WEIGHT, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT, InventoryProviderError
 from app.services.inventory import provider as inventory_provider, sync as inventory_sync
 from app.services.inventory.sync import InventorySyncLoop, record_sync, status
 from tests.fake_providers import FakeInventoryProvider
@@ -104,7 +104,7 @@ def fetched():
 async def test_tick_does_nothing_with_no_provider_a_disabled_one_or_a_non_remote_one(session_factory, fetched):
     await _loop_for(session_factory)._tick()                                  # nothing configured
     await plugin_host.update_config("spoolman", settings={"url": URL}, enabled=False)
-    await plugin_host.set_slot("filament_inventory", "spoolman")
+    await plugin_host.set_provider("inventory.filament", "spoolman")
     await plugin_host.update_config("spoolman", enabled=False)                # selected but disabled
     await _loop_for(session_factory)._tick()
     local = FakeInventoryProvider(capabilities=frozenset({TRACKS_WEIGHT}))   # active but not REMOTE: nothing to sync

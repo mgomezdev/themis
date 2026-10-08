@@ -13,7 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from ...plugins.host import plugin_host
-from ..kinds.filament_inventory import (
+from ..capabilities.filament_inventory import (
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, MATERIAL_FIELDS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, SPOOL_FIELDS,
     TRACKS_WEIGHT, WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft,
     SpoolDraft,

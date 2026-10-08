@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './client';
-import { useActivePlugin, type PluginSummary } from './plugins';
+import { featuresOf, useCapabilityProvider, type PluginSummary } from './plugins';
 import { askBinding, slotBinding, type LoadedFilament } from './printers';
 
-export const INVENTORY_KIND = 'filament_inventory';
+export const INVENTORY_CAPABILITY = 'inventory.filament';
 
 /** Capability names an inventory provider can declare (see docs/provider-interfaces.md). */
 export const CAP = {
@@ -222,8 +222,8 @@ export interface InventoryProvider {
 }
 
 export function useInventory(): InventoryProvider {
-  const plugin = useActivePlugin(INVENTORY_KIND);
-  const has = useCallback((c: string) => !!plugin && plugin.capabilities.includes(c), [plugin]);
+  const plugin = useCapabilityProvider(INVENTORY_CAPABILITY);
+  const has = useCallback((c: string) => !!plugin && featuresOf(plugin, INVENTORY_CAPABILITY).includes(c), [plugin]);
   return useMemo(() => ({ plugin, id: plugin?.id ?? null, has }), [plugin, has]);
 }
 

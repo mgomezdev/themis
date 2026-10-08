@@ -76,7 +76,7 @@ async function install(page: Page, fake: Fake, opts: { local: boolean }) {
       fake.allowLocal = body.allow_local_login;
       return send(200, account());
     }
-    if (path === '/plugins') return send(200, { plugins: [], slots: {} });
+    if (path === '/plugins') return send(200, { plugins: [], selections: {} });
     if (['/queue', '/jobs', '/fleet', '/printers', '/orders', '/projects', '/customers'].includes(path))
       return send(200, []);
     return send(200, {});

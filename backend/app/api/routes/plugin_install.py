@@ -9,7 +9,7 @@ import signal
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_admin_session
@@ -130,7 +130,7 @@ async def rollback(plugin_id: str, key: ApiKey | None = _admin, session: AsyncSe
 async def _remove_data(session: AsyncSession, plugin_id: str) -> None:
     """Drop the plugin's own tables (its migrations' down(), newest first), its settings row and its provider slot — on the
     caller's session and WITHOUT committing, so it lands in one transaction with the uninstall mark and its audit row."""
-    from ...models import ExtensionSlot, PluginConfig
+    from ...models import CapabilitySelection, PluginConfig
     manifest = get_plugin(plugin_id)
     if manifest is None:
         raise installer.InstallError("this plugin is not loaded, so its data cannot be removed (its migrations are not "
@@ -141,8 +141,7 @@ async def _remove_data(session: AsyncSession, plugin_id: str) -> None:
     cfg = await session.get(PluginConfig, plugin_id)
     if cfg is not None:
         await session.delete(cfg)
-    for slot in (await session.execute(select(ExtensionSlot).where(ExtensionSlot.plugin_id == plugin_id))).scalars():
-        slot.plugin_id = None
+    await session.execute(delete(CapabilitySelection).where(CapabilitySelection.plugin_id == plugin_id))      # auto-select may reconsider later
 
 
 @router.delete("/plugins/{plugin_id}", summary="Uninstall at the next restart (data is kept unless remove_data=true)")

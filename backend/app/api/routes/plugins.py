@@ -1,5 +1,5 @@
 """Plugin management API (BIZ-202 §3.9): list manifests, read/write a plugin's settings (secrets write-only), test a
-connection, choose the provider of a kind. Gated on `settings:read` / `settings:write`."""
+connection, see capabilities.py for choosing providers. Gated on `settings:read` / `settings:write`."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,13 +34,29 @@ def install_info(row: InstalledPlugin | None) -> dict | None:
             "can_check_updates": row.source == "github"}
 
 
+def _provides(m: PluginManifest) -> list[dict]:
+    out = []
+    for cap, p in sorted(m.provides.items()):
+        st = plugin_host.status(cap)
+        mine = st.plugin_id == m.id and st.state != "dormant"
+        out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": mine,
+                    "status": st.state if mine else "not_selected", "waiting_on": list(st.waiting_on) if mine else []})
+    return out
+
+
+def _refs(reqs) -> list[dict]:
+    return [{"capability": r.capability, "min_version": r.min_version} for r in reqs]
+
+
 def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
+    provides = _provides(m)
     return {
-        "id": m.id, "name": m.name, "kind": m.kind, "version": m.version, "description": m.description,
+        "id": m.id, "name": m.name, "version": m.version, "description": m.description,
         "docs_url": m.docs_url, "source": row.source if row else "bundled", "loaded": True, "install": install_info(row),
-        "capabilities": sorted(m.capabilities), "ui": _ui(m),
+        "provides": provides, "requires": _refs(m.requires), "optional": _refs(m.optional),
+        "defines": [d.id for d in m.defines], "ui": _ui(m),
         "enabled": plugin_host.is_enabled(m.id),
-        "active": plugin_host.active(m.kind) is not None and plugin_host.slot(m.kind) == m.id,
+        "active": any(x["status"] == "serving" for x in provides),
         "error": plugin_host.build_error(m.id) or plugin_host.state(m.id).get("last_error"),
     }
 
@@ -75,17 +91,16 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
     # Installed packages that are not running: staged for the next restart, or failed to load (shown with their error).
     for r in sorted(rows.values(), key=lambda r: r.plugin_id):
         if get_plugin(r.plugin_id) is None:
-            plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "kind": r.kind, "version": r.version,
+            plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
                             "description": "", "docs_url": None, "source": r.source, "loaded": False,
-                            "install": install_info(r), "capabilities": [],
+                            "install": install_info(r), "provides": [], "requires": [], "optional": [], "defines": [],
                             "ui": {"mode": "section", "nav_label": r.name or r.plugin_id, "nav_placement": "settings",
                                    "nav_icon": None, "tabs": []},
                             "enabled": False, "active": False, "error": r.error})
     pending = [{"plugin_id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
                 "change": "uninstall" if r.status == "pending_removal" else ("install" if not r.previous_version else "update")}
                for r in sorted(rows.values(), key=lambda r: r.plugin_id) if r.status in ("pending_restart", "pending_removal")]
-    kinds = sorted({m.kind for m in loaded})
-    return {"plugins": plugins, "slots": {k: plugin_host.slot(k) for k in kinds}, "pending": pending}
+    return {"plugins": plugins, "selections": plugin_host.selections(), "pending": pending}
 
 
 @router.get("/plugins/{plugin_id}", summary="One plugin: settings (secrets as set/unset), schema and state",
@@ -140,17 +155,3 @@ async def test_plugin(plugin_id: str, body: PluginTest):
     except Exception as e:
         return {"ok": False, "message": plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values()))}
     return {"ok": True, **({"version": info.get("version")} if isinstance(info, dict) else {})}
-
-
-class SlotBody(BaseModel):
-    plugin_id: str | None = None
-
-
-@router.put("/extension-slots/{kind}", summary="Choose the provider for a plugin kind (null = none)",
-            dependencies=[Depends(require_scope("settings:write"))])
-async def set_slot(kind: str, body: SlotBody):
-    try:
-        await plugin_host.set_slot(kind, body.plugin_id)
-    except PluginError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    return {"kind": kind, "plugin_id": plugin_host.slot(kind)}

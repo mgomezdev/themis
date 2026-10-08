@@ -19,7 +19,7 @@ from ...services.inventory import config as inventory_config, provider as invent
 from ...services.inventory import sync as inventory_sync
 from ..host import plugin_host
 from ..manifest import PluginError
-from ..kinds.filament_inventory import KIND, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, InventoryProviderError
+from ..capabilities.filament_inventory import CAPABILITY, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, InventoryProviderError
 
 router = APIRouter(prefix="/api/v1/spoolman", tags=["spoolman"])
 settings_router = APIRouter(prefix="/api/v1/settings/spoolman", tags=["settings"])
@@ -225,8 +225,8 @@ async def update_spoolman_config(body: SpoolmanConfigIn):
         await plugin_host.update_config(
             PLUGIN_ID, enabled=body.enabled, settings=settings or None,
             secrets={"api_key": body.api_key} if body.api_key is not None else None)
-        if body.enabled and plugin_host.slot(KIND) != PLUGIN_ID:
-            await plugin_host.set_slot(KIND, PLUGIN_ID)
+        if body.enabled and plugin_host.selected(CAPABILITY) != PLUGIN_ID:
+            await plugin_host.set_provider(CAPABILITY, PLUGIN_ID)
     except PluginError as e:
         raise HTTPException(status_code=422, detail=str(e))
     return _spoolman_out()

@@ -162,7 +162,7 @@ async function install(page: Page, fake: Fake, opts: { staffKey?: boolean; local
       return p ? send(200, staffProject(p)) : send(404, { detail: 'Not found' });
     }
     if (path === '/projects') return send(200, fake.projects.map(staffProject));
-    if (path === '/plugins') return send(200, { plugins: [], slots: {} });
+    if (path === '/plugins') return send(200, { plugins: [], selections: {} });
     if (path === '/queue' || path === '/jobs' || path === '/fleet' || path === '/printers' || path === '/orders')
       return send(200, []);
     return send(200, {});

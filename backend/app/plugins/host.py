@@ -1,7 +1,8 @@
 """PluginHost: lifecycle, the active rule, and failure containment (spec §3.1).
 
-* **Active rule (one source of truth):** a provider is active iff `extension_slots[kind] == id` AND
-  `plugin_configs[id].enabled`. Core asks only `host.active(kind)` / `host.has(kind, cap)`.
+* **Active rule (one source of truth):** a plugin serves a capability iff `capability_selections[cap] == id`, it is
+  registered and provides `cap`, `plugin_configs[id].enabled`, its `requires` are met and its instance built. Core asks only
+  `host.active(cap)` / `host.has(cap, feature)` / `host.part(cap)`.
 * **Containment:** every core -> provider call goes through `host.call(...)`: a timeout, every exception caught,
   logged with the plugin id and recorded in `plugin_configs.state.last_error`; the caller gets a typed
   `CallResult`, never an exception. Plugin errors never reach the queue loop or a request handler.
@@ -11,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,10 +22,10 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..models import ExtensionSlot, PluginConfig
-from . import PluginError, get_plugin
+from ..models import CapabilitySelection, PluginConfig
+from . import PluginError, capability_catalog, get_plugin, providers_of
 from . import migrations as plugin_migrations
-from .manifest import PluginManifest
+from .manifest import PluginManifest, Provide
 
 logger = logging.getLogger("app")
 
@@ -49,6 +51,22 @@ class CallResult:
 class ActivePlugin:
     manifest: PluginManifest
     instance: Any
+    capability: str
+    part: Any                                    # the part of the instance that serves `capability`
+    features: frozenset[str]
+
+
+@dataclass(frozen=True)
+class CapabilityStatus:
+    # serving | waiting (unmet requires) | error (could not build) | disabled | none_selected | no_provider | dormant (definer gone)
+    state: Literal["serving", "waiting", "error", "disabled", "none_selected", "no_provider", "dormant"]
+    plugin_id: str | None = None
+    waiting_on: tuple[str, ...] = ()
+    error: str | None = None
+
+
+def _part_of(instance: Any, provide: Provide) -> Any:
+    return instance if provide.attr is None else getattr(instance, provide.attr, None)
 
 
 @dataclass
@@ -62,15 +80,17 @@ class _Snapshot:
 class PluginHost:
     def __init__(self) -> None:
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
-        self._slots: dict[str, str | None] = {}
+        self._selections: dict[str, str | None] = {}
+        self._explicit: dict[str, bool] = {}
         self._configs: dict[str, _Snapshot] = {}
         self._instances: dict[str, Any] = {}
         self._build_errors: dict[str, str] = {}
+        self._rejected: dict[str, dict[str, str]] = {}     # plugin id -> {capability: why that provide entry was refused}
         self._fingerprints: dict[str, tuple] = {}
         # Async callbacks `(plugin_id)` run when a *running* plugin's settings/secrets change (its instance is replaced), so a
         # kind's services can drop anything derived from the old configuration (e.g. a cache of a different server's data).
         self.config_changed_hooks: list = []
-        self._lock = asyncio.Lock()          # serialises reload/update_config/set_slot (instance swaps)
+        self._lock = asyncio.Lock()          # serialises reload/update_config/set_provider (instance swaps)
         self._state_lock = asyncio.Lock()    # serialises state persistence (memory + DB stay in step)
 
     # --- lifecycle -------------------------------------------------------------------------------------------
@@ -92,7 +112,7 @@ class PluginHost:
             self._fingerprints.clear()
 
     async def reload(self) -> None:
-        """Re-read slots + configs from the DB and bring the active provider instances in line: an instance is only
+        """Re-read selections + configs from the DB and bring the active provider instances in line: an instance is only
         rebuilt when its enabled/settings/secrets changed (a change to one plugin never touches another)."""
         async with self._lock:
             await self._reload_locked()
@@ -100,16 +120,28 @@ class PluginHost:
     async def _reload_locked(self) -> None:
         assert self._session_factory is not None, "PluginHost.configure() was not called"
         async with self._session_factory() as s:
-            slots = {r.kind: r.plugin_id for r in (await s.execute(select(ExtensionSlot))).scalars()}
+            rows = list((await s.execute(select(CapabilitySelection))).scalars())
+            selections = {r.capability: r.plugin_id for r in rows}
+            explicit = {r.capability: bool(r.explicit) for r in rows}
             configs = {r.plugin_id: _Snapshot(bool(r.enabled), dict(r.settings or {}), dict(r.secrets or {}),
                                               dict(r.state or {}))
                        for r in (await s.execute(select(PluginConfig))).scalars()}
-        self._slots, self._configs = slots, configs
-        wanted = {pid for pid in slots.values() if pid and self._is_enabled(pid)}
+            for cap in capability_catalog():              # auto-select the unambiguous case only (spec decision 5)
+                if cap in selections:
+                    continue
+                enabled = [m.id for m in providers_of(cap) if configs.get(m.id) and configs[m.id].enabled]
+                if len(enabled) == 1:
+                    s.add(CapabilitySelection(capability=cap, plugin_id=enabled[0], explicit=False))
+                    selections[cap], explicit[cap] = enabled[0], False
+            await s.commit()
+        self._selections, self._explicit, self._configs = selections, explicit, configs
+        wanted = {pid for pid in {p for p in selections.values() if p}
+                  if self._is_enabled(pid) and self._serves_any(pid) and not self.unmet(pid)}
         for plugin_id in [p for p in self._instances if p not in wanted]:
             await self._close(self._instances.pop(plugin_id), plugin_id)
             self._fingerprints.pop(plugin_id, None)
         self._build_errors = {k: v for k, v in self._build_errors.items() if k in wanted}
+        self._rejected = {k: v for k, v in self._rejected.items() if k in wanted}
         for plugin_id in sorted(wanted):
             cfg = configs[plugin_id]
             fingerprint = (repr(sorted(cfg.settings.items())), repr(sorted(cfg.secrets.items())),
@@ -129,6 +161,50 @@ class PluginHost:
     def _is_enabled(self, plugin_id: str) -> bool:
         cfg = self._configs.get(plugin_id)
         return bool(cfg and cfg.enabled and get_plugin(plugin_id) is not None)
+
+    def _serves_any(self, plugin_id: str) -> bool:
+        m, catalog = get_plugin(plugin_id), capability_catalog()
+        return m is not None and any(sel == plugin_id and cap in m.provides and cap in catalog
+                                     for cap, sel in self._selections.items())
+
+    def unmet(self, plugin_id: str, _seen: frozenset[str] = frozenset()) -> tuple[str, ...]:
+        """Capability ids this plugin `requires` that nobody enabled (and itself satisfied) currently serves at a high enough
+        version. A requirement cycle never recurses forever: a plugin already on the walk counts as unmet."""
+        m = get_plugin(plugin_id)
+        if m is None:
+            return ()
+        catalog, out = capability_catalog(), []
+        for req in m.requires:
+            pid = self._selections.get(req.capability)
+            provider = get_plugin(pid) if pid else None
+            prov = provider.provides.get(req.capability) if provider else None
+            ok = (req.capability in catalog and pid is not None and pid != plugin_id and pid not in _seen
+                  and self._is_enabled(pid) and prov is not None and prov.version >= req.min_version
+                  and not self.unmet(pid, _seen | {plugin_id}))
+            if not ok:
+                out.append(req.capability)
+        return tuple(out)
+
+    @staticmethod
+    def _check_contract(manifest: PluginManifest, instance: Any) -> dict[str, str]:
+        """Duck-typing check per provide entry: the named part exists, the contract version matches the definition and the
+        definition's required async methods are there. Returns {capability: reason} for the entries that fail; the others keep
+        working (a plugin serving several capabilities is not taken down by one bad entry)."""
+        catalog, rejected = capability_catalog(), {}
+        for cap, prov in manifest.provides.items():
+            d = catalog.get(cap)
+            part = _part_of(instance, prov)
+            if part is None:
+                rejected[cap] = f"provides {cap} through attribute {prov.attr!r}, which the instance does not have"
+            elif d is None:
+                continue                                    # definer not registered: nothing to verify yet
+            elif d.version != prov.version:
+                rejected[cap] = f"provides {cap} v{prov.version} but this Themis knows v{d.version}"
+            else:
+                missing = [n for n in d.required_methods if not inspect.iscoroutinefunction(getattr(part, n, None))]
+                if missing:
+                    rejected[cap] = f"{cap}: missing async method(s) {', '.join(missing)}"
+        return rejected
 
     async def _close(self, instance: Any, plugin_id: str) -> None:
         closer = getattr(instance, "aclose", None)
@@ -157,13 +233,16 @@ class PluginHost:
                 raise PluginError(migration_error)
             settings = manifest.settings_model(**{**cfg.settings, **cfg.secrets})
             built = manifest.factory(settings)
+            rejected = self._check_contract(manifest, built)
         except Exception as e:                          # contained: a bad config must not stop Themis
             message = self._redact(plugin_id, f"could not build provider: {self._describe(e)}")
             logger.warning("Plugin %s could not be built: %s", plugin_id, message)
             self._instances.pop(plugin_id, None)
+            self._rejected.pop(plugin_id, None)
             self._build_errors[plugin_id] = message
             await self._record(plugin_id, last_error=message, last_error_at=_now())
         else:
+            self._rejected[plugin_id] = rejected
             self._instances[plugin_id] = built          # swap first, then close the old one: no window where a closed instance is active
             self._build_errors.pop(plugin_id, None)
             await self._record(plugin_id, last_error=None)
@@ -179,16 +258,54 @@ class PluginHost:
 
     # --- the active rule ---------------------------------------------------------------------------------------
 
-    def active(self, kind: str) -> ActivePlugin | None:
-        plugin_id = self._slots.get(kind)
-        if not plugin_id or not self._is_enabled(plugin_id):
+    def active(self, cap: str) -> ActivePlugin | None:
+        pid = self._selections.get(cap)
+        m = get_plugin(pid) if pid else None
+        prov = m.provides.get(cap) if m else None
+        inst = self._instances.get(pid) if pid else None
+        if m is None or prov is None or inst is None or cap not in capability_catalog() or not self._is_enabled(pid):
             return None
-        inst, manifest = self._instances.get(plugin_id), get_plugin(plugin_id)
-        return ActivePlugin(manifest, inst) if inst is not None and manifest is not None else None
+        if cap in self._rejected.get(pid, {}):
+            return None
+        return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
 
-    def has(self, kind: str, capability: str) -> bool:
-        a = self.active(kind)
-        return a is not None and capability in a.manifest.capabilities
+    def has(self, cap: str, feature: str) -> bool:
+        a = self.active(cap)
+        return a is not None and feature in a.features
+
+    def part(self, cap: str) -> Any | None:
+        a = self.active(cap)
+        return a.part if a else None
+
+    def selected(self, cap: str) -> str | None:
+        """The stored choice for `cap` (it may not be active: disabled, waiting, or built with an error)."""
+        return self._selections.get(cap)
+
+    def is_explicit(self, cap: str) -> bool:
+        return self._explicit.get(cap, False)
+
+    def selections(self) -> dict[str, str | None]:
+        return dict(self._selections)
+
+    def status(self, cap: str) -> CapabilityStatus:
+        if cap not in capability_catalog():
+            return CapabilityStatus("dormant", self._selections.get(cap))
+        pid = self._selections.get(cap)
+        if pid is None:
+            return CapabilityStatus("none_selected" if cap in self._selections or providers_of(cap) else "no_provider")
+        m = get_plugin(pid)
+        if m is None or cap not in m.provides:
+            return CapabilityStatus("no_provider", pid)
+        if not self._is_enabled(pid):
+            return CapabilityStatus("disabled", pid)
+        missing = self.unmet(pid)
+        if missing:
+            return CapabilityStatus("waiting", pid, waiting_on=missing)
+        if self._build_errors.get(pid):
+            return CapabilityStatus("error", pid, error=self._build_errors[pid])
+        if cap in self._rejected.get(pid, {}):
+            return CapabilityStatus("error", pid, error=self._rejected[pid][cap])
+        return CapabilityStatus("serving", pid) if self.active(cap) else CapabilityStatus("error", pid)
 
     def build_error(self, plugin_id: str) -> str | None:
         return self._build_errors.get(plugin_id)
@@ -209,9 +326,6 @@ class PluginHost:
     def has_secret(self, plugin_id: str, field: str) -> bool:
         cfg = self._configs.get(plugin_id)
         return bool(cfg and cfg.secrets.get(field))
-
-    def slot(self, kind: str) -> str | None:
-        return self._slots.get(kind)
 
     def redact(self, plugin_id: str, text: str, extra: tuple[str, ...] = ()) -> str:
         """`text` with the plugin's secret values (and any `extra` candidate secrets the caller is trying) masked — for
@@ -249,21 +363,21 @@ class PluginHost:
 
     def _reset(self) -> None:
         """Forget everything in memory (tests; the DB is untouched)."""
-        self._slots, self._configs, self._instances = {}, {}, {}
-        self._build_errors, self._fingerprints = {}, {}
+        self._selections, self._explicit, self._configs, self._instances = {}, {}, {}, {}
+        self._build_errors, self._fingerprints, self._rejected = {}, {}, {}
         # Fresh locks: a lock is bound to the event loop that first contended it, and a task killed mid-hold when a
         # test's loop closes would leave it locked forever for the next test.
         self._lock, self._state_lock = asyncio.Lock(), asyncio.Lock()
 
     # --- containment -------------------------------------------------------------------------------------------
 
-    async def call(self, kind: str, method: str, *args, timeout: float = DEFAULT_TIMEOUT_S, **kwargs) -> CallResult:
-        """Call `method` on the active provider of `kind`. Never raises (except cancellation)."""
-        active = self.active(kind)
+    async def call(self, cap: str, method: str, *args, timeout: float = DEFAULT_TIMEOUT_S, **kwargs) -> CallResult:
+        """Call `method` on the part of the active provider of `cap` that serves it. Never raises (except cancellation)."""
+        active = self.active(cap)
         if active is None:
-            return CallResult(False, error=f"no active {kind} provider", reason="inactive")
+            return CallResult(False, error=f"no active {cap} provider", reason="inactive")
         plugin_id, instance = active.manifest.id, active.instance
-        fn = getattr(instance, method, None)
+        fn = getattr(active.part, method, None)
         if fn is None:
             return CallResult(False, error=f"{plugin_id} has no method {method!r}", reason="inactive")
         try:
@@ -351,28 +465,54 @@ class PluginHost:
                 await s.commit()
             await self._reload_locked()
 
-    async def set_slot(self, kind: str, plugin_id: str | None) -> None:
-        """Choose the provider for `kind` (None = no provider). Selecting a provider enables it (spec §3.1)."""
+    async def set_provider(self, cap: str, plugin_id: str | None) -> None:
+        """Choose the provider of `cap` (None = none, remembered). Selecting a provider enables it (spec §3)."""
+        if cap not in capability_catalog():
+            raise PluginError(f"unknown capability {cap!r}")
         if plugin_id is not None:
             manifest = get_plugin(plugin_id)
-            if manifest is None or manifest.kind != kind:
-                raise PluginError(f"{plugin_id!r} is not a registered {kind} plugin")
+            if manifest is None or cap not in manifest.provides:
+                raise PluginError(f"{plugin_id!r} does not provide {cap}")
+            self._reject_cycle(cap, plugin_id)
         assert self._session_factory is not None
         async with self._lock:
             async with self._session_factory() as s:
-                slot = await s.get(ExtensionSlot, kind)
-                if slot is None:
-                    s.add(ExtensionSlot(kind=kind, plugin_id=plugin_id))
+                row = await s.get(CapabilitySelection, cap)
+                if row is None:
+                    s.add(CapabilitySelection(capability=cap, plugin_id=plugin_id, explicit=True))
                 else:
-                    slot.plugin_id = plugin_id
+                    row.plugin_id, row.explicit = plugin_id, True
                 if plugin_id is not None:
-                    row = await s.get(PluginConfig, plugin_id)
-                    if row is None:
+                    cfg = await s.get(PluginConfig, plugin_id)
+                    if cfg is None:
                         s.add(PluginConfig(plugin_id=plugin_id, enabled=True, settings={}, secrets={}, state={}))
                     else:
-                        row.enabled = True
+                        cfg.enabled = True
                 await s.commit()
             await self._reload_locked()
+
+    def _reject_cycle(self, cap: str, plugin_id: str) -> None:
+        """Selecting `plugin_id` for `cap` must not make it (transitively) require itself through the selected providers."""
+        sel = {**self._selections, cap: plugin_id}
+        stack: list[str] = []
+
+        def walk(pid: str, seen: set[str]) -> bool:
+            stack.append(pid)
+            m = get_plugin(pid)
+            for req in (m.requires if m else ()):
+                nxt = sel.get(req.capability)
+                if nxt is None:
+                    continue
+                if nxt == plugin_id:
+                    stack.append(plugin_id)
+                    return True
+                if nxt not in seen and walk(nxt, seen | {nxt}):
+                    return True
+            stack.pop()
+            return False
+
+        if walk(plugin_id, {plugin_id}):
+            raise PluginError(f"selecting {plugin_id!r} for {cap} would create a requirement cycle ({' -> '.join(stack)})")
 
 
 plugin_host = PluginHost()

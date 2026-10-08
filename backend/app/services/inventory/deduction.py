@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...models import InventorySpoolStatus, Job
-from ...plugins.kinds.filament_inventory import TRACKS_WEIGHT, WRITE_WEIGHT
+from ...plugins.capabilities.filament_inventory import TRACKS_WEIGHT, WRITE_WEIGHT
 from . import events, outbox, provider, snapshots, tasks
 
 logger = logging.getLogger("app")

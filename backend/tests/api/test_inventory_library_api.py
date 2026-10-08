@@ -2,7 +2,7 @@
 capability-gated (409 for providers that do not own their library, e.g. Spoolman) and never provider-specific."""
 import pytest
 
-from app.plugins.kinds.filament_inventory import MANAGE_MATERIALS, MANAGE_SPOOLS, TRACKS_WEIGHT, WRITE_WEIGHT
+from app.plugins.capabilities.filament_inventory import MANAGE_MATERIALS, MANAGE_SPOOLS, TRACKS_WEIGHT, WRITE_WEIGHT
 from tests.api.test_inventory_api import _client_with
 from tests.fake_providers import FakeInventoryProvider, FakeLibraryProvider
 from tests.inventory_helpers import use_provider
@@ -58,7 +58,7 @@ async def test_material_management_needs_manage_materials(client, method, path, 
     await use_provider(FakeInventoryProvider())                               # reads and weights, but no library
     resp = await client.request(method, BASE + path, json=body)
     assert resp.status_code == 409
-    assert resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory", "capability": MANAGE_MATERIALS}
+    assert resp.json() == {"error": "capability_unavailable", "capability": "inventory.filament", "feature": MANAGE_MATERIALS}
 
 
 @pytest.mark.parametrize("method, path, body", [
@@ -67,13 +67,13 @@ async def test_material_management_needs_manage_materials(client, method, path, 
 async def test_spool_management_needs_manage_spools(client, method, path, body):
     await use_provider(FakeInventoryProvider())
     resp = await client.request(method, BASE + path, json=body)
-    assert resp.status_code == 409 and resp.json()["capability"] == MANAGE_SPOOLS
+    assert resp.status_code == 409 and resp.json()["feature"] == MANAGE_SPOOLS
 
 
 async def test_setting_the_weight_needs_write_weight_and_a_library_can_lack_it(client):
     await use_provider(FakeLibraryProvider(capabilities=frozenset({TRACKS_WEIGHT, MANAGE_SPOOLS, MANAGE_MATERIALS})))
     resp = await client.put(f"{BASE}/spools/1/remaining", json={"remaining_g": 5})
-    assert resp.status_code == 409 and resp.json()["capability"] == WRITE_WEIGHT
+    assert resp.status_code == 409 and resp.json()["feature"] == WRITE_WEIGHT
 
 
 async def test_spoolman_stays_a_valid_provider_without_library_management(client, spoolman_upstream):
@@ -81,7 +81,7 @@ async def test_spoolman_stays_a_valid_provider_without_library_management(client
     await enable_spoolman()
     assert (await client.get(f"{BASE}/materials")).status_code == 200                     # reads work
     resp = await client.post(f"{BASE}/materials", json={"name": "x"})
-    assert resp.status_code == 409 and resp.json()["capability"] == MANAGE_MATERIALS       # nothing Local-specific, just a capability
+    assert resp.status_code == 409 and resp.json()["feature"] == MANAGE_MATERIALS       # nothing Local-specific, just a capability
     weight = await client.put(f"{BASE}/spools/1/remaining", json={"remaining_g": 640})      # Spoolman does support weights
     assert weight.status_code == 200 and weight.json()["remaining_g"] == 640.0
 
@@ -141,7 +141,7 @@ async def test_a_failing_provider_is_a_503_never_a_500_on_every_write_path(clien
 
 
 async def test_provider_statuses_pass_through_only_for_404_409_422_everything_else_is_503(client, lib):
-    from app.plugins.kinds.filament_inventory import InventoryProviderError
+    from app.plugins.capabilities.filament_inventory import InventoryProviderError
     for status, expected in [(422, 422), (404, 404), (409, 409), (401, 503), (403, 503), (500, 503), (502, 503)]:
         lib.fail_with = InventoryProviderError(f"upstream said {status}", code=str(status), status=status)
         resp = await client.post(f"{BASE}/materials", json={"name": "x"})
@@ -153,11 +153,11 @@ async def test_provider_statuses_pass_through_only_for_404_409_422_everything_el
 
 
 async def test_a_provider_that_advertises_a_capability_but_refuses_the_call_is_a_409_capability_error(client, lib):
-    from app.plugins.kinds.filament_inventory import NotSupported
+    from app.plugins.capabilities.filament_inventory import NotSupported
     lib.fail_with = NotSupported(MANAGE_MATERIALS)
     resp = await client.post(f"{BASE}/materials", json={"name": "x"})
-    assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "kind": "filament_inventory",
-                                                       "capability": MANAGE_MATERIALS}
+    assert resp.status_code == 409 and resp.json() == {"error": "capability_unavailable", "capability": "inventory.filament",
+                                                       "feature": MANAGE_MATERIALS}
 
 
 async def test_setting_the_weight_survives_a_failed_read_back(client, lib):

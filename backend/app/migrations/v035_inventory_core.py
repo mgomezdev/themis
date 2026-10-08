@@ -35,6 +35,10 @@ async def _has_table(conn, table: str) -> bool:
     return bool((await conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:t"), {"t": table})).first())
 
 
+async def _table_exists(conn, name: str) -> bool:
+    return (await conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='table' AND name=:n"), {"n": name})).first() is not None
+
+
 async def up(conn) -> None:
     await conn.execute(text("""
         CREATE TABLE IF NOT EXISTS inventory_config (
@@ -60,7 +64,13 @@ async def up(conn) -> None:
                 "VALUES ('spoolman', :e, :s, :k, :t)"),
                 {"e": 1 if row["enabled"] else 0, "s": json.dumps(settings), "k": json.dumps(secrets), "t": json.dumps(state)})
             if row["url"]:
-                await conn.execute(text("INSERT OR IGNORE INTO extension_slots (kind, plugin_id) VALUES ('filament_inventory', 'spoolman')"))
+                if await _table_exists(conn, "extension_slots"):
+                    await conn.execute(text("INSERT OR IGNORE INTO extension_slots (kind, plugin_id) VALUES ('filament_inventory', 'spoolman')"))
+                else:                                       # a re-run after v040 replaced the slot table
+                    await conn.execute(text("CREATE TABLE IF NOT EXISTS capability_selections (capability VARCHAR(96) PRIMARY KEY, "
+                                            "plugin_id VARCHAR(64), explicit BOOLEAN NOT NULL DEFAULT 0)"))     # (v040 down dropped it)
+                    await conn.execute(text("INSERT OR IGNORE INTO capability_selections (capability, plugin_id, explicit) "
+                                            "VALUES ('inventory.filament', 'spoolman', 1)"))
             overrides = {f"spoolman:{k}": float(v) for k, v in _loads(row["low_stock_overrides"], {}).items()}
             alerted = [f"spoolman:{i}" for i in _loads(row["low_stock_alerted"], [])]
             await conn.execute(text(
@@ -101,7 +111,8 @@ async def down(conn) -> None:
                 await conn.execute(text(
                     "UPDATE spoolman_config SET low_stock_default_g = :d, low_stock_overrides = :o, low_stock_alerted = :a WHERE id = 1"),
                     {"d": inv["low_stock_default_g"], "o": json.dumps(overrides), "a": json.dumps(alerted)})
-    await conn.execute(text("DELETE FROM extension_slots WHERE kind = 'filament_inventory' AND plugin_id = 'spoolman'"))
+    if await _table_exists(conn, "extension_slots"):
+        await conn.execute(text("DELETE FROM extension_slots WHERE kind = 'filament_inventory' AND plugin_id = 'spoolman'"))
     await conn.execute(text("DELETE FROM plugin_configs WHERE plugin_id = 'spoolman'"))
     await conn.execute(text("DROP TABLE IF EXISTS inventory_config"))
     for key_id, scopes_raw in (await conn.execute(text("SELECT id, scopes FROM api_keys"))).fetchall():

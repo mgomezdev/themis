@@ -90,7 +90,10 @@ class Staged:
 
     def preview(self) -> dict:
         t = self.toml
-        return {"token": self.token, "id": t.id, "name": t.name, "version": t.version, "kind": t.kind,
+        return {"token": self.token, "id": t.id, "name": t.name, "version": t.version,
+                "provides": [{"capability": c, "version": v} for c, v in t.provides],
+                "requires": [{"capability": c, "min_version": v} for c, v in t.requires],
+                "optional": [{"capability": c, "min_version": v} for c, v in t.optional], "defines": list(t.defines),
                 "publisher": t.publisher, "description": t.description, "source": self.source,
                 "source_url": self.source_url, "ref": self.ref, "commit_sha": self.commit_sha,
                 "archive_sha256": self.archive_sha256, "min_themis": t.min_themis}
@@ -283,7 +286,11 @@ m = getattr(importlib.import_module(module), attr)
 from app.plugins.manifest import PluginManifest
 if not isinstance(m, PluginManifest):
     raise SystemExit("entry is not a PluginManifest")
-print("@@themis-manifest@@" + json.dumps({"id": m.id, "version": m.version, "kind": m.kind, "host_api": m.host_api,
+print("@@themis-manifest@@" + json.dumps({"id": m.id, "version": m.version, "host_api": m.host_api,
+      "provides": sorted([c, p.version] for c, p in m.provides.items()),
+      "requires": sorted([r.capability, r.min_version] for r in m.requires),
+      "optional": sorted([r.capability, r.min_version] for r in m.optional),
+      "defines": sorted(d.id for d in m.defines),
       "migrations": sorted(x.version for x in m.migrations)}))
 '''
 
@@ -308,6 +315,8 @@ def dry_run(root: Path, t: PluginToml) -> dict:
     scratch.mkdir(exist_ok=True)
     env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
            "THEMIS_DATA_DIR": str(scratch), "HOME": str(scratch), "PYTHONDONTWRITEBYTECODE": "1"}
+    if os.name == "nt":                                                    # Winsock (asyncio) won't initialise without it
+        env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
     try:
         proc = subprocess.run([sys.executable, "-P", "-c", _DRYRUN, str(root), str(root / "vendor"), t.module, t.attr],
                               capture_output=True, text=True, timeout=DRYRUN_TIMEOUT_S, env=env, cwd=scratch)
@@ -320,9 +329,14 @@ def dry_run(root: Path, t: PluginToml) -> dict:
     if line is None:
         raise InstallError("the plugin did not export a MANIFEST")
     info = json.loads(line.split("@@themis-manifest@@", 1)[1])
-    for k in ("id", "version", "kind", "host_api"):
+    for k in ("id", "version", "host_api"):
         if info[k] != getattr(t, k):
             raise InstallError(f"{TOML_NAME} {k} {getattr(t, k)!r} does not match MANIFEST {k} {info[k]!r}")
+    for k in ("provides", "requires", "optional"):
+        if sorted(list(x) for x in getattr(t, k)) != info[k]:
+            raise InstallError(f"{TOML_NAME} {k} {sorted(list(x) for x in getattr(t, k))!r} does not match MANIFEST {k} {info[k]!r}")
+    if sorted(t.defines) != info["defines"]:
+        raise InstallError(f"{TOML_NAME} defines {sorted(t.defines)!r} does not match MANIFEST defines {info['defines']!r}")
     return info
 
 
@@ -537,7 +551,7 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
             if row is None:
                 row = InstalledPlugin(plugin_id=t.id)
                 session.add(row)
-            row.version, row.name, row.kind, row.publisher = t.version, t.name, t.kind, t.publisher
+            row.version, row.name, row.publisher = t.version, t.name, t.publisher
             row.source, row.source_url, row.ref, row.subdir = staged.source, staged.source_url, staged.ref, staged.subdir
             row.commit_sha, row.archive_sha256, row.installed_at = staged.commit_sha, staged.archive_sha256, _now()
             row.status, row.error, row.previous_version = "pending_restart", None, previous

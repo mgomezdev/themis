@@ -84,6 +84,7 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
     { to: '/settings/maintenance',       label: 'Maintenance' },
     { to: '/settings/inventory',        label: 'Filament inventory' },
     { to: '/settings/plugins',          label: 'Plugins' },
+    { to: '/settings/capabilities',     label: 'Capabilities' },
     ...pluginPages.filter(p => p.ui.nav_placement === 'settings').map(p => ({ to: `/plugins/${p.id}`, label: p.ui.nav_label })),
     { to: '/settings/webhook',          label: 'Webhooks' },
     { to: '/settings/notifications',    label: 'Notifications' },

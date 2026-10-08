@@ -1,7 +1,8 @@
 # Plugins: authoring and installing
 
-A plugin is an in-process Python package that Themis loads at startup. Today there is one **kind**, `filament_inventory`
-(see `provider-interfaces.md` for its ABC and capabilities); the host, package format and installer are kind-agnostic.
+A plugin is an in-process Python package that Themis loads at startup. It declares the **capabilities** it provides, requires
+and defines (there is no plugin "kind"). A capability is a named, versioned service contract such as `inventory.filament` v1
+(see `provider-interfaces.md` for that contract's ABC and feature flags); exactly one plugin serves each capability at a time.
 Bundled plugins (`spoolman`, `local_inventory`) live in `backend/app/plugins/<id>/` and use the **same package format** as
 installed ones. Design: Linear "Plugin architecture — design spec" (BIZ-202), §3.1 and §3.11.
 
@@ -18,21 +19,45 @@ README.md
 id = "acme_inventory"            # ^[a-z][a-z0-9_]{2,40}$ — stable forever; bundled ids (spoolman, local_inventory) are reserved
 name = "Acme inventory"
 version = "1.2.0"                # MAJOR.MINOR.PATCH[-pre]
-kind = "filament_inventory"      # must be a kind this Themis knows
 host_api = 1                     # the host refuses any other value
+provides = ["inventory.filament@1"]   # capabilities served, with the contract version (@N, default 1)
+requires = []                    # capabilities that must be served for this plugin to work ("cap@N" = minimum version)
+optional = []                    # capabilities used when present (resolved at call time)
+defines  = []                    # capabilities this plugin introduces; ids must start "<plugin id>."  e.g. "acme_inventory.notes"
 entry = "acme_inventory:MANIFEST"   # module:attribute
 min_themis = "2026.10"           # optional, dotted-number compare with the running version
 publisher = "Acme"               # optional; display only, NOT verified
 # permissions = []               # reserved (BIZ-200): parsed, ignored
 ```
 
-Unknown keys are rejected. The `MANIFEST` must agree with the toml on `id`, `version`, `kind` and `host_api` (checked at install
-and at every start). The top-level package name must not already resolve in Themis (so a plugin cannot shadow `app`, the
+Unknown keys are rejected. The `MANIFEST` must agree with the toml on `id`, `version`, `host_api` and the four capability lists
+(checked at install and at every start). The top-level package name must not already resolve in Themis (so a plugin cannot shadow `app`, the
 standard library, a Themis dependency, or another plugin).
 
 `PluginManifest` (see `app/plugins/manifest.py`): `settings_model` (pydantic; generates the settings form), `secret_fields`
-(write-only), `factory(settings) -> provider`, `capabilities`, `ui` (`UiContribution`: a `section` on Settings → Plugins or its own
-`page` with tabs), `routers` (mounted under `/api/v1/plugins/<id>/…`), `migrations`, `table_prefix` (default `<id>_`).
+(write-only), `factory(settings) -> instance` (one instance per plugin), `provides` (`{capability: Provide(version, attr, features,
+routers)}`: `attr` names the part of the instance that serves it, default the instance itself; `features` are that capability's feature
+flags), `requires` / `optional` (`Requirement(capability, min_version)`), `defines` (`CapabilityDef(id, version, label, description,
+required_methods)`), `ui` (`UiContribution`: a `section` on Settings → Plugins or its own `page` with tabs), `routers` (mounted under
+`/api/v1/plugins/<id>/…`), `migrations`, `table_prefix` (default `<id>_`).
+
+### Capabilities, selection and dependencies
+
+* **One plugin = one settings model, one `factory`, one enabled flag, one instance.** Selection is per capability: a plugin that
+  provides two capabilities can be selected for both, one, or neither.
+* **Selection** (`capability_selections`, Settings → **Capabilities**, `PUT /api/v1/capabilities/{cap}/provider`): a plugin is
+  *auto-selected* only when no choice is stored and exactly one enabled plugin provides the capability. A later provider never
+  displaces a stored choice; an explicit "None" is remembered. Selecting a plugin also enables it.
+* **`requires`**: until every required capability is served (at the minimum version) the plugin is registered but *waiting on
+  `<cap>`* and offers nothing; it starts without a restart once the dependency is served. A selection that would create a
+  requirement cycle is rejected (422). **`optional`** capabilities are checked at call time (`plugin_host.active(cap)`).
+* **Plugin-defined capabilities** are duck-typed: a definition names an id, a version and, optionally, `required_methods`; the host
+  verifies the serving part has those `async` methods (and that the provided version matches) when it builds the instance. Consumers
+  call through `plugin_host.call(cap, method, …)` (same timeout and containment as core). A plugin cannot redefine a core id. If the
+  only definer is uninstalled, the capability leaves the catalog and a stored selection for it is kept *dormant*.
+* **REST**: routers listed in `Provide.routers` are served at `/api/v1/plugins/<id>/…` and also at `/api/v1/capabilities/<cap>/…`,
+  dispatched to whichever plugin is currently active (409 `capability_unavailable` when none, 404 for a path the active plugin does
+  not expose). Each route keeps its own `require_scope`. Routers in plain `routers` stay plugin-id-only.
 
 ### What an installed plugin may and may not do
 
@@ -61,7 +86,7 @@ Pipeline (`app/plugins/installer.py`), the same for both sources:
    cannot bypass it). Tar decompression is capped too (headers and directory entries are not file bytes), and every entry
    counts toward the file limit. The upload route refuses an oversized or length-less body (413) before it is read; staged
    previews that are never confirmed expire after an hour.
-3. **Validate** the toml (id format, reserved ids, semver, `host_api`, known kind, entry shape and file, `min_themis`, name clash).
+3. **Validate** the toml (id format, reserved ids, semver, `host_api`, capability lists, entry shape and file, `min_themis`, name clash).
 4. **On confirmation — dry-run import in a subprocess** (clean environment, throwaway data dir, `vendor/` after Themis's own
    path): import errors, missing dependencies and a MANIFEST that disagrees with the toml fail here, without touching the live
    process. This is the first time any of the package's code runs, and only after the admin has accepted the trust warning.
@@ -96,7 +121,7 @@ provider. After migrations, each row becomes `active` or `error`; `pending_remov
   the previous version does not ship (it would run against a newer schema); upgrade forward instead.
 * **Uninstall** disables the plugin now, marks `pending_removal`, and deletes the code at the restart. Its data (prefixed tables,
   settings, queued writes) is **kept** unless you tick "also delete this plugin's data" (`?remove_data=true`: runs its migrations'
-  `down()`, newest first, and drops its settings row and provider slot, in one transaction with the audit row; refused when the
+  `down()`, newest first, and drops its settings row and capability selections, in one transaction with the audit row; refused when the
   plugin is not loaded, since its migrations are then unavailable). Bundled plugins can be disabled, never uninstalled.
 
 ### API (admin session only)

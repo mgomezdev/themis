@@ -2,8 +2,8 @@
 
 Themis core never talks to Laminus (slicing) or to an inventory system (Spoolman, Local inventory...) directly.
 Slicing goes through `backend/app/services/providers/slicing.py` (an ABC, capability flags, a registry + accessor, the
-same pattern as `AbstractPrinterClient`, see `printer-interface.md`). **Filament inventory is a plugin kind** (BIZ-202):
-the ABC and DTOs live in `backend/app/plugins/kinds/filament_inventory.py`, every inventory system is a plugin
+same pattern as `AbstractPrinterClient`, see `printer-interface.md`). **Filament inventory is a core capability** (`inventory.filament` v1, BIZ-202):
+the ABC and DTOs live in `backend/app/plugins/capabilities/filament_inventory.py`, every inventory system is a plugin
 (`backend/app/plugins/<id>/`), and core reaches the active one only through the plugin host
 (`backend/app/services/inventory/`).
 
@@ -14,7 +14,7 @@ core (queue_engine, routes, services)
 providers/slicing.py                     app/services/inventory/*  →  plugins/host.py  (host.call: contained, capability-gated)
   SlicingProvider (sync)                        │ the active filament_inventory plugin
   Catalog / Preset / SliceSpec                  ▼
-        │ registry                       plugins/kinds/filament_inventory.py   FilamentInventoryProvider (async)
+        │ registry                       plugins/capabilities/filament_inventory.py   FilamentInventoryProvider (async)
         ▼                                  InvMaterial / InvSpool, capabilities
 providers/laminus/                              │ registry (plugins/__init__.py)
   adapter.py  LaminusSlicingProvider            ▼
@@ -38,9 +38,9 @@ Only the two accessor modules (`providers/slicing.py`, `providers/filament_inven
 adapter package, to register it. The test is in CI (`pytest`) and has planted-violation cases proving it
 can fail. Importing the DTOs / ABCs from `providers.slicing` / `providers.filament_inventory` is always fine.
 
-## `FilamentInventoryProvider` — async (a plugin kind)
+## `FilamentInventoryProvider` — async (the `inventory.filament` capability)
 
-`plugins/kinds/filament_inventory.py` (spec: Linear "Plugin architecture — design spec" §3.2). Core and the frontend only
+`plugins/capabilities/filament_inventory.py` (spec: Linear "Plugin architecture — design spec" §3.2). Core and the frontend only
 see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 
 | Method | Returns | Notes |
@@ -80,7 +80,7 @@ that are not `REMOTE` have none of this.
 Errors: `InventoryProviderError(message, code, status)` — `code` is the HTTP status string or the transport exception class name.
 
 **Core access** is `app/services/inventory/`: `provider.py` (`active_provider()`, `has(cap)`, `require(cap)` → raises
-`CapabilityUnavailable` → HTTP 409 `{"error": "capability_unavailable", "kind", "capability"}`, `call(method, …)` → the host's
+`CapabilityUnavailable` → HTTP 409 `{"error": "capability_unavailable", "capability": "inventory.filament", "feature"}`, `call(method, …)` → the host's
 contained `CallResult`), `read.py`, `alerts.py` (`spool.low`), `preflight.py` (`low_stock_warning`), `sync.py` (generic sync
 loop + health in `plugin_configs.state`), `deduction.py` + `snapshots.py` + `outbox.py` + `tasks.py` (the deduction model below), `config.py`
 (`inventory_config`: `deduct_on_complete` + low-stock thresholds, keys namespaced `"<provider>:<ref>"`).
@@ -90,7 +90,7 @@ loop + health in `plugin_configs.state`), `deduction.py` + `snapshots.py` + `out
 `set_profile_links` (drift repair in `laminus.py` confirm-remap; the catalog drift check needs `PROFILE_LINKS_READ`).
 
 Neutral API: `/api/v1/inventory/{materials,spools,sync-now,sync-status,resolve-label,settings}`, `PATCH …/materials/{ref}/profile-links`, and library management (`POST/PATCH /materials[/{ref}]`, `POST /materials/{ref}/archive`, `POST/PATCH /spools[/{ref}]`, `POST /spools/{ref}/archive`, `PUT /spools/{ref}/remaining`; 409 `capability_unavailable` without `MANAGE_*`/`WRITE_WEIGHT`)
-(scopes `inventory:read/write`); plugin management `/api/v1/plugins…` and `PUT /api/v1/extension-slots/{kind}` (scopes `settings:*`).
+(scopes `inventory:read/write`); plugin management `/api/v1/plugins…` `GET /api/v1/capabilities` and `PUT /api/v1/capabilities/{cap}/provider` (scopes `settings:*`).
 
 ## `SlicingProvider` — sync
 
@@ -147,7 +147,7 @@ map to `HTTPException`.
 it, a `providers/<name>/__init__.py` calling `register_slicing_provider`, one entry in the accessor in `providers/slicing.py`, and the
 package in `ADAPTER_PACKAGES` of `test_provider_boundary.py`.
 
-**Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, kind `filament_inventory`, `settings_model`,
+**Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, `provides={"inventory.filament": Provide(...)}`, `settings_model`,
 `secret_fields`, `factory`, `capabilities`, `ui`), a provider class implementing the ABC, nothing else (bundled plugins are discovered: any sub-package of `app/plugins/` that exports `MANIFEST`), the
 package in `ADAPTER_PACKAGES`, and a parameter in the provider contract suite
 (`tests/plugins/test_filament_inventory_contract.py`). Map vendor errors to `InventoryProviderError`. No core file changes.

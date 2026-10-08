@@ -11,10 +11,20 @@ export interface PluginUi {
   tabs: PluginTab[];
 }
 
+export interface PluginProvides {
+  capability: string;
+  version: number;
+  features: string[];
+  /** This plugin is the stored choice for the capability. */
+  selected: boolean;
+  status: 'serving' | 'waiting' | 'error' | 'disabled' | 'none_selected' | 'no_provider' | 'dormant' | 'not_selected';
+  waiting_on: string[];
+}
+export interface CapabilityRef { capability: string; min_version: number }
+
 export interface PluginSummary {
   id: string;
   name: string;
-  kind: string;
   version: string;
   description: string;
   docs_url: string | null;
@@ -23,11 +33,14 @@ export interface PluginSummary {
   loaded?: boolean;
   /** What the installer knows about a non-bundled plugin; null/absent for bundled ones. */
   install?: PluginInstall | null;
-  capabilities: string[];
+  provides: PluginProvides[];
+  requires: CapabilityRef[];
+  optional: CapabilityRef[];
+  defines: string[];
   ui: PluginUi;
-  /** The plugin's own switch (it also has to be the selected provider of its kind to be in use). */
+  /** The plugin's own switch (it also has to be the selected provider of a capability to be in use). */
   enabled: boolean;
-  /** Selected for its kind AND enabled: the one instance core talks to. */
+  /** Serving at least one capability right now. */
   active: boolean;
   error: string | null;
 }
@@ -68,7 +81,7 @@ export interface PluginInstall {
 
 export interface PendingChange { plugin_id: string; name: string; version: string; change: 'install' | 'update' | 'uninstall' }
 
-export interface PluginList { plugins: PluginSummary[]; slots: Record<string, string | null>; pending?: PendingChange[] }
+export interface PluginList { plugins: PluginSummary[]; selections: Record<string, string | null>; pending?: PendingChange[] }
 
 export interface PluginUpdate {
   enabled?: boolean;
@@ -106,16 +119,24 @@ export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings
   return request(`/api/v1/plugins/${encodeURIComponent(id)}/test`, json('POST', draft));
 }
 
-export async function setExtensionSlot(kind: string, pluginId: string | null): Promise<{ kind: string; plugin_id: string | null }> {
-  const r = await request<{ kind: string; plugin_id: string | null }>(`/api/v1/extension-slots/${encodeURIComponent(kind)}`, json('PUT', { plugin_id: pluginId }));
+export async function setCapabilityProvider(capability: string, pluginId: string | null): Promise<{ capability: string; plugin_id: string | null; explicit: boolean }> {
+  const r = await request<{ capability: string; plugin_id: string | null; explicit: boolean }>(
+    `/api/v1/capabilities/${encodeURIComponent(capability)}/provider`, json('PUT', { plugin_id: pluginId }));
   invalidatePlugins();
   return r;
+}
+
+/** The feature flags a plugin declares for `capability` (or, with no capability, for all of them). */
+export function featuresOf(plugin: Pick<PluginSummary, 'provides'>, capability?: string): string[] {
+  const entries = capability ? plugin.provides.filter(p => p.capability === capability) : plugin.provides;
+  return [...new Set(entries.flatMap(p => p.features))];
 }
 
 // ---- installation (admin session only) ----
 
 export interface InstallPreview {
-  token: string; id: string; name: string; version: string; kind: string; publisher: string | null; description: string;
+  token: string; id: string; name: string; version: string; publisher: string | null; description: string;
+  provides: { capability: string; version: number }[]; requires: CapabilityRef[]; optional: CapabilityRef[]; defines: string[];
   source: 'upload' | 'github'; source_url: string | null; ref: string | null; commit_sha: string | null; archive_sha256: string;
   min_themis: string | null;
 }
@@ -211,22 +232,27 @@ function subscribe(l: () => void) {
   return () => { listeners.delete(l); };
 }
 
-export function usePlugins(): { plugins: PluginSummary[]; slots: Record<string, string | null>; pending: PendingChange[]; loaded: boolean; refresh: () => void } {
+// Stable empties: consumers put these in effect dependency lists, so a fresh [] / {} per render would loop.
+const NO_PLUGINS: PluginSummary[] = [];
+const NO_SELECTIONS: Record<string, string | null> = {};
+const NO_PENDING: PendingChange[] = [];
+
+export function usePlugins(): { plugins: PluginSummary[]; selections: Record<string, string | null>; pending: PendingChange[]; loaded: boolean; refresh: () => void } {
   const s = useSyncExternalStore(subscribe, () => store);
   const refresh = useCallback(() => invalidatePlugins(), []);
-  return { plugins: s.data?.plugins ?? [], slots: s.data?.slots ?? {}, pending: s.data?.pending ?? [], loaded: s.loaded, refresh };
+  return { plugins: s.data?.plugins ?? NO_PLUGINS, selections: s.data?.selections ?? NO_SELECTIONS, pending: s.data?.pending ?? NO_PENDING, loaded: s.loaded, refresh };
 }
 
-/** The plugin currently in use for `kind` (selected and enabled), or null. */
-export function useActivePlugin(kind: string): PluginSummary | null {
+/** The plugin currently serving `capability` (selected, enabled, requirements met), or null. */
+export function useCapabilityProvider(capability: string): PluginSummary | null {
   const { plugins } = usePlugins();
-  return plugins.find(p => p.kind === kind && p.active) ?? null;
+  return plugins.find(p => p.provides.some(x => x.capability === capability && x.status === 'serving')) ?? null;
 }
 
-/** Whether the active plugin of `kind` offers `capability`. False with no active plugin, or while loading. */
-export function useCapability(kind: string, capability: string): boolean {
-  const active = useActivePlugin(kind);
-  return !!active && active.capabilities.includes(capability);
+/** Whether the provider serving `capability` offers `feature`. False with no provider, or while loading. */
+export function useFeature(capability: string, feature: string): boolean {
+  const provider = useCapabilityProvider(capability);
+  return !!provider && featuresOf(provider, capability).includes(feature);
 }
 
 // ---- schema-renderer tabs (`renderer: 'schema'`): a UI the plugin describes, rendered by Themis ----

@@ -8,7 +8,7 @@ import { mkPlugin, mkStatus } from '../test/inventoryFixtures';
 beforeEach(() => {
   resetPluginStore();
   vi.stubGlobal('fetch', vi.fn(async (url: string) =>
-    new Response(JSON.stringify(url === '/api/v1/plugins' ? { plugins: [], slots: {} } : {}), { status: 200 })
+    new Response(JSON.stringify(url === '/api/v1/plugins' ? { plugins: [], selections: {} } : {}), { status: 200 })
   ));
 });
 
@@ -279,7 +279,7 @@ describe('Sidebar build info', () => {
 
 function withPlugins(plugins: ReturnType<typeof mkPlugin>[], extra: Record<string, unknown> = {}) {
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins, slots: {} }), { status: 200 });
+    if (url === '/api/v1/plugins') return new Response(JSON.stringify({ plugins, selections: {} }), { status: 200 });
     return new Response(JSON.stringify(extra[url] ?? {}), { status: 200 });
   }));
 }
@@ -325,7 +325,7 @@ describe('Inventory status chip in the sidebar', () => {
 
   it('shows the provider with its sync tone once one is active', async () => {
     const plugin = mkPlugin({ id: 'spoolman', name: 'Spoolman' });
-    withPlugins([plugin], { '/api/v1/inventory/sync-status': mkStatus({ provider: 'spoolman', capabilities: plugin.capabilities, pending_count: 2 }) });
+    withPlugins([plugin], { '/api/v1/inventory/sync-status': mkStatus({ provider: 'spoolman', capabilities: plugin.provides[0].features, pending_count: 2 }) });
     renderOnFleet(0, 0, 0);
 
     const chip = await screen.findByTestId('inventory-chip');

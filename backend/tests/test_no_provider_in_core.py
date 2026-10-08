@@ -102,7 +102,7 @@ def test_a_stale_allowlist_entry_is_caught(tree):
 # management is reached through capabilities (MANAGE_MATERIALS / MANAGE_SPOOLS), not plugin ids.
 
 NEUTRAL_SURFACE = ("api/routes/inventory.py", "api/routes/plugins.py", "plugins/host.py", "plugins/manifest.py",
-                   "plugins/migrations.py", "plugins/kinds/", "services/inventory/")
+                   "plugins/migrations.py", "plugins/capabilities/", "services/inventory/")
 TRANSITIONAL = {"services/inventory/refs.py"}        # the legacy slot key; BIZ-217 removes it
 
 
@@ -123,11 +123,11 @@ def test_the_neutral_library_surface_never_names_a_provider():
 
 def test_the_neutral_surface_checker_can_fail(tmp_path):
     (tmp_path / "services" / "inventory").mkdir(parents=True)
-    (tmp_path / "plugins" / "kinds").mkdir(parents=True)
+    (tmp_path / "plugins" / "capabilities").mkdir(parents=True)
     (tmp_path / "services" / "inventory" / "x.py").write_text("from app.plugins.local_inventory import Provider\n")
-    (tmp_path / "plugins" / "kinds" / "y.py").write_text("PROVIDER = 'spoolman'\n")
+    (tmp_path / "plugins" / "capabilities" / "y.py").write_text("PROVIDER = 'spoolman'\n")
     (tmp_path / "services" / "inventory" / "refs.py").write_text("LEGACY = 'spoolman'\n")          # transitional: exempt
-    assert neutral_violations(tmp_path) == ["plugins/kinds/y.py: names a specific inventory provider",
+    assert neutral_violations(tmp_path) == ["plugins/capabilities/y.py: names a specific inventory provider",
                                             "services/inventory/x.py: names a specific inventory provider"]
 
 

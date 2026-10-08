@@ -9,7 +9,7 @@ from sqlalchemy import select
 from app.models import (
     InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile, WebhookConfig,
 )
-from app.plugins.kinds.filament_inventory import InvSpool, InventoryProviderError
+from app.plugins.capabilities.filament_inventory import InvSpool, InventoryProviderError
 from app.services.inventory import deduction, outbox, snapshots, tasks
 from tests.fake_providers import FakeInventoryProvider
 from tests.inventory_helpers import spool, use_provider
