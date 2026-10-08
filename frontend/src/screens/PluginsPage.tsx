@@ -62,7 +62,10 @@ export function PluginsPage() {
   return (
     <div>
       <PageHeader title="Plugins" sub="Integrations that extend Themis. Each is enabled, configured and (where it has a library) browsed here."
-                  actions={<button className="btn primary sm" onClick={() => setInstalling('new')}>Install plugin</button>} />
+                  actions={<div className="row gap-2">
+                    <Link className="btn sm" to="/settings/capabilities">Capability suppliers</Link>
+                    <button className="btn primary sm" onClick={() => setInstalling('new')}>Install plugin</button>
+                  </div>} />
       {pending.length > 0 && (
         <div className="card" role="status" data-testid="restart-banner" style={{ padding: 12, marginBottom: 12 }}>
           {restarting ? <div>Restarting Themis… this page will reconnect when it is back.</div> : (

@@ -172,6 +172,12 @@ describe('PluginsPage (Settings → Plugins)', () => {
     expect([...badges].map(b => b.className.replace('pill ', ''))).toEqual(['ok', 'idle', 'err', 'warn']);
   });
 
+  it('links to the capability suppliers page', async () => {
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} } });
+    render(<MemoryRouter><PluginsPage /></MemoryRouter>);
+    expect((await screen.findByRole('link', { name: 'Capability suppliers' })).getAttribute('href')).toBe('/settings/capabilities');
+  });
+
   it('says so when nothing is installed', async () => {
     stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} } });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
