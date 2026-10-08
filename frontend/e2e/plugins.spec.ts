@@ -2,15 +2,18 @@ import { test, expect } from '@playwright/test';
 import { mockApi } from './mock-api';
 
 const SPOOLMAN = {
-  id: 'spoolman', name: 'Spoolman', kind: 'filament_inventory', version: '1', description: 'Filament tracker', docs_url: null,
-  source: 'bundled', capabilities: ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'REMOTE', 'LABEL_SCAN', 'PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE'],
+  id: 'spoolman', name: 'Spoolman', version: '1', description: 'Filament tracker', docs_url: null,
+  source: 'bundled', requires: [], optional: [], defines: [],
+  provides: [{ capability: 'inventory.filament', version: 1, selected: true, status: 'serving', waiting_on: [],
+    features: ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'REMOTE', 'LABEL_SCAN', 'PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE'] }],
   enabled: true, active: true, error: null,
   ui: { mode: 'page', nav_label: 'Spoolman', nav_placement: 'settings', nav_icon: null,
         tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }, { id: 'mappings', label: 'Filament mappings', renderer: 'component' }] },
 };
-const LOCAL = { ...SPOOLMAN, id: 'local_inv', name: 'Local', enabled: false, active: false, capabilities: ['TRACKS_WEIGHT'],
+const LOCAL = { ...SPOOLMAN, id: 'local_inv', name: 'Local', enabled: false, active: false,
+  provides: [{ capability: 'inventory.filament', version: 1, selected: false, status: 'not_selected', waiting_on: [], features: ['TRACKS_WEIGHT'] }],
   ui: { mode: 'page', nav_label: 'Local', nav_placement: 'settings', nav_icon: null, tabs: [] } };
-const PLUGINS = { plugins: [SPOOLMAN, LOCAL], slots: { filament_inventory: 'spoolman' } };
+const PLUGINS = { plugins: [SPOOLMAN, LOCAL], selections: { 'inventory.filament': 'spoolman' } };
 const DETAIL = {
   ...SPOOLMAN, settings: { url: 'http://spoolman.test', sync_interval_minutes: 15, max_disconnect_minutes: null }, secrets: { api_key: false },
   secret_fields: ['api_key'], state: {},
@@ -45,6 +48,22 @@ test.describe('Plugins', () => {
     await page.goto('/settings/plugins');
     await expect(page.getByTestId('plugin-spoolman')).toContainText('Active');
     await expect(page.getByTestId('plugin-local_inv')).toContainText('Disabled');
+  });
+
+  test('Settings → Capabilities lists each capability with its provider picker and status', async ({ page }) => {
+    await mockApi(page, { plugins: PLUGINS });
+    await page.route('**/api/v1/capabilities', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      capabilities: [{ id: 'inventory.filament', version: 1, label: 'Filament inventory', description: 'Where spools come from', definer: null,
+        features: [], required_methods: [], selected: 'spoolman', explicit: true, status: 'serving', waiting_on: [], error: null, requires_by: [],
+        providers: [{ plugin_id: 'spoolman', name: 'Spoolman', version: 1, enabled: true, status: 'serving', waiting_on: [] },
+                    { plugin_id: 'local_inv', name: 'Local', version: 1, enabled: false, status: 'not_selected', waiting_on: [] }] }] }) }));
+    await page.goto('/settings/capabilities');
+
+    await expect(page.getByRole('heading', { name: 'Capabilities' })).toBeVisible();
+    const picker = page.getByLabel('Filament inventory provider');
+    await expect(picker).toHaveValue('spoolman');
+    await expect(picker.locator('option')).toHaveText(['None', 'Spoolman', 'Local (disabled)']);
+    await expect(page.getByText('Serving')).toBeVisible();
   });
 
   test('with no provider the app offers no spool features', async ({ page }) => {

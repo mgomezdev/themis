@@ -93,7 +93,7 @@ test.describe('API Keys management', () => {
       if (path === '/projects') return ok([]);
       if (path === '/queue') return ok([]);
       if (path === '/queue/config' || path === '/settings/queue') return ok({ check_interval_minutes: 5 });
-      if (path === '/plugins') return ok({ plugins: [], slots: {} });
+      if (path === '/plugins') return ok({ plugins: [], selections: {} });
       if (path === '/laminus/catalog/status') return ok({ cached: false, laminus: { catalog_building: false } });
       if (path === '/machine-catalog') return ok([]);
 

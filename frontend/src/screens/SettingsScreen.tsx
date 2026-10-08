@@ -16,6 +16,7 @@ import { Icons, Icon } from '../components/icons';
 import { FieldRow, PageHeader, Toggle } from '../components/settingsUi';
 import { FilamentInventoryPage } from './FilamentInventoryPage';
 import { PluginsPage } from './PluginsPage';
+import { CapabilitiesPage } from './CapabilitiesPage';
 import { usePlugins } from '../api/plugins';
 import {
   MaintenanceItemForm, TRIGGER_LABEL, triggerChipText,
@@ -1688,7 +1689,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'inventory' | 'plugins' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'inventory' | 'plugins' | 'capabilities' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1702,7 +1703,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'inventory', 'plugins', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'inventory', 'plugins', 'capabilities', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1733,6 +1734,7 @@ export function SettingsScreen() {
       items: [
         { id: 'inventory' as PageId, label: 'Filament inventory', icon: SettingsIcons.inventory, sub: 'Provider, deduction & low-stock alerts' },
         { id: 'plugins' as PageId,   label: 'Plugins',            icon: Icons.layers,           sub: 'Installed plugins & their settings' },
+        { id: 'capabilities' as PageId, label: 'Capabilities',    icon: Icons.layers,           sub: 'Which plugin serves each capability' },
         { id: 'webhook' as PageId, label: 'Webhooks',          icon: SettingsIcons.webhook,  sub: 'Job state notifications' },
         { id: 'notifications' as PageId, label: 'Notifications', icon: Icons.bell, sub: 'ntfy, Discord & email alerts' },
       ],
@@ -1784,6 +1786,7 @@ export function SettingsScreen() {
       {activePage === 'maintenance'        && <MaintenancePage />}
       {activePage === 'inventory'         && <FilamentInventoryPage />}
       {activePage === 'plugins'           && <PluginsPage />}
+      {activePage === 'capabilities'      && <CapabilitiesPage />}
       {activePage === 'webhook'           && <WebhookPage />}
       {activePage === 'notifications'     && <NotificationsPage />}
       {activePage === 'fleet-backup'      && <FleetBackupPage />}
