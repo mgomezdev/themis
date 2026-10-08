@@ -101,7 +101,7 @@ export function PluginInstallDialog({ plugins, initial, onClose, onInstalled }: 
           <div className="col gap-2" data-testid="install-preview">
             <div>
               <div style={{ fontWeight: 600 }}>{preview.name} <span className="muted small">v{preview.version}</span></div>
-              <div className="muted small">{preview.description || preview.kind.replace(/_/g, ' ')}</div>
+              <div className="muted small">{preview.description || preview.provides.map(x => x.capability).join(', ')}</div>
             </div>
             <dl className="small" style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '4px 12px', margin: 0 }}>
               <dt className="muted">Plugin id</dt><dd style={{ margin: 0 }}>{preview.id}</dd>

@@ -39,7 +39,7 @@ function boot(path: string, over: Record<string, unknown> = {}) {
     'GET /api/v1/queue': [],
     'GET /api/v1/settings/queue': { operator_name: null },
     'GET /api/v1/fleet': [],
-    'GET /api/v1/plugins': { plugins: [], slots: {} },
+    'GET /api/v1/plugins': { plugins: [], selections: {} },
     'GET /api/v1/laminus/catalog/status': { laminus_configured: false, laminus: null },
     'GET /api/v1/orders': [],
     'GET /api/v1/files': [],

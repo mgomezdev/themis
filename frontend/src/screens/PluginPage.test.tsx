@@ -118,7 +118,7 @@ describe('PluginsPage (Settings → Plugins)', () => {
     const small = mkPlugin({ id: 'small_one', name: 'Small', enabled: true, active: false, ui: { mode: 'section', nav_label: 'Small', nav_placement: 'settings', nav_icon: null, tabs: [] } });
     const big = mkPlugin({ id: 'big_one', name: 'Big', ui: tabs(['c', 'C', 'default']) });
     stubFetch({
-      'GET /api/v1/plugins': { plugins: [big, small], slots: { filament_inventory: 'big_one' } },
+      'GET /api/v1/plugins': { plugins: [big, small], selections: { 'inventory.filament': 'big_one' } },
       'GET /api/v1/plugins/small_one': { ...small, settings: {}, secrets: {}, secret_fields: [], settings_schema: { properties: {} }, state: {} },
     });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
@@ -135,7 +135,7 @@ describe('PluginsPage (Settings → Plugins)', () => {
 
   it('a disabled plugin is offered an Enable button instead of a page link (never a dead end)', async () => {
     const off = mkPlugin({ id: 'off_one', name: 'Off', enabled: false, active: false, ui: tabs(['c', 'C', 'default']) });
-    const api = stubFetch({ 'GET /api/v1/plugins': { plugins: [off], slots: {} }, 'PUT /api/v1/plugins/off_one': { id: 'off_one' } });
+    const api = stubFetch({ 'GET /api/v1/plugins': { plugins: [off], selections: {} }, 'PUT /api/v1/plugins/off_one': { id: 'off_one' } });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
     expect((await screen.findByTestId('plugin-off_one')).textContent).toContain('Disabled');
     expect(screen.queryByRole('link', { name: 'Open' })).toBeNull();
@@ -144,7 +144,7 @@ describe('PluginsPage (Settings → Plugins)', () => {
   });
 
   it('says so when nothing is installed', async () => {
-    stubFetch({ 'GET /api/v1/plugins': { plugins: [], slots: {} } });
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} } });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
     expect(await screen.findByText('No plugins are installed.')).toBeTruthy();
   });

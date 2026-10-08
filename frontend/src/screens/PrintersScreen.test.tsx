@@ -48,7 +48,7 @@ function makeFetch(url: string) {
   if (url.includes('/types')) return Promise.resolve({ ok: true, json: () => Promise.resolve(mockTypes) });
   if (url === '/api/v1/printers') return Promise.resolve({ ok: true, json: () => Promise.resolve(mockPrinters) });
   if (url.includes('/orca-machine-catalog')) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
-  if (url === '/api/v1/plugins') return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins: [], slots: {} }) });
+  if (url === '/api/v1/plugins') return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins: [], selections: {} }) });
   if (url.includes('/profiles')) return Promise.resolve({ ok: true, json: () => Promise.resolve({ print_profiles: [], filament_profiles: [] }) });
   return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
 }

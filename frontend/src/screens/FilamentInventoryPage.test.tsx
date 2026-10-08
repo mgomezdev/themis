@@ -11,7 +11,7 @@ const SETTINGS = { provider: 'p', deduct_on_complete: true, low_stock: { default
 
 const render_ = () => render(<MemoryRouter><FilamentInventoryPage /></MemoryRouter>);
 const base = (plugins: ReturnType<typeof mkPlugin>[], slot: string | null, over: Record<string, unknown> = {}) => ({
-  'GET /api/v1/plugins': { plugins, slots: { filament_inventory: slot } },
+  'GET /api/v1/plugins': { plugins, selections: { 'inventory.filament': slot } },
   'GET /api/v1/inventory/settings': SETTINGS,
   'GET /api/v1/inventory/materials': { provider: 'p', stale: false, as_of: 'x', items: [mkMaterial({ ref: '1', name: 'PLA' })] },
   ...over,
@@ -36,25 +36,25 @@ describe('FilamentInventoryPage', () => {
   it('selecting a provider enables it first, then makes it the active one', async () => {
     const api = stubFetch(base([mkPlugin({ id: 'spoolman', active: false, enabled: false })], null, {
       'PUT /api/v1/plugins/spoolman': { id: 'spoolman' },
-      'PUT /api/v1/extension-slots/filament_inventory': { kind: 'filament_inventory', plugin_id: 'spoolman' },
+      'PUT /api/v1/capabilities/inventory.filament/provider': { capability: 'inventory.filament', plugin_id: 'spoolman', explicit: true },
     }));
     render_();
 
     await userEvent.selectOptions(await screen.findByLabelText('Inventory provider'), 'spoolman');
 
-    await waitFor(() => expect(api.to('PUT', '/api/v1/extension-slots/filament_inventory')).toHaveLength(1));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/inventory.filament/provider')).toHaveLength(1));
     expect(api.to('PUT', '/api/v1/plugins/spoolman')[0].body).toEqual({ enabled: true });
-    expect(api.to('PUT', '/api/v1/extension-slots/filament_inventory')[0].body).toEqual({ plugin_id: 'spoolman' });
+    expect(api.to('PUT', '/api/v1/capabilities/inventory.filament/provider')[0].body).toEqual({ plugin_id: 'spoolman' });
     // order: enable, then select
     expect(api.calls.findIndex(c => c.method === 'PUT' && c.url === '/api/v1/plugins/spoolman'))
-      .toBeLessThan(api.calls.findIndex(c => c.method === 'PUT' && c.url === '/api/v1/extension-slots/filament_inventory'));
+      .toBeLessThan(api.calls.findIndex(c => c.method === 'PUT' && c.url === '/api/v1/capabilities/inventory.filament/provider'));
   });
 
   it('choosing None clears the slot', async () => {
-    const api = stubFetch(base([mkPlugin({ id: 'spoolman' })], 'spoolman', { 'PUT /api/v1/extension-slots/filament_inventory': { kind: 'filament_inventory', plugin_id: null } }));
+    const api = stubFetch(base([mkPlugin({ id: 'spoolman' })], 'spoolman', { 'PUT /api/v1/capabilities/inventory.filament/provider': { capability: 'inventory.filament', plugin_id: null, explicit: true } }));
     render_();
     await userEvent.selectOptions(await screen.findByLabelText('Inventory provider'), '');
-    await waitFor(() => expect(api.to('PUT', '/api/v1/extension-slots/filament_inventory')[0].body).toEqual({ plugin_id: null }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/inventory.filament/provider')[0].body).toEqual({ plugin_id: null }));
   });
 
   it('with a capable provider: link to its page, the deduct switch and the thresholds', async () => {

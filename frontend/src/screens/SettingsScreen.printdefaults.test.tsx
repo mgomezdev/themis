@@ -11,7 +11,7 @@ const QUEUE = 'PUT /api/v1/settings/queue';
 function open(over: Record<string, unknown> = {}) {
   const api = stubFetch({
     'GET /api/v1/settings/queue': CONFIG,
-    'GET /api/v1/plugins': { plugins: [], slots: {} },
+    'GET /api/v1/plugins': { plugins: [], selections: {} },
     'GET /api/v1/laminus/catalog/status': { laminus_configured: false, laminus: null, cached: false, cached_bytes: 0 },
     [QUEUE]: CONFIG,
     ...over,

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CAP, INVENTORY_KIND, getInventorySettings, saveInventorySettings, useInventory, useMaterials } from '../api/inventory';
-import { setExtensionSlot, updatePlugin, usePlugins } from '../api/plugins';
+import { CAP, INVENTORY_CAPABILITY, getInventorySettings, saveInventorySettings, useInventory, useMaterials } from '../api/inventory';
+import { setCapabilityProvider, updatePlugin, usePlugins } from '../api/plugins';
 import { LowStockSettings } from '../components/LowStockSettings';
 import { FieldRow, PageHeader, Toggle } from '../components/settingsUi';
 
@@ -10,7 +10,7 @@ import { FieldRow, PageHeader, Toggle } from '../components/settingsUi';
 export function FilamentInventoryPage() {
   const { plugins } = usePlugins();
   const inventory = useInventory();
-  const providers = plugins.filter(p => p.kind === INVENTORY_KIND);
+  const providers = plugins.filter(p => p.provides.some(x => x.capability === INVENTORY_CAPABILITY));
   const materials = useMaterials(inventory.has(CAP.TRACKS_WEIGHT));
   const [deduct, setDeduct] = useState<boolean | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -28,7 +28,7 @@ export function FilamentInventoryPage() {
         const p = providers.find(x => x.id === id);
         if (p && !p.enabled) await updatePlugin(id, { enabled: true });
       }
-      await setExtensionSlot(INVENTORY_KIND, id || null);
+      await setCapabilityProvider(INVENTORY_CAPABILITY, id || null);
     } catch (e) { setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
   }
 

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  fetchPlugin, setExtensionSlot, testPlugin, updatePlugin, usePlugins,
+  fetchPlugin, setCapabilityProvider, testPlugin, updatePlugin, usePlugins,
   type JsonSchemaProperty, type PluginDetail,
 } from '../api/plugins';
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
+import { INVENTORY_CAPABILITY } from '../api/inventory';
 import { InventoryProviderPanel } from './InventoryProviderPanel';
 
 /** The default plugin page every plugin can reference: header (name, version, docs, enable, health), a connection form
@@ -22,7 +23,7 @@ function propType(p: JsonSchemaProperty): 'boolean' | 'number' | 'text' {
 const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
 export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
-  const { slots, refresh } = usePlugins();
+  const { refresh } = usePlugins();
   const [plugin, setPlugin] = useState<PluginDetail | null>(null);
   const [draft, setDraft] = useState<Draft>({});
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
@@ -49,10 +50,11 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   if (loadError) return <div role="alert" style={{ color: 'var(--err)' }}>{loadError}</div>;
   if (!plugin) return <div className="muted small">Loading…</div>;
-  const pluginId_ = plugin.id; const kind = plugin.kind;
+  const pluginId_ = plugin.id;
 
   const required = new Set(plugin.settings_schema?.required ?? []);
-  const isSelected = slots[plugin.kind] === plugin.id;
+  const unselected = plugin.provides.filter(p => !p.selected);            // capabilities this plugin could serve but does not
+  const isSelected = plugin.provides.some(p => p.selected);
   const health: { tone: string; label: string } = plugin.error ? { tone: 'err', label: 'Problem' }
     : !plugin.enabled ? { tone: 'idle', label: 'Disabled' }
     : isSelected ? { tone: 'ok', label: 'Active' } : { tone: 'info', label: 'Enabled, not selected' };
@@ -79,7 +81,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   const save = () => run('Saved', () => updatePlugin(pluginId_, patchBody()));
   const setEnabled = (enabled: boolean) => run(enabled ? 'Enabled' : 'Disabled', () => updatePlugin(pluginId_, { enabled }));
-  const makeActive = () => run('Selected as the active provider', async () => { await setExtensionSlot(kind, pluginId_); refresh(); });
+  const makeActive = (capability: string) => run('Selected as the active provider', async () => { await setCapabilityProvider(capability, pluginId_); refresh(); });
 
   async function test() {
     setBusy(true); setTestMsg(null);
@@ -95,7 +97,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
     <div data-testid="plugin-page">
       <PageHeader
         title={plugin.name}
-        sub={`${plugin.description || plugin.kind} · v${plugin.version}`}
+        sub={`${plugin.description || plugin.provides.map(p => p.capability).join(', ')} · v${plugin.version}`}
         actions={<span className={`pill ${health.tone}`} data-testid="plugin-health"><span className="dot" />{health.label}</span>}
       />
       {plugin.docs_url && <div className="small" style={{ marginBottom: 12 }}><a href={plugin.docs_url} target="_blank" rel="noreferrer">Documentation</a></div>}
@@ -104,11 +106,18 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       <FieldRow label={`Enable ${plugin.name}`} hint="When off, Themis ignores this plugin entirely.">
         <Toggle checked={plugin.enabled} onChange={setEnabled} />
       </FieldRow>
-      {plugin.enabled && !isSelected && (
-        <FieldRow label="Use as the active provider" hint={`Another ${plugin.kind.replace(/_/g, ' ')} provider is selected (or none). Only the selected one is used.`}>
-          <button className="btn sm" onClick={makeActive} disabled={busy}>Use {plugin.name}</button>
+      {plugin.enabled && unselected.map(p => (
+        <FieldRow key={p.capability} label={`Use for ${p.capability}`}
+                  hint={`Another provider is selected for ${p.capability} (or none). Only the selected one is used.`}>
+          <button className="btn sm" onClick={() => makeActive(p.capability)} disabled={busy}
+                  aria-label={unselected.length > 1 ? `Use ${plugin.name} for ${p.capability}` : `Use ${plugin.name}`}>Use {plugin.name}</button>
         </FieldRow>
-      )}
+      ))}
+      {plugin.provides.filter(p => p.status === 'waiting').map(p => (
+        <div key={p.capability} role="status" className="small muted" style={{ marginBottom: 8 }}>
+          {p.capability}: waiting on {p.waiting_on.join(', ')}
+        </div>
+      ))}
 
       {fields.map(([key, prop]) => {
         const type = propType(prop);
@@ -152,7 +161,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
         {testMsg && <span data-testid="test-result" className="small" style={{ color: testMsg.ok ? 'var(--ok)' : 'var(--err)' }}>{testMsg.text}</span>}
       </div>
 
-      {plugin.kind === 'filament_inventory' && plugin.active && <InventoryProviderPanel plugin={plugin} />}
+      {plugin.provides.some(p => p.capability === INVENTORY_CAPABILITY && p.status === 'serving') && <InventoryProviderPanel plugin={plugin} />}
     </div>
   );
 }

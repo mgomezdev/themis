@@ -631,7 +631,7 @@ describe('FleetScreen — inventory capability gating', () => {
     vi.stubGlobal('fetch', vi.fn((url: string) => {
       const reply = (body: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
       if (url === '/api/v1/fleet') return reply([SPOOL_INTEGRATION]);
-      if (url === '/api/v1/plugins') return reply({ plugins, slots: { filament_inventory: slot } });
+      if (url === '/api/v1/plugins') return reply({ plugins, selections: { 'inventory.filament': slot } });
       if (url === '/api/v1/inventory/spools') return reply({ provider: 'p', stale: false, as_of: 'x', items: [MOCK_SPOOL] });
       if (url === '/api/v1/inventory/materials') return reply({ provider: 'p', stale: false, as_of: 'x', items: [] });
       if (url.includes('types') || url.includes('catalog')) return reply([]);

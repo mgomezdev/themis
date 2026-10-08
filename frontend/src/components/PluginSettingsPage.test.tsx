@@ -7,7 +7,7 @@ import { mkPlugin, mkStatus, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore, type PluginDetail } from '../api/plugins';
 
 const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
-  ...mkPlugin({ id: 'demo_inv', name: 'Demo inventory' }),
+  ...mkPlugin({ id: 'demo_inv', name: 'Demo inventory', ...(over.active === false ? { active: false } : {}) }),
   description: 'A demo provider', docs_url: 'https://example.test/docs', version: '2.1',
   settings: { url: 'http://demo.test', sync_interval_minutes: 15, max_disconnect_minutes: null },
   secrets: { api_key: true },
@@ -135,15 +135,15 @@ describe('PluginSettingsPage', () => {
   it('offers to make an enabled plugin the active provider when another one is selected', async () => {
     const d = detail({ active: false });
     const api = stubFetch(routes(d, {
-      'GET /api/v1/plugins': { plugins: [d], slots: { filament_inventory: 'someone_else' } },
-      'PUT /api/v1/extension-slots/filament_inventory': { kind: 'filament_inventory', plugin_id: 'demo_inv' },
+      'GET /api/v1/plugins': { plugins: [d], selections: { 'inventory.filament': 'someone_else' } },
+      'PUT /api/v1/capabilities/inventory.filament/provider': { capability: 'inventory.filament', plugin_id: 'demo_inv', explicit: true },
     }));
     render(<PluginSettingsPage pluginId="demo_inv" />);
 
     expect(await screen.findByText('Enabled, not selected')).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: 'Use Demo inventory' }));
 
-    await waitFor(() => expect(api.to('PUT', '/api/v1/extension-slots/filament_inventory')[0].body).toEqual({ plugin_id: 'demo_inv' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/inventory.filament/provider')[0].body).toEqual({ plugin_id: 'demo_inv' }));
   });
 
   it('shows a plugin problem, and a load failure, instead of the form', async () => {
@@ -153,7 +153,7 @@ describe('PluginSettingsPage', () => {
     expect(screen.getByText('could not build provider: bad url')).toBeTruthy();
     unmount();
 
-    stubFetch({ 'GET /api/v1/plugins': { plugins: [], slots: {} }, 'GET /api/v1/plugins/demo_inv': new Reply(404, { detail: "Unknown plugin 'demo_inv'" }) });
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} }, 'GET /api/v1/plugins/demo_inv': new Reply(404, { detail: "Unknown plugin 'demo_inv'" }) });
     resetPluginStore();
     render(<PluginSettingsPage pluginId="demo_inv" />);
     expect((await screen.findByRole('alert')).textContent).toBe("Unknown plugin 'demo_inv'");
@@ -170,5 +170,27 @@ describe('PluginSettingsPage', () => {
     render(<PluginSettingsPage pluginId="demo_inv" />);
     expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
     expect(within(screen.getByTestId('inventory-panel')).getByText('Queued weight updates')).toBeTruthy();
+  });
+
+  it('a plugin serving several capabilities gets one "Use for" button per capability it is not selected for', async () => {
+    const base = mkPlugin({ id: 'demo_inv', name: 'Demo inventory', active: false });
+    const d = detail({ active: false, provides: [
+      { ...base.provides[0], selected: false },
+      { capability: 'demo_inv.notes', version: 1, features: [], selected: false, status: 'not_selected', waiting_on: [] }] });
+    const api = stubFetch(routes(d, { 'PUT /api/v1/capabilities/demo_inv.notes/provider': { capability: 'demo_inv.notes', plugin_id: 'demo_inv', explicit: true } }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Use Demo inventory for demo_inv.notes' }));
+
+    expect(screen.getByRole('button', { name: 'Use Demo inventory for inventory.filament' })).toBeTruthy();
+    await waitFor(() => expect(api.to('PUT', '/api/v1/capabilities/demo_inv.notes/provider')[0].body).toEqual({ plugin_id: 'demo_inv' }));
+  });
+
+  it('says what a waiting capability is waiting on', async () => {
+    const d = detail({ provides: [{ capability: 'demo_inv.report', version: 1, features: [], selected: true, status: 'waiting', waiting_on: ['demo_inv.notes'] }] });
+    stubFetch(routes(d));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByText('demo_inv.report: waiting on demo_inv.notes')).toBeTruthy();
+    expect(screen.queryByTestId('inventory-panel')).toBeNull();
   });
 });

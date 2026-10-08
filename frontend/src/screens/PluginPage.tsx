@@ -1,5 +1,5 @@
 import { Navigate, NavLink, useParams } from 'react-router-dom';
-import { updatePlugin, usePlugins } from '../api/plugins';
+import { featuresOf, updatePlugin, usePlugins } from '../api/plugins';
 import { PluginSettingsPage } from '../components/PluginSettingsPage';
 import { SchemaTab } from '../components/SchemaTab';
 import { COMPONENT_TABS } from '../plugins/registry';
@@ -25,7 +25,7 @@ export function PluginPage() {
   // A component tab that needs a capability the plugin lacks does not exist (e.g. mappings without preset links).
   const tabs = declared.filter(t => {
     const needs = t.renderer === 'component' ? COMPONENT_TABS[`${plugin.id}/${t.id}`]?.requires : undefined;
-    return !needs || plugin.capabilities.includes(needs);
+    return !needs || featuresOf(plugin).includes(needs);
   });
   if (tabs.length === 0) return <div className="card" style={{ padding: 24 }}><div className="small muted">{plugin.name} has no pages available.</div></div>;
   const active = tabs.find(t => t.id === tab);

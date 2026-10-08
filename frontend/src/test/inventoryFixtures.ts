@@ -22,17 +22,23 @@ export const mkStatus = (over: Partial<SyncStatus> = {}): SyncStatus => ({
 
 export const ALL_CAPS = ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE', 'LABEL_SCAN', 'REMOTE'];
 
-export const mkPlugin = (over: Partial<PluginSummary> & { id: string } = { id: 'spoolman' }): PluginSummary => ({
-  name: over.id, kind: 'filament_inventory', version: '1', description: '', docs_url: null, source: 'bundled',
-  capabilities: ALL_CAPS, enabled: true, active: true, error: null,
-  ui: { mode: 'page', nav_label: over.name ?? over.id, nav_placement: 'settings', nav_icon: null, tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }] },
-  ...over,
-});
+/** A plugin serving `inventory.filament`. `capabilities` is shorthand for that capability's feature flags. */
+export const mkPlugin = (over: Partial<PluginSummary> & { id: string; capabilities?: string[] } = { id: 'spoolman' }): PluginSummary => {
+  const { capabilities, ...rest } = over;
+  const active = rest.active ?? true;
+  return {
+    name: over.id, version: '1', description: '', docs_url: null, source: 'bundled',
+    provides: [{ capability: 'inventory.filament', version: 1, features: capabilities ?? ALL_CAPS, selected: active, status: active ? 'serving' : 'not_selected', waiting_on: [] }],
+    requires: [], optional: [], defines: [], enabled: true, active, error: null,
+    ui: { mode: 'page', nav_label: over.name ?? over.id, nav_placement: 'settings', nav_icon: null, tabs: [{ id: 'connection', label: 'Connection', renderer: 'default' }] },
+    ...rest,
+  };
+};
 
 /** `GET /api/v1/plugins` body with `plugin` selected (or nothing selected when null). */
 export const pluginsBody = (plugin: PluginSummary | null, others: PluginSummary[] = []) => ({
   plugins: [...(plugin ? [plugin] : []), ...others],
-  slots: { filament_inventory: plugin?.active ? plugin.id : null },
+  selections: { 'inventory.filament': plugin?.active ? plugin.id : null },
 });
 
 /** Routes for a stubFetch test with an active, fully capable provider listing `spools` / `materials`. */
@@ -43,7 +49,7 @@ export function inventoryRoutes(opts: { plugin?: PluginSummary | null; spools?: 
     'GET /api/v1/plugins': pluginsBody(plugin),
     'GET /api/v1/inventory/spools': list(opts.spools ?? []),
     'GET /api/v1/inventory/materials': list(opts.materials ?? []),
-    'GET /api/v1/inventory/sync-status': mkStatus({ provider: plugin?.id ?? null, capabilities: plugin?.capabilities ?? [] }),
+    'GET /api/v1/inventory/sync-status': mkStatus({ provider: plugin?.id ?? null, capabilities: plugin?.provides[0]?.features ?? [] }),
   };
 }
 

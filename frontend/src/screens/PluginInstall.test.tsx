@@ -8,7 +8,7 @@ import { mkPlugin } from '../test/inventoryFixtures';
 import { RECONNECT, resetPluginStore, type InstallPreview, type PluginInstall, type PluginSummary } from '../api/plugins';
 
 const preview = (over: Partial<InstallPreview> = {}): InstallPreview => ({
-  token: 'tok1', id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', kind: 'filament_inventory', publisher: 'Acme',
+  token: 'tok1', id: 'acme_inv', name: 'Acme inventory', version: '1.0.0', provides: [{ capability: 'inventory.filament', version: 1 }], requires: [], optional: [], defines: [], publisher: 'Acme',
   description: 'Acme stock', source: 'upload', source_url: 'acme.zip', ref: null, commit_sha: null, archive_sha256: 'ab'.repeat(32), min_themis: null, ...over,
 });
 const install = (over: Partial<PluginInstall> = {}): PluginInstall => ({
@@ -19,7 +19,7 @@ const installed = (over: Partial<PluginSummary> & { install?: PluginInstall } = 
   mkPlugin({ id: 'acme_inv', name: 'Acme inventory', source: 'upload', loaded: true, active: false, enabled: true,
              ui: { mode: 'section', nav_label: 'Acme', nav_placement: 'settings', nav_icon: null, tabs: [] }, install: install(), ...over });
 
-const list = (plugins: PluginSummary[], pending: unknown[] = []) => ({ plugins, slots: {}, pending });
+const list = (plugins: PluginSummary[], pending: unknown[] = []) => ({ plugins, selections: {}, pending });
 const show = () => render(<MemoryRouter><PluginsPage /></MemoryRouter>);
 const GH = 'https://github.com/acme/inv';
 
