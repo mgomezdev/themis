@@ -94,7 +94,17 @@ export function PluginsPage() {
             <div className="row between" style={{ alignItems: 'center' }}>
               <div className="col">
                 <div style={{ fontWeight: 600 }}>{p.name} <span className="muted small">v{p.version}</span></div>
-                <div className="muted small">{p.description || p.provides.map(x => x.capability).join(', ')}</div>
+                {p.description && <div className="muted small">{p.description}</div>}
+                {p.provides.length > 0 && (
+                  <div className="row gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }} data-testid={`plugin-caps-${p.id}`}>
+                    {p.provides.map(x => (
+                      <span key={x.capability} className={`pill ${x.status === 'serving' ? 'ok' : 'idle'}`}
+                            title={x.status === 'serving' ? `Serving ${x.capability}` : `Provides ${x.capability} (not the selected provider)`}>
+                        <span className="dot" />{x.capability}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {p.install && (
                   <div className="tiny muted" data-testid={`plugin-source-${p.id}`}>
                     {p.install.source_url ? `${p.source === 'github' ? 'GitHub' : 'Uploaded'}: ${p.install.source_url}` : p.source}

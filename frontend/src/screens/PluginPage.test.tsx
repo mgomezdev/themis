@@ -158,6 +158,17 @@ describe('PluginsPage (Settings → Plugins)', () => {
     await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/off_one')[0].body).toEqual({ enabled: true }));
   });
 
+  it('shows a badge per capability a plugin provides, marking the ones it serves', async () => {
+    const p = mkPlugin({ id: 'multi', name: 'Multi', description: '', provides: [
+      { capability: 'inventory.filament', version: 1, features: [], selected: true, status: 'serving', waiting_on: [] },
+      { capability: 'other.cap', version: 1, features: [], selected: false, status: 'not_selected', waiting_on: [] },
+    ] });
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [p], selections: {} } });
+    render(<MemoryRouter><PluginsPage /></MemoryRouter>);
+    const badges = (await screen.findByTestId('plugin-caps-multi')).querySelectorAll('.pill');
+    expect([...badges].map(b => [b.textContent, b.classList.contains('ok')])).toEqual([['inventory.filament', true], ['other.cap', false]]);
+  });
+
   it('says so when nothing is installed', async () => {
     stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} } });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
