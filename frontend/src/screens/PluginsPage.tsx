@@ -8,6 +8,14 @@ import { PluginInstallDialog } from '../components/PluginInstallDialog';
 import { PageHeader } from '../components/settingsUi';
 import { PluginSettingsPage } from '../components/PluginSettingsPage';
 
+const capTone = (status: string) => status === 'serving' ? 'ok' : status === 'error' ? 'err' : status === 'waiting' ? 'warn' : 'idle';
+const capTitle = (x: { capability: string; status: string; waiting_on: string[] }) =>
+  x.status === 'serving' ? `Serving ${x.capability}`
+  : x.status === 'error' ? `Selected for ${x.capability} but failing`
+  : x.status === 'waiting' ? `Selected for ${x.capability}, waiting on ${x.waiting_on.join(', ')}`
+  : x.status === 'not_selected' ? `Provides ${x.capability} (not the selected provider)`
+  : `Provides ${x.capability} (${x.status.replace('_', ' ')})`;
+
 /** Settings → Plugins: every installed plugin. A `page` plugin links to its own sidebar page; a `section` plugin renders
  *  here, collapsible, with the default plugin page as its body. */
 export function PluginsPage() {
@@ -54,7 +62,10 @@ export function PluginsPage() {
   return (
     <div>
       <PageHeader title="Plugins" sub="Integrations that extend Themis. Each is enabled, configured and (where it has a library) browsed here."
-                  actions={<button className="btn primary sm" onClick={() => setInstalling('new')}>Install plugin</button>} />
+                  actions={<div className="row gap-2">
+                    <Link className="btn sm" to="/settings/capabilities">Capability suppliers</Link>
+                    <button className="btn primary sm" onClick={() => setInstalling('new')}>Install plugin</button>
+                  </div>} />
       {pending.length > 0 && (
         <div className="card" role="status" data-testid="restart-banner" style={{ padding: 12, marginBottom: 12 }}>
           {restarting ? <div>Restarting Themis… this page will reconnect when it is back.</div> : (
@@ -94,7 +105,16 @@ export function PluginsPage() {
             <div className="row between" style={{ alignItems: 'center' }}>
               <div className="col">
                 <div style={{ fontWeight: 600 }}>{p.name} <span className="muted small">v{p.version}</span></div>
-                <div className="muted small">{p.description || p.provides.map(x => x.capability).join(', ')}</div>
+                {p.description && <div className="muted small">{p.description}</div>}
+                {p.provides.length > 0 && (
+                  <div className="row gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }} data-testid={`plugin-caps-${p.id}`}>
+                    {p.provides.map(x => (
+                      <span key={x.capability} className={`pill ${capTone(x.status)}`} title={capTitle(x)}>
+                        <span className="dot" />{x.capability}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 {p.install && (
                   <div className="tiny muted" data-testid={`plugin-source-${p.id}`}>
                     {p.install.source_url ? `${p.source === 'github' ? 'GitHub' : 'Uploaded'}: ${p.install.source_url}` : p.source}

@@ -40,7 +40,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const { pending, options, spoolman_error, sync_id } = payload;
+  const { pending, options, inventory_error, sync_id } = payload;
 
   // Parse all filament names into { material → { brand → [names] } } once.
   const parsedFilaments = useMemo(() => {
@@ -77,7 +77,7 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
         const val = jobSelections[`${entry.field}|${entry.stale_value}`] ?? '';
         return { field: entry.field, stale_value: entry.stale_value, new_value: val || null };
       }),
-      spoolman_filaments: pending.spoolman_filaments.map(entry => {
+      inventory_filaments: pending.inventory_filaments.map(entry => {
         const key = `${entry.printer_preset}|${entry.stale_name}`;
         const name = spoolSearch[key] ?? '';
         return {
@@ -134,12 +134,12 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
         <div style={{ padding: '24px 24px 12px', overflowY: 'auto', flex: 1 }}>
           <h2 style={{ marginTop: 0 }}>Profile References Need Remapping</h2>
           <p style={{ color: 'var(--text-muted, #aaa)', fontSize: 14 }}>
-            The incoming catalog removed profiles still referenced below. Printers need a replacement; jobs and Spoolman filaments can be cleared.
+            The incoming catalog removed profiles still referenced below. Printers need a replacement; jobs and inventory filaments can be cleared.
           </p>
 
-          {spoolman_error && (
+          {inventory_error && (
             <div style={{ background: '#7c2d12', padding: '8px 12px', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
-              Spoolman references could not be fully checked: {spoolman_error}
+              Inventory references could not be fully checked: {inventory_error}
             </div>
           )}
 
@@ -209,10 +209,10 @@ export function RemapModal({ payload, onDone, onCancel }: Props) {
             </section>
           )}
 
-          {pending.spoolman_filaments.length > 0 && (
+          {pending.inventory_filaments.length > 0 && (
             <section>
-              <h3>Spoolman Filaments</h3>
-              {pending.spoolman_filaments.map(entry => {
+              <h3>Inventory Filaments</h3>
+              {pending.inventory_filaments.map(entry => {
                 const key = `${entry.printer_preset}|${entry.stale_name}`;
                 const listId = `s-${safeId(key)}`;
                 const mat = spoolMaterial[key] ?? '';

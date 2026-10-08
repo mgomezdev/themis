@@ -7,10 +7,10 @@ import { PluginsPage } from './PluginsPage';
 import { stubFetch } from '../test/fetchStub';
 import { mkPlugin, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore, type PluginSummary } from '../api/plugins';
-import { LEGACY_REDIRECTS } from '../plugins/registry';
+import { PluginRedirects, pluginRedirectFor } from '../plugins/PluginRedirects';
 
 const tabs = (...t: [string, string, 'default' | 'schema' | 'component'][]) =>
-  ({ mode: 'page' as const, nav_label: 'Demo', nav_placement: 'settings' as const, nav_icon: null, tabs: t.map(([id, label, renderer]) => ({ id, label, renderer })) });
+  ({ mode: 'page' as const, nav_label: 'Demo', nav_placement: 'settings' as const, nav_icon: null, tabs: t.map(([id, label, renderer]) => ({ id, label, renderer, ...(renderer === 'component' ? { component: 'material-mappings', requires: 'PROFILE_LINKS_READ' } : {}) })), redirects: [] });
 
 function Where() { const l = useLocation(); return <div data-testid="where">{l.pathname}</div>; }
 
@@ -54,7 +54,9 @@ describe('PluginPage', () => {
   });
 
   it('a component tab renders the registered component, and says so when the build has none', async () => {
-    withPlugin(mkPlugin({ id: 'nocomp', ui: tabs(['x', 'X', 'component']) }));
+    const ui = tabs(['x', 'X', 'component']);
+    ui.tabs[0] = { ...ui.tabs[0], component: 'not-in-this-build', requires: undefined };
+    withPlugin(mkPlugin({ id: 'nocomp', ui }));
     show('/plugins/nocomp/x');
     expect((await screen.findByRole('alert')).textContent).toMatch(/needs a component that is not part of this build/);
   });
@@ -102,11 +104,24 @@ describe('PluginPage', () => {
     expect(await screen.findByText(/No plugin “ghost” is installed/)).toBeTruthy();
   });
 
-  it('the old settings URLs are redirected to their plugin pages', () => {
-    expect(LEGACY_REDIRECTS).toEqual({
-      '/settings/spoolman': '/plugins/spoolman/connection',
-      '/settings/spoolman-mappings': '/plugins/spoolman/mappings',
-    });
+  it('old URLs a plugin declares are redirected to that plugin\'s tab; others are left alone', () => {
+    const p = mkPlugin({ id: 'acme', ui: { ...tabs(['conn', 'Connection', 'default']), redirects: [{ from: '/settings/acme', tab: 'conn' }] } });
+    expect(pluginRedirectFor([mkPlugin({ id: 'other' }), p], '/settings/acme')).toBe('/plugins/acme/conn');
+    expect(pluginRedirectFor([p], '/settings/elsewhere')).toBeNull();
+    const hijack = mkPlugin({ id: 'evil', ui: { ...tabs(['c', 'C', 'default']), redirects: [{ from: '/queue', tab: 'c' }] } });
+    expect(pluginRedirectFor([hijack], '/queue')).toBeNull();                              // core routes can't be claimed
+  });
+});
+
+describe('PluginRedirects (mounted)', () => {
+  beforeEach(() => resetPluginStore());
+  afterEach(() => { vi.unstubAllGlobals(); resetPluginStore(); });
+
+  it('navigates an old URL to the declaring plugin\'s tab once plugins load', async () => {
+    const p = mkPlugin({ id: 'demo', ui: { ...tabs(['conn', 'Connection', 'default']), redirects: [{ from: '/settings/demo', tab: 'conn' }] } });
+    stubFetch({ 'GET /api/v1/plugins': pluginsBody(p) });
+    render(<MemoryRouter initialEntries={['/settings/demo']}><PluginRedirects /><Where /></MemoryRouter>);
+    await waitFor(() => expect(screen.getByTestId('where').textContent).toBe('/plugins/demo/conn'));
   });
 });
 
@@ -141,6 +156,26 @@ describe('PluginsPage (Settings → Plugins)', () => {
     expect(screen.queryByRole('link', { name: 'Open' })).toBeNull();
     await userEvent.click(screen.getByRole('button', { name: 'Enable' }));
     await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/off_one')[0].body).toEqual({ enabled: true }));
+  });
+
+  it('shows a badge per capability a plugin provides, marking the ones it serves', async () => {
+    const p = mkPlugin({ id: 'multi', name: 'Multi', description: '', provides: [
+      { capability: 'inventory.filament', version: 1, features: [], selected: true, status: 'serving', waiting_on: [] },
+      { capability: 'other.cap', version: 1, features: [], selected: false, status: 'not_selected', waiting_on: [] },
+      { capability: 'bad.cap', version: 1, features: [], selected: true, status: 'error', waiting_on: [] },
+      { capability: 'wait.cap', version: 1, features: [], selected: true, status: 'waiting', waiting_on: ['x.y'] },
+    ] });
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [p], selections: {} } });
+    render(<MemoryRouter><PluginsPage /></MemoryRouter>);
+    const badges = (await screen.findByTestId('plugin-caps-multi')).querySelectorAll('.pill');
+    expect([...badges].map(b => [b.textContent, b.classList.contains('ok')])).toEqual([['inventory.filament', true], ['other.cap', false], ['bad.cap', false], ['wait.cap', false]]);
+    expect([...badges].map(b => b.className.replace('pill ', ''))).toEqual(['ok', 'idle', 'err', 'warn']);
+  });
+
+  it('links to the capability suppliers page', async () => {
+    stubFetch({ 'GET /api/v1/plugins': { plugins: [], selections: {} } });
+    render(<MemoryRouter><PluginsPage /></MemoryRouter>);
+    expect((await screen.findByRole('link', { name: 'Capability suppliers' })).getAttribute('href')).toBe('/settings/capabilities');
   });
 
   it('says so when nothing is installed', async () => {

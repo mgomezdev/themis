@@ -258,14 +258,14 @@ async def test_spoolman_connection(body: SpoolmanConfigIn):
     if _catalog is not None and PROFILE_LINKS_READ in inventory.capabilities:
         try:
             _, _, catalog_filaments, _ = catalog_name_sets(_catalog)
-            spoolman_groups = stale_binding_groups(
+            inventory_groups = stale_binding_groups(
                 await inventory.list_materials(), lambda name: name not in catalog_filaments)
 
-            if spoolman_groups:
+            if inventory_groups:
                 import uuid as _uuid
                 import time as _time
                 sync_id = str(_uuid.uuid4())
-                pending_entries = list(spoolman_groups.values())
+                pending_entries = list(inventory_groups.values())
                 catalog_service.set_pending_sync({
                     "sync_id": sync_id,
                     "raw": None,
@@ -273,7 +273,7 @@ async def test_spoolman_connection(body: SpoolmanConfigIn):
                     "pending": {
                         "printers": [],
                         "jobs": [],
-                        "spoolman_filaments": pending_entries,
+                        "inventory_filaments": pending_entries,
                     },
                     "created_at": _time.time(),
                 })
@@ -284,14 +284,14 @@ async def test_spoolman_connection(body: SpoolmanConfigIn):
                     "pending": {
                         "printers": [],
                         "jobs": [],
-                        "spoolman_filaments": pending_entries,
+                        "inventory_filaments": pending_entries,
                     },
                     "options": {
                         "machine": [],
                         "process": [],
                         "filament": sorted(catalog_filaments),
                     },
-                    "spoolman_error": None,
+                    "inventory_error": None,
                 }
         except Exception:
             # Best-effort: if fetch_filaments fails, fall through to normal success

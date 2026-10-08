@@ -19,7 +19,9 @@ MANIFEST = PluginManifest(
     alias_routers=(alias_router, alias_settings_router),
     ui=UiContribution(mode="page", nav_label="Spoolman", nav_placement="settings",
                       tabs=(UiTab("connection", "Connection", "default"),
-                            UiTab("mappings", "Filament mappings", "component"))),
+                            UiTab("mappings", "Filament mappings", "component",
+                                  component="material-mappings", requires="PROFILE_LINKS_READ")),
+                      redirects=(("/settings/spoolman", "connection"), ("/settings/spoolman-mappings", "mappings"))),
     description="Filament inventory from a Spoolman instance: spools, materials, weights and Orca preset links.",
     docs_url="https://github.com/Donkie/Spoolman",
 )

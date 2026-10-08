@@ -12,6 +12,8 @@ on:
   push:
     branches: [develop, main]
     tags: ["v*"]
+  # Manual run of the whole pipeline, including e2e-full, against any branch without opening a PR to main.
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -248,12 +250,15 @@ jobs:
 
   # The release gate: real Laminus, real OrcaSlicer, no mocks. Only runs on a
   # pull request targeting main -- i.e. a develop -> main release PR -- never
-  # on a develop-targeting PR and never on push. That is deliberate: it is what
+  # on a develop-targeting PR and never on push (or manually via workflow_dispatch,
+  # which a ruleset never sees as a PR check). That is deliberate: it is what
   # lets a ruleset on this repo's main branch require this check without ever
   # seeing it skipped, which a check gated any other way would be.
   e2e-full:
     needs: [image]
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main'
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main')
     permissions:
       contents: read
       packages: read

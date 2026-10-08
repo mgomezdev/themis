@@ -15,7 +15,7 @@ import { PluginPage } from './screens/PluginPage';
 import { FilamentLibraryScreen } from './screens/FilamentLibraryScreen';
 import { CAP, useInventory } from './api/inventory';
 import { InventoryBanner } from './components/InventoryBanner';
-import { LEGACY_REDIRECTS } from './plugins/registry';
+import { PluginRedirects } from './plugins/PluginRedirects';
 
 import { QueueScreen }     from './screens/QueueScreen';
 import { FleetScreen }     from './screens/FleetScreen';
@@ -243,6 +243,7 @@ function AppShell() {
         <div className="content" data-density="balanced">
           <InventoryBanner />
           <TopbarOverrideContext.Provider value={setTopbarOverride}>
+          <PluginRedirects />
           <Routes>
             <Route path="/"             element={<Navigate to="/queue" replace />} />
             <Route path="/queue"        element={<QueueScreen />} />
@@ -267,7 +268,6 @@ function AppShell() {
             <Route path="/history"        element={<HistoryScreen />} />
             <Route path="/analytics"      element={<AnalyticsScreen />} />
             <Route path="/library"        element={<FilamentLibraryScreen />} />
-            {Object.entries(LEGACY_REDIRECTS).map(([from, to]) => <Route key={from} path={from} element={<Navigate to={to} replace />} />)}
             <Route path="/plugins/:id"      element={<PluginPage />} />
             <Route path="/plugins/:id/:tab" element={<PluginPage />} />
             {/* Customers used to live under Settings. */}

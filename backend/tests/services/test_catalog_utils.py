@@ -250,7 +250,7 @@ async def test_compute_drift_spoolman_stale_name(drift_session):
     result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert result is not None
-    spool_entries = result["pending"]["spoolman_filaments"]
+    spool_entries = result["pending"]["inventory_filaments"]
     # One entry grouped by (printer_preset, stale_name)
     assert len(spool_entries) == 1
     entry = spool_entries[0]
@@ -262,7 +262,7 @@ async def test_compute_drift_spoolman_stale_name(drift_session):
 
 @pytest.mark.asyncio
 async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
-    """Spoolman HTTP failure → spoolman_error set; printer hits still captured."""
+    """Spoolman HTTP failure → inventory_error set; printer hits still captured."""
     removed_uuid = "aaaa-1111"
     new_cat = {
         "machine": [{"name": "Bambu X1C New"}],  # remove "Bambu X1C"
@@ -284,7 +284,7 @@ async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
     result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert result is not None
-    assert result["spoolman_error"] == "connection refused"
+    assert result["inventory_error"] == "connection refused"
     # Printer hit should still appear
     assert len(result["pending"]["printers"]) == 1
 
@@ -310,7 +310,7 @@ async def test_compute_drift_spoolman_disabled_skips_section(drift_session):
 
     # If filament was stale, it should show in printers section even though spoolman skipped
     assert result is not None
-    assert result["pending"]["spoolman_filaments"] == []
+    assert result["pending"]["inventory_filaments"] == []
 
 
 @pytest.mark.asyncio
@@ -330,4 +330,4 @@ async def test_compute_drift_skips_inventories_without_profile_bindings(drift_se
     result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert inventory.calls == []
-    assert result["pending"]["spoolman_filaments"] == [] and result["spoolman_error"] is None
+    assert result["pending"]["inventory_filaments"] == [] and result["inventory_error"] is None

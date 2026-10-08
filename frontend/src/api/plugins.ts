@@ -2,13 +2,17 @@ import { useCallback, useSyncExternalStore } from 'react';
 import { apiFetch } from './client';
 
 export type PluginRenderer = 'default' | 'schema' | 'component';
-export interface PluginTab { id: string; label: string; renderer: PluginRenderer }
+export interface PluginTab { id: string; label: string; renderer: PluginRenderer;
+  /** `component` tabs: the registry key of the compiled-in component, and the capability feature the plugin must declare. */
+  component?: string | null; requires?: string | null }
 export interface PluginUi {
   mode: 'section' | 'page';
   nav_label: string;
   nav_placement: 'settings' | 'main';
   nav_icon: string | null;
   tabs: PluginTab[];
+  /** Old absolute app URLs → the tab of this plugin that replaced them. */
+  redirects?: { from: string; tab: string }[];
 }
 
 export interface PluginProvides {

@@ -21,7 +21,9 @@ router = APIRouter(prefix="/api/v1", tags=["plugins"])
 def _ui(m: PluginManifest) -> dict:
     u = m.ui
     return {"mode": u.mode, "nav_label": u.nav_label or m.name, "nav_placement": u.nav_placement, "nav_icon": u.nav_icon,
-            "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer} for t in u.tabs]}
+            "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer, "component": t.component, "requires": t.requires}
+                     for t in u.tabs],
+            "redirects": [{"from": src, "tab": tab} for src, tab in u.redirects]}
 
 
 def install_info(row: InstalledPlugin | None) -> dict | None:

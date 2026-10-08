@@ -30,6 +30,10 @@ class UiTab:
     # default   -> the shared default plugin page; schema -> a generic form/table from a schema the plugin serves at
     # GET /api/v1/plugins/{id}/ui/{tab_id}; component -> a React component compiled into Themis (bundled plugins only)
     renderer: Literal["default", "schema", "component"] = "default"
+    # component tabs only: the key of the compiled-in React component (frontend `plugins/registry.ts`) and the capability
+    # feature flag the plugin must declare for the tab to exist. Core names no plugin id; the plugin declares both.
+    component: str | None = None
+    requires: str | None = None
 
 
 @dataclass(frozen=True)
@@ -40,6 +44,8 @@ class UiContribution:
     nav_placement: Literal["settings", "main"] = "settings"
     nav_icon: str | None = None
     tabs: tuple[UiTab, ...] = ()
+    # (old absolute app URL, tab id): the frontend redirects the old URL to /plugins/{id}/{tab}
+    redirects: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -45,6 +45,12 @@ def test_a_migration_without_down_is_rejected_and_an_unknown_tab_renderer_too():
         make_manifest(ui=UiContribution(tabs=(UiTab("t", "T", renderer="react"),)))
 
 
+def test_a_component_tab_declares_its_component_and_required_feature():
+    from app.plugins import UiContribution, UiTab
+    ok = make_manifest(ui=UiContribution(tabs=(UiTab("t", "T", "component", component="x", requires="F"),)))
+    assert (ok.ui.tabs[0].component, ok.ui.tabs[0].requires) == ("x", "F")
+
+
 def test_the_reserved_permissions_key_is_parsed_and_ignored():
     assert make_manifest(permissions=("net",)).permissions == ("net",)
 
