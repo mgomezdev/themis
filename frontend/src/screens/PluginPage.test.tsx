@@ -162,11 +162,14 @@ describe('PluginsPage (Settings → Plugins)', () => {
     const p = mkPlugin({ id: 'multi', name: 'Multi', description: '', provides: [
       { capability: 'inventory.filament', version: 1, features: [], selected: true, status: 'serving', waiting_on: [] },
       { capability: 'other.cap', version: 1, features: [], selected: false, status: 'not_selected', waiting_on: [] },
+      { capability: 'bad.cap', version: 1, features: [], selected: true, status: 'error', waiting_on: [] },
+      { capability: 'wait.cap', version: 1, features: [], selected: true, status: 'waiting', waiting_on: ['x.y'] },
     ] });
     stubFetch({ 'GET /api/v1/plugins': { plugins: [p], selections: {} } });
     render(<MemoryRouter><PluginsPage /></MemoryRouter>);
     const badges = (await screen.findByTestId('plugin-caps-multi')).querySelectorAll('.pill');
-    expect([...badges].map(b => [b.textContent, b.classList.contains('ok')])).toEqual([['inventory.filament', true], ['other.cap', false]]);
+    expect([...badges].map(b => [b.textContent, b.classList.contains('ok')])).toEqual([['inventory.filament', true], ['other.cap', false], ['bad.cap', false], ['wait.cap', false]]);
+    expect([...badges].map(b => b.className.replace('pill ', ''))).toEqual(['ok', 'idle', 'err', 'warn']);
   });
 
   it('says so when nothing is installed', async () => {

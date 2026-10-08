@@ -8,6 +8,14 @@ import { PluginInstallDialog } from '../components/PluginInstallDialog';
 import { PageHeader } from '../components/settingsUi';
 import { PluginSettingsPage } from '../components/PluginSettingsPage';
 
+const capTone = (status: string) => status === 'serving' ? 'ok' : status === 'error' ? 'err' : status === 'waiting' ? 'warn' : 'idle';
+const capTitle = (x: { capability: string; status: string; waiting_on: string[] }) =>
+  x.status === 'serving' ? `Serving ${x.capability}`
+  : x.status === 'error' ? `Selected for ${x.capability} but failing`
+  : x.status === 'waiting' ? `Selected for ${x.capability}, waiting on ${x.waiting_on.join(', ')}`
+  : x.status === 'not_selected' ? `Provides ${x.capability} (not the selected provider)`
+  : `Provides ${x.capability} (${x.status.replace('_', ' ')})`;
+
 /** Settings → Plugins: every installed plugin. A `page` plugin links to its own sidebar page; a `section` plugin renders
  *  here, collapsible, with the default plugin page as its body. */
 export function PluginsPage() {
@@ -98,8 +106,7 @@ export function PluginsPage() {
                 {p.provides.length > 0 && (
                   <div className="row gap-2" style={{ flexWrap: 'wrap', marginTop: 4 }} data-testid={`plugin-caps-${p.id}`}>
                     {p.provides.map(x => (
-                      <span key={x.capability} className={`pill ${x.status === 'serving' ? 'ok' : 'idle'}`}
-                            title={x.status === 'serving' ? `Serving ${x.capability}` : `Provides ${x.capability} (not the selected provider)`}>
+                      <span key={x.capability} className={`pill ${capTone(x.status)}`} title={capTitle(x)}>
                         <span className="dot" />{x.capability}
                       </span>
                     ))}
