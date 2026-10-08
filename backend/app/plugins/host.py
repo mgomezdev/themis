@@ -89,7 +89,7 @@ class PluginHost:
         # Async callbacks `(plugin_id)` run when a *running* plugin's settings/secrets change (its instance is replaced), so a
         # kind's services can drop anything derived from the old configuration (e.g. a cache of a different server's data).
         self.config_changed_hooks: list = []
-        self._lock = asyncio.Lock()          # serialises reload/update_config/set_slot (instance swaps)
+        self._lock = asyncio.Lock()          # serialises reload/update_config/set_provider (instance swaps)
         self._state_lock = asyncio.Lock()    # serialises state persistence (memory + DB stay in step)
 
     # --- lifecycle -------------------------------------------------------------------------------------------
