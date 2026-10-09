@@ -122,7 +122,9 @@ describe('FilesScreen — cached sliced versions', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Delete$/ }));
 
     const dialog = await screen.findByRole('dialog');
-    expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' }));
+    // Focus and the Escape listener are set by the same effect, which can run after the dialog is in the DOM: wait for it
+    // (asserting synchronously failed ~1 in 25 runs under CPU load) and the listener is then attached too.
+    await waitFor(() => expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Cancel' })));
     fireEvent.keyDown(window, { key: 'Escape' });
 
     expect(screen.queryByRole('dialog')).toBeNull();
