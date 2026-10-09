@@ -1,6 +1,6 @@
 # Elegoo Centauri Client — Implementation Reference
 
-Source: `backend/app/services/elegoo_centauri_client.py`  
+Source: `backend/app/plugins/elegoo_centauri/client.py`  
 Tests: `backend/tests/unit/services/test_elegoo_centauri_client.py`
 
 ---

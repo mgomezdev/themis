@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { PrinterAddForm } from './PrintersScreen';
 import type { PrinterType } from '../api/printers';
+import { printerType } from '../test/printerTypes';
 
 const TYPES: PrinterType[] = [
-  { printer_type: 'bambu', display_name: 'Bambu', connection_fields: [
+  printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S', connection_fields: [
     { name: 'ip_address', label: 'IP', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
-  ] },
+  ] }),
 ];
 const CATALOG = [{ name: 'Bambu Lab P1S 0.4 nozzle', vendor: 'Bambu Lab', printer_model: 'P1S', nozzle: '0.4', source: 'system' }];
 

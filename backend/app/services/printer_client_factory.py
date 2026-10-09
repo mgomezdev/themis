@@ -45,6 +45,11 @@ def enabled_client_classes() -> dict[str, type[AbstractPrinterClient]]:
     return {cls.printer_type: cls for _, cls in printer_client_plugins(enabled_only=True)}
 
 
+def printer_type_plugins() -> dict[str, str]:
+    """Client `printer_type` -> the id of the plugin that serves it."""
+    return {cls.printer_type: m.id for m, cls in printer_client_plugins()}
+
+
 def printer_type_names() -> dict[str, str]:
     """Client `printer_type` -> its plugin's display name."""
     return {cls.printer_type: m.name for m, cls in printer_client_plugins()}

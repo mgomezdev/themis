@@ -116,7 +116,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const printerType = printerTypes.find(t => t.printer_type === p.model);
+  const printerType = printerTypes.find(t => t.plugin_id === p.pluginId);
 
   useEffect(() => {
     fetchPrinter(Number(p.id))
@@ -143,7 +143,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
     setTesting(true);
     setTestResult(null);
     try {
-      const result = await testConnection({ printer_type: p.model, connection_config: draftConn });
+      const result = await testConnection({ printer_type: p.pluginId ?? p.model, connection_config: draftConn });
       setTestResult(result);
     } catch (e) {
       setTestResult({ ok: false, error: e instanceof Error ? e.message : 'Test failed' });

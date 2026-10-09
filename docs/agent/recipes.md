@@ -5,17 +5,22 @@ Verify symbols against current code before relying on them ("code wins").
 
 ## Add a printer vendor
 
-1. `backend/app/services/<vendor>_client.py` — subclass `AbstractPrinterClient`. Implement the
+A vendor is a bundled plugin package; core names none (`tests/test_vendor_extraction_boundary.py`).
+
+1. `backend/app/plugins/<vendor>/client.py` — subclass `AbstractPrinterClient`. Implement the
    abstract methods; override `connection_fields()` (form + ctor kwargs), `get_capabilities()`,
-   `is_idle`, `orca_export_args()` (raw vs `--export-3mf`), and if AMS-like, `get_loaded_filaments()`
-   + an `_on_ams_change` attr. Read per-printer flags from `self._*` in `start_print` (options always
-   present). Set `printer_type` ClassVar.
-2. `printer_client_factory.py` — add to `REGISTRY` (type→dotted class) + the display-name map.
-3. `printer_manager.py` — add a `_serialize_<vendor>` and register in `_STATUS_SERIALIZERS`. If AMS,
-   nothing else (the `on_ams_change` wiring is generic, gated on the client having the attr).
-4. `backend/tests/services/test_<vendor>_client.py` — connect/parse/upload/start_print/connection-fields.
-5. No frontend change needed: the add-printer wizard reads `GET /printers/types` (driven by
-   `connection_fields()`); the Fleet card reads the normalized serializer dict.
+   `is_idle`, `orca_export_args()` (raw vs `--export-3mf`), `serialize_state(printer_id)` (the normalized status dict; module-level
+   `serialize_<vendor>(state, id)` + a one-line method is the pattern), and if AMS-like, `get_loaded_filaments()` + an
+   `_on_ams_change` attr. Read per-printer flags from `self._*` in `start_print` (options always present). Set `printer_type` ClassVar;
+   optional `SSDP_PORTS`, `discover_host`/`parse_announcement` (discovery), `slice_tool_mapping = True` (tool changers).
+2. `backend/app/plugins/<vendor>/alarms.py` (optional) — decode the vendor's raw error report into `Alarm`s for `get_alarms()`.
+3. `backend/app/plugins/<vendor>/__init__.py` — `MANIFEST = PluginManifest(id=…, factory=<ClientClass>, settings_model=<empty model>,
+   manufacturers=(Manufacturer(id, name, (PrinterModel(id, name, bed_mm=…, toolheads=…), …)),), default_enabled=…)` and a
+   `themis-plugin.toml` next to it (`provides = []`; the loader checks it against `MANIFEST`). Bundled plugins are discovered by directory.
+4. `backend/tests/` — connect/parse/upload/start_print/connection-fields tests; add the vendor to the virtual-printer suites if it has a documented protocol.
+5. No core or frontend change: `printer_client_factory` resolves the class from the plugin, `GET /printers/types` lists the declared
+   models and the add-printer wizard offers them (manufacturer → model); the Fleet card reads `serialize_state`.
+   `tests/services/test_printer_client_factory_plugins.py` is the proof a fake vendor works with no core change.
 
 ## Add an API route
 

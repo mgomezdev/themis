@@ -1215,7 +1215,7 @@
         "tags": [
           "printers"
         ],
-        "summary": "List printer types",
+        "summary": "List printer models every plugin declares",
         "description": "Available printer driver types with display name and required connection config fields.",
         "operationId": "list_printer_types_api_v1_printers_types_get",
         "responses": {
@@ -12365,8 +12365,48 @@
             "type": "string",
             "title": "Name"
           },
+          "plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plugin Id"
+          },
+          "manufacturer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Id"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
+          },
           "printer_type": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Printer Type"
           },
           "connection_config": {
@@ -12419,14 +12459,26 @@
             "default": false
           },
           "bed_x_mm": {
-            "type": "number",
-            "title": "Bed X Mm",
-            "default": 256.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed X Mm"
           },
           "bed_y_mm": {
-            "type": "number",
-            "title": "Bed Y Mm",
-            "default": 256.0
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bed Y Mm"
           },
           "machine_rate_per_hour": {
             "anyOf": [
@@ -12445,7 +12497,6 @@
         "type": "object",
         "required": [
           "name",
-          "printer_type",
           "connection_config"
         ],
         "title": "PrinterCreate"
@@ -12462,6 +12513,28 @@
               }
             ],
             "title": "Name"
+          },
+          "manufacturer_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Manufacturer Id"
+          },
+          "model_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Id"
           },
           "connection_config": {
             "anyOf": [

@@ -51,9 +51,7 @@ themis/
 │           ├── slicer_service.py        # Laminus slice orchestration
 │           ├── printer_manager.py       # All printer connection state
 │           ├── printer_client_factory.py
-│           ├── bambu_mqtt.py
-│           ├── elegoo_centauri_client.py
-│           ├── snapmaker_client.py
+│           ├── events.py  printer_events.py  printer_identity.py   # event bus; plugin/model identity
 │           ├── catalog_service.py       # catalog cache over SlicingProvider
 │           ├── providers/               # SlicingProvider + FilamentInventoryProvider, adapters/
 │           │   ├── slicing.py  filament_inventory.py
@@ -396,16 +394,11 @@ app.include_router(widgets_router)
 
 ## Adding a New Printer Type
 
-1. Create `backend/app/services/my_printer_client.py` implementing `AbstractPrinterClient` (see `abstract_printer_client.py` for the full interface and `docs/printer-interface.md` for the protocol).
-2. Register in `printer_client_factory.py`:
-```python
-_REGISTRY = {
-    "bambu": "...",
-    "elegoo_centauri": "...",
-    "my_printer": "app.services.my_printer_client.MyPrinterClient",
-}
-```
-3. Add connection form fields by implementing `get_connection_fields() -> list[ConnectionField]`.
+A vendor is a bundled plugin package (`backend/app/plugins/bambu/`, `elegoo_centauri/`, `snapmaker/` and `mock/` are the examples):
+
+1. `backend/app/plugins/my_printer/client.py` — implement `AbstractPrinterClient` (see `abstract_printer_client.py` for the full interface and `docs/printer-interface.md` for the protocol), including `connection_fields()` for the connection form and `serialize_state()` for the status dict.
+2. `backend/app/plugins/my_printer/__init__.py` — export `MANIFEST = PluginManifest(id="my_printer", factory=MyPrinterClient, settings_model=…, manufacturers=(Manufacturer(…, models=(PrinterModel(…),)),))` plus a `themis-plugin.toml`.
+3. That is all: the factory resolves the class from the plugin, `GET /api/v1/printers/types` lists the declared models, and the add-printer wizard offers them.
 
 ---
 

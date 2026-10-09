@@ -23,7 +23,9 @@ from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names
+from ...services.printer_client_factory import (
+    client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
+)
 from ...services.printer_identity import IdentityError, declared_model, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
@@ -407,10 +409,12 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
             if cfg.get(key):
                 existing.add(str(cfg[key]).strip())
     names = printer_type_names()
+    plugin_ids = printer_type_plugins()
     return {
         "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
         "found": [{
-            "printer_type": d.printer_type, "display_name": names.get(d.printer_type, d.printer_type),
+            "printer_type": d.printer_type, "plugin_id": plugin_ids.get(d.printer_type),
+            "display_name": names.get(d.printer_type, d.printer_type),
             "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
             "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
         } for d in result.found],

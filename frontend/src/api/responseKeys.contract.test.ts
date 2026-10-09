@@ -25,13 +25,13 @@ const keysOf = (o: object) => sorted(Object.keys(o));
 
 // `satisfies Record<keyof T, 1>` makes tsc reject a missing OR an extra key, so each literal tracks its interface.
 const FLEET = {
-  id: 1, name: 1, printer_type: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
+  id: 1, name: 1, printer_type: 1, plugin_id: 1, enabled: 1, queue_on: 1, connected: 1, awaiting_plate_clear: 1, no_snapshots_while_idle: 1,
   loaded_filaments: 1, state: 1, progress: 1, remaining_time: 1, layer_num: 1, total_layers: 1, temperatures: 1,
   capabilities: 1, current_print: 1, fan_model: 1, fan_aux: 1, fan_box: 1, alarm_count: 1, alarm_severity: 1,
 } satisfies Record<keyof FleetPrinter, 1>;
 
 const PRINTER = {
-  id: 1, name: 1, printer_type: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
+  id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
   current_orca_printer_profile: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
   no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;

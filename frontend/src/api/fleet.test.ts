@@ -6,6 +6,7 @@ const BASE: FleetPrinter = {
   id: 1,
   name: 'Forge',
   printer_type: 'elegoo_centauri',
+  plugin_id: 'elegoo_centauri',
   enabled: true,
   queue_on: true,
   connected: true,

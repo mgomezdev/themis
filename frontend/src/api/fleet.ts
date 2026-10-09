@@ -7,6 +7,7 @@ export interface FleetPrinter {
   id: number;
   name: string;
   printer_type: string;
+  plugin_id: string | null;
   enabled: boolean;
   queue_on: boolean;
   connected: boolean;
@@ -61,6 +62,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     name: p.name,
     nickname: p.name,
     model: p.printer_type,
+    pluginId: p.plugin_id ?? undefined,
     badge: BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase(),
     buildVolume: '',
     capabilities: Object.entries(p.capabilities ?? {})

@@ -6,6 +6,7 @@ import { PrintersScreen, EditForm } from './PrintersScreen';
 import type { ApiPrinter, PrinterType } from '../api/printers';
 import { mkPlugin, mkSpool, pluginsBody } from '../test/inventoryFixtures';
 import { resetPluginStore } from '../api/plugins';
+import { printerType } from '../test/printerTypes';
 
 const wrapper = ({ children }: { children: React.ReactNode }) => (
   <MemoryRouter>{children}</MemoryRouter>
@@ -16,6 +17,9 @@ const mockPrinters = [
     id: 1,
     name: 'Forge',
     printer_type: 'bambu',
+    plugin_id: 'bambu',
+    manufacturer_id: 'bambu',
+    model_id: 'p1s',
     connection_config: { ip_address: '192.168.1.100', access_code: '12345678', serial_number: 'SN001' },
     awaiting_plate_clear: false,
     orca_printer_profiles: [],
@@ -33,15 +37,14 @@ const mockPrinters = [
 ];
 
 const mockTypes = [
-  {
-    printer_type: 'bambu',
-    display_name: 'Bambu Lab',
+  printerType({
+    plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
       { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
       { name: 'access_code', label: 'Access Code', field_type: 'password', required: true, default: null, placeholder: '', help_text: '' },
       { name: 'serial_number', label: 'Serial Number', field_type: 'text', required: true, default: null, placeholder: '', help_text: '' },
     ],
-  },
+  }),
 ];
 
 function makeFetch(url: string) {
@@ -77,7 +80,7 @@ describe('PrintersScreen', () => {
     await waitFor(() => expect(screen.getByText(/1 connected/i)).toBeTruthy());
   });
 
-  it('clicking Add printer shows wizard step 1 with type tiles', async () => {
+  it('clicking Add printer shows wizard step 1 with the manufacturer and model pickers', async () => {
     const user = userEvent.setup();
     render(<PrintersScreen />, { wrapper });
     await waitFor(() => screen.getByRole('button', { name: /add printer/i }));
@@ -172,6 +175,9 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   id: 7,
   name: 'Prism',
   printer_type: 'bambu',
+  plugin_id: 'bambu',
+  manufacturer_id: 'bambu',
+  model_id: 'p1s',
   connection_config: { ip_address: '192.168.2.50', access_code: 'xyz', serial_number: 'SN007' },
   awaiting_plate_clear: false,
   orca_printer_profiles: [],
@@ -190,13 +196,12 @@ const INTEGRATION_PRINTER: ApiPrinter = {
 };
 
 const INTEGRATION_TYPES: PrinterType[] = [
-  {
-    printer_type: 'bambu',
-    display_name: 'Bambu Lab',
+  printerType({
+    plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S',
     connection_fields: [
       { name: 'ip_address', label: 'IP Address', field_type: 'text', required: true, default: null, placeholder: '192.168.1.x', help_text: '' },
     ],
-  },
+  }),
 ];
 
 const INTEGRATION_SPOOL = mkSpool('7', {

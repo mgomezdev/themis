@@ -49,6 +49,27 @@ function SlotSwatch({ color, name, type }: { color: string; name: string; type: 
 
 type ConnStatus = 'idle' | 'testing' | 'success' | 'error';
 
+/** Models a user may add: those whose plugin is enabled (a disabled plugin's models are listed by the API but not offered). */
+const addable = (types: PrinterType[]) => types.filter(t => t.plugin_enabled);
+
+function manufacturersOf(types: PrinterType[]): { id: string; name: string }[] {
+  const seen = new Map<string, string>();
+  for (const t of addable(types)) if (!seen.has(t.manufacturer_id)) seen.set(t.manufacturer_id, t.manufacturer_name);
+  return [...seen].map(([id, name]) => ({ id, name }));
+}
+
+const modelsOf = (types: PrinterType[], manufacturerId: string) =>
+  addable(types).filter(t => t.manufacturer_id === manufacturerId);
+
+/** The same model offered by several plugins (native vs modified firmware) is told apart by its plugin. */
+function modelLabel(t: PrinterType, all: PrinterType[]): string {
+  const offeredByMany = addable(all).filter(o => o.manufacturer_id === t.manufacturer_id && o.model_id === t.model_id).length > 1;
+  return offeredByMany ? `${t.display_name} (${t.plugin_id})` : t.display_name;
+}
+
+const sameModel = (t: PrinterType, p: { plugin_id: string | null; manufacturer_id: string | null; model_id: string | null }) =>
+  t.plugin_id === p.plugin_id && t.manufacturer_id === p.manufacturer_id && t.model_id === p.model_id;
+
 interface WizardData {
   printerType: PrinterType | null;
   nickname: string;
@@ -70,7 +91,7 @@ export function EditForm({
   onSave: () => void;
   onCancel: () => void;
 }) {
-  const ptype = types.find(t => t.printer_type === printer.printer_type);
+  const ptype = types.find(t => t.plugin_id === printer.plugin_id);       // every model of a plugin shares its connection form
   const [name, setName] = useState(printer.name);
   const [config, setConfig] = useState<Record<string, string>>(
     Object.fromEntries(
@@ -233,7 +254,7 @@ export function PrinterAddForm({
 }) {
   const [step, setStep] = useState(1);
   const [data, setData] = useState<WizardData>({
-    printerType: types[0] ?? null,
+    printerType: addable(types)[0] ?? null,
     nickname: '',
     connectionConfig: {},
   });
@@ -251,7 +272,7 @@ export function PrinterAddForm({
     setConnError(null);
     try {
       const result = await testConnection({
-        printer_type: data.printerType.printer_type,
+        printer_type: data.printerType.plugin_id,
         connection_config: data.connectionConfig,
       });
       if (result.ok) {
@@ -268,7 +289,9 @@ export function PrinterAddForm({
 
   /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. */
   function applyDiscovered(p: DiscoveredPrinter) {
-    const type = types.find(t => t.printer_type === p.printer_type);
+    const ofPlugin = addable(types).filter(t => t.plugin_id === p.plugin_id);
+    // the announcement's model text picks the declared model when it matches one; otherwise the plugin's first
+    const type = ofPlugin.find(t => !!p.model && t.display_name.toLowerCase() === p.model.toLowerCase()) ?? ofPlugin[0];
     if (!type) return;
     setData({
       printerType: type,
@@ -286,8 +309,10 @@ export function PrinterAddForm({
     setFinishError(null);
     try {
       await createPrinter({
-        name: data.nickname || data.printerType.display_name,
-        printer_type: data.printerType.printer_type,
+        name: data.nickname || `${data.printerType.manufacturer_name} ${data.printerType.display_name}`,
+        plugin_id: data.printerType.plugin_id,
+        manufacturer_id: data.printerType.manufacturer_id,
+        model_id: data.printerType.model_id,
         connection_config: data.connectionConfig,
         current_orca_printer_profile: machinePreset || null,
         orca_printer_profiles: machinePreset ? [machinePreset] : [],
@@ -345,27 +370,42 @@ export function PrinterAddForm({
         {step === 1 && (
           <div className="card" style={{ padding: 24 }}>
             <DiscoverPrinters onPick={applyDiscovered} />
-            <SectionHeader title="Select printer type" sub="Choose the vendor for this printer." />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
-              {types.map(t => {
-                const active = data.printerType?.printer_type === t.printer_type;
-                return (
-                  <button key={t.printer_type}
-                    onClick={() => setData({ ...data, printerType: t, connectionConfig: {} })}
-                    className="card"
-                    style={{
-                      textAlign: 'left', padding: 14, cursor: 'pointer',
-                      background: active ? 'var(--bg-3)' : 'var(--bg-1)',
-                      borderColor: active ? 'var(--accent)' : 'var(--border-1)',
+            <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
+            {addable(types).length === 0 ? (
+              <div className="small muted" style={{ marginBottom: 20 }}>
+                No printer plugin is enabled. Enable one under Settings → Plugins.
+              </div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 20 }}>
+                <div>
+                  <label className="label" htmlFor="printer-manufacturer">Manufacturer</label>
+                  <select id="printer-manufacturer" className="input"
+                    value={data.printerType?.manufacturer_id ?? ''}
+                    onChange={e => {
+                      const first = modelsOf(types, e.target.value)[0] ?? null;
+                      setData({ ...data, printerType: first, connectionConfig: {} });
                     }}>
-                    <div className="row between">
-                      <div style={{ fontWeight: 500 }}>{t.display_name}</div>
-                      {active && <div style={{ color: 'var(--accent-hi)' }}>{Icons.check}</div>}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                    {manufacturersOf(types).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="label" htmlFor="printer-model">Model</label>
+                  <select id="printer-model" className="input"
+                    value={data.printerType ? `${data.printerType.plugin_id}/${data.printerType.model_id}` : ''}
+                    onChange={e => {
+                      const next = modelsOf(types, data.printerType?.manufacturer_id ?? '')
+                        .find(t => `${t.plugin_id}/${t.model_id}` === e.target.value) ?? null;
+                      setData({ ...data, printerType: next, connectionConfig: {} });
+                    }}>
+                    {modelsOf(types, data.printerType?.manufacturer_id ?? '').map(t => (
+                      <option key={`${t.plugin_id}/${t.model_id}`} value={`${t.plugin_id}/${t.model_id}`}>
+                        {modelLabel(t, types)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            )}
             <div>
               <label className="label">Nickname</label>
               <input className="input" value={data.nickname}
@@ -548,7 +588,10 @@ export function PrintersScreen() {
   const offlineCount = printers.filter(p => !p.connected).length;
 
   const displayName = (p: ApiPrinter) =>
-    types.find(t => t.printer_type === p.printer_type)?.display_name ?? p.printer_type;
+    (() => {
+      const t = types.find(m => sameModel(m, p));
+      return t ? `${t.manufacturer_name} ${t.display_name}` : p.printer_type;
+    })();
 
   const connectionSummary = (p: ApiPrinter) => {
     const cfg = p.connection_config;
