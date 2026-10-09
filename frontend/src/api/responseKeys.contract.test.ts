@@ -16,6 +16,8 @@ import type { ApiPrinter } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails } from './queue';
+import type { CapabilityInfo } from './capabilities';
+import type { PluginProvides, PluginSummary } from './plugins';
 
 const contract = JSON.parse(contractRaw) as Record<string, string[]>;
 const sorted = (keys: string[]) => [...new Set(keys)].sort();
@@ -119,6 +121,16 @@ const PORTAL_PROJECT = {
 const PORTAL_QUOTE = { price: 1, paid: 1, balance: 1, accepted_at: 1, payments: 1 } satisfies Record<keyof PortalQuote, 1>;
 const PORTAL_PAYMENT = { id: 1, received_on: 1, amount: 1, method: 1 } satisfies Record<keyof PortalPayment, 1>;
 
+const PLUGIN_SUMMARY = {
+  id: 1, name: 1, version: 1, description: 1, docs_url: 1, source: 1, loaded: 1, install: 1, provides: 1, requires: 1, optional: 1,
+  defines: 1, ui: 1, enabled: 1, active: 1, error: 1,
+} satisfies Record<keyof PluginSummary, 1>;
+const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
+const CAPABILITY_INFO = {
+  id: 1, version: 1, label: 1, description: 1, definer: 1, features: 1, required_methods: 1, selected: 1, explicit: 1, status: 1,
+  waiting_on: 1, error: 1, providers: 1, requires_by: 1,
+} satisfies Record<keyof CapabilityInfo, 1>;
+
 describe('contracts/response-keys.json matches the frontend interfaces', () => {
   const cases: [string, string[], string[]][] = [
     ['fleet printer (offline keys + connected-only keys)', [...contract.fleet_printer, ...contract.fleet_printer_connected_only], keysOf(FLEET)],
@@ -150,6 +162,9 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['analytics material', contract.analytics_material, keysOf(ANALYTICS_MATERIAL)],
     ['project payment', contract.project_payment, keysOf(PROJECT_PAYMENT)],
     ['customer payment', contract.customer_payment, keysOf(CUSTOMER_PAYMENT)],
+    ['plugin summary', contract.plugin_summary, keysOf(PLUGIN_SUMMARY)],
+    ['plugin provides entry', contract.plugin_provides, keysOf(PLUGIN_PROVIDES)],
+    ['capability info', contract.capability_info, keysOf(CAPABILITY_INFO)],
   ];
 
   it.each(cases)('%s', (_name, fromContract, fromInterface) => {
@@ -163,7 +178,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'portal_project', 'portal_quote', 'portal_payment',
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
-      'project_labor', 'project_costs', 'cost_config', 'sliced_version_item']);
+      'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
+      'plugin_summary', 'plugin_provides', 'capability_info']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

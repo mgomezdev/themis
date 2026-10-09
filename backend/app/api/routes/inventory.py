@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
+from ...plugins.capabilities.inventory_routes import LowStock
 from ...plugins.capabilities.filament_inventory import (
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     InventoryProviderError, InvMaterial, InvSpool, MaterialDraft, NotSupported, SpoolDraft,
@@ -440,23 +441,6 @@ async def set_profile_links(ref: str, body: LinksBody):
         status = exc.status if isinstance(exc, InventoryProviderError) and exc.status else 503
         raise HTTPException(status_code=status, detail=inventory_provider.describe_failure(result)[1])
     return material_out(result.value)
-
-
-class LowStock(BaseModel):
-    """Grams below which a spool raises `spool.low`. `overrides` maps a material ref (of the active provider) to its own
-    threshold and wins over `default_g`; with neither set nothing alerts."""
-    default_g: float | None = Field(default=None, ge=0, le=100_000)
-    overrides: dict[str, float] = Field(default_factory=dict)
-
-    @field_validator("overrides")
-    @classmethod
-    def _valid(cls, v: dict[str, float]) -> dict[str, float]:
-        for key, grams in v.items():
-            if not key.strip() or ":" in key:
-                raise ValueError(f"override key {key!r} must be a material ref")
-            if not 0 <= grams <= 100_000:
-                raise ValueError("override thresholds must be between 0 and 100000 grams")
-        return v
 
 
 class SettingsIn(BaseModel):

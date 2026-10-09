@@ -1,10 +1,12 @@
 """Capability management API: every known capability (core + plugin-defined), its providers and the selected one."""
 from __future__ import annotations
 
+import asyncio
+import logging
 import re
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from starlette.routing import compile_path
 
@@ -13,6 +15,8 @@ from ...plugins import PluginError, capability_catalog, definer_of, providers_of
 from ...plugins.capabilities.definition import CapabilityDef
 from ...plugins.host import plugin_host
 from ...plugins.manifest import PluginManifest
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["capabilities"])
 
@@ -81,27 +85,63 @@ def mount_plugin(app: FastAPI, manifest: PluginManifest) -> None:
     for cap, provide in manifest.provides.items():
         for r in provide.routers:
             mount(r)
-        _EXPOSED[(manifest.id, cap)] = tuple((compile_path(f"{prefix}{route.path}")[0], frozenset(route.methods or ()))
-                                             for r in provide.routers for route in r.routes)
+        exposed = []
+        for r in provide.routers:
+            for route in r.routes:
+                methods = frozenset(route.methods or ())
+                if route.path == "/provider" and "PUT" in methods:   # PUT /capabilities/{cap}/provider is the selection route
+                    logger.warning("Plugin %s route PUT /provider is not exposed through /capabilities/%s (reserved)", manifest.id, cap)
+                    methods -= {"PUT"}
+                if methods:
+                    exposed.append((compile_path(f"{prefix}{route.path}")[0], methods))
+        _EXPOSED[(manifest.id, cap)] = tuple(exposed)
     for r in manifest.alias_routers:                      # deprecated aliases keep their historical absolute paths
         app.include_router(r)
 
 
 async def _forward(scope: dict, request: Request) -> Response:
     """Run the request through the app's own router at the plugin-id path (so the route's dependency overrides, scopes and
-    validation apply exactly as for /api/v1/plugins/{id}/...) and capture its response."""
+    validation apply exactly as for /api/v1/plugins/{id}/...) and relay its response: headers verbatim (repeats such as
+    several Set-Cookie survive) and the body chunk by chunk, so a streaming route streams."""
+    started = asyncio.Event()
+    chunks: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=16)      # bounded: a slow client slows the route down
     start: dict = {}
-    body = bytearray()
 
     async def send(message) -> None:
         if message["type"] == "http.response.start":
             start.update(message)
+            started.set()
         elif message["type"] == "http.response.body":
-            body.extend(message.get("body", b""))
+            if message.get("body"):
+                await chunks.put(message["body"])
+            if not message.get("more_body", False):
+                await chunks.put(None)
 
-    await request.app.router(scope, request.receive, send)
-    headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in start.get("headers", []) if k.lower() != b"content-length"}
-    return Response(content=bytes(body), status_code=start.get("status", 500), headers=headers)
+    async def run() -> None:
+        try:
+            await request.app.router(scope, request.receive, send)
+        finally:
+            started.set()                                  # a route that raises before responding must not leave us waiting
+            await chunks.put(None)
+
+    task = asyncio.create_task(run())
+    await started.wait()
+    if not start:
+        await task                                         # re-raises what the route raised
+        return Response(status_code=500)
+
+    async def body():
+        try:
+            while (chunk := await chunks.get()) is not None:
+                yield chunk
+            await task
+        finally:
+            if not task.done():                            # the client went away mid-stream
+                task.cancel()
+
+    response = StreamingResponse(body(), status_code=start.get("status", 500))
+    response.raw_headers = [(k, v) for k, v in start.get("headers", [])]
+    return response
 
 
 # Any valid key gets in; the inner route then enforces its own scope. Without this, anonymous callers could probe which

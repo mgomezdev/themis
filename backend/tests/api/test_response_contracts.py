@@ -188,3 +188,13 @@ async def test_sliced_versions_items_carry_their_keys(client, upload_3mf, sessio
     model = await upload_3mf()
     await _version_for(session_factory, tmp_path / "library", model)
     assert_carries("sliced_version_item", (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()[0])
+
+
+async def test_plugin_and_capability_responses_carry_their_keys(client):
+    listing = (await client.get("/api/v1/plugins")).json()["plugins"]
+    spoolman = next(pl for pl in listing if pl["id"] == "spoolman")
+    assert_carries("plugin_summary", spoolman)
+    assert_carries("plugin_provides", spoolman["provides"][0])
+    assert_carries("plugin_summary", (await client.get("/api/v1/plugins/spoolman")).json())
+    caps = (await client.get("/api/v1/capabilities")).json()["capabilities"]
+    assert_carries("capability_info", next(c for c in caps if c["id"] == "inventory.filament"))

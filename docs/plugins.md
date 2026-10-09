@@ -151,3 +151,12 @@ subprocess (run only after you confirm) only protects the live process from impo
 * Installation is always allowed — there is no kill switch or allowlist (decision D15).
 
 Out of scope (tracked): private GitHub repos (BIZ-199), declared permissions (BIZ-200), hot-loading, remote frontend components.
+
+## Capability paths (replaceable providers)
+
+`/api/v1/capabilities/<capability>/…` is the provider-independent path: it is forwarded to whichever plugin is selected for the
+capability, so a client keeps working when the provider is swapped. Every `inventory.filament` provider serves the shared routes
+(`low-stock` GET/PUT, neutral `inventory:*` scopes: `app/plugins/capabilities/inventory_routes.py:shared_router`, listed in its
+`Provide.routers`). Anything a provider adds beyond that (Local inventory's `weight-log`) is optional and answers 404 from a provider
+without it; nothing selected answers 409. A plugin route `PUT /provider` is never exposed there (the selection route owns it). Common
+functionality lives in the neutral API (`/api/v1/inventory/*`); the old `/api/v1/spoolman/*` paths are deprecated aliases.
