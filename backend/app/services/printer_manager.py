@@ -17,83 +17,6 @@ from .printer_identity import dormant_reason
 logger = logging.getLogger(__name__)
 
 
-def _serialize_bambu(state, printer_id: int) -> dict:
-    return {
-        "printer_type": "bambu",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": getattr(state, "remaining_time", 0),
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_elegoo(state, printer_id: int) -> dict:
-    total_ticks = getattr(state, "total_ticks", 0)
-    current_ticks = getattr(state, "current_ticks", 0)
-    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
-        remaining_time = int((total_ticks - current_ticks) / 60)
-    else:
-        remaining_time = getattr(state, "remaining_time", 0) or 0
-    return {
-        "printer_type": "elegoo_centauri",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "filename", None) or getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": remaining_time,
-        "layer_num": getattr(state, "layer_num", None),
-        "total_layers": getattr(state, "total_layers", None),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": getattr(state, "print_speed_pct", 100) / 100.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_snapmaker(state, printer_id: int) -> dict:
-    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", False))
-    return {
-        "printer_type": "snapmaker_extended",
-        "id": printer_id,
-        "connected": conn,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0) * 100.0,  # Klipper display_status.progress is 0..1; the API is 0..100
-        "remaining_time": getattr(state, "remaining_time", 0) or 0,
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": 0,
-        "fan_aux": 0,
-        "fan_box": 0,
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if conn else "disconnected",
-        "cover_url": None,
-    }
-
-
-_STATUS_SERIALIZERS: dict[str, Callable] = {
-    "bambu": _serialize_bambu,
-    "elegoo_centauri": _serialize_elegoo,
-    "snapmaker_extended": _serialize_snapmaker,
-}
-
-
 class PrinterManager:
     def __init__(self) -> None:
         self._clients: dict[int, AbstractPrinterClient] = {}
@@ -190,10 +113,7 @@ class PrinterManager:
 
     def get_normalized_state(self, printer_id: int) -> dict:
         client = self._clients[printer_id]
-        serializer = _STATUS_SERIALIZERS.get(client.printer_type)
-        if serializer is None:
-            return {"id": printer_id, "printer_type": client.printer_type, "connected": client.connected}
-        state = serializer(client.state, printer_id)
+        state = client.serialize_state(printer_id)
         # Override connected with the client-level property (authoritative source)
         state["connected"] = client.connected
         state["capabilities"] = asdict(client.get_capabilities())

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ...services.elegoo_centauri_client import ElegooCentauriClient
+from .client import ElegooCentauriClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
 
 

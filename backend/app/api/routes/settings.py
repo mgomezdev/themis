@@ -17,7 +17,8 @@ from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, Webh
 from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.notification_service import send_discord, send_email, send_ntfy
-from ...services.printer_client_factory import REGISTRY, create_client
+from ...services.printer_client_factory import client_class, create_client
+from ...services.printer_identity import IdentityError, declared_model, resolve_legacy
 from ...services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -348,7 +349,7 @@ def _redact_connection_config(printer_type: str, cfg: dict) -> dict:
     driven by each printer client's own `connection_fields()` declaration
     (`field_type == "password"`), not a hardcoded key list, so a new vendor client is
     covered automatically as long as it marks its own secret fields correctly."""
-    cls = REGISTRY.get(printer_type)
+    cls = client_class(printer_type)
     if cls is None:
         return dict(cfg)
     secret_names = {f.name for f in cls.connection_fields() if f.field_type == "password"}
@@ -387,6 +388,9 @@ async def fleet_backup(
             {
                 "name": p.name,
                 "printer_type": p.printer_type,
+                "plugin_id": p.plugin_id,
+                "manufacturer_id": p.manufacturer_id,
+                "model_id": p.model_id,
                 "connection_config": (
                     (p.connection_config or {}) if include_credentials
                     else _redact_connection_config(p.printer_type, p.connection_config or {})
@@ -471,7 +475,7 @@ async def fleet_import(
         pname = pr.get("name") or "Unnamed Printer"
         ptype = pr.get("printer_type", "")
 
-        if ptype not in REGISTRY:
+        if client_class(ptype) is None:
             warnings.append(f"'{pname}': skipped — unknown printer type '{ptype}'")
             skipped += 1
             continue
@@ -481,7 +485,7 @@ async def fleet_import(
         loaded: list[dict] = pr.get("loaded_filaments") or []
         conn_cfg: dict = pr.get("connection_config") or {}
 
-        secret_names = {f.name for f in REGISTRY[ptype].connection_fields() if f.field_type == "password"}
+        secret_names = {f.name for f in client_class(ptype).connection_fields() if f.field_type == "password"}
         blank_secrets = sorted(n for n in secret_names if not conn_cfg.get(n))
         if blank_secrets:
             warnings.append(
@@ -502,9 +506,20 @@ async def fleet_import(
                         f"'{pname}' slot {slot.get('slot', '?')}: filament profile '{fp}' not found in catalog"
                     )
 
+        try:                                    # a backup's own identity wins; an older one only has the legacy printer_type
+            if pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"):
+                identity = (pr["plugin_id"], pr["manufacturer_id"], pr["model_id"])
+                declared_model(*identity)
+            else:
+                identity = resolve_legacy(ptype)
+        except IdentityError:
+            identity = (None, None, None)       # unknown to the installed plugins: kept dormant-less, identity filled later
         printer = Printer(
             name=pname,
             printer_type=ptype,
+            plugin_id=identity[0],
+            manufacturer_id=identity[1],
+            model_id=identity[2],
             connection_config=conn_cfg,
             orca_printer_profiles=orca_profiles,
             current_orca_printer_profile=current_profile,
@@ -515,6 +530,7 @@ async def fleet_import(
         )
         session.add(printer)
         await session.flush()
+        printer_manager.set_printer_plugin(printer.id, printer.plugin_id)
 
         try:
             client = create_client(printer)

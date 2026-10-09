@@ -10,7 +10,7 @@ Usage — register via the Themis API:
 """
 from __future__ import annotations
 
-from .abstract_printer_client import AbstractPrinterClient, PrinterCapabilities, StartPrintOptions
+from ...services.abstract_printer_client import AbstractPrinterClient, PrinterCapabilities, StartPrintOptions
 
 
 class MockPrinterClient(AbstractPrinterClient):

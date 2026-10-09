@@ -4,7 +4,7 @@ from pathlib import Path
 
 import app
 from app.services.abstract_printer_client import AbstractPrinterClient
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 APP_DIR = Path(app.__file__).parent
 
@@ -20,7 +20,7 @@ def test_slice_tool_mapping_flag():
 
 
 def test_snapmaker_client_and_plugin_do_not_import_remap_package():
-    files = [APP_DIR / "services" / "snapmaker_client.py", *(APP_DIR / "plugins" / "snapmaker").rglob("*.py")]
+    files = [APP_DIR / "plugins" / "snapmaker" / "client.py", *(APP_DIR / "plugins" / "snapmaker").rglob("*.py")]
     assert len(files) >= 2
     for f in files:
         text = f.read_text(encoding="utf-8")

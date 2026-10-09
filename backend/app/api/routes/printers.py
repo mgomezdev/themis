@@ -23,7 +23,7 @@ from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
+from ...services.printer_client_factory import client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names
 from ...services.printer_identity import IdentityError, declared_model, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
@@ -393,7 +393,7 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
     net = _discovery_network()
     try:
         async with _discovery_lock:
-            result = await discovery.scan(net, ranges, REGISTRY)
+            result = await discovery.scan(net, ranges, enabled_client_classes())
     except discovery.ScanRangeError as e:
         raise HTTPException(422, str(e))
     finally:
@@ -406,7 +406,7 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
         for key in ("ip_address", "host"):
             if cfg.get(key):
                 existing.add(str(cfg[key]).strip())
-    names = {t["printer_type"]: t["display_name"] for t in get_printer_types_for_ui()}
+    names = printer_type_names()
     return {
         "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
         "found": [{
@@ -458,7 +458,7 @@ async def _connect_failure_hint(client) -> str:
 async def test_connection(body: TestConnectionRequest) -> dict:
     """Attempt to connect with the given config and return `{ok: true}` or
     `{ok: false, error: "..."}` with a human-readable hint about why it failed."""
-    if body.printer_type not in REGISTRY:
+    if client_class(body.printer_type) is None:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
     client = None
     try:

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ...services.bambu_mqtt import BambuMQTTClient
+from .client import BambuMQTTClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
 
 

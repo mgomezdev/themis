@@ -212,6 +212,11 @@ class AbstractPrinterClient(ABC):
 
     # --- Capabilities and lifecycle hooks ---
 
+    def serialize_state(self, printer_id: int) -> dict:
+        """The vendor's normalized status dict (see printers.md for the keys). The manager overlays `connected`,
+        `capabilities` and `awaiting_plate_clear`. Default: identity only; vendors with telemetry override."""
+        return {"id": printer_id, "printer_type": self.printer_type, "connected": self.connected}
+
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities()
 

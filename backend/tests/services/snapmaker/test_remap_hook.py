@@ -1,9 +1,9 @@
 import zipfile
 
-from app.services.elegoo_centauri_client import ElegooCentauriClient
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient
 from app.services.providers.laminus.adapter import LaminusSlicingProvider
 from app.services.slicer_service import tool_mapping_hook
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 
 def _prepared(tmp_path):

@@ -4,6 +4,8 @@ vendor client is faked."""
 import os
 from unittest.mock import MagicMock
 
+from app.plugins.bambu.client import serialize_bambu
+
 import pytest
 from sqlalchemy import select
 
@@ -23,6 +25,7 @@ def _client(state: str = "IDLE", connected: bool = True, idle: bool = True) -> M
     c.get_capabilities.return_value = PrinterCapabilities()
     c.state = MagicMock()
     c.state.state = state
+    c.serialize_state.side_effect = lambda printer_id: serialize_bambu(c.state, printer_id)   # as the Bambu client does
     return c
 
 

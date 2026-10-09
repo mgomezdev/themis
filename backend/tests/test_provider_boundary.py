@@ -41,8 +41,8 @@ URL_READERS = {f"{PROVIDERS}.slicing", "app.config"}
 HTTPX_ALLOWED = {
     "app.services.camera_proxy": "printer camera streams",
     "app.services.discovery_net": "printer discovery",
-    "app.services.elegoo_centauri_client": "Elegoo printer API",
-    "app.services.snapmaker_client": "Moonraker printer API",
+    "app.plugins.elegoo_centauri.client": "Elegoo printer API",
+    "app.plugins.snapmaker.client": "Moonraker printer API",
     "app.services.notification_service": "ntfy/Discord notifications",
     "app.services.webhook_service": "outbound webhooks",
     "app.plugins.installer": "GitHub plugin download",

@@ -95,9 +95,11 @@ async def scan(
         result.scanned += 1
 
     async def listen() -> None:
-        from .bambu_mqtt import SSDP_PORTS
+        ports = sorted({p for c in registry.values() for p in getattr(c, "SSDP_PORTS", ())})
+        if not ports:
+            return
         try:
-            heard = await net.ssdp_listen(SSDP_PORTS, listen_s)
+            heard = await net.ssdp_listen(tuple(ports), listen_s)
         except Exception:
             return                                  # multicast unavailable (Docker bridge, no permissions): sweep only
         for ip, dgram in heard:

@@ -3,7 +3,7 @@ import threading
 import time
 from unittest.mock import MagicMock, call, patch
 import pytest
-from app.services.bambu_mqtt import BambuMQTTClient, PrinterState
+from app.plugins.bambu.client import BambuMQTTClient, PrinterState
 from app.services.abstract_printer_client import PrinterCapabilities, StartPrintOptions
 
 
@@ -142,7 +142,7 @@ def test_start_print_publishes():
 def test_upload_file_uses_implicit_ftps(mocker):
     client = _make_client()
     mock_ftp = MagicMock()
-    mocker.patch("app.services.bambu_mqtt._ImplicitFTP_TLS", return_value=mock_ftp)
+    mocker.patch("app.plugins.bambu.client._ImplicitFTP_TLS", return_value=mock_ftp)
     result = client.upload_file(b"data", "model.gcode.3mf")
     assert result is True
     # implicit FTPS on 990, authenticated, encrypted data channel
@@ -154,7 +154,7 @@ def test_upload_file_uses_implicit_ftps(mocker):
 
 def test_upload_file_returns_false_on_ftps_error(mocker):
     client = _make_client()
-    mocker.patch("app.services.bambu_mqtt._ImplicitFTP_TLS", side_effect=OSError("refused"))
+    mocker.patch("app.plugins.bambu.client._ImplicitFTP_TLS", side_effect=OSError("refused"))
     assert client.upload_file(b"data", "model.gcode.3mf") is False
 
 

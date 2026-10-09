@@ -90,13 +90,13 @@ class _FakeFTP:
 
 
 def install(monkeypatch, storage: VirtualBambuStorage):
-    from app.services import bambu_mqtt
+    from app.plugins.bambu import client as bambu_mqtt
     monkeypatch.setattr(bambu_mqtt, "_ImplicitFTP_TLS", lambda context=None: _FakeFTP(storage, context))
 
 
 def make_client(access_code: str = ACCESS_CODE):
     """A real BambuMQTTClient (no MQTT connection) pointed at the virtual storage."""
-    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.plugins.bambu.client import BambuMQTTClient
     c = BambuMQTTClient.__new__(BambuMQTTClient)
     c._ip, c._access_code, c._serial_number = "192.0.2.10", access_code, "01P00A000000000"
     return c

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from ...services.snapmaker_client import SnapmakerExtendedClient
+from .client import SnapmakerExtendedClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
 
 

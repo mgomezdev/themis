@@ -7,7 +7,7 @@ import os
 
 from pydantic import BaseModel
 
-from ...services.mock_printer_client import MockPrinterClient
+from .client import MockPrinterClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
 
 

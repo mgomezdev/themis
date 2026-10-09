@@ -1,20 +1,27 @@
 import pytest
 from app.services.abstract_printer_client import ConnectionField
-from app.services.mock_printer_client import MockPrinterClient
+from app.plugins.mock.client import MockPrinterClient
+from pydantic import BaseModel
+
+from app import plugins
+from app.models import Printer
+from app.plugins.manifest import HOST_API, PluginManifest
 from app.services.printer_client_factory import (
-    get_printer_types_for_ui,
+    client_class,
     create_client,
     create_client_from_config,
-    REGISTRY,
+    printer_client_plugins,
 )
-from app.models import Printer
+
+VENDORS = ["bambu", "elegoo_centauri", "snapmaker", "mock"]
 
 
-def _printer(printer_type: str, config: dict) -> Printer:
+def _printer(plugin_id: str, config: dict) -> Printer:
     p = Printer()
     p.id = 1
     p.name = "Test"
-    p.printer_type = printer_type
+    p.plugin_id = plugin_id
+    p.printer_type = plugin_id
     p.connection_config = config
     p.orca_printer_profiles = []
     p.current_orca_printer_profile = None
@@ -23,26 +30,21 @@ def _printer(printer_type: str, config: dict) -> Printer:
     return p
 
 
-def test_ui_type_list_covers_every_registry_entry():
-    types = get_printer_types_for_ui()
-    assert [t["printer_type"] for t in types] == list(REGISTRY)
-    for t in types:
-        assert isinstance(t["display_name"], str) and t["display_name"]
-        assert all({"name", "label", "field_type", "required"} <= set(f) for f in t["connection_fields"])
+def test_every_bundled_vendor_is_a_printer_plugin_with_a_connection_form():
+    by_id = {m.id: cls for m, cls in printer_client_plugins()}
+    assert set(VENDORS) <= set(by_id)
+    for cls in by_id.values():
+        assert all(f.name and f.label and f.field_type for f in cls.connection_fields())
 
 
-def test_get_printer_types_bambu_fields():
-    types = {t["printer_type"]: t for t in get_printer_types_for_ui()}
-    assert "bambu" in types
-    field_names = [f["name"] for f in types["bambu"]["connection_fields"]]
+def test_bambu_fields():
+    field_names = [f.name for f in client_class("bambu").connection_fields()]
     assert "serial_number" in field_names
     assert "access_code" in field_names
 
 
-def test_get_printer_types_elegoo_fields():
-    types = {t["printer_type"]: t for t in get_printer_types_for_ui()}
-    assert "elegoo_centauri" in types
-    field_names = [f["name"] for f in types["elegoo_centauri"]["connection_fields"]]
+def test_elegoo_fields():
+    field_names = [f.name for f in client_class("elegoo_centauri").connection_fields()]
     assert "ip_address" in field_names
     # camera_url is not a connection field — camera URL is derived from IP at port 3031
     assert "camera_url" not in field_names
@@ -54,11 +56,11 @@ def _minimal_config(cls) -> dict:
             for f in cls.connection_fields() if f.required}
 
 
-@pytest.mark.parametrize("printer_type", list(REGISTRY))
-def test_create_client_builds_the_registered_class_for_every_type(printer_type):
-    cls = REGISTRY[printer_type]
-    assert type(create_client(_printer(printer_type, _minimal_config(cls)))) is cls
-    assert type(create_client_from_config(printer_type, _minimal_config(cls))) is cls
+@pytest.mark.parametrize("plugin_id", VENDORS)
+def test_create_client_builds_the_plugins_class_for_every_vendor(plugin_id):
+    cls = client_class(plugin_id)
+    assert type(create_client(_printer(plugin_id, _minimal_config(cls)))) is cls
+    assert type(create_client_from_config(plugin_id, _minimal_config(cls))) is cls
 
 
 class _SpyClient(MockPrinterClient):
@@ -74,15 +76,20 @@ class _SpyClient(MockPrinterClient):
         return [ConnectionField(name="ip_address", label="IP", field_type="text")]
 
 
+class _NoSettings(BaseModel):
+    pass
+
+
 @pytest.fixture
 def spy_type(monkeypatch):
     _SpyClient.calls = []
-    monkeypatch.setitem(REGISTRY, "spy", _SpyClient)
+    monkeypatch.setitem(plugins._REGISTRY, "spy_vendor", PluginManifest(
+        id="spy_vendor", name="Spy", version="1.0.0", host_api=HOST_API, settings_model=_NoSettings, factory=_SpyClient))
     return _SpyClient
 
 
 def test_create_client_forwards_only_declared_fields_and_accepted_callbacks(spy_type):
-    printer = _printer("spy", {"ip_address": "9.9.9.9", "stray": "dropped", "on_state": "not-a-callback"})
+    printer = _printer("spy_vendor", {"ip_address": "9.9.9.9", "stray": "dropped", "on_state": "not-a-callback"})
     on_state, on_other = object(), object()
 
     create_client(printer, on_state=on_state, on_other=on_other)
@@ -93,7 +100,7 @@ def test_create_client_forwards_only_declared_fields_and_accepted_callbacks(spy_
 
 
 def test_create_client_from_config_forwards_only_declared_fields(spy_type):
-    create_client_from_config("spy", {"ip_address": "9.9.9.9", "extra": "ignored"})
+    create_client_from_config("spy_vendor", {"ip_address": "9.9.9.9", "extra": "ignored"})
 
     assert spy_type.calls == [{"ip_address": "9.9.9.9", "on_state": None}]
 

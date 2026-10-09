@@ -77,9 +77,9 @@ def test_discovery_verification_checks_pass_against_the_virtual_lan(monkeypatch)
 
 
 def test_alarm_verification_checks_pass_against_virtual_error_reports(monkeypatch):
-    from app.services.bambu_mqtt import BambuMQTTClient
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
-    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from app.plugins.bambu.client import BambuMQTTClient
+    from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
     from tests.virtual_printers.alarm_payloads import bambu_report, elegoo_status, moonraker_status
 
     bambu = BambuMQTTClient(ip_address="192.0.2.7", serial_number="S", access_code="1")
