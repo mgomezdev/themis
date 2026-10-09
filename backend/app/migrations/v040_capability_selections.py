@@ -1,7 +1,10 @@
 """Capability selections (replaces extension_slots) and drop installed_plugins.kind (capability model).
 
 `down` only removes capability_selections: it does not resurrect the legacy slot table or `kind` column (the prerelease capability
-model does not support running pre-capability code against a downgraded database)."""
+model does not support running pre-capability code against a downgraded database).
+
+`ALTER TABLE ... DROP COLUMN` needs SQLite 3.35+: the Docker image (python:3.11-slim, Debian bookworm) ships 3.40 and python.org's
+Windows 3.11 builds ship 3.4x, so no table rebuild is needed."""
 from __future__ import annotations
 from sqlalchemy import text
 

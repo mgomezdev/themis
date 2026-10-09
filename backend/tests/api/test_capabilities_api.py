@@ -87,3 +87,14 @@ async def test_capability_routes_need_the_settings_scopes(client, session_factor
         assert (await reader.get("/api/v1/capabilities")).status_code == 200
         assert (await reader.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": None})).status_code == 403
         assert (await nothing.get("/api/v1/capabilities")).status_code == 403
+
+
+async def test_a_dormant_selection_can_be_cleared_through_the_api(client):
+    from app.plugins.host import plugin_host
+    plugins.register_plugin(make_manifest("plug_a", cap="plug_a.ping"))
+    await client.put("/api/v1/capabilities/plug_a.ping/provider", json={"plugin_id": "plug_a"})
+    plugins._REGISTRY.pop("plug_a")
+    await plugin_host.reload()
+    cleared = await client.put("/api/v1/capabilities/plug_a.ping/provider", json={"plugin_id": None})
+    assert cleared.status_code == 200 and cleared.json()["plugin_id"] is None
+    assert "plug_a.ping" not in {c["id"] for c in (await client.get("/api/v1/capabilities")).json()["capabilities"]}

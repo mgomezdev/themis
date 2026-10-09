@@ -123,6 +123,11 @@ class PluginHost:
             rows = list((await s.execute(select(CapabilitySelection))).scalars())
             selections = {r.capability: r.plugin_id for r in rows}
             explicit = {r.capability: bool(r.explicit) for r in rows}
+            for r in rows:                                # an auto-picked provider that is gone must not block auto-select
+                if not r.explicit and r.plugin_id and get_plugin(r.plugin_id) is None:
+                    await s.delete(r)
+                    selections.pop(r.capability, None)
+                    explicit.pop(r.capability, None)
             configs = {r.plugin_id: _Snapshot(bool(r.enabled), dict(r.settings or {}), dict(r.secrets or {}),
                                               dict(r.state or {}))
                        for r in (await s.execute(select(PluginConfig))).scalars()}
@@ -135,28 +140,32 @@ class PluginHost:
                     selections[cap], explicit[cap] = enabled[0], False
             await s.commit()
         self._selections, self._explicit, self._configs = selections, explicit, configs
-        wanted = {pid for pid in {p for p in selections.values() if p}
-                  if self._is_enabled(pid) and self._serves_any(pid) and not self.unmet(pid)}
-        for plugin_id in [p for p in self._instances if p not in wanted]:
-            await self._close(self._instances.pop(plugin_id), plugin_id)
-            self._fingerprints.pop(plugin_id, None)
-        self._build_errors = {k: v for k, v in self._build_errors.items() if k in wanted}
-        self._rejected = {k: v for k, v in self._rejected.items() if k in wanted}
-        for plugin_id in sorted(wanted):
-            cfg = configs[plugin_id]
-            fingerprint = (repr(sorted(cfg.settings.items())), repr(sorted(cfg.secrets.items())),
-                           plugin_migrations.failed.get(plugin_id))
-            if self._fingerprints.get(plugin_id) == fingerprint and (plugin_id in self._instances or plugin_id in self._build_errors):
-                continue
-            changed = plugin_id in self._fingerprints                    # a known instance whose configuration changed
-            await self._rebuild(plugin_id)
-            self._fingerprints[plugin_id] = fingerprint
-            if changed:
-                for hook in self.config_changed_hooks:
-                    try:
-                        await hook(plugin_id)
-                    except Exception:
-                        logger.warning("Config-changed hook failed for plugin %s", plugin_id)
+        for _ in range(len(selections) + 1):          # a provider that fails to build takes its dependents down in the same pass
+            wanted = {pid for pid in {p for p in selections.values() if p}
+                      if self._is_enabled(pid) and self._serves_any(pid) and not self.unmet(pid)}
+            for plugin_id in [p for p in self._instances if p not in wanted]:
+                await self._close(self._instances.pop(plugin_id), plugin_id)
+                self._fingerprints.pop(plugin_id, None)
+            self._build_errors = {k: v for k, v in self._build_errors.items() if k in wanted}
+            self._rejected = {k: v for k, v in self._rejected.items() if k in wanted}
+            errors_before = set(self._build_errors)
+            for plugin_id in sorted(wanted):
+                cfg = configs[plugin_id]
+                fingerprint = (repr(sorted(cfg.settings.items())), repr(sorted(cfg.secrets.items())),
+                               plugin_migrations.failed.get(plugin_id))
+                if self._fingerprints.get(plugin_id) == fingerprint and (plugin_id in self._instances or plugin_id in self._build_errors):
+                    continue
+                changed = plugin_id in self._fingerprints                    # a known instance whose configuration changed
+                await self._rebuild(plugin_id)
+                self._fingerprints[plugin_id] = fingerprint
+                if changed:
+                    for hook in self.config_changed_hooks:
+                        try:
+                            await hook(plugin_id)
+                        except Exception:
+                            logger.warning("Config-changed hook failed for plugin %s", plugin_id)
+            if set(self._build_errors) == errors_before:
+                break
 
     def _is_enabled(self, plugin_id: str) -> bool:
         cfg = self._configs.get(plugin_id)
@@ -179,8 +188,8 @@ class PluginHost:
             provider = get_plugin(pid) if pid else None
             prov = provider.provides.get(req.capability) if provider else None
             ok = (req.capability in catalog and pid is not None and pid != plugin_id and pid not in _seen
-                  and self._is_enabled(pid) and prov is not None and prov.version >= req.min_version
-                  and not self.unmet(pid, _seen | {plugin_id}))
+                  and self._is_enabled(pid) and pid not in self._build_errors and prov is not None
+                  and prov.version >= req.min_version and not self.unmet(pid, _seen | {plugin_id}))
             if not ok:
                 out.append(req.capability)
         return tuple(out)
@@ -468,6 +477,9 @@ class PluginHost:
     async def set_provider(self, cap: str, plugin_id: str | None) -> None:
         """Choose the provider of `cap` (None = none, remembered). Selecting a provider enables it (spec §3)."""
         if cap not in capability_catalog():
+            if plugin_id is None and cap in self._selections:        # a dormant choice (its definer is gone): clearing forgets it
+                await self._forget_selection(cap)
+                return
             raise PluginError(f"unknown capability {cap!r}")
         if plugin_id is not None:
             manifest = get_plugin(plugin_id)
@@ -489,6 +501,16 @@ class PluginHost:
                     else:
                         cfg.enabled = True
                 await s.commit()
+            await self._reload_locked()
+
+    async def _forget_selection(self, cap: str) -> None:
+        assert self._session_factory is not None
+        async with self._lock:
+            async with self._session_factory() as s:
+                row = await s.get(CapabilitySelection, cap)
+                if row is not None:
+                    await s.delete(row)
+                    await s.commit()
             await self._reload_locked()
 
     def _reject_cycle(self, cap: str, plugin_id: str) -> None:

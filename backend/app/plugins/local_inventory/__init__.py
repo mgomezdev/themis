@@ -3,6 +3,7 @@ database (plugin-owned `local_inv_*` tables). An ordinary plugin: nothing in cor
 from __future__ import annotations
 
 from ..capabilities.filament_inventory import CAPABILITY
+from ..capabilities.inventory_routes import shared_router
 from ..manifest import HOST_API, PluginManifest, Provide, UiContribution, UiTab
 from .migrations import v001_tables
 from .provider import LocalInventoryProvider
@@ -16,7 +17,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=LocalInventorySettings,
     factory=LocalInventoryProvider,
-    provides={CAPABILITY: Provide(version=1, features=LocalInventoryProvider.capabilities, routers=(router,))},
+    provides={CAPABILITY: Provide(version=1, features=LocalInventoryProvider.capabilities, routers=(router, shared_router))},
     migrations=(v001_tables,),
     table_prefix="local_inv_",
     ui=UiContribution(mode="page", nav_label="Local inventory", nav_placement="settings",
