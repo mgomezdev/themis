@@ -16,7 +16,7 @@ import inspect
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Literal
+from typing import Any, Awaitable, Callable, Generic, Literal, TypeVar
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -25,11 +25,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..models import CapabilitySelection, PluginConfig
 from . import PluginError, capability_catalog, get_plugin, providers_of
 from . import migrations as plugin_migrations
+from .capabilities.definition import CapabilityDef, RoutedCapability
 from .manifest import PluginManifest, Provide
 
 logger = logging.getLogger("app")
 
 DEFAULT_TIMEOUT_S = 10.0
+R = TypeVar("R")
+P = TypeVar("P")
 
 
 def _now() -> str:
@@ -37,9 +40,9 @@ def _now() -> str:
 
 
 @dataclass(frozen=True)
-class CallResult:
+class CallResult(Generic[R]):
     ok: bool
-    value: Any = None
+    value: R | None = None
     error: str | None = None
     # ok | inactive (no active provider / method) | timeout | error
     reason: Literal["ok", "inactive", "timeout", "error"] = "ok"
@@ -131,8 +134,8 @@ class PluginHost:
             configs = {r.plugin_id: _Snapshot(bool(r.enabled), dict(r.settings or {}), dict(r.secrets or {}),
                                               dict(r.state or {}))
                        for r in (await s.execute(select(PluginConfig))).scalars()}
-            for cap in capability_catalog():              # auto-select the unambiguous case only (spec decision 5)
-                if cap in selections:
+            for cap, d in capability_catalog().items():  # auto-select the unambiguous case only (spec decision 5)
+                if cap in selections or d.mode == "routed":
                     continue
                 enabled = [m.id for m in providers_of(cap) if configs.get(m.id) and configs[m.id].enabled]
                 if len(enabled) == 1:
@@ -141,7 +144,8 @@ class PluginHost:
             await s.commit()
         self._selections, self._explicit, self._configs = selections, explicit, configs
         for _ in range(len(selections) + 1):          # a provider that fails to build takes its dependents down in the same pass
-            wanted = {pid for pid in {p for p in selections.values() if p}
+            candidates = {p for p in selections.values() if p} | set(configs)     # routed providers are never selected
+            wanted = {pid for pid in candidates
                       if self._is_enabled(pid) and self._serves_any(pid) and not self.unmet(pid)}
             for plugin_id in [p for p in self._instances if p not in wanted]:
                 await self._close(self._instances.pop(plugin_id), plugin_id)
@@ -173,8 +177,8 @@ class PluginHost:
 
     def _serves_any(self, plugin_id: str) -> bool:
         m, catalog = get_plugin(plugin_id), capability_catalog()
-        return m is not None and any(sel == plugin_id and cap in m.provides and cap in catalog
-                                     for cap, sel in self._selections.items())
+        return m is not None and any(cap in catalog and (catalog[cap].mode == "routed" or self._selections.get(cap) == plugin_id)
+                                     for cap in m.provides)
 
     def unmet(self, plugin_id: str, _seen: frozenset[str] = frozenset()) -> tuple[str, ...]:
         """Capability ids this plugin `requires` that nobody enabled (and itself satisfied) currently serves at a high enough
@@ -209,6 +213,8 @@ class PluginHost:
                 continue                                    # definer not registered: nothing to verify yet
             elif d.version != prov.version:
                 rejected[cap] = f"provides {cap} v{prov.version} but this Themis knows v{d.version}"
+            elif d.protocol is not None and not isinstance(part, d.protocol):
+                rejected[cap] = f"{cap}: does not satisfy {d.protocol.__name__}"
             else:
                 missing = [n for n in d.required_methods if not inspect.iscoroutinefunction(getattr(part, n, None))]
                 if missing:
@@ -267,7 +273,13 @@ class PluginHost:
 
     # --- the active rule ---------------------------------------------------------------------------------------
 
+    def _is_routed(self, cap: str) -> bool:
+        d = capability_catalog().get(cap)
+        return d is not None and d.mode == "routed"
+
     def active(self, cap: str) -> ActivePlugin | None:
+        if self._is_routed(cap):
+            return None                                       # a routed capability has one provider per resource, not one overall
         pid = self._selections.get(cap)
         m = get_plugin(pid) if pid else None
         prov = m.provides.get(cap) if m else None
@@ -277,6 +289,20 @@ class PluginHost:
         if cap in self._rejected.get(pid, {}):
             return None
         return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
+
+    def active_for(self, cap: str, plugin_id: str) -> ActivePlugin | None:
+        """The routed capability `cap` as served by `plugin_id`, or None when that plugin is not an active provider of it."""
+        if not self._is_routed(cap) or not self._is_enabled(plugin_id):
+            return None
+        m, inst = get_plugin(plugin_id), self._instances.get(plugin_id)
+        prov = m.provides.get(cap) if m else None
+        if m is None or prov is None or inst is None or cap in self._rejected.get(plugin_id, {}):
+            return None
+        return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
+
+    def active_providers(self, cap: str) -> list[str]:
+        """Ids of the enabled, built providers of a routed capability (what a resource may be bound to)."""
+        return [m.id for m in providers_of(cap) if self.active_for(cap, m.id) is not None]
 
     def has(self, cap: str, feature: str) -> bool:
         a = self.active(cap)
@@ -299,6 +325,10 @@ class PluginHost:
     def status(self, cap: str) -> CapabilityStatus:
         if cap not in capability_catalog():
             return CapabilityStatus("dormant", self._selections.get(cap))
+        if self._is_routed(cap):
+            if not providers_of(cap):
+                return CapabilityStatus("no_provider")
+            return CapabilityStatus("serving") if self.active_providers(cap) else CapabilityStatus("disabled")
         pid = self._selections.get(cap)
         if pid is None:
             return CapabilityStatus("none_selected" if cap in self._selections or providers_of(cap) else "no_provider")
@@ -385,21 +415,42 @@ class PluginHost:
         active = self.active(cap)
         if active is None:
             return CallResult(False, error=f"no active {cap} provider", reason="inactive")
-        plugin_id, instance = active.manifest.id, active.instance
         fn = getattr(active.part, method, None)
         if fn is None:
-            return CallResult(False, error=f"{plugin_id} has no method {method!r}", reason="inactive")
+            return CallResult(False, error=f"{active.manifest.id} has no method {method!r}", reason="inactive")
+        return await self._contained(active.manifest.id, active.instance, method, lambda: fn(*args, **kwargs), timeout)
+
+    async def call_for(self, cap: RoutedCapability[P] | str, plugin_id: str, fn: Callable[[P], R], *,
+                       timeout: float = DEFAULT_TIMEOUT_S) -> CallResult[R]:
+        """Run `fn` against the routed capability `cap` as served by `plugin_id` (the provider bound to the resource).
+
+        `fn` takes the provider and returns its result; a blocking method runs in a worker thread so the event loop is never
+        held, an async one is awaited. Typed: `RoutedCapability[P]` makes `p` a `P` in the lambda. Never raises (except
+        cancellation); an unbound or inactive provider is `reason="inactive"`."""
+        cap_id = cap.id if isinstance(cap, RoutedCapability) else cap
+        active = self.active_for(cap_id, plugin_id)
+        if active is None:
+            return CallResult(False, error=f"no active {cap_id} provider {plugin_id!r}", reason="inactive")
+
+        async def run() -> R:
+            out = await asyncio.to_thread(fn, active.part)
+            return await out if inspect.isawaitable(out) else out
+
+        return await self._contained(plugin_id, active.instance, cap_id, run, timeout)
+
+    async def _contained(self, plugin_id: str, instance: Any, what: str, run: Callable[[], Awaitable[Any]],
+                         timeout: float) -> CallResult:
         try:
-            value = await asyncio.wait_for(fn(*args, **kwargs), timeout=timeout)
+            value = await asyncio.wait_for(run(), timeout=timeout)
         except asyncio.TimeoutError:
-            return await self._failed(plugin_id, instance, f"{method} timed out after {timeout:g}s", "timeout")
+            return await self._failed(plugin_id, instance, f"{what} timed out after {timeout:g}s", "timeout")
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling():          # *we* were cancelled: propagate
                 raise
-            return await self._failed(plugin_id, instance, f"{method} was cancelled inside the plugin", "error")
+            return await self._failed(plugin_id, instance, f"{what} was cancelled inside the plugin", "error")
         except Exception as e:
-            return await self._failed(plugin_id, instance, f"{method} failed: {self._describe(e)}", "error", exc=e)
+            return await self._failed(plugin_id, instance, f"{what} failed: {self._describe(e)}", "error", exc=e)
         if self._instances.get(plugin_id) is instance:
             await self._record(plugin_id, last_error=None, last_ok_at=_now())
         return CallResult(True, value=value)
@@ -481,6 +532,8 @@ class PluginHost:
                 await self._forget_selection(cap)
                 return
             raise PluginError(f"unknown capability {cap!r}")
+        if self._is_routed(cap):
+            raise PluginError(f"{cap} is routed: every enabled provider serves it; enable the plugin instead")
         if plugin_id is not None:
             manifest = get_plugin(plugin_id)
             if manifest is None or cap not in manifest.provides:
