@@ -8,10 +8,12 @@ import pytest
 from urllib.parse import urlparse
 
 from app.services import discovery
-from app.services.bambu_mqtt import BAMBU_MSEARCH, SSDP_PORTS, BambuMQTTClient, bambu_from_ssdp, parse_ssdp_headers
-from app.services.elegoo_centauri_client import ElegooCentauriClient
-from app.services.printer_client_factory import REGISTRY
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.bambu.client import BAMBU_MSEARCH, SSDP_PORTS, BambuMQTTClient, bambu_from_ssdp, parse_ssdp_headers
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
+
+# the sweep takes client classes by printer_type
+REGISTRY = {"bambu": BambuMQTTClient, "elegoo_centauri": ElegooCentauriClient, "snapmaker_extended": SnapmakerExtendedClient}
 
 
 def run(coro):

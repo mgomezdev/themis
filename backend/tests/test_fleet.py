@@ -1,4 +1,5 @@
 import logging
+from app.plugins.elegoo_centauri.client import serialize_elegoo
 from dataclasses import asdict
 from types import SimpleNamespace
 
@@ -81,6 +82,9 @@ class _FakeElegoo:
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(pause_resume=True)
+
+    def serialize_state(self, printer_id: int) -> dict:
+        return serialize_elegoo(self.state, printer_id)       # as the Elegoo client does
 
 
 async def _add_printer(client: AsyncClient, name: str) -> int:

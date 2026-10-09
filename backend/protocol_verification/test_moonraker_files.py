@@ -3,7 +3,7 @@
 import httpx
 import pytest
 
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 
 @pytest.fixture

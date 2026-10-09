@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from app.services.elegoo_centauri_client import ElegooCentauriClient, _Cmd
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient, _Cmd
 
 
 @pytest.fixture(scope="module")
