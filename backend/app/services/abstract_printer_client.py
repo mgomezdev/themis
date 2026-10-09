@@ -106,6 +106,9 @@ class ConnectionField:
 
 class AbstractPrinterClient(ABC):
     printer_type: ClassVar[str]
+    # True for tool-changer printers whose filament->tool routing is baked into the 3MF at slice time (Snapmaker U1).
+    # The rewrite itself is the slicing provider's job (SlicingProvider.apply_tool_mapping); the vendor only declares the need.
+    slice_tool_mapping: ClassVar[bool] = False
 
     # --- Connection lifecycle (must implement) ---
 
@@ -285,12 +288,6 @@ class AbstractPrinterClient(ABC):
 
     def get_loaded_filaments(self) -> list:
         return []
-
-    def remap_sliceable_3mf(self, sliceable_3mf, *, tool_index=None, filament_map=None) -> None:
-        """Rewrite the prepared sliceable 3MF in place to route the model's filament(s)
-        to the chosen physical tool(s). Default: no-op (vendors that realize the mapping
-        elsewhere, e.g. Bambu at print time via ams_mapping)."""
-        return None
 
     # --- File ID validation (call before any external file_id input) ---
 

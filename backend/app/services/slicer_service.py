@@ -48,6 +48,19 @@ class SliceRequest:
     extra_config: dict = field(default_factory=dict)
 
 
+def tool_mapping_hook(client, tool_index, filament_map, provider) -> "Callable[[Path], None] | None":
+    """The `SliceRequest.prepare_hook` that routes a 3MF's filaments to tool heads, or None when none is needed. Only a
+    printer whose client declares `slice_tool_mapping` has its 3MF rewritten (Bambu realizes the mapping at print time);
+    the rewrite is the slicing provider's (`apply_tool_mapping`), never the printer client's."""
+    if client is None or not getattr(client, "slice_tool_mapping", False):
+        return None
+    if tool_index is None and not filament_map:
+        return None
+    if provider is None:
+        return None                                  # the slice itself reports "not configured"
+    return lambda path: provider.apply_tool_mapping(path, tool_index=tool_index, filament_map=filament_map)
+
+
 def resolve_preset_uuids(
     machine_preset: str, process_preset: str, filament_presets: list[str], provider: SlicingProvider,
 ) -> "tuple[str, str, list[str]]":

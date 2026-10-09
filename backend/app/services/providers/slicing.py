@@ -74,6 +74,14 @@ class SlicingProvider(ABC):
     ARRANGE: ClassVar[bool] = False
     PACK_MODELS: ClassVar[bool] = False
     PREPARED_PROJECT: ClassVar[bool] = False
+    TOOL_MAPPING: ClassVar[bool] = False       # can route a 3MF's filaments to physical tool heads (apply_tool_mapping)
+
+    def apply_tool_mapping(self, source_3mf: Path, *, tool_index: int | None = None,
+                           filament_map: list[dict] | None = None) -> None:
+        """Rewrite the prepared 3MF at `source_3mf` in place so its filament(s) print on the chosen physical tool(s) of a
+        tool-changer printer. `tool_index` (0-based) puts every object on one tool; `filament_map` is
+        `[{model_filament (1-based), tool_index (0-based)}]`. They are mutually exclusive; neither is a no-op."""
+        raise SlicingProviderError(f"{type(self).__name__} does not support tool mapping")
 
     @property
     @abstractmethod

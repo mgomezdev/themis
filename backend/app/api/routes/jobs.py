@@ -24,7 +24,8 @@ from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
-from ...services.slicer_service import SliceError, SliceRequest
+from ...services.providers.slicing import get_slicing_provider
+from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._materials import material_columns, stored
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
@@ -1012,12 +1013,7 @@ def _build_slice_request(
 
     cfg_tool_index = config.tool_index
     cfg_filament_map = config.filament_map
-    prepare_hook = None
-    if client is not None and (cfg_tool_index is not None or cfg_filament_map):
-        prepare_hook = (
-            lambda p, c=client, ti=cfg_tool_index, fm=cfg_filament_map:
-            c.remap_sliceable_3mf(p, tool_index=ti, filament_map=fm)
-        )
+    prepare_hook = tool_mapping_hook(client, cfg_tool_index, cfg_filament_map, get_slicing_provider())
 
     if cfg_filament_map:
         ordered = sorted(loaded, key=lambda s: s.get("slot", 0))

@@ -51,7 +51,7 @@ def build_sliceable_3mf(
     and apply ours fresh.
 
     Vendor-specific routing (extruder remapping, paint recolor) is applied
-    separately via the printer client's ``remap_sliceable_3mf`` hook after this
+    separately via the slicing provider's ``apply_tool_mapping`` hook after this
     call — this function is vendor-agnostic.
     """
     source_3mf, out_path = Path(source_3mf), Path(out_path)
@@ -98,7 +98,7 @@ def stl_to_3mf(stl_path: str | Path, project_config: dict, out_path: str | Path)
     a bare STL (no 3MF container / model_settings to preserve).
 
     Vendor-specific routing (extruder assignment) is applied separately via the
-    printer client's ``remap_sliceable_3mf`` hook after this call.
+    slicing provider's ``apply_tool_mapping`` hook after this call.
     """
     stl_path, out_path = Path(stl_path), Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
