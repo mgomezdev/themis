@@ -386,6 +386,8 @@ async def resolve_conflict(write_id: int, body: ConflictChoice, session: AsyncSe
         row = await session.get(InventoryPendingWrite, write_id)
         if row is None or row.status != "conflict":
             raise HTTPException(status_code=404, detail="No such held write")
+        if row.provider != inventory_provider.provider_id():       # its spool ref means something else to another provider
+            raise HTTPException(status_code=409, detail="This held write belongs to another inventory provider; reselect it to resolve")
         if body.choice == "provider":
             row.status = "discarded"
             job = await session.get(Job, row.job_id) if row.job_id else None

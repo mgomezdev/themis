@@ -219,3 +219,61 @@ async def test_a_completion_records_the_start_weight_the_write_was_computed_from
     async with session_factory() as s:
         row = (await s.execute(select(InventoryPendingWrite))).scalar_one()
         assert (row.pre_weight_g, row.target_g) == (100.0, 88.0)
+
+
+async def test_a_resolved_conflict_is_written_before_the_rows_queued_behind_it_and_those_are_checked_against_it(client, session_factory):
+    fake = FakeInventoryProvider(spools=[spool("1", 1200.0)])               # job A started at 1000, then the spool was re-weighed to 1200
+    await use_provider(fake)
+    a = await _queue(session_factory, pre=1000.0, target=900.0)
+    await client.post(f"{BASE}/pending-writes/flush")
+    b = await _queue(session_factory, pre=900.0, target=800.0)               # job B queued behind the held A
+    assert (await _row(session_factory, a)).status == "conflict"
+
+    resolved = (await client.post(f"{BASE}/pending-writes/{a}/resolve-conflict", json={"choice": "subtract"})).json()
+
+    assert (resolved["status"], resolved["target_g"]) == ("applied", 1100.0)
+    assert fake.writes == [("1", 1100.0)]                                    # the user's choice reached the provider, B did not replace it
+    assert (await _row(session_factory, b)).status == "conflict"             # B was computed from 900; the spool is now 1100: asked again
+    await client.post(f"{BASE}/pending-writes/{b}/resolve-conflict", json={"choice": "subtract"})
+    assert fake.writes[-1] == ("1", 1000.0)                                  # 1100 - B's 100 g
+
+
+async def test_subtract_on_a_held_chain_deducts_every_job_in_the_chain(client, session_factory):
+    fake = FakeInventoryProvider(spools=[spool("1", 120.0)])                 # re-weighed to 120 while two jobs were queued
+    await use_provider(fake)
+    first = await _queue(session_factory, pre=100.0, target=90.0)
+    second = await _queue(session_factory, pre=90.0, target=80.0)
+    await client.post(f"{BASE}/pending-writes/flush")
+
+    held = (await client.get(f"{BASE}/pending-writes")).json()["items"]
+    assert [(h["id"], h["status"], h["pre_weight_g"]) for h in held] == [(second, "conflict", 100.0)]      # the chain's start weight
+    assert (await _row(session_factory, first)).status == "superseded"
+
+    await client.post(f"{BASE}/pending-writes/{second}/resolve-conflict", json={"choice": "subtract"})
+
+    assert fake.writes == [("1", 100.0)]                                     # 120 - (10 + 10)
+
+
+async def test_a_held_write_of_another_provider_cannot_be_resolved_against_the_active_one(client, session_factory):
+    fake, wid = await _held(client, session_factory)                         # held for "spoolman"
+    await use_provider(FakeInventoryProvider(spools=[spool("1", 5.0)]), plugin_id="other_inventory")
+
+    resp = await client.post(f"{BASE}/pending-writes/{wid}/resolve-conflict", json={"choice": "subtract"})
+
+    assert resp.status_code == 409
+    row = await _row(session_factory, wid)
+    assert (row.status, row.target_g) == ("conflict", 90.0)                  # untouched: never baked another spool's weight in
+    assert fake.writes == []
+
+
+async def test_a_held_conflict_is_never_pruned_however_old(session_factory):
+    async with session_factory() as s:
+        for status in ("conflict", "applied"):
+            s.add(InventoryPendingWrite(provider="spoolman", spool_ref="1", target_g=1.0, source="queue", status=status,
+                                        created_at="2020-01-01T00:00:00+00:00"))
+        await s.commit()
+
+    await outbox._prune(session_factory)
+
+    async with session_factory() as s:
+        assert [r.status for r in (await s.execute(select(InventoryPendingWrite))).scalars()] == ["conflict"]

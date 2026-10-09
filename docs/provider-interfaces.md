@@ -74,7 +74,9 @@ weight (or any earlier target of the same chain) → write; already at the targe
 means it was changed in the provider during the print, so the row is held as `conflict` (`inventory.weight_conflict` event) and later writes
 for that spool wait. The user chooses (`POST /inventory/pending-writes/{id}/resolve-conflict`): `themis` (write the computed target),
 `provider` (keep the provider's weight; the job is flagged `deduction_skipped`), `subtract` (write provider weight − the job's grams).
-A hand-set weight supersedes a held conflict. A weight that cannot be read leaves the row `pending` and it is retried.
+A hand-set weight supersedes a held conflict. A weight that cannot be read leaves the row `pending` and it is retried. A held row records
+the chain's start weight (so `subtract` deducts every queued job), a resolved row is sent on its own before later rows (which are then
+checked against the new weight), only the active provider's conflicts can be resolved, and a held conflict is never pruned.
 
 **Offline behaviour (REMOTE providers, BIZ-219).** `read.py` persists each successful list to `inventory_cache` and answers an unreachable
 provider from it (`stale`, `as_of`); effective remaining = newest pending outbox target, else the live/cached weight (preflight, low-stock

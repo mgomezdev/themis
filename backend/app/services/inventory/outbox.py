@@ -84,49 +84,77 @@ async def flush(factory: async_sessionmaker[AsyncSession]) -> int:
                     by_spool.setdefault(r.spool_ref, []).append((r.id, r.target_g, r.pre_weight_g, r.job_id))
         applied = 0
         for ref, items in by_spool.items():
-            newest_id, target, _, newest_job = items[-1]
-            older = [i[0] for i in items[:-1]]
-            first_pre = items[0][2]
-            already_there = False
-            if first_pre is not None:                    # conflict guard: has someone changed the spool since the print started?
-                read = await provider.call("get_spool", ref)
-                if not read.ok:
-                    await _record_failure(factory, newest_id, ref, provider.describe_failure(read)[1])
-                    continue
-                current = read.value.remaining_g if read.value is not None else None
-                if current is not None:
-                    known = [first_pre, *[t for _, t, _, _ in items]]      # earlier writes of the chain may already have landed
-                    if _near(current, target):
-                        already_there = True
-                    elif not any(_near(current, k) for k in known):
-                        await _hold_conflict(factory, pid, ref, newest_id, older, newest_job, float(current), target, first_pre)
-                        continue
-            result = None if already_there else await provider.call("set_remaining", ref, target)
-            patch_cache = False
-            async with factory() as session:
-                if already_there or (result is not None and result.ok):
-                    await session.execute(update(InventoryPendingWrite).where(
-                        InventoryPendingWrite.id == newest_id, InventoryPendingWrite.status == "pending")
-                        .values(status="applied", last_attempt_at=_now(), last_error=None))
-                    if older:
-                        await session.execute(update(InventoryPendingWrite).where(
-                            InventoryPendingWrite.id.in_(older), InventoryPendingWrite.status == "pending")
-                            .values(status="superseded"))
+            for chain in _segments(items):                # guarded and unguarded rows are never merged into one send
+                outcome = await _flush_chain(factory, pid, ref, chain)
+                if outcome == "applied":
                     applied += 1
-                    patch_cache = True
-                else:
-                    msg = provider.describe_failure(result)[1]
-                    row = await session.get(InventoryPendingWrite, newest_id)
-                    if row is not None and row.status == "pending":
-                        row.attempts += 1
-                        row.last_attempt_at = _now()
-                        row.last_error = msg
-                    logger.warning("Inventory write for spool %s not applied (will retry): %s", ref, msg)
-                await session.commit()
-            if patch_cache:                                      # after the commit: one writer at a time on SQLite
-                await cache.patch_spool_weight(pid, ref, target)
+                else:                                     # held / failed: later rows for the spool wait for the next flush
+                    break
         await _prune(factory)
         return applied
+
+
+_Item = tuple[int, float, float | None, int | None]       # (row id, target_g, pre_weight_g, job_id)
+
+
+def _segments(items: list[_Item]) -> list[list[_Item]]:
+    """Consecutive rows with a start weight (guarded) or without one (decided by the user after a conflict, or legacy) form a
+    segment. A decided row is sent on its own first, so the weight chosen by the user is what the later rows are checked against
+    instead of the later rows silently superseding it."""
+    out: list[list[_Item]] = []
+    for item in items:
+        if out and (out[-1][0][2] is None) == (item[2] is None):
+            out[-1].append(item)
+        else:
+            out.append([item])
+    return out
+
+
+async def _flush_chain(factory: async_sessionmaker[AsyncSession], pid: str, ref: str, items: list[_Item]) -> str:
+    """Send the newest target of one segment of a spool's queue. Returns `applied`, `held` (conflict) or `failed`."""
+    newest_id, target, _, newest_job = items[-1]
+    older = [i[0] for i in items[:-1]]
+    first_pre = items[0][2]
+    already_there = False
+    if first_pre is not None:                        # conflict guard: has someone changed the spool since the print started?
+        read = await provider.call("get_spool", ref)
+        if not read.ok:
+            await _record_failure(factory, newest_id, ref, provider.describe_failure(read)[1])
+            return "failed"
+        current = read.value.remaining_g if read.value is not None else None
+        if current is not None:
+            known = [first_pre, *[t for _, t, _, _ in items]]          # earlier writes of the chain may already have landed
+            if _near(current, target):
+                already_there = True
+            elif not any(_near(current, k) for k in known):
+                await _hold_conflict(factory, pid, ref, newest_id, older, newest_job, float(current), target, first_pre)
+                return "held"
+    result = None if already_there else await provider.call("set_remaining", ref, target)
+    async with factory() as session:
+        if already_there or (result is not None and result.ok):
+            await session.execute(update(InventoryPendingWrite).where(
+                InventoryPendingWrite.id == newest_id, InventoryPendingWrite.status == "pending")
+                .values(status="applied", last_attempt_at=_now(), last_error=None))
+            if older:
+                await session.execute(update(InventoryPendingWrite).where(
+                    InventoryPendingWrite.id.in_(older), InventoryPendingWrite.status == "pending")
+                    .values(status="superseded"))
+            await session.commit()
+            ok = True
+        else:
+            msg = provider.describe_failure(result)[1]
+            row = await session.get(InventoryPendingWrite, newest_id)
+            if row is not None and row.status == "pending":
+                row.attempts += 1
+                row.last_attempt_at = _now()
+                row.last_error = msg
+            logger.warning("Inventory write for spool %s not applied (will retry): %s", ref, msg)
+            await session.commit()
+            ok = False
+    if not ok:
+        return "failed"
+    await cache.patch_spool_weight(pid, ref, target)         # after the commit: one writer at a time on SQLite
+    return "applied"
 
 
 async def _record_failure(factory: async_sessionmaker[AsyncSession], row_id: int, ref: str, msg: str) -> None:
@@ -147,7 +175,10 @@ async def _hold_conflict(factory: async_sessionmaker[AsyncSession], pid: str, re
         row = await session.get(InventoryPendingWrite, newest_id)
         if row is None or row.status != "pending":
             return
+        # `pre_weight_g` becomes the chain's start weight, so `pre - target` is the grams of EVERY job in the chain (older rows are
+        # superseded below and their usage lives on in this row's target).
         row.status, row.conflict_current_g, row.last_attempt_at, row.last_error = "conflict", current, _now(), None
+        row.pre_weight_g = pre
         if older:
             await session.execute(update(InventoryPendingWrite).where(
                 InventoryPendingWrite.id.in_(older), InventoryPendingWrite.status == "pending").values(status="superseded"))
@@ -165,5 +196,5 @@ async def _prune(factory: async_sessionmaker[AsyncSession]) -> None:
     cutoff = (datetime.now(timezone.utc) - timedelta(days=_KEEP_DAYS)).isoformat()
     async with factory() as session:
         await session.execute(delete(InventoryPendingWrite).where(
-            InventoryPendingWrite.status != "pending", InventoryPendingWrite.created_at < cutoff))
+            InventoryPendingWrite.status.notin_(("pending", "conflict")), InventoryPendingWrite.created_at < cutoff))
         await session.commit()
