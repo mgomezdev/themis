@@ -1,6 +1,7 @@
 from __future__ import annotations
 import urllib.parse
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import ClassVar, Optional
 
@@ -49,6 +50,10 @@ class StartPrintOptions:
     timelapse: bool = False
     use_ams: bool = True
     gcode_path: str | None = None
+
+
+class CameraUnavailable(Exception):
+    """A client's camera cannot be served; the message is user-facing (e.g. a missing tool)."""
 
 
 class FileTooLargeError(Exception):
@@ -267,6 +272,28 @@ class AbstractPrinterClient(ABC):
     @property
     def camera_rtsp_url(self) -> str | None:
         return None
+
+    def camera_unavailable_reason(self) -> str | None:
+        """Why this client's camera cannot be served right now (user-facing), or None."""
+        return None
+
+    async def camera_stream(self) -> AsyncGenerator[bytes, None]:
+        """Multipart-JPEG chunks of the live feed, which the camera hub fans out to viewers. The client produces its own feed
+        (a vendor needing a transcode does it here); default: proxy the MJPEG URL."""
+        url = self.camera_mjpeg_url
+        if not url:
+            raise CameraUnavailable("No camera URL configured")
+        from .camera_proxy import stream_mjpeg
+        async for chunk in stream_mjpeg(url):
+            yield chunk
+
+    async def camera_snapshot(self) -> bytes | None:
+        """One JPEG frame, or None when the client has no camera source. Default: grab one from the MJPEG URL."""
+        url = self.camera_mjpeg_url
+        if not url:
+            return None
+        from .camera_proxy import grab_jpeg_frame
+        return await grab_jpeg_frame(url)
 
     def control_endpoint(self) -> tuple[str, int] | None:
         """Host/port of the primary control channel, used by the add-printer

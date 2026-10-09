@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import shutil
 
 from ...auth import require_scope
 from ...database import get_session
@@ -22,7 +21,6 @@ from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
-from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import (
     client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
@@ -1209,7 +1207,7 @@ async def _activate_camera(client) -> None:
     summary="Stream camera (MJPEG)",
     responses={
         404: {"description": "Printer not found or has no camera"},
-        503: {"description": "Printer not connected or ffmpeg unavailable for RTSP"},
+        503: {"description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"},
     },
     dependencies=[Depends(require_scope("printers:read"))],
 )
@@ -1217,8 +1215,8 @@ async def stream_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    """MJPEG multipart stream from the printer camera. Supports both native MJPEG
-    and RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on
+    """MJPEG multipart stream from the printer camera. The printer's client produces the feed (native
+    MJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on
     printers that time out after 60 s of inactivity."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
@@ -1228,25 +1226,20 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    if client.camera_mjpeg_url:
-        mjpeg_url, rtsp_url = client.camera_mjpeg_url, None
-    elif client.camera_rtsp_url:
-        from ...config import get_ffmpeg_executable
-        if not shutil.which(get_ffmpeg_executable()):
-            raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        mjpeg_url, rtsp_url = None, client.camera_rtsp_url
-    else:
+    if not (client.camera_mjpeg_url or client.camera_rtsp_url):
         raise HTTPException(404, "No camera URL configured")
+    reason = client.camera_unavailable_reason()          # e.g. a transcoder the vendor needs is missing
+    if reason:
+        raise HTTPException(503, reason)
 
     if not camera_hub.hub.has_stream(printer_id):
         await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
 
     async def upstream():
-        raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
-        async for chunk in raw:
+        async for chunk in client.camera_stream():       # the client (its plugin) produces the feed; core fans it out
             yield chunk
 
-    # One upstream connection / ffmpeg per printer however many viewers (camera wall, several browsers);
+    # One upstream connection / transcoder per printer however many viewers (camera wall, several browsers);
     # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
     ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
     if camera_hub.hub.is_full_for(printer_id):
@@ -1292,7 +1285,7 @@ async def snapshot_camera(
 
     async def grab():
         await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
-        return await grab_snapshot_from_client(client)
+        return await client.camera_snapshot()
 
     try:
         jpeg = await camera_hub.hub.snapshot(printer_id, grab)

@@ -13,6 +13,8 @@ from typing import Callable, ClassVar, Optional
 
 import paho.mqtt.client as mqtt
 
+from . import camera
+
 from ...services.abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
@@ -423,6 +425,26 @@ class BambuMQTTClient(AbstractPrinterClient):
     @property
     def camera_mjpeg_url(self) -> str | None:
         return None
+
+    def camera_unavailable_reason(self) -> str | None:
+        if self.camera_rtsp_url and not camera.ffmpeg_available():
+            return "ffmpeg not available for RTSP streaming"
+        return None
+
+    async def camera_stream(self):
+        url = self.camera_rtsp_url
+        if not url:
+            async for chunk in super().camera_stream():
+                yield chunk
+            return
+        async for chunk in camera.stream_rtsp_ffmpeg(url):
+            yield chunk
+
+    async def camera_snapshot(self) -> bytes | None:
+        url = self.camera_rtsp_url
+        if not url:
+            return await super().camera_snapshot()
+        return await camera.grab_rtsp_frame(url)
 
     @property
     def is_idle(self) -> bool:
