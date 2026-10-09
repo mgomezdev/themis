@@ -8,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
+from .events import event_bus
 from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
+from .printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,17 @@ class PrinterManager:
         self._on_job_complete: Callable | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session_factory: async_sessionmaker | None = None
+        self._subscribed = False
+
+    def subscribe_events(self) -> None:
+        """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
+        lifespan runs once per client in tests."""
+        if self._subscribed:
+            return
+        self._subscribed = True
+        event_bus.subscribe(PrinterStateChanged, lambda e: self.on_state_change(e.printer_id, e.state))
+        event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state))
+        event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
         self._on_state_broadcast = cb
@@ -250,13 +263,13 @@ class PrinterManager:
             logger.warning("connect_printer called before set_loop — callbacks will be disabled")
 
         async def _on_state(state):
-            await self.on_state_change(printer_id, state)
+            await event_bus.publish(PrinterStateChanged(printer_id=printer_id, state=state))
 
         async def _on_complete(state):
-            await self.on_print_complete(printer_id, state)
+            await event_bus.publish(PrintCompleted(printer_id=printer_id, state=state))
 
         async def _on_ams(trays):
-            await self.on_ams_change(printer_id, trays)
+            await event_bus.publish(AmsChanged(printer_id=printer_id, trays=trays))
 
         # Assign async functions directly — clients call run_coroutine_threadsafe on them
         client._on_state_change = _on_state
