@@ -18,7 +18,7 @@ from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import client_class, create_client
-from ...services.printer_identity import IdentityError, declared_model, resolve_legacy
+from ...services.printer_identity import IdentityError, resolve_legacy
 from ...services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -506,14 +506,15 @@ async def fleet_import(
                         f"'{pname}' slot {slot.get('slot', '?')}: filament profile '{fp}' not found in catalog"
                     )
 
-        try:                                    # a backup's own identity wins; an older one only has the legacy printer_type
-            if pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"):
-                identity = (pr["plugin_id"], pr["manufacturer_id"], pr["model_id"])
-                declared_model(*identity)
-            else:
+        if pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"):
+            # a backup's own identity is kept as written: if its plugin is not installed here the printer is imported dormant
+            # (plugin_removed) rather than lost or guessed
+            identity = (pr["plugin_id"], pr["manufacturer_id"], pr["model_id"])
+        else:                                   # an older backup only has the legacy printer_type
+            try:
                 identity = resolve_legacy(ptype)
-        except IdentityError:
-            identity = (None, None, None)       # unknown to the installed plugins: kept dormant-less, identity filled later
+            except IdentityError:               # a type with no legacy mapping (only a hand-edited file): no identity to invent
+                identity = (None, None, None)
         printer = Printer(
             name=pname,
             printer_type=ptype,

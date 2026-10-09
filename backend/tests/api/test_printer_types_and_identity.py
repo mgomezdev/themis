@@ -15,7 +15,7 @@ TYPE_KEYS = {"plugin_id", "manufacturer_id", "manufacturer_name", "model_id", "d
 @pytest.fixture(autouse=True)
 def _fake_printer_plugin():
     saved = dict(plugins._REGISTRY)
-    plugins.register_plugin(make_manifest(FAKE, manufacturers=(
+    plugins.register_plugin(make_manifest(FAKE, default_enabled=True, manufacturers=(
         Manufacturer("zeta", "Zeta Works", (PrinterModel("z9", "Z9", bed_mm=(300, 200), toolheads=2),)),
         Manufacturer("acme", "Acme 3D", (PrinterModel("a2", "Acme A2"),
                                          PrinterModel("a1", "Acme A1", bed_mm=(220, 220)))),

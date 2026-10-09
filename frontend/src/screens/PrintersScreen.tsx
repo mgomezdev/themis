@@ -67,6 +67,20 @@ function modelLabel(t: PrinterType, all: PrinterType[]): string {
   return offeredByMany ? `${t.display_name} (${t.plugin_id})` : t.display_name;
 }
 
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** The declared model an announcement's model text names: an exact match, else the longest declared name the text contains
+ *  ("X1 / X1 Carbon" -> "X1 Carbon"). No match returns undefined — never a guess. */
+function matchModel(candidates: PrinterType[], model: string | null): PrinterType | undefined {
+  if (!model) return undefined;
+  const m = norm(model);
+  const exact = candidates.find(t => norm(t.display_name) === m);
+  if (exact) return exact;
+  return candidates
+    .filter(t => norm(t.display_name) !== '' && m.includes(norm(t.display_name)))
+    .sort((a, b) => norm(b.display_name).length - norm(a.display_name).length)[0];
+}
+
 const sameModel = (t: PrinterType, p: { plugin_id: string | null; manufacturer_id: string | null; model_id: string | null }) =>
   t.plugin_id === p.plugin_id && t.manufacturer_id === p.manufacturer_id && t.model_id === p.model_id;
 
@@ -253,6 +267,7 @@ export function PrinterAddForm({
   backLabel?: string;
 }) {
   const [step, setStep] = useState(1);
+  const [modelUnconfirmed, setModelUnconfirmed] = useState(false);   // a discovered printer whose model we could not tell
   const [data, setData] = useState<WizardData>({
     printerType: addable(types)[0] ?? null,
     nickname: '',
@@ -287,20 +302,21 @@ export function PrinterAddForm({
     }
   }
 
-  /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. */
+  /** A discovered printer pre-fills type, nickname and the connection fields; only secrets are left to type. When its model
+   *  text names no declared model the wizard stays on the printer step (plugin's first model selected) so the user picks it. */
   function applyDiscovered(p: DiscoveredPrinter) {
     const ofPlugin = addable(types).filter(t => t.plugin_id === p.plugin_id);
-    // the announcement's model text picks the declared model when it matches one; otherwise the plugin's first
-    const type = ofPlugin.find(t => !!p.model && t.display_name.toLowerCase() === p.model.toLowerCase()) ?? ofPlugin[0];
-    if (!type) return;
+    if (ofPlugin.length === 0) return;
+    const matched = matchModel(ofPlugin, p.model);
     setData({
-      printerType: type,
+      printerType: matched ?? ofPlugin[0],
       nickname: data.nickname || p.name || p.model || '',
       connectionConfig: Object.fromEntries(Object.entries(p.connection_config).map(([k, v]) => [k, String(v)])),
     });
     setConnStatus('idle');
     setConnError(null);
-    setStep(2);
+    setModelUnconfirmed(!matched);
+    setStep(matched ? 2 : 1);
   }
 
   async function handleFinish() {
@@ -371,6 +387,11 @@ export function PrinterAddForm({
           <div className="card" style={{ padding: 24 }}>
             <DiscoverPrinters onPick={applyDiscovered} />
             <SectionHeader title="Select printer" sub="Choose the manufacturer and model of this printer." />
+            {modelUnconfirmed && (
+              <div className="small" role="status" style={{ marginBottom: 12, color: 'var(--warn)' }}>
+                We could not tell which model this printer is — choose the model below.
+              </div>
+            )}
             {addable(types).length === 0 ? (
               <div className="small muted" style={{ marginBottom: 20 }}>
                 No printer plugin is enabled. Enable one under Settings → Plugins.
@@ -383,6 +404,7 @@ export function PrinterAddForm({
                     value={data.printerType?.manufacturer_id ?? ''}
                     onChange={e => {
                       const first = modelsOf(types, e.target.value)[0] ?? null;
+                      setModelUnconfirmed(false);
                       setData({ ...data, printerType: first, connectionConfig: {} });
                     }}>
                     {manufacturersOf(types).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -395,7 +417,10 @@ export function PrinterAddForm({
                     onChange={e => {
                       const next = modelsOf(types, data.printerType?.manufacturer_id ?? '')
                         .find(t => `${t.plugin_id}/${t.model_id}` === e.target.value) ?? null;
-                      setData({ ...data, printerType: next, connectionConfig: {} });
+                      setModelUnconfirmed(false);
+                      // the same plugin shares one connection form, so values (e.g. a discovered IP) survive a model change
+                      const samePlugin = next?.plugin_id === data.printerType?.plugin_id;
+                      setData({ ...data, printerType: next, connectionConfig: samePlugin ? data.connectionConfig : {} });
                     }}>
                     {modelsOf(types, data.printerType?.manufacturer_id ?? '').map(t => (
                       <option key={`${t.plugin_id}/${t.model_id}`} value={`${t.plugin_id}/${t.model_id}`}>

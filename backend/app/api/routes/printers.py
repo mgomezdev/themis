@@ -24,7 +24,7 @@ from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.printer_client_factory import (
     client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
-from ...services.printer_identity import IdentityError, declared_model, printer_model_catalog, resolve_legacy
+from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
@@ -177,10 +177,13 @@ def _identity_for_create(body: PrinterCreate):
         printer_type = body.printer_type
     elif body.plugin_id is not None and body.manufacturer_id and body.model_id:
         plugin_id, manufacturer_id, model_id = body.plugin_id, body.manufacturer_id, body.model_id
-        printer_type = plugin_id
+        # the legacy column keeps the client's own key (e.g. snapmaker_extended), which badges and old consumers still read
+        printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
     else:
         raise IdentityError("Give plugin_id, manufacturer_id and model_id, or a legacy printer_type")
     _, model = declared_model(plugin_id, manufacturer_id, model_id)
+    if dormant_reason(plugin_id) == "plugin_disabled":
+        raise IdentityError(f"Plugin {plugin_id!r} is disabled; enable it before adding printers")
     return plugin_id, manufacturer_id, model_id, printer_type, model
 
 
@@ -661,6 +664,7 @@ async def delete_printer(
     await session.delete(printer)
     await session.commit()
     printer_manager.disconnect_printer(printer_id)
+    printer_manager.forget_printer(printer_id)
     if printer_manager._on_state_broadcast is not None:   # its alarms went with it (FK cascade)
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 

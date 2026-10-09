@@ -197,16 +197,32 @@ describe('PrinterAddForm — discovery pre-fill by plugin', () => {
     expect(field('Serial Number').value).toBe('SER1');
   });
 
-  it('falls back to the plugin\'s first enabled entry when no display_name matches, pre-filling nickname', async () => {
+  it('picks the declared model an announcement names among several ("X1 / X1 Carbon" -> X1 Carbon, longest contained name wins)', async () => {
     const user = userEvent.setup();
-    stubFetch({ ...ROUTES, 'POST /api/v1/printers/discover': found({ model: 'Unknown Thing' }) });
+    stubFetch({ ...ROUTES, 'POST /api/v1/printers/discover': found({ model: 'X1 / X1 Carbon' }) });
     renderForm([ELEGOO, BAMBU_P1S, BAMBU_X1C]);
     await scanAndUse(user);
-    expect(screen.getByText('Connect to P1S')).toBeTruthy();
-    expect(field('IP Address').value).toBe('192.168.7.20');
-    await user.click(screen.getByRole('button', { name: /Back/i }));
+    expect(screen.getByText('Connect to X1 Carbon')).toBeTruthy();
+  });
+
+  it('does not guess when no declared model matches: stays on the printer step with the plugin selected and asks for the model', async () => {
+    const user = userEvent.setup();
+    stubFetch({ ...ROUTES, 'POST /api/v1/printers/discover': found({ model: 'C13' }) });   // a raw, unmapped model code
+    renderForm([ELEGOO, BAMBU_P1S, BAMBU_X1C]);
+    await scanAndUse(user);
+
+    expect(screen.queryByText(/^Connect to/)).toBeNull();                                  // still step 1
+    expect(screen.getByRole('status').textContent).toMatch(/choose the model/i);
+    expect(selectedText(select('Manufacturer'))).toBe('Bambu Lab');                         // the plugin is known, the model is not
     expect((screen.getByPlaceholderText('e.g. Atlas, Forge, Iris') as HTMLInputElement).value).toBe('Bambu-P1S');
-    expect(selectedText(select('Manufacturer'))).toBe('Bambu Lab');
+
+    // choosing the model keeps what discovery found (same plugin, same connection form) and clears the notice
+    await user.selectOptions(select('Model'), 'bambu/x1c');
+    expect(screen.queryByRole('status')).toBeNull();
+    await user.click(screen.getByRole('button', { name: /next/i }));
+    expect(screen.getByText('Connect to X1 Carbon')).toBeTruthy();
+    expect(field('IP Address').value).toBe('192.168.7.20');
+    expect(field('Serial Number').value).toBe('SER1');
   });
 
   it('a discovered printer whose plugin has no enabled entry does nothing', async () => {

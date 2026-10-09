@@ -35,7 +35,8 @@ class PrinterManager:
             return
         self._subscribed = True
         event_bus.subscribe(PrinterStateChanged, lambda e: self.on_state_change(e.printer_id, e.state))
-        event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state))
+        # completing a job (DB commit, inventory deduction, webhooks) must never be cut short by the bus's handler timeout
+        event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state), timeout=None)
         event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
@@ -93,6 +94,10 @@ class PrinterManager:
     def set_printer_plugin(self, printer_id: int, plugin_id: str | None) -> None:
         """Remember which plugin serves a printer, so a disabled or removed plugin makes its printers dormant (not ready)."""
         self._printer_plugin[printer_id] = plugin_id
+
+    def forget_printer(self, printer_id: int) -> None:
+        """Drop a deleted printer's plugin mapping (ids can be reused, and a stale mapping would make the new printer dormant)."""
+        self._printer_plugin.pop(printer_id, None)
 
     def is_printer_ready(self, printer_id: int) -> bool:
         client = self._clients.get(printer_id)

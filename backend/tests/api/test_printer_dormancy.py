@@ -18,7 +18,7 @@ FAKE = "fake_printer"
 @pytest.fixture(autouse=True)
 def _fake_printer_plugin():
     saved = dict(plugins._REGISTRY)
-    plugins.register_plugin(make_manifest(FAKE, manufacturers=(
+    plugins.register_plugin(make_manifest(FAKE, default_enabled=True, manufacturers=(
         Manufacturer("acme", "Acme 3D", (PrinterModel("a1", "Acme A1"),)),
     )))
     yield

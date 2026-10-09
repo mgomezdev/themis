@@ -38,7 +38,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads
   `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/ams_mapping` reliably.
 - **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
-  `/fleet`, and is never ready (`is_printer_ready` false → the queue neither claims nor fails its jobs; they stay queued). Never delete
+  `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
   or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade
   does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1` (the test conftest sets it;
   set it locally to add mock printers).

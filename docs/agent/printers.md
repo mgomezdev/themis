@@ -21,14 +21,14 @@ The vendor-abstraction is the most-extended part of the codebase. Adding a print
 `serialize_state(printer_id)` (the vendor's normalized status dict — see below; base default = identity only),
 `camera_stream()` / `camera_snapshot()` / `camera_unavailable_reason()` (the client produces its own camera feed for the core camera hub; defaults proxy `camera_mjpeg_url`; Bambu transcodes RTSP in `plugins/bambu/camera.py`),
 `slice_tool_mapping` (ClassVar bool, default False; True = the 3MF's filament→tool routing is baked in at slice time — Snapmaker),
-`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu).
+`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu). The camera routes only serve a client that exposes `camera_mjpeg_url` or `camera_rtsp_url` (404 otherwise); the feed itself comes from the client.
 
 **Callbacks** (set by `printer_manager.connect_printer`, fired from the client's bg thread via
 `run_coroutine_threadsafe(self._loop)`): `_on_state_change(state)`, `_on_print_complete(state)`,
 `_on_ams_change(trays)` (only wired if the client has the attr). They no longer call the manager directly: each publishes a typed
 event on the process bus (`services/events.event_bus` → `PrinterStateChanged` / `PrintCompleted` / `AmsChanged` in
 `services/printer_events.py`), and `PrinterManager.subscribe_events()` (called once in the `main.py` lifespan, idempotent) routes them
-to `on_state_change` / `on_print_complete` / `on_ams_change`. Handlers are isolated, timeout-bounded tasks; publishers never wait.
+to `on_state_change` / `on_print_complete` / `on_ams_change`. Handlers are isolated tasks; publishers never wait. Each is bounded by the bus's `handler_timeout` (10 s) except the print-completion handler, subscribed with `timeout=None` because completing a job (commit, inventory deduction, webhooks) must never be cut short.
 
 **`StartPrintOptions`**: `plate_id, gcode_path, ams_mapping?, bed_levelling, flow_cali, vibration_cali,
 layer_inspect, timelapse, use_ams`. The queue engine fills `plate_id`/`gcode_path`/`ams_mapping`;
@@ -44,7 +44,7 @@ existing printers are not dormant after upgrade); `mock` is enabled only when `T
 
 `printers` rows carry `plugin_id` + `manufacturer_id` + `model_id` (v042 backfilled from the legacy `printer_type`:
 `bambu`→bambu/bambu/p1s, `elegoo_centauri`→elegoo_centauri/elegoo/centauri, `snapmaker_extended`→snapmaker/snapmaker/u1_extended,
-`mock`→mock/mock/mock; the Bambu plugin offers every Bambu model). `printer_identity.LEGACY_IDENTITY` is that mapping.
+`mock`→mock/mock/mock; the Bambu plugin offers every Bambu model). `printer_identity.LEGACY_IDENTITY` is that mapping. A printer created from an identity triple stores its client's own `printer_type` (e.g. `snapmaker_extended` for plugin `snapmaker`) so badges and old consumers keyed on it keep working; creating one on a **disabled** plugin is a 422. Fleet backup carries the triple; import keeps a backup's triple verbatim (an uninstalled plugin ⇒ imported dormant) and maps an old backup's `printer_type` through `LEGACY_IDENTITY`.
 
 - `client_class(key)` — client class for a plugin id **or** a legacy `printer_type`; None if no such printer plugin.
   `create_client(printer)` uses `printer.plugin_id or printer.printer_type`; `create_client_from_config(plugin_or_type, cfg)`; both pass only

@@ -2798,7 +2798,7 @@
           "printers"
         ],
         "summary": "Stream camera (MJPEG)",
-        "description": "MJPEG multipart stream from the printer camera. Supports both native MJPEG\nand RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on\nprinters that time out after 60 s of inactivity.",
+        "description": "MJPEG multipart stream from the printer camera. The printer's client produces the feed (native\nMJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on\nprinters that time out after 60 s of inactivity.",
         "operationId": "stream_camera_api_v1_printers__printer_id__camera_get",
         "parameters": [
           {
@@ -2824,7 +2824,7 @@
             "description": "Printer not found or has no camera"
           },
           "503": {
-            "description": "Printer not connected or ffmpeg unavailable for RTSP"
+            "description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"
           },
           "422": {
             "description": "Validation Error",

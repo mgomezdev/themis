@@ -428,7 +428,8 @@ class PluginHost:
 
         `fn` takes the provider and returns its result; a blocking method runs in a worker thread so the event loop is never
         held, an async one is awaited. Typed: `RoutedCapability[P]` makes `p` a `P` in the lambda. Never raises (except
-        cancellation); an unbound or inactive provider is `reason="inactive"`."""
+        cancellation); an unbound or inactive provider is `reason="inactive"`. A blocking method that outlives `timeout` is abandoned,
+        not stopped: `asyncio.wait_for` cannot interrupt a worker thread, which keeps running until the call returns."""
         cap_id = cap.id if isinstance(cap, RoutedCapability) else cap
         active = self.active_for(cap_id, plugin_id)
         if active is None:
