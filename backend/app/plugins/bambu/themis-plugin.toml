@@ -1,0 +1,7 @@
+id = "bambu"
+name = "Bambu Lab"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.bambu:MANIFEST"
+publisher = "Themis"

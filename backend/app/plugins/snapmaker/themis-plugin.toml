@@ -1,0 +1,7 @@
+id = "snapmaker"
+name = "Snapmaker U1 (Extended)"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.snapmaker:MANIFEST"
+publisher = "Themis"

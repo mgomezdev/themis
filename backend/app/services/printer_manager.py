@@ -12,6 +12,7 @@ from .events import event_bus
 from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
 from .printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
+from .printer_identity import dormant_reason
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +103,7 @@ class PrinterManager:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session_factory: async_sessionmaker | None = None
         self._subscribed = False
+        self._printer_plugin: dict[int, str | None] = {}
 
     def subscribe_events(self) -> None:
         """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
@@ -146,6 +148,7 @@ class PrinterManager:
             )
             printers = result.scalars().all()
         for printer in printers:
+            self.set_printer_plugin(printer.id, printer.plugin_id)
             try:
                 client = create_client(printer)
                 self.connect_printer(printer.id, client)
@@ -164,9 +167,15 @@ class PrinterManager:
     def is_awaiting_plate_clear(self, printer_id: int) -> bool:
         return printer_id in self._awaiting_plate_clear
 
+    def set_printer_plugin(self, printer_id: int, plugin_id: str | None) -> None:
+        """Remember which plugin serves a printer, so a disabled or removed plugin makes its printers dormant (not ready)."""
+        self._printer_plugin[printer_id] = plugin_id
+
     def is_printer_ready(self, printer_id: int) -> bool:
         client = self._clients.get(printer_id)
         if client is None:
+            return False
+        if dormant_reason(self._printer_plugin.get(printer_id)) is not None:
             return False
         return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 

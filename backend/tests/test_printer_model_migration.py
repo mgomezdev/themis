@@ -74,7 +74,8 @@ async def test_v042_keeps_connection_config_name_and_every_other_column(v041_db)
         after = await _printers(conn)
     assert len(after) == len(before) == len(LEGACY)
     for old, new in zip(before, after):
-        assert {k: v for k, v in new.items() if k not in IDENTITY_COLS} == old
+        # the fixture is built from the current models, so the identity columns exist before v042 too: compare the rest
+        assert {k: v for k, v in new.items() if k not in IDENTITY_COLS} == {k: v for k, v in old.items() if k not in IDENTITY_COLS}
         assert json.loads(new["connection_config"])["serial_number"] == f"SN{old['id']}"
         assert new["printer_type"] == old["printer_type"]
 

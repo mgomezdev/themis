@@ -1,0 +1,7 @@
+id = "mock"
+name = "Mock Printer (Testing)"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.mock:MANIFEST"
+publisher = "Themis"

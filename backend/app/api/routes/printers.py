@@ -24,6 +24,7 @@ from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
 from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
+from ...services.printer_identity import IdentityError, declared_model, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
@@ -42,20 +43,26 @@ router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
 class PrinterCreate(BaseModel):
     name: str
-    printer_type: str
+    # Identity: either the plugin/manufacturer/model triple, or a legacy printer_type (mapped to the triple).
+    plugin_id: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
+    printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
-    bed_x_mm: float = 256.0
-    bed_y_mm: float = 256.0
+    bed_x_mm: float | None = None         # default: the declared model's bed
+    bed_y_mm: float | None = None
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
 class PrinterUpdate(BaseModel):
     name: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
     connection_config: dict | None = None
     orca_printer_profiles: list[str] | None = None
     current_orca_printer_profile: str | None = None
@@ -127,6 +134,9 @@ def _to_dict(p: Printer) -> dict:
         "id": p.id,
         "name": p.name,
         "printer_type": p.printer_type,
+        "plugin_id": p.plugin_id,
+        "manufacturer_id": p.manufacturer_id,
+        "model_id": p.model_id,
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "orca_printer_profiles": p.orca_printer_profiles,
@@ -159,10 +169,25 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-@router.get("/types", summary="List printer types", dependencies=[Depends(require_scope("printers:read"))])
+def _identity_for_create(body: PrinterCreate):
+    """(plugin_id, manufacturer_id, model_id, stored printer_type, declared model). A legacy printer_type is mapped; an
+    explicit triple must be declared by its plugin. Raises IdentityError (-> 422) before anything is stored."""
+    if body.plugin_id is None and body.printer_type is not None:
+        plugin_id, manufacturer_id, model_id = resolve_legacy(body.printer_type)
+        printer_type = body.printer_type
+    elif body.plugin_id is not None and body.manufacturer_id and body.model_id:
+        plugin_id, manufacturer_id, model_id = body.plugin_id, body.manufacturer_id, body.model_id
+        printer_type = plugin_id
+    else:
+        raise IdentityError("Give plugin_id, manufacturer_id and model_id, or a legacy printer_type")
+    _, model = declared_model(plugin_id, manufacturer_id, model_id)
+    return plugin_id, manufacturer_id, model_id, printer_type, model
+
+
+@router.get("/types", summary="List printer models every plugin declares", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printer_types() -> list[dict]:
     """Available printer driver types with display name and required connection config fields."""
-    return get_printer_types_for_ui()
+    return printer_model_catalog()
 
 
 def _stem(name: str) -> str:
@@ -243,24 +268,30 @@ async def create_printer(
 ) -> dict:
     """Register a new printer and attempt an immediate connection. Connection failure
     is non-fatal — the printer is saved and will retry on next restart."""
-    if body.printer_type not in REGISTRY:
-        raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}. Valid types: {list(REGISTRY.keys())}")
+    try:
+        plugin_id, manufacturer_id, model_id, printer_type, model = _identity_for_create(body)
+    except IdentityError as e:
+        raise HTTPException(422, str(e))
     printer = Printer(
         name=body.name,
-        printer_type=body.printer_type,
+        printer_type=printer_type,
+        plugin_id=plugin_id,
+        manufacturer_id=manufacturer_id,
+        model_id=model_id,
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=inventory_refs.normalize_slots(body.loaded_filaments),
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
-        bed_x_mm=body.bed_x_mm,
-        bed_y_mm=body.bed_y_mm,
+        bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
+        bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
         machine_rate_per_hour=body.machine_rate_per_hour,
     )
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
+    printer_manager.set_printer_plugin(printer.id, plugin_id)
     try:
         client = create_client(printer)
         printer_manager.connect_printer(printer.id, client)
@@ -508,6 +539,15 @@ async def update_printer(
     """Update one or more printer fields. Omitted fields are left unchanged.
     `current_orca_printer_profile` supports explicit null to clear the preset."""
     printer = await _get_or_404(printer_id, session)
+    if body.manufacturer_id is not None or body.model_id is not None:
+        # validated before anything is changed: a rejected identity leaves the printer exactly as it was
+        manufacturer_id = body.manufacturer_id or printer.manufacturer_id or ""
+        model_id = body.model_id or printer.model_id or ""
+        try:
+            declared_model(printer.plugin_id or "", manufacturer_id, model_id)
+        except IdentityError as e:
+            raise HTTPException(422, str(e))
+        printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:

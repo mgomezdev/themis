@@ -48,6 +48,25 @@ class UiContribution:
     redirects: tuple[tuple[str, str], ...] = ()
 
 
+_MODEL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+@dataclass(frozen=True)
+class PrinterModel:
+    """A printer model a plugin supports (BIZ-262). `id` is stable: printers store it."""
+    id: str
+    name: str
+    bed_mm: tuple[int, int] = (256, 256)
+    toolheads: int = 1
+
+
+@dataclass(frozen=True)
+class Manufacturer:
+    id: str
+    name: str
+    models: tuple[PrinterModel, ...] = ()
+
+
 @dataclass(frozen=True)
 class Provide:
     """How a plugin serves one capability. `attr` names the attribute of the plugin's instance that serves it (None = the
@@ -99,6 +118,7 @@ class PluginManifest:
     description: str = ""
     docs_url: str | None = None
     permissions: tuple[str, ...] = ()         # reserved (BIZ-200): parsed, never enforced
+    manufacturers: tuple[Manufacturer, ...] = ()   # printer models this plugin supports (new-printer dropdowns)
 
     def __post_init__(self) -> None:
         if not ID_RE.match(self.id):
@@ -132,6 +152,18 @@ class PluginManifest:
         for r in (*self.requires, *self.optional):
             if r.capability in self.provides:
                 raise PluginError(f"plugin {self.id!r}: lists {r.capability!r} as required or optional, which it provides itself")
+        mfr_ids: set[str] = set()
+        model_ids: set[str] = set()          # unique across the whole plugin, not per manufacturer
+        for mfr in self.manufacturers:
+            if not _MODEL_ID_RE.match(mfr.id) or mfr.id in mfr_ids:
+                raise PluginError(f"plugin {self.id!r}: manufacturer id {mfr.id!r} is invalid or duplicated")
+            mfr_ids.add(mfr.id)
+            for model in mfr.models:
+                if not _MODEL_ID_RE.match(model.id) or model.id in model_ids:
+                    raise PluginError(f"plugin {self.id!r}: model id {model.id!r} is invalid or duplicated")
+                model_ids.add(model.id)
+                if min(model.bed_mm) <= 0 or model.toolheads < 1:
+                    raise PluginError(f"plugin {self.id!r}: model {model.id!r} needs a positive bed and at least one toolhead")
         for mod in self.migrations:
             for attr in ("version", "name", "up", "down"):
                 if not hasattr(mod, attr):
