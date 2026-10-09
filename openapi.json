@@ -9234,6 +9234,128 @@
         }
       }
     },
+    "/api/v1/plugins/local_inventory/low-stock": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Low-inventory alert thresholds of the active provider",
+        "operationId": "get_low_stock_api_v1_plugins_local_inventory_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set the low-inventory alert thresholds of the active provider",
+        "description": "Takes effect at the next sync. Raising a threshold alerts spools now below it; lowering one re-arms spools that are no\nlonger below it.",
+        "operationId": "put_low_stock_api_v1_plugins_local_inventory_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStock"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/spoolman/low-stock": {
+      "get": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Low-inventory alert thresholds of the active provider",
+        "operationId": "get_low_stock_api_v1_plugins_spoolman_low_stock_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Set the low-inventory alert thresholds of the active provider",
+        "description": "Takes effect at the next sync. Raising a threshold alerts spools now below it; lowering one re-arms spools that are no\nlonger below it.",
+        "operationId": "put_low_stock_api_v1_plugins_spoolman_low_stock_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LowStock"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LowStock"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/spoolman/filaments": {
       "get": {
         "tags": [
