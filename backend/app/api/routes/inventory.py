@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -18,7 +19,7 @@ from ...plugins.capabilities.filament_inventory import (
     LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     InventoryProviderError, InvMaterial, InvSpool, MaterialDraft, NotSupported, SpoolDraft,
 )
-from ...models import InventoryPendingWrite
+from ...models import InventoryPendingWrite, Job
 from ...services.inventory import (
     cache as inventory_cache, config as inventory_config, deduction as inventory_deduction, outbox as inventory_outbox,
     provider as inventory_provider, read as inventory_read, sync as inventory_sync,
@@ -261,7 +262,7 @@ async def _weight_corrected(session: AsyncSession, ref: str) -> bool:
     pid = inventory_provider.provider_id()
     await session.execute(update(InventoryPendingWrite).where(
         InventoryPendingWrite.provider == pid, InventoryPendingWrite.spool_ref == ref,
-        InventoryPendingWrite.status == "pending").values(status="superseded"))
+        InventoryPendingWrite.status.in_(("pending", "conflict"))).values(status="superseded"))
     restored = await inventory_deduction.restore(session, pid, ref)
     await session.commit()
     return restored
@@ -314,13 +315,14 @@ async def tracking(session: AsyncSession = Depends(get_session)):
 def _write_out(r: InventoryPendingWrite) -> dict:
     return {"id": r.id, "provider": r.provider, "spool_ref": r.spool_ref, "target_g": r.target_g, "job_id": r.job_id,
             "printer_id": r.printer_id, "source": r.source, "created_at": r.created_at, "attempts": r.attempts,
-            "last_attempt_at": r.last_attempt_at, "last_error": r.last_error, "status": r.status}
+            "last_attempt_at": r.last_attempt_at, "last_error": r.last_error, "status": r.status,
+            "pre_weight_g": r.pre_weight_g, "conflict_current_g": r.conflict_current_g}
 
 
-@router.get("/pending-writes", summary="Weight updates not yet applied to the provider",
+@router.get("/pending-writes", summary="Weight updates not yet applied to the provider (status `pending`, or `conflict` = held)",
             dependencies=[Depends(require_scope("inventory:read"))])
 async def pending_writes(session: AsyncSession = Depends(get_session)):
-    rows = (await session.execute(select(InventoryPendingWrite).where(InventoryPendingWrite.status == "pending")
+    rows = (await session.execute(select(InventoryPendingWrite).where(InventoryPendingWrite.status.in_(("pending", "conflict")))
                                   .order_by(InventoryPendingWrite.id))).scalars().all()
     return {"provider": inventory_provider.provider_id(), "items": [_write_out(r) for r in rows]}
 
@@ -366,6 +368,43 @@ async def resolve_pending_write(write_id: int, body: ResolveBody | None = None, 
             row.target_g = body.target_g
         await session.commit()
     await inventory_outbox.flush(inventory_deduction.factory_for(session))
+    await session.refresh(row)
+    return _write_out(row)
+
+
+class ConflictChoice(BaseModel):
+    choice: Literal["themis", "provider", "subtract"] = Field(
+        description="`themis`: write the value computed from the print-start weight. `provider`: keep the weight now in the "
+                    "provider and drop this deduction. `subtract`: write the provider's current weight minus the grams the job used.")
+
+
+@router.post("/pending-writes/{write_id}/resolve-conflict", summary="Resolve a held weight update (the provider's weight changed during the print)",
+             responses={404: {"description": "No such held write"}, **_LIBRARY_RESPONSES},
+             dependencies=[Depends(require_scope("inventory:write"))])
+async def resolve_conflict(write_id: int, body: ConflictChoice, session: AsyncSession = Depends(get_session)):
+    inventory_provider.require(WRITE_WEIGHT)
+    async with inventory_outbox.flush_lock():
+        row = await session.get(InventoryPendingWrite, write_id)
+        if row is None or row.status != "conflict":
+            raise HTTPException(status_code=404, detail="No such held write")
+        if row.provider != inventory_provider.provider_id():       # its spool ref means something else to another provider
+            raise HTTPException(status_code=409, detail="This held write belongs to another inventory provider; reselect it to resolve")
+        if body.choice == "provider":
+            row.status = "discarded"
+            job = await session.get(Job, row.job_id) if row.job_id else None
+            if job is not None:
+                job.deduction_skipped, job.deduction_note = True, "Weight changed in the inventory during the print — its value was kept"
+        else:
+            if body.choice == "subtract":
+                read = await inventory_provider.call("get_spool", row.spool_ref)
+                if not read.ok or read.value is None or read.value.remaining_g is None:
+                    raise HTTPException(status_code=502, detail="Could not read the spool's current weight from the inventory")
+                spent = max(0.0, (row.pre_weight_g or 0.0) - row.target_g)
+                row.target_g = max(0.0, float(read.value.remaining_g) - spent)
+            row.status, row.pre_weight_g, row.conflict_current_g = "pending", None, None      # decided: no second check
+        await session.commit()
+    if row.status == "pending":
+        await inventory_outbox.flush(inventory_deduction.factory_for(session))
     await session.refresh(row)
     return _write_out(row)
 

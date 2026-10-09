@@ -670,7 +670,8 @@ class JobSpoolSnapshot(Base):
 
 class InventoryPendingWrite(Base):
     """The deduction outbox: an ABSOLUTE `set remaining = target_g` for a spool, written in the completion transaction and
-    flushed to the provider by the host (re-sending is harmless). status: pending -> applied | superseded | discarded."""
+    flushed to the provider by the host (re-sending is harmless). status: pending -> applied | superseded | discarded, or
+    `conflict` (BIZ-198: the provider's weight changed since `pre_weight_g`, so the write is held for the user to resolve)."""
     __tablename__ = "inventory_pending_writes"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -685,6 +686,8 @@ class InventoryPendingWrite(Base):
     last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default="pending")
+    pre_weight_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)         # the weight `target_g` was computed from
+    conflict_current_g: Mapped[Optional[float]] = mapped_column(Float, nullable=True)   # the provider's weight when a conflict was found
 
     __table_args__ = (Index("ix_inventory_pending_writes_spool", "provider", "spool_ref", "status"),)
 

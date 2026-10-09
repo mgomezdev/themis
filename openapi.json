@@ -8191,7 +8191,7 @@
         "tags": [
           "inventory"
         ],
-        "summary": "Weight updates not yet applied to the provider",
+        "summary": "Weight updates not yet applied to the provider (status `pending`, or `conflict` = held)",
         "operationId": "pending_writes_api_v1_inventory_pending_writes_get",
         "responses": {
           "200": {
@@ -8323,6 +8323,55 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/pending-writes/{write_id}/resolve-conflict": {
+      "post": {
+        "tags": [
+          "inventory"
+        ],
+        "summary": "Resolve a held weight update (the provider's weight changed during the print)",
+        "operationId": "resolve_conflict_api_v1_inventory_pending_writes__write_id__resolve_conflict_post",
+        "parameters": [
+          {
+            "name": "write_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Write Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConflictChoice"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown ref"
+          },
+          "409": {
+            "description": "The provider does not manage its own library"
+          },
+          "422": {
+            "description": "Invalid input"
           }
         }
       }
@@ -10091,6 +10140,25 @@
           "resolutions"
         ],
         "title": "ConfirmRemapBody"
+      },
+      "ConflictChoice": {
+        "properties": {
+          "choice": {
+            "type": "string",
+            "enum": [
+              "themis",
+              "provider",
+              "subtract"
+            ],
+            "title": "Choice",
+            "description": "`themis`: write the value computed from the print-start weight. `provider`: keep the weight now in the provider and drop this deduction. `subtract`: write the provider's current weight minus the grams the job used."
+          }
+        },
+        "type": "object",
+        "required": [
+          "choice"
+        ],
+        "title": "ConflictChoice"
       },
       "CostConfigModel": {
         "properties": {

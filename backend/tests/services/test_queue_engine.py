@@ -1050,9 +1050,30 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
 
 
 @pytest.mark.asyncio
-async def test_handle_print_complete_writes_the_snapshot_minus_grams_not_the_live_weight(db):
-    """The absolute target is `start-of-print weight - spent`, taken from the job's snapshot (the live reading, 500, is
-    deliberately different so a read-then-subtract regression fails)."""
+async def test_handle_print_complete_writes_the_snapshot_minus_grams(db):
+    """The absolute target is `start-of-print weight - spent`, taken from the job's snapshot; the row remembers that start
+    weight (the conflict guard compares the provider against it) and the unchanged spool receives the write."""
+    from app.services.inventory import tasks as inventory_tasks
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 300.0)])
+    await use_provider(fake)
+    await _snapshot(db, job_id, 300.0)
+
+    await engine.handle_print_complete(printer_id)
+    await inventory_tasks.drain()
+
+    assert fake.writes == [("42", pytest.approx(282.5))]
+    rows = await _outbox_rows(db)
+    assert [(r.spool_ref, r.status, r.pre_weight_g) for r in rows] == [("42", "applied", 300.0)]
+
+
+@pytest.mark.asyncio
+async def test_handle_print_complete_holds_the_write_when_the_spool_was_changed_during_the_print(db):
+    """The live reading (500) is not the start-of-print weight (300): someone changed the spool mid-print, so the deduction is
+    held for the user instead of overwriting that change (BIZ-198)."""
     from app.services.inventory import tasks as inventory_tasks
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import spool, use_provider
@@ -1065,10 +1086,9 @@ async def test_handle_print_complete_writes_the_snapshot_minus_grams_not_the_liv
     await engine.handle_print_complete(printer_id)
     await inventory_tasks.drain()
 
-    assert fake.writes == [("42", pytest.approx(282.5))]
-    assert "get_spool" not in fake.calls
+    assert fake.writes == []
     rows = await _outbox_rows(db)
-    assert [(r.spool_ref, r.status) for r in rows] == [("42", "applied")]
+    assert [(r.spool_ref, r.status, r.conflict_current_g) for r in rows] == [("42", "conflict", 500.0)]
 
 
 async def _seed_completing_job(db, grams=17.5):
