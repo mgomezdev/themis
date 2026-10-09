@@ -119,6 +119,8 @@ class PluginManifest:
     docs_url: str | None = None
     permissions: tuple[str, ...] = ()         # reserved (BIZ-200): parsed, never enforced
     manufacturers: tuple[Manufacturer, ...] = ()   # printer models this plugin supports (new-printer dropdowns)
+    # Enabled when no config row exists yet (bundled printer vendors: their printers must not go dormant on upgrade).
+    default_enabled: bool = False
 
     def __post_init__(self) -> None:
         if not ID_RE.match(self.id):

@@ -19,6 +19,7 @@ MANIFEST = PluginManifest(
     version="1.0.0",
     host_api=HOST_API,
     settings_model=NoSettings,
+    default_enabled=True,
     factory=ElegooCentauriClient,
     manufacturers=(
     Manufacturer("elegoo", "Elegoo", (PrinterModel("centauri", "Centauri Carbon", bed_mm=(256, 256), toolheads=1),)),

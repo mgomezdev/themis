@@ -173,7 +173,10 @@ class PluginHost:
 
     def _is_enabled(self, plugin_id: str) -> bool:
         cfg = self._configs.get(plugin_id)
-        return bool(cfg and cfg.enabled and get_plugin(plugin_id) is not None)
+        if cfg is None:                                  # never configured: the manifest's default applies
+            m = get_plugin(plugin_id)
+            return bool(m and m.default_enabled)
+        return bool(cfg.enabled and get_plugin(plugin_id) is not None)
 
     def _serves_any(self, plugin_id: str) -> bool:
         m, catalog = get_plugin(plugin_id), capability_catalog()
@@ -359,8 +362,7 @@ class PluginHost:
         return dict(cfg.settings) if cfg else {}
 
     def is_enabled(self, plugin_id: str) -> bool:
-        cfg = self._configs.get(plugin_id)
-        return bool(cfg and cfg.enabled)
+        return self._is_enabled(plugin_id)
 
     def has_secret(self, plugin_id: str, field: str) -> bool:
         cfg = self._configs.get(plugin_id)
@@ -503,7 +505,7 @@ class PluginHost:
             async with self._session_factory() as s:
                 row = await s.get(PluginConfig, plugin_id)
                 if row is None:
-                    row = PluginConfig(plugin_id=plugin_id, enabled=False, settings={}, secrets={}, state={})
+                    row = PluginConfig(plugin_id=plugin_id, enabled=manifest.default_enabled, settings={}, secrets={}, state={})
                     s.add(row)
                 new_settings = {**(row.settings or {}), **(settings or {})}
                 new_secrets = {**(row.secrets or {})}

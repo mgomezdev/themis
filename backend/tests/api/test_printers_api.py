@@ -10,9 +10,9 @@ async def test_get_printer_types(client):
     assert response.status_code == 200
     types = response.json()
     assert isinstance(types, list)
-    printer_type_names = [t["printer_type"] for t in types]
-    assert "bambu" in printer_type_names
-    assert "elegoo_centauri" in printer_type_names
+    plugin_ids = {t["plugin_id"] for t in types}
+    assert "bambu" in plugin_ids
+    assert "elegoo_centauri" in plugin_ids
 
 
 async def test_list_printers_empty(client):

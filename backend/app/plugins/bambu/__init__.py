@@ -19,6 +19,7 @@ MANIFEST = PluginManifest(
     version="1.0.0",
     host_api=HOST_API,
     settings_model=NoSettings,
+    default_enabled=True,
     factory=BambuMQTTClient,
     manufacturers=(
     Manufacturer("bambu", "Bambu Lab", (PrinterModel("p1s", "P1S", bed_mm=(256, 256), toolheads=1), PrinterModel("p1p", "P1P", bed_mm=(256, 256), toolheads=1), PrinterModel("x1c", "X1 Carbon", bed_mm=(256, 256), toolheads=1), PrinterModel("x1e", "X1E", bed_mm=(256, 256), toolheads=1), PrinterModel("a1", "A1", bed_mm=(256, 256), toolheads=1), PrinterModel("a1_mini", "A1 mini", bed_mm=(180, 180), toolheads=1), PrinterModel("h2d", "H2D", bed_mm=(350, 320), toolheads=1),)),

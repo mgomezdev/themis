@@ -19,6 +19,7 @@ MANIFEST = PluginManifest(
     version="1.0.0",
     host_api=HOST_API,
     settings_model=NoSettings,
+    default_enabled=True,
     factory=SnapmakerExtendedClient,
     manufacturers=(
     Manufacturer("snapmaker", "Snapmaker", (PrinterModel("u1_extended", "U1 (Extended)", bed_mm=(270, 270), toolheads=4),)),
