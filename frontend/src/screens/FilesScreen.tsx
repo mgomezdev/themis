@@ -786,8 +786,11 @@ export function FilesScreen() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await uploadLibraryFile(file, currentFolder || '/Job Uploads');
+      const uploaded = await uploadLibraryFile(file, currentFolder || '/Job Uploads');
       refetch();
+      // A pre-sliced file arrives with unknown machine eligibility: open its drawer so the user records which printers it is for
+      // right away (BIZ-263). The drawer follows the live row, so it fills in once the refetch lands.
+      if (uploaded?.eligibility && !uploaded.eligibility.known) setSelected(uploaded);
     } catch (err) {
       window.alert(String(err));
     }

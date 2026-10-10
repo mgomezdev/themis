@@ -193,3 +193,43 @@ async def test_a_make_model_target_nobody_eligible_can_take_is_refused(client):
         r = await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"machine_profile": "Shared 0.4"}]})
 
     assert r.status_code == 422 and "No Shared 0.4 printer can take this file" in r.json()["detail"]
+
+
+async def test_a_printer_that_later_joins_a_machine_preset_does_not_inherit_waiting_jobs_for_files_it_cannot_take(client, session_factory):
+    """Target sync (printer re-profiled / added after the job): the eligibility gate keeps an incompatible printer off the job."""
+    from sqlalchemy import select
+    from app.models import JobPrinterConfig
+    from app.services import model_targets
+
+    models = await model_ids(client)
+    good = await printer_on(client, models, "x1")
+    await client.patch(f"/api/v1/printers/{good}", json={"current_orca_printer_profile": "Shared 0.4"})
+    f = await upload(client, "ok.gcode", [models["x1"]])
+    with patch("app.api.routes.jobs.queue_engine"):
+        job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"machine_profile": "Shared 0.4"}]})).json()
+    bad = await printer_on(client, models, "x2")                      # a new printer, then moved onto the preset
+    await client.patch(f"/api/v1/printers/{bad}", json={"current_orca_printer_profile": "Shared 0.4"})
+    async with session_factory() as s:
+        from app.models import Printer
+        await model_targets.sync_targets_for_printer(s, await s.get(Printer, bad))
+        await s.commit()
+        printers = (await s.execute(select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job["id"]))).scalars().all()
+
+    assert printers == [good]
+    await client.put(f"/api/v1/files/{f['id']}/eligibility", json={"model_uuids": [models["x1"], models["x2"]]})
+    async with session_factory() as s:
+        await model_targets.sync_targets_for_printer(s, await s.get(Printer, bad))
+        await s.commit()
+        printers = (await s.execute(select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job["id"]))).scalars().all()
+    assert sorted(printers) == sorted([good, bad])                    # once the file fits x2 too, the printer is added
+
+
+async def test_reuploading_identical_content_with_a_model_set_updates_that_files_eligibility(client):
+    models = await model_ids(client)
+    first = await upload(client, "same.gcode", [models["x1"]])
+
+    again = await client.post("/api/v1/files/upload", files={"file": ("same.gcode", GCODE + b"; same.gcode\n", "application/octet-stream")},
+                              data={"eligible_model_uuids": [models["x2"]]})
+
+    assert again.status_code == 201 and again.json()["id"] == first["id"]
+    assert again.json()["eligibility"]["model_uuids"] == [models["x2"]]

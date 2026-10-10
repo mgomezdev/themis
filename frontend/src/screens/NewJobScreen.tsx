@@ -1099,7 +1099,7 @@ export function NewJobScreen() {
       }
       const already = created.length > 0 ? ` (${created.length} of ${count} already added; those plates are now skipped)` : '';
       const text = err instanceof Error ? err.message : String(err);
-      if (text.startsWith('409') && /machine eligibility/.test(text)) {
+      if (created.length === 0 && text.startsWith('409') && /machine eligibility/.test(text)) {
         // A legacy pre-sliced file: nothing records which machines it is for. Ask, never guess (BIZ-263).
         let detail = text.replace(/^409\s*/, '');
         try { detail = JSON.parse(detail).detail ?? detail; } catch { /* plain text body */ }
