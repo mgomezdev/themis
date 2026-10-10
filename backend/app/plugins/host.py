@@ -23,7 +23,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import CapabilitySelection, PluginConfig
-from . import PluginError, capability_catalog, get_plugin, providers_of
+from ..eventing.definitions import EventSubscription
+from . import PluginError, capability_catalog, get_plugin, providers_of, registered_plugins
 from . import migrations as plugin_migrations
 from .capabilities.definition import BUILDS_ALL, CapabilityDef, RoutedCapability
 from .manifest import PluginManifest, Provide
@@ -191,6 +192,8 @@ class PluginHost:
 
     def _serves_any(self, plugin_id: str) -> bool:
         m, catalog = get_plugin(plugin_id), capability_catalog()
+        if m is not None and (m.subscribes or m.defines_events):     # event subscribers/publishers are built even when they serve no selected capability
+            return True
         return m is not None and any(cap in catalog and (catalog[cap].mode in BUILDS_ALL or self._selections.get(cap) == plugin_id)
                                      for cap in m.provides)
 
@@ -479,6 +482,41 @@ class PluginHost:
         ids = self.active_providers(cap_id)
         results = await asyncio.gather(*(self.call_for(cap_id, pid, fn, timeout=timeout) for pid in ids))
         return dict(zip(ids, results))
+
+    # --- events (BIZ-249) ----------------------------------------------------------------------------------------
+
+    def event_subscriptions(self, event: str) -> list[tuple[str, EventSubscription]]:
+        """(plugin id, subscription) for every enabled, built plugin subscribed to `event` whose handler is an async method.
+        Resolved at delivery time, so disabling or removing a plugin stops its deliveries without any unregistering."""
+        out = []
+        for m in sorted(registered_plugins(), key=lambda m: m.id):
+            inst = self._instances.get(m.id)
+            if inst is None or not self._is_enabled(m.id):
+                continue
+            for sub in m.subscribes:
+                if sub.event == event and inspect.iscoroutinefunction(getattr(inst, sub.handler, None)):
+                    out.append((m.id, sub))
+        return out
+
+    def broken_subscriptions(self) -> list[dict]:
+        """Subscriptions of running plugins whose handler is missing or not `async` (reported to operators, never delivered to)."""
+        out = []
+        for m in registered_plugins():
+            inst = self._instances.get(m.id)
+            if inst is None or not self._is_enabled(m.id):
+                continue
+            out += [{"plugin_id": m.id, "event": s.event, "handler": s.handler} for s in m.subscribes
+                    if not inspect.iscoroutinefunction(getattr(inst, s.handler, None))]
+        return out
+
+    async def deliver_event(self, plugin_id: str, handler: str, envelope: Any, *, timeout: float) -> CallResult:
+        """Run one plugin's event handler with the same containment as any provider call (timeout, exceptions caught, redacted,
+        recorded in the plugin's state). Never raises (except cancellation)."""
+        inst = self._instances.get(plugin_id)
+        fn = getattr(inst, handler, None) if inst is not None and self._is_enabled(plugin_id) else None
+        if fn is None:
+            return CallResult(False, error=f"{plugin_id} is not running or has no handler {handler!r}", reason="inactive")
+        return await self._contained(plugin_id, inst, f"event handler {handler}", lambda: fn(envelope), timeout)
 
     # --- containment -------------------------------------------------------------------------------------------
 

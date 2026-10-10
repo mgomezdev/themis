@@ -526,3 +526,12 @@ in sync. See `backend-review.md`/`frontend-review.md` §1 before changing a fiel
 ### installed_plugins, audit_log  (v039 — BIZ-223)
 
 `installed_plugins{plugin_id PK, version, name, publisher, source upload|github, source_url, ref, subdir, commit_sha, archive_sha256, installed_at, status pending_restart|active|error|pending_removal, error, previous_version}`: one row per **non-bundled** plugin (bundled ones have none); the code lives in `<data>/plugins/<id>/<version>/` (+ a `.themis-installed.json` listing the migrations that version ships). `status` is written by the installer (`pending_*`) and by `plugins/loader.reconcile` after each start (`active`/`error`). `audit_log{id, at, actor, action, target, detail JSON}` is append-only: `plugin.install|upgrade|rollback|uninstall`, `system.restart`; the actor is `session:<key id>` or `local-admin`; rows commit in the same transaction as the change they describe.
+
+### event_outbox, event_deliveries  (v045 — BIZ-249)
+
+Durable event outbox (`docs/events.md`). `event_outbox`: `id`, `event_id` (unique, the envelope id), `dedup_key` (unique, nullable —
+a second publication of the same logical event stores nothing), `name`, `schema_version`, `source`, `occurred_at`, `envelope`
+(JSON), `created_at`; written in the publisher's own transaction. `event_deliveries`: one row per (outbox event, subscriber key
+`core:<name>` | `plugin:<id>:<handler>`) — unique together; `status` `pending|delivered|dead`, `attempts` (committed before the
+handler runs), `next_attempt_at` (backoff / dormant re-check), `last_error` (redacted), `last_attempt_at`, `delivered_at`. Index
+`(status, next_attempt_at)`. Finished outbox rows are purged after 7 days.

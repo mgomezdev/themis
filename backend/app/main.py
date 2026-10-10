@@ -44,6 +44,7 @@ from .api.routes.inventory import router as inventory_router
 from .api.routes.plugins import router as plugins_router
 from .api.routes import capabilities as capabilities_mod
 from .api.routes.capabilities import router as capabilities_router
+from .api.routes.events import router as events_router
 from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
@@ -141,6 +142,8 @@ async def lifespan(app: FastAPI):
     except Exception:
         logging.getLogger("app").exception("Printer-model registry sync failed; continuing")
 
+    from .eventing.hub import hub as event_hub
+    await event_hub.start(SessionLocal)
     inventory_sync_loop.configure(SessionLocal)
     await inventory_sync_loop.start()
 
@@ -163,6 +166,7 @@ async def lifespan(app: FastAPI):
     yield
 
     await inventory_sync_loop.stop()
+    await event_hub.stop()
     await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
@@ -218,6 +222,7 @@ app.include_router(inventory_router)
 app.include_router(plugin_install_router)
 app.include_router(plugins_router)
 app.include_router(capabilities_router)
+app.include_router(events_router)
 
 # Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
 from .plugins import load_bundled, registered_plugins  # noqa: E402

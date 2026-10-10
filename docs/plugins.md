@@ -59,6 +59,15 @@ required_methods)`), `ui` (`UiContribution`: a `section` on Settings → Plugins
   dispatched to whichever plugin is currently active (409 `capability_unavailable` when none, 404 for a path the active plugin does
   not expose). Each route keeps its own `require_scope`. Routers in plain `routers` stay plugin-id-only.
 
+### Events (BIZ-249)
+
+A plugin may **define** event classes (`PluginManifest.defines_events=(EventDef("<id>.thing", version=1, durability="best_effort"|"durable",
+payload_model=…),)`, names start `<id>.`) and **subscribe** to core or other plugins' events (`subscribes=(EventSubscription("job.complete",
+"on_complete", timeout=10, queue_size=1000),)` with `async def on_complete(self, envelope)` on the instance). Neither goes in
+`themis-plugin.toml`. A plugin with only events is still built when enabled; disabling it stops delivery at once, re-enabling
+resumes it (no replay of best-effort events). Handlers are contained like any provider call, must be idempotent on `envelope.id`,
+and their errors are redacted. Contract, delivery guarantees and operator endpoints: `docs/events.md`.
+
 ### What an installed plugin may and may not do
 
 * UI: **`default` and `schema` tabs only.** `default` is the generated settings page; `schema` is a form/table Themis renders

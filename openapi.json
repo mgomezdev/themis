@@ -9489,6 +9489,181 @@
         }
       }
     },
+    "/api/v1/events/catalog": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Catalog",
+        "description": "Every event class: name, schema version, durability, and who defines it (\"core\" or a plugin id).",
+        "operationId": "catalog_api_v1_events_catalog_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Catalog Api V1 Events Catalog Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/subscribers": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Subscribers",
+        "description": "Per-subscriber counters since startup (delivered/failed/timed out/dropped/skipped), lane depth and the last redacted error,\nplus the durable backlog (`pending`, `dead`) from the outbox.",
+        "operationId": "subscribers_api_v1_events_subscribers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response Subscribers Api V1 Events Subscribers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/deliveries": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Deliveries",
+        "description": "Durable deliveries, newest first. `status` is pending | delivered | dead (default dead: what needs attention).",
+        "operationId": "deliveries_api_v1_events_deliveries_get",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "dead",
+              "title": "Status"
+            }
+          },
+          {
+            "name": "subscriber",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subscriber"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response Deliveries Api V1 Events Deliveries Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/events/deliveries/{delivery_id}/retry": {
+      "post": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Retry Delivery",
+        "operationId": "retry_delivery_api_v1_events_deliveries__delivery_id__retry_post",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Delivery Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Retry Delivery Api V1 Events Deliveries  Delivery Id  Retry Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins/local_inventory/weight-log": {
       "get": {
         "tags": [
