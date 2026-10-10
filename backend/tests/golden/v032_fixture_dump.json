@@ -117,6 +117,7 @@
       "estimate_token": 0,
       "filament_cost": null,
       "id": 1,
+      "maintenance_accrued": 0,
       "not_before": null,
       "order_id": 1,
       "outcome": null,
