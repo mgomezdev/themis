@@ -70,6 +70,7 @@ export function VideoTile({
 }) {
   const [imgError, setImgError] = React.useState(false);
   const [snapTick, setSnapTick] = React.useState(0);
+  const [displayedTick, setDisplayedTick] = React.useState(0);
 
   const paused = noSnapshotsWhileIdle && status !== 'printing';
   const interval = intervalMs ?? SNAPSHOT_INTERVAL_MS;
@@ -77,6 +78,7 @@ export function VideoTile({
   React.useEffect(() => {
     setImgError(false);
     setSnapTick(0);
+    setDisplayedTick(0);
   }, [printerId]);
 
   React.useEffect(() => {
@@ -85,14 +87,23 @@ export function VideoTile({
     return () => clearInterval(id);
   }, [live, printerId, paused, interval]);
 
+  // Load each new snapshot off-screen. Keep the last decoded frame visible until the
+  // replacement is ready; swapping/remounting the <img> on every timer tick flashes black.
+  React.useEffect(() => {
+    if (!live || !printerId || paused || snapTick === displayedTick) return;
+    const image = new Image();
+    image.onload = () => setDisplayedTick(snapTick);
+    image.src = withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`);
+    return () => { image.onload = null; };
+  }, [live, printerId, paused, snapTick, displayedTick]);
+
   const showCamera = live && printerId && !imgError && !paused;    // an idle printer set to be left alone is not even fetched once
 
   return (
     <div className={`video ${live ? 'live' : ''}`}>
       {showCamera ? (
         <img
-          key={snapTick}
-          src={withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${snapTick}`)}
+          src={withKeyParam(`/api/v1/printers/${printerId}/snapshot?t=${displayedTick}`)}
           style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
           onError={() => setImgError(true)}
           alt=""
