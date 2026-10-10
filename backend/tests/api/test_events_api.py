@@ -93,3 +93,31 @@ async def test_durable_rows_of_an_unregistered_subscriber_are_still_reported(cli
 
 async def _noop(e):
     return None
+
+
+async def test_deliveries_can_be_found_by_entity_event_id_dedup_key_and_name(client, hub, session_factory):
+    async def ok(e): ...
+
+    hub.subscribe("job.complete", ok, name="api.find")
+    ids = {}
+    for job_id in (41, 42):
+        env = EventEnvelope(name="job.complete", entities={"job_id": job_id, "printer_id": 7}, dedup_key=f"job.complete:{job_id}",
+                            correlation_id="flow-1", payload={"source": "queue"})
+        ids[job_id] = env.id
+        async with session_factory() as s:
+            await hub.enqueue_durable(s, env)
+            await s.commit()
+    hub.wake()
+
+    async def delivered(**params):
+        rows = (await client.get("/api/v1/events/deliveries", params={"status": "delivered", **params})).json()
+        return rows or None
+
+    (row,) = await wait_until(lambda: delivered(entity="job_id:42"), what="delivery of job 42")
+    assert (row["event_id"], row["entities"], row["correlation_id"]) == (ids[42], {"job_id": 42, "printer_id": 7}, "flow-1")
+    assert [r["event_id"] for r in await delivered(event_id=ids[41])] == [ids[41]]
+    assert [r["dedup_key"] for r in await delivered(dedup_key="job.complete:41")] == ["job.complete:41"]
+    assert len(await delivered(name="job.complete")) == 2 and len(await delivered(entity="printer_id:7")) == 2
+    assert (await client.get("/api/v1/events/deliveries", params={"status": "delivered", "entity": "job_id:999"})).json() == []
+    assert (await client.get("/api/v1/events/deliveries", params={"entity": "banana:1"})).status_code == 422
+    assert (await client.get("/api/v1/events/deliveries", params={"entity": "job_id"})).status_code == 422
