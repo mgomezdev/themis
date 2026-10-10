@@ -10,7 +10,7 @@ The system supports multiple 3D printer vendors (Bambu Lab, Elegoo, Moonraker/Kl
 
 1. **No vendor strings in the API layer** — route handlers call `client.start_print()`, not `if bambu: … elif elegoo: …`.
 2. **Capability-driven UI** — the frontend reads a capability flags object returned by each client; it never hardcodes printer type strings to decide which controls to show.
-3. **Pluggable discovery** — a registry + factory maps a `printer_type` string to a class at runtime; adding a new vendor requires zero changes to route logic.
+3. **Pluggable vendors** — each vendor is a plugin (`backend/app/plugins/<vendor>/`) whose manifest exposes its client class and declares the manufacturers/models it supports; the factory resolves a printer's class from its `plugin_id` at runtime, so adding a vendor requires zero changes to route or core logic.
 
 ---
 
@@ -194,7 +194,7 @@ _FILE_CATEGORY_EXCLUSIONS = {
 5. Implement all abstract methods. Override optional methods for supported features.
 6. Override `get_capabilities()` to return a `PrinterCapabilities` with the right flags set.
 
-### `BambuMQTTClient` — `bambu_mqtt.py`
+### `BambuMQTTClient` — `plugins/bambu/client.py`
 
 **Protocol**: MQTT over TLS, port 8883.
 
@@ -218,7 +218,7 @@ _FILE_CATEGORY_EXCLUSIONS = {
 - `raw_data: dict` — raw MQTT push_status payload (AMS data is parsed from here)
 - `hms_errors: list[HMSError]` — active health management errors
 
-### `ElegooCentauriClient` — `elegoo_centauri_client.py`
+### `ElegooCentauriClient` — `plugins/elegoo_centauri/client.py`
 
 **Protocol**: SDCP (Chitubox Data Communication Protocol) over WebSocket, port 3030.
 
@@ -284,42 +284,22 @@ _FILE_CATEGORY_EXCLUSIONS = {
 
 ## The Factory
 
-`backend/app/services/printer_client_factory.py`
+`backend/app/services/printer_client_factory.py` — resolves a printer's client class through the **plugin registry**; it imports no vendor.
 
-### Registry
+A printer plugin's manifest `factory` is its client class, and its `manufacturers` list the models it supports. A `printers` row carries
+`plugin_id` + `manufacturer_id` + `model_id`; old rows and backups also carry the legacy `printer_type` string, which maps onto them
+(`printer_identity.LEGACY_IDENTITY`).
 
-```python
-_REGISTRY: dict[str, str] = {
-    "bambu":           "backend.app.services.bambu_mqtt.BambuMQTTClient",
-    "moonraker":       "backend.app.services.moonraker_client.MoonrakerClient",
-    "elegoo_centauri": "backend.app.services.elegoo_centauri_client.ElegooCentauriClient",
-    "snapmaker_u1":    "backend.app.services.snapmaker_u1_client.SnapmakerU1Client",
-}
-```
+| Function | Purpose |
+|---|---|
+| `client_class(key)` | Client class for a plugin id **or** a legacy `printer_type`; `None` when no such printer plugin is registered. |
+| `create_client(printer, **callbacks)` | Builds the client for an ORM `Printer` row (`plugin_id or printer_type`). Passes only the keys named in the class's `connection_fields()` from `connection_config`, plus callbacks the constructor accepts (so vendor-specific callbacks are dropped for clients that do not take them). Unknown plugin → `ValueError`. |
+| `create_client_from_config(plugin_or_type, cfg)` | Same, from a config dict (test-connection, no row). |
+| `printer_client_plugins(enabled_only=)` / `enabled_client_classes()` | The printer plugins / the enabled ones' classes by `printer_type` (what network discovery sweeps). |
 
-Classes are imported lazily via `importlib.import_module` to avoid circular imports at module load time. Adding a new vendor = add one entry here; nothing else changes.
-
-### `create_client(printer, **callbacks) → AbstractPrinterClient`
-
-Takes an ORM `Printer` row and optional callback functions, dispatches to the right constructor. Constructor signatures differ per vendor (Bambu needs `serial_number` + `access_code`; Moonraker needs `port` + `api_key`). The factory holds all that knowledge centrally.
-
-Bambu-specific callbacks (`on_ams_change`, `on_bed_temp_update`) are silently dropped for non-Bambu clients — the factory doesn't pass kwargs the constructor doesn't accept.
-
-### `get_printer_types_for_ui() → list[dict]`
-
-Reads `connection_fields()` from each registered class and returns:
-```json
-[
-  {
-    "printer_type": "bambu",
-    "display_name": "Bambu Lab",
-    "connection_fields": [{"name": "serial_number", ...}, {"name": "access_code", ...}]
-  },
-  ...
-]
-```
-
-Called by `GET /api/v1/printers/types`. The add-printer UI renders a dynamic form from this — no frontend code needs to know what credentials each vendor requires.
+`GET /api/v1/printers/types` returns one entry per plugin-declared model (`printer_identity.printer_model_catalog()`):
+`{plugin_id, manufacturer_id, manufacturer_name, model_id, display_name, bed_mm, toolheads, connection_fields, plugin_enabled}`.
+The add-printer UI offers manufacturer → model for the enabled plugins and then that plugin's `connection_fields`.
 
 ---
 
@@ -378,18 +358,11 @@ These are applied by the `printer_state_to_dict` serializer (e.g. filter out `ch
 
 Each vendor has a vendor-specific state dataclass (`PrinterState`, `ElegooState`, `MoonrakerState`). The API and WebSocket push need a **normalized JSON structure** that the frontend can consume uniformly.
 
-### Per-type serializers (in `printer_manager.py`)
+### `AbstractPrinterClient.serialize_state(printer_id)`
 
-```python
-_STATUS_SERIALIZERS: dict[str, Callable] = {
-    "bambu":         lambda state, printer_id, model: printer_state_to_dict(state, printer_id, model),
-    "elegoo_centauri": lambda state, printer_id, model: _elegoo_state_to_dict(state, printer_id),
-    "moonraker":     lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
-    "snapmaker_u1":  lambda state, printer_id, model: _moonraker_state_to_dict(state, printer_id),
-}
-```
-
-Adding a new vendor = add one entry here. The broadcast path looks up by `client.printer_type` — no `isinstance`.
+Each client returns its own normalized dict (the vendors implement it as a module-level `serialize_<vendor>(state, printer_id)` plus a
+one-line method; the base-class default is `{id, printer_type, connected}`). `PrinterManager.get_normalized_state` calls it and overlays
+`connected`, `capabilities` and `awaiting_plate_clear`. There is no per-type table and no `isinstance` in core.
 
 ### Normalized output fields (common subset)
 
@@ -438,20 +411,16 @@ The 422 is an intentional choice: it tells the frontend the operation is not app
 
 ## Adding a New Vendor — Checklist
 
-1. Create `backend/app/services/<vendor>_client.py`.
-2. Define a vendor state dataclass (add `raw_data → None` and `state → print_state` compat properties if your state doesn't match Bambu's).
-3. Subclass `AbstractPrinterClient`.
-4. Set `printer_type = "<vendor>"`.
-5. Override `connection_fields()` with required credentials.
-6. Implement all `@abstractmethod` methods.
-7. Override optional methods for supported features (`set_chamber_light`, `upload_file_async`, etc.).
-8. Override `get_capabilities()` to return a `PrinterCapabilities` with your flags set.
-9. Override `is_idle` and `is_printing` properties if your state enum has clean mappings.
-10. Add an entry to `_REGISTRY` in `printer_client_factory.py`.
-11. Add a serializer entry to `_STATUS_SERIALIZERS` in `printer_manager.py`.
-12. Add to `_UI_TYPES` in `printer_client_factory.py` if it should appear in the add-printer UI.
-13. Add a branch in `create_client()` if constructor kwargs differ from the Moonraker defaults.
-14. Add a branch in `PrinterManager.test_connection()` if you want connection testing without persistence.
+1. Create the plugin package `backend/app/plugins/<vendor>/` with `client.py` (the client), optional `alarms.py`, `__init__.py` (`MANIFEST`) and `themis-plugin.toml`.
+2. Define a vendor state dataclass (add `raw_data → None` and `state → print_state` compat properties if needed).
+3. Subclass `AbstractPrinterClient`; set `printer_type = "<vendor>"`.
+4. Override `connection_fields()` with the required credentials.
+5. Implement all `@abstractmethod` methods; override optional methods for supported features (`set_chamber_light`, `upload_file`, …).
+6. Override `get_capabilities()`, and `is_idle` / `is_printing` where your state enum has clean mappings.
+7. Implement `serialize_state(printer_id)` (the normalized status dict).
+8. Optional: `discover_host` / `parse_announcement` / `SSDP_PORTS` for discovery; `slice_tool_mapping = True` for tool-changer printers; `get_alarms()` backed by your `alarms.py`.
+9. In `__init__.py` export `MANIFEST = PluginManifest(id=…, factory=<ClientClass>, settings_model=<empty model>, manufacturers=(…,), default_enabled=…)`.
+10. Nothing else: no core, route or frontend change (see `docs/agent/recipes.md` § Add a printer vendor).
 
 ---
 

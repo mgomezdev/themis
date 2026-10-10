@@ -38,9 +38,19 @@ class LaminusSlicingProvider(SlicingProvider):
     ARRANGE = True
     PACK_MODELS = True
     PREPARED_PROJECT = True
+    TOOL_MAPPING = True
 
     def __init__(self, url: str) -> None:
         self._url = url
+
+    def apply_tool_mapping(self, source_3mf: Path, *, tool_index: int | None = None,
+                           filament_map: list[dict] | None = None) -> None:
+        if tool_index is not None and filament_map:
+            raise SlicingProviderError("tool_index and filament_map are mutually exclusive")
+        if tool_index is None and not filament_map:
+            return
+        from ...snapmaker.remap import remap_3mf      # the Orca paint_color codec lives in Themis for now (BIZ-248)
+        remap_3mf(source_3mf, tool_index=tool_index, filament_map=filament_map)
 
     @property
     def identity(self) -> str:

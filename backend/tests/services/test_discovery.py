@@ -8,10 +8,16 @@ import pytest
 
 from app.services import discovery
 from app.services.abstract_printer_client import AbstractPrinterClient
-from app.services.bambu_mqtt import BambuMQTTClient, parse_ssdp_headers
-from app.services.elegoo_centauri_client import ElegooCentauriClient
-from app.services.printer_client_factory import REGISTRY
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.bambu.client import BambuMQTTClient, parse_ssdp_headers
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+from app.plugins.bambu.client import BambuMQTTClient
+from app.plugins.elegoo_centauri.client import ElegooCentauriClient
+from app.plugins.mock.client import MockPrinterClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
+
+REGISTRY = {"bambu": BambuMQTTClient, "elegoo_centauri": ElegooCentauriClient,
+            "snapmaker_extended": SnapmakerExtendedClient, "mock": MockPrinterClient}   # every vendor's client class
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 from tests.virtual_printers.virtual_network import VirtualNetwork, bambu_ssdp_reply
 
 

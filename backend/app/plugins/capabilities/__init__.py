@@ -2,9 +2,10 @@
 plugin host. Plugin-defined capabilities come from `PluginManifest.defines`, not from here."""
 from __future__ import annotations
 
-from .definition import CAP_ID_RE, CapabilityDef
+from .definition import CAP_ID_RE, CapabilityDef, RoutedCapability
 from .filament_inventory import DEFINITION as _FILAMENT
+from .printer_client import DEFINITION as _PRINTER_CLIENT
 
-CORE: dict[str, CapabilityDef] = {d.id: d for d in (_FILAMENT,)}
+CORE: dict[str, CapabilityDef] = {d.id: d for d in (_FILAMENT, _PRINTER_CLIENT)}
 
-__all__ = ["CAP_ID_RE", "CORE", "CapabilityDef"]
+__all__ = ["CAP_ID_RE", "CORE", "CapabilityDef", "RoutedCapability"]

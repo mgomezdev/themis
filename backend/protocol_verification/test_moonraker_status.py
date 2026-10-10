@@ -2,7 +2,7 @@
 import httpx
 import pytest
 
-from app.services.snapmaker_client import SnapmakerExtendedClient
+from app.plugins.snapmaker.client import SnapmakerExtendedClient
 
 
 @pytest.fixture
@@ -50,6 +50,6 @@ def test_print_task_config_describes_each_tool_s_filament(client):
     for key in ("filament_exist", "filament_type", "filament_vendor", "filament_sub_type", "filament_color_rgba"):
         assert isinstance(cfg[key], list) and len(cfg[key]) == 4, key
     assert all(len(c) == 8 for c in cfg["filament_color_rgba"])
-    from app.services.snapmaker_client import _trays_from_task_config
+    from app.plugins.snapmaker.client import _trays_from_task_config
     trays = _trays_from_task_config(cfg)
     assert [t["slot"] for t in trays] == [0, 1, 2, 3]

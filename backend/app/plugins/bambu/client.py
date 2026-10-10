@@ -13,7 +13,9 @@ from typing import Callable, ClassVar, Optional
 
 import paho.mqtt.client as mqtt
 
-from .abstract_printer_client import (
+from . import camera
+
+from ...services.abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
     Alarm,
@@ -170,8 +172,30 @@ class PrinterState:
     ams_tray_now: int | None = None
 
 
+def serialize_bambu(state, printer_id: int) -> dict:
+    return {
+        "printer_type": "bambu",
+        "id": printer_id,
+        "connected": state.connected,
+        "state": getattr(state, "state", "unknown"),
+        "current_print": getattr(state, "current_print", None),
+        "progress": getattr(state, "progress", 0.0),
+        "remaining_time": getattr(state, "remaining_time", 0),
+        "layer_num": getattr(state, "layer_num", 0),
+        "total_layers": getattr(state, "total_layers", 0),
+        "temperatures": getattr(state, "temperatures", {}),
+        "fan_model": getattr(state, "fan_model", 0),
+        "fan_aux": getattr(state, "fan_aux", 0),
+        "fan_box": getattr(state, "fan_box", 0),
+        "speed_factor": 1.0,
+        "klippy_state": "ready" if state.connected else "disconnected",
+        "cover_url": None,
+    }
+
+
 class BambuMQTTClient(AbstractPrinterClient):
     printer_type: ClassVar[str] = "bambu"
+    SSDP_PORTS: ClassVar[tuple[int, ...]] = SSDP_PORTS      # discovery listens for announcements on these
 
     @classmethod
     async def discover_host(cls, net, ip: str):
@@ -371,6 +395,9 @@ class BambuMQTTClient(AbstractPrinterClient):
             logger.exception("FTPS download of %s from %s failed", file_id, self._ip)
             return None
 
+    def serialize_state(self, printer_id: int) -> dict:
+        return serialize_bambu(self.state, printer_id)
+
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
             ams=True,
@@ -399,6 +426,26 @@ class BambuMQTTClient(AbstractPrinterClient):
     def camera_mjpeg_url(self) -> str | None:
         return None
 
+    def camera_unavailable_reason(self) -> str | None:
+        if self.camera_rtsp_url and not camera.ffmpeg_available():
+            return "ffmpeg not available for RTSP streaming"
+        return None
+
+    async def camera_stream(self):
+        url = self.camera_rtsp_url
+        if not url:
+            async for chunk in super().camera_stream():
+                yield chunk
+            return
+        async for chunk in camera.stream_rtsp_ffmpeg(url):
+            yield chunk
+
+    async def camera_snapshot(self) -> bytes | None:
+        url = self.camera_rtsp_url
+        if not url:
+            return await super().camera_snapshot()
+        return await camera.grab_rtsp_frame(url)
+
     @property
     def is_idle(self) -> bool:
         if self.state.state == "IDLE":
@@ -412,7 +459,7 @@ class BambuMQTTClient(AbstractPrinterClient):
         return self.state.state in ("RUNNING", "PAUSE")
 
     def get_alarms(self) -> list[Alarm]:
-        from .alarm_codes import hms_alarms
+        from .alarms import hms_alarms
         return hms_alarms(self.state.hms_errors)
 
     def request_status_update(self) -> None:

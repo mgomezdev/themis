@@ -97,5 +97,5 @@ def install(monkeypatch, server: VirtualMoonraker):
 
 
 def make_client(api_key: str | None = None):
-    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
     return SnapmakerExtendedClient(ip_address="192.0.2.20", api_key=api_key)

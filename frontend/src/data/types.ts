@@ -9,6 +9,8 @@ export interface Printer {
   name: string;
   nickname: string;
   model: string;
+  /** The plugin serving this printer (its connection form comes from the plugin's declared models). */
+  pluginId?: string;
   badge: string;
   buildVolume: string;
   capabilities: string[];

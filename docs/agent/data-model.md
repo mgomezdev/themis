@@ -1,7 +1,7 @@
 # Data Model Reference
 
 SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Migrations run automatically at
-startup via `backend/app/migrations/runner.py` (Flyway-style versioned files in
+startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v042, in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
@@ -46,7 +46,7 @@ printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCAD
 ```
 
 ### printers
-`id, name, printer_type` (factory key: `bambu`|`elegoo_centauri`|`snapmaker_extended`), `connection_config: JSON`,
+`id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
 `curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`

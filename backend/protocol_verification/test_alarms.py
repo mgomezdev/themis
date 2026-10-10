@@ -1,4 +1,4 @@
-"""Printer error reporting: assumptions behind `alarm_codes` and the clients' `get_alarms()`.
+"""Printer error reporting: assumptions behind the plugins' alarm decoders (`app/plugins/*/alarms.py`) and the clients' `get_alarms()`.
 
 These are mostly *observational*: a healthy printer has no errors, so the checks assert the SHAPE of whatever the
 printer reports (and print it with -s) rather than forcing a fault. To exercise the decoders for real, trigger a
@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from app.services import alarm_codes
+from app.plugins.bambu import alarms as alarm_codes   # Bambu HMS decoding (HMS_MODULES, hms_alarms, ...)
 from app.services.abstract_printer_client import SEVERITIES
 
 
@@ -22,7 +22,7 @@ def bambu_report(bambu_cfg):
     serial = os.environ.get("THEMIS_VERIFY_BAMBU_SERIAL")
     if not serial:
         pytest.skip("set THEMIS_VERIFY_BAMBU_SERIAL (the printer's serial) for the MQTT checks")
-    from app.services.bambu_mqtt import BambuMQTTClient
+    from app.plugins.bambu.client import BambuMQTTClient
     seen: list[dict] = []
     c = BambuMQTTClient(ip_address=bambu_cfg["host"], serial_number=serial, access_code=bambu_cfg["access_code"])
     original = c._handle_message
@@ -52,7 +52,7 @@ def test_bambu_hms_entries_decode_to_known_modules_and_severities(bambu_report):
     for a in alarms:
         print("decoded:", a)
         assert a.severity in SEVERITIES and a.code.startswith("HMS_") and a.help_url
-        assert "module 0x" not in a.message, f"unknown module in {a.code}: add it to alarm_codes.HMS_MODULES"
+        assert "module 0x" not in a.message, f"unknown module in {a.code}: add it to app/plugins/bambu/alarms.py HMS_MODULES"
     if not alarms:
         print("printer currently reports no HMS errors (trigger a harmless fault to exercise the decoder)")
 
@@ -62,7 +62,7 @@ def test_bambu_hms_entries_decode_to_known_modules_and_severities(bambu_report):
 @pytest.fixture
 def elegoo_client(elegoo_cfg):
     """A connected client that has received at least one status push."""
-    from app.services.elegoo_centauri_client import ElegooCentauriClient
+    from app.plugins.elegoo_centauri.client import ElegooCentauriClient
     c = ElegooCentauriClient(ip_address=elegoo_cfg["host"], port=elegoo_cfg["port"])
     c.connect()
     deadline = time.time() + 15
@@ -104,7 +104,7 @@ def test_moonraker_exposes_webhooks_state_and_print_stats_message(moonraker_cfg)
 def test_moonraker_client_alarms_match_the_raw_state(moonraker_cfg):
     from urllib.parse import urlparse
     import httpx
-    from app.services.snapmaker_client import SnapmakerExtendedClient
+    from app.plugins.snapmaker.client import SnapmakerExtendedClient
     u = urlparse(moonraker_cfg["url"])
     c = SnapmakerExtendedClient(ip_address=u.hostname, port=u.port or 7125, api_key=moonraker_cfg["api_key"])
     headers = {"X-Api-Key": moonraker_cfg["api_key"]} if moonraker_cfg["api_key"] else {}

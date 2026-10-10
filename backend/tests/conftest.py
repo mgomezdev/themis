@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import zipfile
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
@@ -9,7 +10,10 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 
-from app.main import app
+# The mock printer plugin is off in production; the suite (and local dev) turn it on before the app modules import.
+os.environ.setdefault("THEMIS_MOCK_PRINTERS", "1")
+
+from app.main import app  # noqa: E402
 from sqlalchemy import event
 from app.database import Base, get_session, _set_sqlite_pragmas
 from app.auth import SCOPES

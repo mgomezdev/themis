@@ -22,10 +22,17 @@ export interface ConnectionField {
   help_text: string;
 }
 
+/** One printer model a plugin declares. The add-printer flow picks manufacturer -> model; the plugin serves the printer. */
 export interface PrinterType {
-  printer_type: string;
-  display_name: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  manufacturer_name: string;
+  model_id: string;
+  display_name: string;               // the model's name
+  bed_mm: [number, number];
+  toolheads: number;
   connection_fields: ConnectionField[];
+  plugin_enabled: boolean;            // a disabled plugin's models are listed but cannot be added
 }
 
 export interface LoadedFilament {
@@ -55,6 +62,9 @@ export interface ApiPrinter {
   id: number;
   name: string;
   printer_type: string;
+  plugin_id: string | null;
+  manufacturer_id: string | null;
+  model_id: string | null;
   connection_config: Record<string, unknown>;
   awaiting_plate_clear: boolean;
   orca_printer_profiles: string[];
@@ -74,7 +84,9 @@ export interface ApiPrinter {
 
 export interface CreatePrinterBody {
   name: string;
-  printer_type: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  model_id: string;
   connection_config: Record<string, unknown>;
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
@@ -83,6 +95,8 @@ export interface CreatePrinterBody {
 
 export interface UpdatePrinterBody {
   name?: string;
+  manufacturer_id?: string;
+  model_id?: string;
   connection_config?: Record<string, unknown>;
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
@@ -261,6 +275,7 @@ export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> 
 
 export interface DiscoveredPrinter {
   printer_type: string;
+  plugin_id: string | null;
   display_name: string;
   ip: string;
   model: string | null;

@@ -58,7 +58,7 @@ def test_bundled_plugins_use_the_same_toml_format_and_agree_with_their_manifest(
         t = read_toml(Path(mod.__file__).parent)
         check_matches(t, mod.MANIFEST)
         assert t.entry == f"{dotted}:MANIFEST"
-    assert plugins.bundled_ids() == {"spoolman", "local_inventory"}
+    assert plugins.bundled_ids() == {"spoolman", "local_inventory", "bambu", "elegoo_centauri", "snapmaker", "mock"}
 
 
 def test_a_bundled_toml_that_disagrees_with_its_manifest_is_not_loaded(monkeypatch):

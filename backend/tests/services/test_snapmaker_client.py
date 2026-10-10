@@ -1,5 +1,5 @@
 from unittest.mock import MagicMock, patch
-from app.services.snapmaker_client import SnapmakerExtendedClient, SnapmakerState
+from app.plugins.snapmaker.client import SnapmakerExtendedClient, SnapmakerState
 
 
 def _client():
@@ -58,7 +58,7 @@ def test_print_complete_fires_once_on_transition():
 
 def test_http_control_calls():
     c = _client()
-    with patch("app.services.snapmaker_client.httpx.post") as post:
+    with patch("app.plugins.snapmaker.client.httpx.post") as post:
         post.return_value = MagicMock(raise_for_status=MagicMock())
         assert c.start_print("cube.gcode") is True
         url, kw = post.call_args[0][0], post.call_args.kwargs
@@ -74,7 +74,7 @@ def test_http_control_calls():
 
 def test_upload_file_posts_multipart():
     c = _client()
-    with patch("app.services.snapmaker_client.httpx.post") as post:
+    with patch("app.plugins.snapmaker.client.httpx.post") as post:
         post.return_value = MagicMock(raise_for_status=MagicMock())
         assert c.upload_file(b"G28\n", "cube.gcode") is True
         assert post.call_args[0][0].endswith("/server/files/upload")
@@ -137,7 +137,7 @@ def test_task_config_notifications_merge_changed_keys_and_fire_only_on_change():
 
 def test_a_tool_with_no_spool_is_not_loaded_for_the_queue():
     from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
-    from app.services.snapmaker_client import _trays_from_task_config
+    from app.plugins.snapmaker.client import _trays_from_task_config
     loaded = _trays_from_task_config(_TASK_CONFIG)
     cfg = MagicMock(tool_index=0, filament_type=None, filament_color=None)
     assert _slot_for_config(cfg, loaded) is None                                                      # T0 is empty

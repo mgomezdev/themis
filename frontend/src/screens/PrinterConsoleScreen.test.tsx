@@ -21,7 +21,7 @@ const ALL_CAPS = { axis_jog: true, home_axes: true, nozzle_temp: true, temp_cont
 
 function printer(over: Partial<FleetPrinter> = {}): FleetPrinter {
   return {
-    id: 1, name: 'Atlas', printer_type: 'bambu', enabled: true, queue_on: true, connected: true,
+    id: 1, name: 'Atlas', printer_type: 'bambu', plugin_id: 'bambu', enabled: true, queue_on: true, connected: true,
     awaiting_plate_clear: false, no_snapshots_while_idle: false, loaded_filaments: [], state: 'IDLE', progress: 0,
     remaining_time: 0, layer_num: null, total_layers: null,
     temperatures: { nozzle: 25, nozzle_target: 0, bed: 24, bed_target: 0, chamber: 22 },

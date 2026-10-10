@@ -33,7 +33,7 @@ from .library_scanner import (
 from .printer_manager import PrinterManager
 from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
-from .slicer_service import SliceError, SliceRequest, SlicerService
+from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import model_targets, slice_cache, slice_saver
 from . import notification_service
 from . import scheduling
@@ -1097,10 +1097,7 @@ class QueueEngine:
         tool_index = p["tool_index"]
         filament_map = _resolve_filament_map(p["filament_map"], loaded) if p["filament_map"] else p["filament_map"]
 
-        prepare_hook = None
-        if client is not None and (tool_index is not None or filament_map):
-            prepare_hook = (lambda path, c=client, ti=tool_index, fm=filament_map:
-                            c.remap_sliceable_3mf(path, tool_index=ti, filament_map=fm))
+        prepare_hook = tool_mapping_hook(client, tool_index, filament_map, get_slicing_provider())
 
         multi_presets: list = []
         if filament_map:

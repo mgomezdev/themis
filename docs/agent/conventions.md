@@ -37,6 +37,13 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   fallback). Don't conflate them.
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads
   `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/ams_mapping` reliably.
+- **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
+  `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
+  or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade
+  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1` (the test conftest sets it;
+  set it locally to add mock printers).
+- **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
+  `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
 - **Cancel ↔ stop are bidirectional**: cancelling an active job stops the printer; stopping a printer
   reconciles its running job → `cancelled`. Keep both directions wired when touching either.
 - **Head-of-line queue**: a job that can't run blocks; the engine does **not** skip to a runnable job
@@ -97,7 +104,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 # Backend (from backend/, python.org venv active)
 uvicorn app.main:app --reload --port 8001
 pytest -v                       # all (CI: `pytest -v -ra --cov`, fails under `[tool.coverage.report] fail_under` in pyproject.toml)
-pytest tests/services/test_bambu_mqtt.py -v
+pytest tests/services/test_bambu_mqtt.py -v   # the Bambu client now lives in app/plugins/bambu/client.py
 
 # Frontend (from frontend/)
 npm run dev                     # :5173, proxies /api + /ws → :8001

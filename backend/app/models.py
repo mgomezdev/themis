@@ -10,6 +10,10 @@ class Printer(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255))
     printer_type: Mapped[str] = mapped_column(String(50))
+    # Plugin-declared identity (BIZ-251/262): which plugin serves this printer and which of its models it is.
+    plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    manufacturer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    model_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     connection_config: Mapped[dict] = mapped_column(JSON)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)

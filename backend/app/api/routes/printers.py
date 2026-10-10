@@ -13,7 +13,6 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import shutil
 
 from ...auth import require_scope
 from ...database import get_session
@@ -22,8 +21,10 @@ from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.providers.slicing import Catalog, get_format_provider
-from ...services.camera_proxy import grab_jpeg_frame, grab_snapshot_from_client, stream_mjpeg, stream_rtsp_ffmpeg
-from ...services.printer_client_factory import REGISTRY, get_printer_types_for_ui, create_client_from_config, create_client
+from ...services.printer_client_factory import (
+    client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
+)
+from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
@@ -42,20 +43,26 @@ router = APIRouter(prefix="/api/v1/printers", tags=["printers"])
 
 class PrinterCreate(BaseModel):
     name: str
-    printer_type: str
+    # Identity: either the plugin/manufacturer/model triple, or a legacy printer_type (mapped to the triple).
+    plugin_id: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
+    printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
     current_orca_printer_profile: str | None = None
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
-    bed_x_mm: float = 256.0
-    bed_y_mm: float = 256.0
+    bed_x_mm: float | None = None         # default: the declared model's bed
+    bed_y_mm: float | None = None
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
 class PrinterUpdate(BaseModel):
     name: str | None = None
+    manufacturer_id: str | None = None
+    model_id: str | None = None
     connection_config: dict | None = None
     orca_printer_profiles: list[str] | None = None
     current_orca_printer_profile: str | None = None
@@ -127,6 +134,9 @@ def _to_dict(p: Printer) -> dict:
         "id": p.id,
         "name": p.name,
         "printer_type": p.printer_type,
+        "plugin_id": p.plugin_id,
+        "manufacturer_id": p.manufacturer_id,
+        "model_id": p.model_id,
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "orca_printer_profiles": p.orca_printer_profiles,
@@ -159,10 +169,28 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-@router.get("/types", summary="List printer types", dependencies=[Depends(require_scope("printers:read"))])
+def _identity_for_create(body: PrinterCreate):
+    """(plugin_id, manufacturer_id, model_id, stored printer_type, declared model). A legacy printer_type is mapped; an
+    explicit triple must be declared by its plugin. Raises IdentityError (-> 422) before anything is stored."""
+    if body.plugin_id is None and body.printer_type is not None:
+        plugin_id, manufacturer_id, model_id = resolve_legacy(body.printer_type)
+        printer_type = body.printer_type
+    elif body.plugin_id is not None and body.manufacturer_id and body.model_id:
+        plugin_id, manufacturer_id, model_id = body.plugin_id, body.manufacturer_id, body.model_id
+        # the legacy column keeps the client's own key (e.g. snapmaker_extended), which badges and old consumers still read
+        printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
+    else:
+        raise IdentityError("Give plugin_id, manufacturer_id and model_id, or a legacy printer_type")
+    _, model = declared_model(plugin_id, manufacturer_id, model_id)
+    if dormant_reason(plugin_id) == "plugin_disabled":
+        raise IdentityError(f"Plugin {plugin_id!r} is disabled; enable it before adding printers")
+    return plugin_id, manufacturer_id, model_id, printer_type, model
+
+
+@router.get("/types", summary="List printer models every plugin declares", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printer_types() -> list[dict]:
     """Available printer driver types with display name and required connection config fields."""
-    return get_printer_types_for_ui()
+    return printer_model_catalog()
 
 
 def _stem(name: str) -> str:
@@ -243,24 +271,30 @@ async def create_printer(
 ) -> dict:
     """Register a new printer and attempt an immediate connection. Connection failure
     is non-fatal — the printer is saved and will retry on next restart."""
-    if body.printer_type not in REGISTRY:
-        raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}. Valid types: {list(REGISTRY.keys())}")
+    try:
+        plugin_id, manufacturer_id, model_id, printer_type, model = _identity_for_create(body)
+    except IdentityError as e:
+        raise HTTPException(422, str(e))
     printer = Printer(
         name=body.name,
-        printer_type=body.printer_type,
+        printer_type=printer_type,
+        plugin_id=plugin_id,
+        manufacturer_id=manufacturer_id,
+        model_id=model_id,
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
         current_orca_printer_profile=body.current_orca_printer_profile,
         loaded_filaments=inventory_refs.normalize_slots(body.loaded_filaments),
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
-        bed_x_mm=body.bed_x_mm,
-        bed_y_mm=body.bed_y_mm,
+        bed_x_mm=body.bed_x_mm if body.bed_x_mm is not None else model.bed_mm[0],
+        bed_y_mm=body.bed_y_mm if body.bed_y_mm is not None else model.bed_mm[1],
         machine_rate_per_hour=body.machine_rate_per_hour,
     )
     session.add(printer)
     await session.commit()
     await session.refresh(printer)
+    printer_manager.set_printer_plugin(printer.id, plugin_id)
     try:
         client = create_client(printer)
         printer_manager.connect_printer(printer.id, client)
@@ -362,7 +396,7 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
     net = _discovery_network()
     try:
         async with _discovery_lock:
-            result = await discovery.scan(net, ranges, REGISTRY)
+            result = await discovery.scan(net, ranges, enabled_client_classes())
     except discovery.ScanRangeError as e:
         raise HTTPException(422, str(e))
     finally:
@@ -375,11 +409,13 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
         for key in ("ip_address", "host"):
             if cfg.get(key):
                 existing.add(str(cfg[key]).strip())
-    names = {t["printer_type"]: t["display_name"] for t in get_printer_types_for_ui()}
+    names = printer_type_names()
+    plugin_ids = printer_type_plugins()
     return {
         "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
         "found": [{
-            "printer_type": d.printer_type, "display_name": names.get(d.printer_type, d.printer_type),
+            "printer_type": d.printer_type, "plugin_id": plugin_ids.get(d.printer_type),
+            "display_name": names.get(d.printer_type, d.printer_type),
             "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
             "connection_config": d.connection_config, "note": d.note, "already_added": d.ip in existing,
         } for d in result.found],
@@ -427,7 +463,7 @@ async def _connect_failure_hint(client) -> str:
 async def test_connection(body: TestConnectionRequest) -> dict:
     """Attempt to connect with the given config and return `{ok: true}` or
     `{ok: false, error: "..."}` with a human-readable hint about why it failed."""
-    if body.printer_type not in REGISTRY:
+    if client_class(body.printer_type) is None:
         raise HTTPException(422, f"Unknown printer_type: {body.printer_type!r}")
     client = None
     try:
@@ -508,6 +544,15 @@ async def update_printer(
     """Update one or more printer fields. Omitted fields are left unchanged.
     `current_orca_printer_profile` supports explicit null to clear the preset."""
     printer = await _get_or_404(printer_id, session)
+    if body.manufacturer_id is not None or body.model_id is not None:
+        # validated before anything is changed: a rejected identity leaves the printer exactly as it was
+        manufacturer_id = body.manufacturer_id or printer.manufacturer_id or ""
+        model_id = body.model_id or printer.model_id or ""
+        try:
+            declared_model(printer.plugin_id or "", manufacturer_id, model_id)
+        except IdentityError as e:
+            raise HTTPException(422, str(e))
+        printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:
@@ -619,6 +664,7 @@ async def delete_printer(
     await session.delete(printer)
     await session.commit()
     printer_manager.disconnect_printer(printer_id)
+    printer_manager.forget_printer(printer_id)
     if printer_manager._on_state_broadcast is not None:   # its alarms went with it (FK cascade)
         await printer_manager._on_state_broadcast("alarms_changed", {"printer_id": printer_id})
 
@@ -1165,7 +1211,7 @@ async def _activate_camera(client) -> None:
     summary="Stream camera (MJPEG)",
     responses={
         404: {"description": "Printer not found or has no camera"},
-        503: {"description": "Printer not connected or ffmpeg unavailable for RTSP"},
+        503: {"description": "Printer not connected or its camera is unavailable (e.g. a transcoder the vendor needs is missing)"},
     },
     dependencies=[Depends(require_scope("printers:read"))],
 )
@@ -1173,8 +1219,8 @@ async def stream_camera(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
-    """MJPEG multipart stream from the printer camera. Supports both native MJPEG
-    and RTSP (transcoded via ffmpeg). A keepalive ping prevents stream drops on
+    """MJPEG multipart stream from the printer camera. The printer's client produces the feed (native
+    MJPEG, or a vendor transcode such as Bambu's RTSP). A keepalive ping prevents stream drops on
     printers that time out after 60 s of inactivity."""
     await _get_or_404(printer_id, session)
     client = printer_manager._clients.get(printer_id)
@@ -1184,25 +1230,20 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    if client.camera_mjpeg_url:
-        mjpeg_url, rtsp_url = client.camera_mjpeg_url, None
-    elif client.camera_rtsp_url:
-        from ...config import get_ffmpeg_executable
-        if not shutil.which(get_ffmpeg_executable()):
-            raise HTTPException(503, "ffmpeg not available for RTSP streaming")
-        mjpeg_url, rtsp_url = None, client.camera_rtsp_url
-    else:
+    if not (client.camera_mjpeg_url or client.camera_rtsp_url):
         raise HTTPException(404, "No camera URL configured")
+    reason = client.camera_unavailable_reason()          # e.g. a transcoder the vendor needs is missing
+    if reason:
+        raise HTTPException(503, reason)
 
     if not camera_hub.hub.has_stream(printer_id):
         await _activate_camera(client)                 # before the response starts, so a failure is a real 5xx
 
     async def upstream():
-        raw = stream_mjpeg(mjpeg_url) if mjpeg_url else stream_rtsp_ffmpeg(rtsp_url)
-        async for chunk in raw:
+        async for chunk in client.camera_stream():       # the client (its plugin) produces the feed; core fans it out
             yield chunk
 
-    # One upstream connection / ffmpeg per printer however many viewers (camera wall, several browsers);
+    # One upstream connection / transcoder per printer however many viewers (camera wall, several browsers);
     # Elegoo drops the MJPEG stream after 60 s of silence, so the hub pings it every 45 s.
     ping = client.ping_video_stream if hasattr(client, "ping_video_stream") else None
     if camera_hub.hub.is_full_for(printer_id):
@@ -1248,7 +1289,7 @@ async def snapshot_camera(
 
     async def grab():
         await _activate_camera(client)           # only when a real grab happens, not on a cache/live-frame hit
-        return await grab_snapshot_from_client(client)
+        return await client.camera_snapshot()
 
     try:
         jpeg = await camera_hub.hub.snapshot(printer_id, grab)

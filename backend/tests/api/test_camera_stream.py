@@ -1,6 +1,7 @@
 import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock, patch
+from app.services.abstract_printer_client import AbstractPrinterClient
 from app.services.camera_hub import multipart_part
 from app.services.printer_manager import printer_manager
 
@@ -20,6 +21,10 @@ def _camera_client(*, connected=True, camera=True, mjpeg=None, rtsp=None) -> Mag
     client.get_capabilities.return_value = MagicMock(camera=camera)
     client.camera_mjpeg_url = mjpeg
     client.camera_rtsp_url = rtsp
+    client.camera_unavailable_reason.return_value = None
+    # the real base-class feed (the default MJPEG proxy), so these tests keep exercising the hub through the actual path
+    client.camera_stream = lambda: AbstractPrinterClient.camera_stream(client)
+    client.camera_snapshot = lambda: AbstractPrinterClient.camera_snapshot(client)
     return client
 
 
@@ -71,10 +76,11 @@ async def test_camera_404_when_the_printer_has_a_camera_but_no_url_configured(cl
 
 
 async def test_camera_503_when_rtsp_needs_ffmpeg_and_it_is_missing(client, printer_id):
-    printer_manager._clients[printer_id] = _camera_client(rtsp="rtsp://192.168.1.20/live")
+    fake = _camera_client(rtsp="rtsp://192.168.1.20/live")
+    fake.camera_unavailable_reason.return_value = "ffmpeg not available for RTSP streaming"      # the vendor's own check
+    printer_manager._clients[printer_id] = fake
 
-    with patch("app.api.routes.printers.shutil.which", return_value=None):
-        resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
+    resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
 
     assert resp.status_code == 503
     assert resp.json()["detail"] == "ffmpeg not available for RTSP streaming"
@@ -90,7 +96,7 @@ async def test_camera_streams_mjpeg_as_multipart_after_activating_the_printer_st
         yield b"junk-header\r\n" + JPEG_A[:6]          # a frame split across chunks, with noise before it
         yield JPEG_A[6:] + b"\r\n--frame\r\n"
 
-    with patch("app.api.routes.printers.stream_mjpeg", stream):
+    with patch("app.services.camera_proxy.stream_mjpeg", stream):
         resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
 
     assert resp.status_code == 200
@@ -113,7 +119,7 @@ async def test_concurrent_viewers_of_one_printer_share_a_single_upstream_connect
     async def viewer():
         return await client.get(f"/api/v1/printers/{printer_id}/camera")
 
-    with patch("app.api.routes.printers.stream_mjpeg", stream):
+    with patch("app.services.camera_proxy.stream_mjpeg", stream):
         t1, t2 = asyncio.create_task(viewer()), asyncio.create_task(viewer())
         from app.services import camera_hub
         for _ in range(200):
@@ -149,7 +155,7 @@ async def test_camera_pings_an_elegoo_style_stream_through_the_hub(client, print
         await asyncio.sleep(0.1)
         yield JPEG_A
 
-    with patch("app.api.routes.printers.stream_mjpeg", stream):
+    with patch("app.services.camera_proxy.stream_mjpeg", stream):
         await client.get(f"/api/v1/printers/{printer_id}/camera")
 
     assert fake.ping_video_stream.call_count >= 1
@@ -157,14 +163,15 @@ async def test_camera_pings_an_elegoo_style_stream_through_the_hub(client, print
 
 async def test_camera_stats_report_open_streams_and_snapshot_sharing(client, printer_id):
     from app.services import camera_hub
-    printer_manager._clients[printer_id] = _camera_client(mjpeg="http://x/video")
+    fake = _camera_client(mjpeg="http://x/video")
+    printer_manager._clients[printer_id] = fake
 
-    async def grab(c):
+    async def grab():
         return JPEG_A
 
-    with patch("app.api.routes.printers.grab_snapshot_from_client", grab):
-        for _ in range(3):
-            await client.get(f"/api/v1/printers/{printer_id}/snapshot")
+    fake.camera_snapshot = grab
+    for _ in range(3):
+        await client.get(f"/api/v1/printers/{printer_id}/snapshot")
     body = (await client.get("/api/v1/cameras/stats")).json()
 
     assert (body["snapshot_grabs"], body["snapshot_hits"], body["streams"], body["viewers"]) == (1, 2, [], 0)
@@ -182,7 +189,7 @@ async def test_camera_accepts_the_key_as_a_query_parameter_for_img_tags(client, 
 
     remote = ASGITransport(app=app, client=("203.0.113.7", 50000))
     async with AsyncClient(transport=remote, base_url="http://test") as anon:
-        with patch("app.api.routes.printers.stream_mjpeg", stream):
+        with patch("app.services.camera_proxy.stream_mjpeg", stream):
             no_key = await anon.get(f"/api/v1/printers/{printer_id}/camera")
             with_key = await anon.get(f"/api/v1/printers/{printer_id}/camera", params={"key": raw})
 
@@ -208,7 +215,7 @@ async def test_a_second_viewer_does_not_wake_an_already_streaming_camera_again(c
     async def stream(url):
         yield JPEG_A
 
-    with patch("app.api.routes.printers.stream_mjpeg", stream):
+    with patch("app.services.camera_proxy.stream_mjpeg", stream):
         task = asyncio.create_task(client.get(f"/api/v1/printers/{printer_id}/camera"))
         await asyncio.sleep(0.05)
         task.cancel()

@@ -8,87 +8,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from .abstract_printer_client import AbstractPrinterClient
+from .events import event_bus
 from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
+from .printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
+from .printer_identity import dormant_reason
 
 logger = logging.getLogger(__name__)
-
-
-def _serialize_bambu(state, printer_id: int) -> dict:
-    return {
-        "printer_type": "bambu",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": getattr(state, "remaining_time", 0),
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_elegoo(state, printer_id: int) -> dict:
-    total_ticks = getattr(state, "total_ticks", 0)
-    current_ticks = getattr(state, "current_ticks", 0)
-    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
-        remaining_time = int((total_ticks - current_ticks) / 60)
-    else:
-        remaining_time = getattr(state, "remaining_time", 0) or 0
-    return {
-        "printer_type": "elegoo_centauri",
-        "id": printer_id,
-        "connected": state.connected,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "filename", None) or getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0),
-        "remaining_time": remaining_time,
-        "layer_num": getattr(state, "layer_num", None),
-        "total_layers": getattr(state, "total_layers", None),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": getattr(state, "fan_model", 0),
-        "fan_aux": getattr(state, "fan_aux", 0),
-        "fan_box": getattr(state, "fan_box", 0),
-        "speed_factor": getattr(state, "print_speed_pct", 100) / 100.0,
-        "klippy_state": "ready" if state.connected else "disconnected",
-        "cover_url": None,
-    }
-
-
-def _serialize_snapmaker(state, printer_id: int) -> dict:
-    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", False))
-    return {
-        "printer_type": "snapmaker_extended",
-        "id": printer_id,
-        "connected": conn,
-        "state": getattr(state, "state", "unknown"),
-        "current_print": getattr(state, "current_print", None),
-        "progress": getattr(state, "progress", 0.0) * 100.0,  # Klipper display_status.progress is 0..1; the API is 0..100
-        "remaining_time": getattr(state, "remaining_time", 0) or 0,
-        "layer_num": getattr(state, "layer_num", 0),
-        "total_layers": getattr(state, "total_layers", 0),
-        "temperatures": getattr(state, "temperatures", {}),
-        "fan_model": 0,
-        "fan_aux": 0,
-        "fan_box": 0,
-        "speed_factor": 1.0,
-        "klippy_state": "ready" if conn else "disconnected",
-        "cover_url": None,
-    }
-
-
-_STATUS_SERIALIZERS: dict[str, Callable] = {
-    "bambu": _serialize_bambu,
-    "elegoo_centauri": _serialize_elegoo,
-    "snapmaker_extended": _serialize_snapmaker,
-}
 
 
 class PrinterManager:
@@ -99,6 +25,19 @@ class PrinterManager:
         self._on_job_complete: Callable | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._session_factory: async_sessionmaker | None = None
+        self._subscribed = False
+        self._printer_plugin: dict[int, str | None] = {}
+
+    def subscribe_events(self) -> None:
+        """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
+        lifespan runs once per client in tests."""
+        if self._subscribed:
+            return
+        self._subscribed = True
+        event_bus.subscribe(PrinterStateChanged, lambda e: self.on_state_change(e.printer_id, e.state))
+        # completing a job (DB commit, inventory deduction, webhooks) must never be cut short by the bus's handler timeout
+        event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state), timeout=None)
+        event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
         self._on_state_broadcast = cb
@@ -133,6 +72,7 @@ class PrinterManager:
             )
             printers = result.scalars().all()
         for printer in printers:
+            self.set_printer_plugin(printer.id, printer.plugin_id)
             try:
                 client = create_client(printer)
                 self.connect_printer(printer.id, client)
@@ -151,9 +91,19 @@ class PrinterManager:
     def is_awaiting_plate_clear(self, printer_id: int) -> bool:
         return printer_id in self._awaiting_plate_clear
 
+    def set_printer_plugin(self, printer_id: int, plugin_id: str | None) -> None:
+        """Remember which plugin serves a printer, so a disabled or removed plugin makes its printers dormant (not ready)."""
+        self._printer_plugin[printer_id] = plugin_id
+
+    def forget_printer(self, printer_id: int) -> None:
+        """Drop a deleted printer's plugin mapping (ids can be reused, and a stale mapping would make the new printer dormant)."""
+        self._printer_plugin.pop(printer_id, None)
+
     def is_printer_ready(self, printer_id: int) -> bool:
         client = self._clients.get(printer_id)
         if client is None:
+            return False
+        if dormant_reason(self._printer_plugin.get(printer_id)) is not None:
             return False
         return client.connected and client.is_idle and printer_id not in self._awaiting_plate_clear
 
@@ -168,10 +118,7 @@ class PrinterManager:
 
     def get_normalized_state(self, printer_id: int) -> dict:
         client = self._clients[printer_id]
-        serializer = _STATUS_SERIALIZERS.get(client.printer_type)
-        if serializer is None:
-            return {"id": printer_id, "printer_type": client.printer_type, "connected": client.connected}
-        state = serializer(client.state, printer_id)
+        state = client.serialize_state(printer_id)
         # Override connected with the client-level property (authoritative source)
         state["connected"] = client.connected
         state["capabilities"] = asdict(client.get_capabilities())
@@ -250,13 +197,13 @@ class PrinterManager:
             logger.warning("connect_printer called before set_loop — callbacks will be disabled")
 
         async def _on_state(state):
-            await self.on_state_change(printer_id, state)
+            await event_bus.publish(PrinterStateChanged(printer_id=printer_id, state=state))
 
         async def _on_complete(state):
-            await self.on_print_complete(printer_id, state)
+            await event_bus.publish(PrintCompleted(printer_id=printer_id, state=state))
 
         async def _on_ams(trays):
-            await self.on_ams_change(printer_id, trays)
+            await event_bus.publish(AmsChanged(printer_id=printer_id, trays=trays))
 
         # Assign async functions directly — clients call run_coroutine_threadsafe on them
         client._on_state_change = _on_state

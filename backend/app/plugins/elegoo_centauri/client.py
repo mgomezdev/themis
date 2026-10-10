@@ -15,7 +15,7 @@ from typing import Callable, ClassVar
 import httpx
 import websocket
 
-from .abstract_printer_client import (
+from ...services.abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
     Alarm,
@@ -149,6 +149,33 @@ def _epoch_to_iso(value) -> str | None:
     return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
 
 
+def serialize_elegoo(state, printer_id: int) -> dict:
+    total_ticks = getattr(state, "total_ticks", 0)
+    current_ticks = getattr(state, "current_ticks", 0)
+    if getattr(state, "print_state", "") != "complete" and total_ticks > 0 and current_ticks < total_ticks:
+        remaining_time = int((total_ticks - current_ticks) / 60)
+    else:
+        remaining_time = getattr(state, "remaining_time", 0) or 0
+    return {
+        "printer_type": "elegoo_centauri",
+        "id": printer_id,
+        "connected": state.connected,
+        "state": getattr(state, "state", "unknown"),
+        "current_print": getattr(state, "filename", None) or getattr(state, "current_print", None),
+        "progress": getattr(state, "progress", 0.0),
+        "remaining_time": remaining_time,
+        "layer_num": getattr(state, "layer_num", None),
+        "total_layers": getattr(state, "total_layers", None),
+        "temperatures": getattr(state, "temperatures", {}),
+        "fan_model": getattr(state, "fan_model", 0),
+        "fan_aux": getattr(state, "fan_aux", 0),
+        "fan_box": getattr(state, "fan_box", 0),
+        "speed_factor": getattr(state, "print_speed_pct", 100) / 100.0,
+        "klippy_state": "ready" if state.connected else "disconnected",
+        "cover_url": None,
+    }
+
+
 class ElegooCentauriClient(AbstractPrinterClient):
     printer_type: ClassVar[str] = "elegoo_centauri"
 
@@ -252,6 +279,9 @@ class ElegooCentauriClient(AbstractPrinterClient):
                 help_text="1 = record a timelapse during the print, 0 = off.",
             ),
         ]
+
+    def serialize_state(self, printer_id: int) -> dict:
+        return serialize_elegoo(self.state, printer_id)
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
@@ -659,7 +689,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
     # ------------------------------------------------------------------
 
     def get_alarms(self) -> list[Alarm]:
-        from .alarm_codes import sdcp_alarms
+        from .alarms import sdcp_alarms
         with self._lock:
             return sdcp_alarms(self.state.error_number)
 

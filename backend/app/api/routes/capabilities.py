@@ -43,7 +43,9 @@ def _view(cap: CapabilityDef) -> dict:
             dependencies=[Depends(require_scope("settings:read"))])
 async def list_capabilities():
     catalog = capability_catalog()
-    items = [_view(d) for d in sorted(catalog.values(), key=lambda d: (definer_of(d.id) is not None, d.id))]
+    # a routed capability nobody provides (printer.client today) has no selection to make, so it is not listed
+    listed = [d for d in catalog.values() if d.mode != "routed" or providers_of(d.id)]
+    items = [_view(d) for d in sorted(listed, key=lambda d: (definer_of(d.id) is not None, d.id))]
     for cap, pid in sorted(plugin_host.selections().items()):         # dormant: a stored choice whose definer is gone
         if cap not in catalog:
             items.append({"id": cap, "version": 0, "label": cap, "description": "", "definer": None, "features": [],

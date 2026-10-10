@@ -314,6 +314,11 @@ async def _dump(conn, tables) -> dict:
             for t in tables}
 
 
+async def _v042_backfill(conn):
+    from app.migrations.v042_printer_model_identity import up
+    await up(conn)
+
+
 async def test_every_migration_up_twice_is_a_noop():
     """Direct second `up()` on a fully migrated DB: schema and rows unchanged, nothing raises."""
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
@@ -325,6 +330,9 @@ async def test_every_migration_up_twice_is_a_noop():
         await conn.execute(ApiKey.__table__.insert().values(
             id=1, name="k", key_prefix="pfx", key_hash="h", scopes=["apikeys:write", "customers:read", "customers:write"],
             created_at="2026-01-01T00:00:00"))
+        # The printer above is written without a plugin identity, as a pre-v042 writer would. v042's backfill is a one-shot
+        # data step: settle it once, then check that a further up() changes nothing.
+        await _v042_backfill(conn)
         tables = list(await _schema(conn))
         baseline_schema = await _schema(conn)
         baseline_rows = await _dump(conn, tables)

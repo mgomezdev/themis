@@ -106,3 +106,13 @@ async def test_loopback_and_reserved_ranges_are_rejected_before_any_probe(client
     for r in ("127.0.0.1", "0.0.0.0/24", "255.255.255.255", "198.18.0.0/24"):
         assert (await client.post("/api/v1/printers/discover", json={"ranges": [r]})).status_code == 422
     assert lan.probes == []
+
+
+async def test_discovered_printers_name_the_plugin_that_serves_them(client, lan):
+    found = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()["found"]
+
+    assert {f["ip"]: (f["printer_type"], f["plugin_id"]) for f in found} == {
+        "192.168.7.20": ("bambu", "bambu"),
+        "192.168.7.30": ("snapmaker_extended", "snapmaker"),      # the client's printer_type differs from its plugin's id
+        "192.168.7.40": ("elegoo_centauri", "elegoo_centauri"),
+    }

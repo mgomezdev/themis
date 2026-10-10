@@ -23,8 +23,8 @@ def accepts_file(printer_type: str, filename: str | None) -> bool:
     kind = file_kind(filename)
     if kind not in ("gcode", "gcode_3mf"):
         return True
-    from .printer_client_factory import REGISTRY   # lazy: the factory imports models
-    cls = REGISTRY.get(printer_type)
+    from .printer_client_factory import client_class   # lazy: the factory imports models
+    cls = client_class(printer_type)
     if kind == "gcode":
         return True if cls is None else bool(getattr(cls, "raw_gcode_supported", True))
     return False if cls is None else bool(getattr(cls, "sliced_archive_supported", False))

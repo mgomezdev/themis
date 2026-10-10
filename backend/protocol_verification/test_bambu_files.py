@@ -5,7 +5,7 @@ import zipfile
 
 import pytest
 
-from app.services.bambu_mqtt import BambuMQTTClient, parse_unix_list_line
+from app.plugins.bambu.client import BambuMQTTClient, parse_unix_list_line
 
 
 @pytest.fixture

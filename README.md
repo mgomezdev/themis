@@ -157,8 +157,8 @@ backend/app
 └── services/
     ├── printer_manager.py        queue_engine.py
     ├── abstract_printer_client.py printer_client_factory.py
-    ├── bambu_mqtt.py             elegoo_centauri_client.py
-    ├── snapmaker_client.py       mock_printer_client.py   # test/E2E fake driver
+    ├── events.py                 printer_events.py         # in-process event bus + printer events
+    ├── printer_identity.py       # plugin/manufacturer/model identity, dormancy
     ├── slicer_service.py         catalog_service.py        # slicing orchestration + catalog cache
     ├── catalog_utils.py
     ├── three_mf_parser.py

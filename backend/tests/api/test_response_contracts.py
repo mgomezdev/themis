@@ -4,6 +4,7 @@ The same file is checked against the frontend's TypeScript interfaces by
 frontend/src/api/responseKeys.contract.test.ts, so a renamed or dropped field fails one side or the other.
 """
 import json
+from app.plugins.elegoo_centauri.client import serialize_elegoo
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -63,6 +64,7 @@ async def test_fleet_items_carry_the_fleet_keys_offline_and_the_fan_keys_when_co
                            filename="a.3mf", temperatures={"nozzle": 200.0}, layer_num=1, total_layers=2,
                            fan_model=1, fan_aux=2, fan_box=3, print_speed_pct=100)
     live.get_capabilities.return_value = PrinterCapabilities()
+    live.serialize_state.side_effect = lambda printer_id: serialize_elegoo(live.state, printer_id)   # as the Elegoo client does
     printer_manager._clients[live_id] = live
 
     items = {i["id"]: i for i in (await client.get("/api/v1/fleet")).json()}

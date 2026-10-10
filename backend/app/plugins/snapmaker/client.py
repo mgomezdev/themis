@@ -12,7 +12,7 @@ from typing import Callable, ClassVar
 import httpx
 import websocket
 
-from .abstract_printer_client import (
+from ...services.abstract_printer_client import (
     AbstractPrinterClient,
     ConnectionField,
     Alarm,
@@ -135,12 +135,36 @@ class SnapmakerState:
         }
 
 
+def serialize_snapmaker(state, printer_id: int) -> dict:
+    conn = bool(getattr(state, "connected", False) and getattr(state, "klippy_ready", False))
+    return {
+        "printer_type": "snapmaker_extended",
+        "id": printer_id,
+        "connected": conn,
+        "state": getattr(state, "state", "unknown"),
+        "current_print": getattr(state, "current_print", None),
+        "progress": getattr(state, "progress", 0.0) * 100.0,  # Klipper display_status.progress is 0..1; the API is 0..100
+        "remaining_time": getattr(state, "remaining_time", 0) or 0,
+        "layer_num": getattr(state, "layer_num", 0),
+        "total_layers": getattr(state, "total_layers", 0),
+        "temperatures": getattr(state, "temperatures", {}),
+        "fan_model": 0,
+        "fan_aux": 0,
+        "fan_box": 0,
+        "speed_factor": 1.0,
+        "klippy_state": "ready" if conn else "disconnected",
+        "cover_url": None,
+    }
+
+
 class SnapmakerExtendedClient(AbstractPrinterClient):
     """Moonraker/Klipper client for the Snapmaker U1 Extended firmware.
 
     Status streams over the Moonraker WebSocket (printer.objects.subscribe);
     control goes over Moonraker HTTP. Modeled on ElegooCentauriClient.
     """
+    slice_tool_mapping = True    # filament->tool routing is baked into the 3MF at slice time (the slicing provider rewrites it)
+
 
     printer_type: ClassVar[str] = "snapmaker_extended"
 
@@ -167,7 +191,7 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
         self._rpc_id = itertools.count(1)
 
     def get_alarms(self) -> list[Alarm]:
-        from .alarm_codes import klipper_alarms
+        from .alarms import klipper_alarms
         with self._lock:
             s = self.state
             return klipper_alarms({"state": s.klippy_state, "state_message": s.klippy_message},
@@ -202,6 +226,9 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
             ConnectionField(name="api_key", label="API key", field_type="password", required=False,
                             help_text="Only if Moonraker requires an API key; leave blank for an open LAN printer."),
         ]
+
+    def serialize_state(self, printer_id: int) -> dict:
+        return serialize_snapmaker(self.state, printer_id)
 
     def get_capabilities(self) -> PrinterCapabilities:
         return PrinterCapabilities(
@@ -562,6 +589,3 @@ class SnapmakerExtendedClient(AbstractPrinterClient):
     def set_bed_temp(self, celsius: int) -> bool:
         return self.send_gcode(f"M140 S{int(celsius)}")
 
-    def remap_sliceable_3mf(self, sliceable_3mf, *, tool_index=None, filament_map=None) -> None:
-        from .snapmaker.remap import remap_3mf
-        remap_3mf(sliceable_3mf, tool_index=tool_index, filament_map=filament_map)
