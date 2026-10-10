@@ -152,6 +152,14 @@ async def drain() -> None:
         await asyncio.gather(*list(_tasks), return_exceptions=True)
 
 
+async def cancel_all() -> None:
+    """Abandon deliveries that are still waiting to retry (shutdown, tests)."""
+    pending = list(_tasks)
+    for t in pending:
+        t.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)
+
+
 async def destinations_for(session: AsyncSession, event: str) -> list[WebhookDestination]:
     rows = (await session.execute(select(WebhookDestination).where(WebhookDestination.enabled.is_(True))
                                   .order_by(WebhookDestination.id))).scalars().all()
