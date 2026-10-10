@@ -91,7 +91,7 @@ One failing, hanging or slow subscriber affects only itself: separate lanes (bes
 `durable_pending`/`durable_dead`; also lists a plugin handler that is missing or not `async`), `GET /api/v1/events/deliveries?status=dead|pending|delivered`,
 `POST /api/v1/events/deliveries/{id}/retry`. Scopes `settings:read` / `settings:write`. A plugin's handler failures also show as the
 plugin's `last_error`. Counters are in-memory (reset on restart); the outbox is the durable record. A queryable log/UI, retention
-settings, replay and external sinks are **out of scope** (BIZ-270 decides them).
+settings, replay and external sinks are **out of scope**: decided in `docs/event-diagnostics-decision.md` (BIZ-270).
 
 ## Delivery guarantees at a glance
 
