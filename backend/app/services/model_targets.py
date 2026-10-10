@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from . import gcode_eligibility
 from .library_scanner import file_kind
 
 # Only waiting jobs are re-synced: a job that is slicing/printing keeps the config it is running with.
@@ -69,17 +70,19 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
         select(JobPrinterConfig.job_id).where(JobPrinterConfig.printer_id == printer.id)
     )).scalars().all())
     rows = (await session.execute(
-        select(JobModelTarget, UploadedFile.original_filename)
+        select(JobModelTarget, UploadedFile, Job.eligibility_confirmed)
         .join(Job, Job.id == JobModelTarget.job_id)
         .join(UploadedFile, UploadedFile.id == Job.uploaded_file_id)
         .where(JobModelTarget.machine_profile == profile, Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
     )).all()
-    for target, filename in rows:
+    for target, file, confirmed in rows:
         if target.job_id in have:  # an explicit pick (or an earlier target) already covers this printer
             continue
-        if not accepts_file(printer.printer_type, filename):
+        if not accepts_file(printer.printer_type, file.original_filename):
             continue
+        if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=bool(confirmed))).allowed:
+            continue   # a pre-sliced file's machine eligibility excludes this printer (BIZ-263)
         session.add(_config_from_target(target, printer.id))
         have.add(target.job_id)
     try:
@@ -98,9 +101,11 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     )).scalars().all()
     if not targets:
         return
-    filename = (await session.execute(
-        select(UploadedFile.original_filename).join(Job, Job.uploaded_file_id == UploadedFile.id).where(Job.id == job_id)
+    file = (await session.execute(
+        select(UploadedFile).join(Job, Job.uploaded_file_id == UploadedFile.id).where(Job.id == job_id)
     )).scalar_one_or_none()
+    filename = file.original_filename if file else None
+    confirmed = bool((await session.execute(select(Job.eligibility_confirmed).where(Job.id == job_id))).scalar())
     have = set((await session.execute(
         select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job_id)
     )).scalars().all())
@@ -111,6 +116,8 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
                 continue
             if not accepts_file(printer.printer_type, filename):
                 continue
+            if not (await gcode_eligibility.evaluate(session, file, printer, confirmed=confirmed)).allowed:
+                continue   # BIZ-263: the file's machine eligibility excludes this printer
             session.add(_config_from_target(target, printer.id))
             have.add(printer.id)
     await session.flush()

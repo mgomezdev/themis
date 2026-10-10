@@ -108,6 +108,7 @@
       "completed_at": null,
       "created_at": "2026-01-01T00:00:00",
       "deduction_skipped": null,
+      "eligibility_confirmed": 0,
       "estimate_filament_breakdown": null,
       "estimate_filament_grams": null,
       "estimate_preset_label": null,
@@ -258,6 +259,7 @@
   "uploaded_files": [
     {
       "content_hash": "",
+      "eligibility_known": 0,
       "folder": "/",
       "id": 1,
       "missing": 0,

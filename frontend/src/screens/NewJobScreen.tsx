@@ -800,6 +800,7 @@ export function NewJobScreen() {
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [eligibilityPrompt, setEligibilityPrompt] = useState<string | null>(null);   // unknown machine eligibility awaiting the user's say-so
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Source selection: upload a new file or pick one from the library.
@@ -1061,10 +1062,11 @@ export function NewJobScreen() {
 
   const isComplete = uploadedFileId != null && selectedPlateIds.length > 0 && selectedPlateIds.every(plateIsComplete);
 
-  async function doCreate() {
+  async function doCreate(confirmUnknownEligibility = false) {
     if (!uploadedFileId) return;
     setSubmitting(true);
     setError(null);
+    setEligibilityPrompt(null);
     const count = selectedPlateIds.length;
     const created: string[] = [];
     try {
@@ -1076,6 +1078,7 @@ export function NewJobScreen() {
           plate_number: plate.index,
           project_id: cfg.projectId,
           ...buildEligibility(cfg.selectedPrinters, cfg.perPrinter),
+          ...(confirmUnknownEligibility ? { confirm_unknown_eligibility: true } : {}),
           overrides: Object.keys(cfg.confirmedOverrides).length > 0 ? cfg.confirmedOverrides : null,
           ...(saveSlice && !isPreslicedKind(file?.type)
             ? { save_slice: true, save_slice_name: saveSliceName.trim() || null } : {}),
@@ -1095,6 +1098,14 @@ export function NewJobScreen() {
         });
       }
       const already = created.length > 0 ? ` (${created.length} of ${count} already added; those plates are now skipped)` : '';
+      const text = err instanceof Error ? err.message : String(err);
+      if (text.startsWith('409') && /machine eligibility/.test(text)) {
+        // A legacy pre-sliced file: nothing records which machines it is for. Ask, never guess (BIZ-263).
+        let detail = text.replace(/^409\s*/, '');
+        try { detail = JSON.parse(detail).detail ?? detail; } catch { /* plain text body */ }
+        setEligibilityPrompt(String(detail));
+        return;
+      }
       setError(`Failed to create job: ${err instanceof Error ? err.message : String(err)}${already}`);
     } finally {
       setSubmitting(false);
@@ -1116,6 +1127,18 @@ export function NewJobScreen() {
           color: 'var(--ok)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 8,
         }}>
           {Icons.check} {successMsg} — <button className="btn ghost sm" style={{ padding: '0 4px', color: 'inherit' }} onClick={() => navigate('/queue')}>view queue</button>
+        </div>
+      )}
+      {eligibilityPrompt && (
+        <div role="alert" data-testid="eligibility-prompt" style={{
+          padding: '10px 14px', borderRadius: 8,
+          background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', fontSize: 13,
+        }}>
+          <div>{eligibilityPrompt}</div>
+          <div className="row gap-2" style={{ marginTop: 8 }}>
+            <button className="btn primary sm" disabled={submitting} onClick={() => doCreate(true)}>Send anyway — I confirm it fits</button>
+            <button className="btn ghost sm" onClick={() => setEligibilityPrompt(null)}>Cancel</button>
+          </div>
         </div>
       )}
       {error && (
@@ -1341,7 +1364,7 @@ export function NewJobScreen() {
               className="btn primary"
               style={{ width: '100%' }}
               disabled={!isComplete || submitting}
-              onClick={doCreate}>
+              onClick={() => doCreate()}>
               {submitting
                 ? 'Adding to queue…'
                 : <>{Icons.check} Add {selectedPlateIds.length || ''} job{selectedPlateIds.length === 1 ? '' : 's'} to queue</>

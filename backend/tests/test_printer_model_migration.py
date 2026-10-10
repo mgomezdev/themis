@@ -123,3 +123,56 @@ async def test_v043_is_idempotent_and_keeps_uuids_on_rerun(v041_db):
         second = (await conn.execute(text("SELECT id, model_uuid FROM printers WHERE id >= 101 ORDER BY id"))).fetchall()
         n = (await conn.execute(text("SELECT COUNT(*) FROM printer_models"))).scalar()
     assert second == first and n == len(LEGACY)
+
+
+def _v044():
+    mod = next((m for m in _MIGRATIONS if m.version == 44), None)
+    assert mod is not None, "v044 file machine eligibility migration is not registered"
+    return mod
+
+
+async def _cached_slice(conn, file_id: int, preset: str) -> None:
+    await conn.execute(text(
+        "INSERT INTO uploaded_files (id, original_filename, stored_path, plates, uploaded_at, relative_path, folder, size_bytes,"
+        " content_hash, mtime, missing) VALUES (:i, :n, '', '[]', '2026-01-01', :n, '/', 1, 'h', 0, 0)"),
+        {"i": file_id, "n": f"slice{file_id}.gcode"})
+    await conn.execute(text(
+        "INSERT INTO sliced_versions (file_id, plate_number, machine_preset, process_preset, filament_presets, extra_config,"
+        " artifact_kind, cache_key, filament_type, filament_color, created_at, source_content_hash)"
+        " VALUES (:i, 1, :p, 'proc', '[]', '{}', 'gcode', :k, 'any', 'any', '2026-01-01', '')"),
+        {"i": file_id, "p": preset, "k": f"k{file_id}"})
+
+
+async def test_v044_backfills_a_cached_slice_only_when_its_machine_preset_maps_to_one_model(v041_db):
+    async with v041_db.begin() as conn:
+        await _v042().up(conn)
+        await _v043().up(conn)
+        models = {r[0]: r[1] for r in (await conn.execute(text("SELECT model_id, id FROM printer_models"))).fetchall()}
+        await conn.execute(text("UPDATE printers SET current_orca_printer_profile = 'Bambu 0.4' WHERE id = 101"))
+        await conn.execute(text("UPDATE printers SET current_orca_printer_profile = 'Mixed 0.4' WHERE id IN (102, 103)"))
+        await _cached_slice(conn, 9001, "Bambu 0.4")          # one printer, one model -> backfilled
+        await _cached_slice(conn, 9002, "Mixed 0.4")          # two different models on one preset -> stays unknown
+        await _cached_slice(conn, 9003, "No printer has this")  # no printer -> stays unknown
+        await _v044().up(conn)
+        known = {r[0]: r[1] for r in (await conn.execute(text("SELECT id, eligibility_known FROM uploaded_files WHERE id >= 9000"))).fetchall()}
+        rows = (await conn.execute(text("SELECT file_id, model_uuid, source FROM file_machine_eligibility"))).fetchall()
+    assert known == {9001: 1, 9002: 0, 9003: 0}
+    assert rows == [(9001, models["p1s"], "backfill")]
+
+
+async def test_v044_is_idempotent_and_never_marks_unrelated_gcode_files_known(v041_db):
+    async with v041_db.begin() as conn:
+        await _v042().up(conn)
+        await _v043().up(conn)
+        await conn.execute(text("UPDATE printers SET current_orca_printer_profile = 'Bambu 0.4' WHERE id = 101"))
+        await _cached_slice(conn, 9001, "Bambu 0.4")
+        await conn.execute(text(
+            "INSERT INTO uploaded_files (id, original_filename, stored_path, plates, uploaded_at, relative_path, folder, size_bytes,"
+            " content_hash, mtime, missing) VALUES (9100, 'legacy.gcode', '', '[]', '2026-01-01', 'legacy.gcode', '/', 1, 'h', 0, 0)"))
+        await _v044().up(conn)
+        first = (await conn.execute(text("SELECT id, eligibility_known FROM uploaded_files WHERE id >= 9000 ORDER BY id"))).fetchall()
+        await _v044().up(conn)
+        second = (await conn.execute(text("SELECT id, eligibility_known FROM uploaded_files WHERE id >= 9000 ORDER BY id"))).fetchall()
+        n = (await conn.execute(text("SELECT COUNT(*) FROM file_machine_eligibility"))).scalar()
+    assert first == second == [(9001, 1), (9100, 0)]
+    assert n == 1

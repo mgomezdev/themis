@@ -28,7 +28,7 @@ async def _seed(factory, library, name="part.gcode") -> tuple[int, int]:
         f = UploadedFile(original_filename=name, relative_path=name, folder="/", plates=[], uploaded_at=_now())
         s.add(f)
         await s.flush()
-        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued",
+        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True,
                 created_at=_now(), updated_at=_now())
         s.add(j)
         await s.flush()
@@ -117,7 +117,7 @@ async def test_sliced_archive_job_prints_without_slicing_and_keeps_its_extension
                          plates=[], uploaded_at=_now())
         s.add(f)
         await s.flush()
-        j = Job(uploaded_file_id=f.id, plate_number=2, queue_position=1.0, status="queued",
+        j = Job(uploaded_file_id=f.id, plate_number=2, queue_position=1.0, status="queued", eligibility_confirmed=True,
                 created_at=_now(), updated_at=_now())
         s.add(j)
         await s.flush()

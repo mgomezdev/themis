@@ -78,6 +78,8 @@ def library(tmp_path, monkeypatch):
 
 
 async def _post_job(client, body):
+    # These legacy files carry no machine eligibility; the tests here are about other behaviour, so the user "confirms" it (BIZ-263).
+    body = {"confirm_unknown_eligibility": True, **body}
     with patch("app.api.routes.jobs.queue_engine"):
         return await client.post("/api/v1/jobs", json=body)
 

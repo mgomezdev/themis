@@ -34,7 +34,7 @@ from .printer_manager import PrinterManager
 from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
-from . import model_targets, slice_cache, slice_saver
+from . import gcode_eligibility, model_targets, slice_cache, slice_saver
 from . import notification_service
 from . import scheduling
 from . import webhook_service
@@ -774,6 +774,12 @@ class QueueEngine:
             await self._block_job(session, job, f"{printer.name} can't print this pre-sliced file as-is")
             return
         if source_file is not None and is_presliced_file(source_file):
+            # Pre-sliced G-code carries its own machine eligibility (BIZ-263): a printer whose model it is not eligible for
+            # (or whose model is unknown) must never get it, even if the config predates the rule. Block, never fail.
+            verdict = await gcode_eligibility.evaluate(session, source_file, printer, confirmed=bool(job.eligibility_confirmed))
+            if not verdict.allowed:
+                await self._block_job(session, job, verdict.message)
+                return
             # A cached version was sliced for one make/model: a printer whose machine preset changed since (another
             # nozzle, say) must not print it.
             version = (await session.execute(

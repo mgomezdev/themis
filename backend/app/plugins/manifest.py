@@ -58,6 +58,9 @@ class PrinterModel:
     name: str
     bed_mm: tuple[int, int] = (256, 256)
     toolheads: int = 1
+    # Ids of OTHER models of this plugin that run the same G-code (BIZ-263), e.g. a rebrand or a bed-size variant. Symmetric:
+    # declaring it on one side is enough. Only these explicit declarations ever widen a G-code file's machine eligibility.
+    equivalents: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -166,6 +169,12 @@ class PluginManifest:
                 model_ids.add(model.id)
                 if min(model.bed_mm) <= 0 or model.toolheads < 1:
                     raise PluginError(f"plugin {self.id!r}: model {model.id!r} needs a positive bed and at least one toolhead")
+        for mfr in self.manufacturers:
+            for model in mfr.models:
+                for eq in model.equivalents:
+                    if eq == model.id or eq not in model_ids:
+                        raise PluginError(f"plugin {self.id!r}: model {model.id!r} lists equivalent {eq!r}, which is itself or "
+                                          "not a model of this plugin")
         for mod in self.migrations:
             for attr in ("version", "name", "up", "down"):
                 if not hasattr(mod, attr):

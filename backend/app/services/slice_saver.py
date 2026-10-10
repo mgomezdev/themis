@@ -19,8 +19,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import config
-from ..models import Job, JobPrinterConfig, SlicedVersion, UploadedFile
-from . import slice_cache
+from ..models import Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
+from . import gcode_eligibility, slice_cache
 from .providers.slicing import get_format_provider, get_slicing_provider
 from .library_scanner import LibraryScanner, folder_of, library_abs_path, sha256_file
 
@@ -194,6 +194,10 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         )
         session.add(version)
         await session.flush()
+        # The saved slice is eligible for the model it was sliced for plus that model's registry-declared equivalents (BIZ-263);
+        # a printer with no registered model leaves it unknown rather than guessed.
+        target = await session.get(Printer, printer_id)
+        await gcode_eligibility.record_slice_target(session, record, target.model_uuid if target else None)
         job.slice_cache_info = slice_cache.with_save_outcome(
             job.slice_cache_info, "saved", cache_key=key, sliced_version_id=version.id, file_id=record.id)
         await session.commit()

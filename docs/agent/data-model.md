@@ -1,11 +1,11 @@
 # Data Model Reference
 
 SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Migrations run automatically at
-startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v043, in
+startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v044, in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (30)
+## Tables (31)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -26,6 +26,7 @@ gcode_files
 sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 plugin_configs      (plugin_id PK; enabled, settings, secrets, state JSON; v034)   — no FKs
 printer_models      (id UUID PK; unique (plugin_id, manufacturer_id, model_id); v043 — see its own section)
+file_machine_eligibility (file_id CASCADE → uploaded_files, model_uuid → printer_models; unique pair; v044 — see its own section)
 capability_selections (capability PK → plugin_id NULL, explicit; v040, replaced extension_slots)
 plugin_schema_versions (plugin_id, version PK; plugin-owned migrations; v034)
 inventory_config    (id=1 singleton; deduct_on_complete, low_stock_default_g, low_stock_overrides, low_stock_alerted; v035)
@@ -45,6 +46,17 @@ maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_ma
 maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
 printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))
 ```
+
+### file_machine_eligibility (BIZ-263)
+Which printer models a **pre-sliced** G-code file (`.gcode` / `.gcode.3mf`) may be sent to: `(file_id, model_uuid, source)` with `source` =
+`manual | target | equivalent | backfill`. `uploaded_files.eligibility_known` (default 0) says whether the rows are the complete set; **0 =
+unknown/legacy and is never a match**. `jobs.eligibility_confirmed` records the user's explicit "send anyway" for an unknown file.
+Written by `PUT /files/{id}/eligibility`, upload `eligible_model_uuids`, and `slice_saver` (target model + registry-declared
+equivalents only — `PrinterModel.equivalents` in the plugin manifest, symmetric, same plugin). v044 backfills cached slices whose
+machine preset maps to exactly one model; everything else stays unknown. Decision: `services/gcode_eligibility.evaluate` →
+`Outcome(allowed, code, message)`, `code` = `not_applicable | eligible | equivalent | unknown_confirmed | unknown_eligibility |
+incompatible | printer_model_unknown`; used by job create/edit (each printer independently; 422 incompatible, 409 unknown), make/model
+target materialisation, and the queue claim (blocks the job with the message as `block_reason`).
 
 ### printer_models (BIZ-262)
 Core-owned registry: `id` (UUID4 string, **never changes**), `plugin_id, manufacturer_id, model_id` (the supplying plugin's own key, unique

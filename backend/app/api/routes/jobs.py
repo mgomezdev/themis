@@ -19,6 +19,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
 from ...services import slice_cache, slice_saver
+from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
 from ...services import model_targets, scheduling
@@ -176,6 +177,37 @@ async def _check_gcode_printers(
             raise HTTPException(422, f"No {t.machine_profile} printer can take this file: each one {why}")
 
 
+async def _check_machine_eligibility(
+    session: AsyncSession, uploaded_file: UploadedFile | None, configs: list[PrinterConfigInput],
+    targets: list[ModelTargetInput], confirmed: bool,
+) -> None:
+    """Pre-sliced G-code only goes to printers whose model it is eligible for (BIZ-263). Every picked printer is judged on its
+    own and the refusal names each one: 422 for an incompatible printer / one with no registered model, 409 when the file's
+    eligibility is simply unknown and the user has not confirmed. A make/model target is refused when no printer on that
+    machine preset could take the file."""
+    if not is_presliced_file(uploaded_file):
+        return
+    refused: list[eligibility.Outcome] = []
+    for cfg in configs:
+        printer = await session.get(Printer, cfg.printer_id)
+        if printer is None:
+            continue
+        outcome = await eligibility.evaluate(session, uploaded_file, printer, confirmed=confirmed)
+        if not outcome.allowed:
+            refused.append(outcome)
+    for t in targets:
+        matching = (await session.execute(
+            select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile))).scalars().all()
+        outcomes = [await eligibility.evaluate(session, uploaded_file, p, confirmed=confirmed) for p in matching]
+        if outcomes and not any(o.allowed for o in outcomes):
+            refused.append(eligibility.Outcome(False, outcomes[0].code, f"No {t.machine_profile} printer can take this file: "
+                                                                        f"{outcomes[0].message}"))
+    if not refused:
+        return
+    unknown = all(o.code == "unknown_eligibility" for o in refused)
+    raise HTTPException(409 if unknown else 422, "; ".join(o.message for o in refused))
+
+
 async def _cached_version_of(session: AsyncSession, uploaded_file: UploadedFile | None) -> SlicedVersion | None:
     if uploaded_file is None:
         return None
@@ -259,6 +291,8 @@ class JobCreate(BaseModel):
     # Slicing cache (BIZ-192): keep this job's production slice in the library, next to the model, as a cached version.
     save_slice: bool = False
     save_slice_name: str | None = Field(default=None, max_length=200)
+    # A pre-sliced file with no recorded machine eligibility (legacy) is refused until the user confirms it fits (BIZ-263).
+    confirm_unknown_eligibility: bool = False
 
     @field_validator("not_before")
     @classmethod
@@ -373,6 +407,8 @@ async def create_job(
         if printer is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
     await _check_gcode_printers(session, uploaded_file, body.printer_configs, body.model_targets)
+    await _check_machine_eligibility(session, uploaded_file, body.printer_configs, body.model_targets,
+                                     body.confirm_unknown_eligibility)
     version = await _cached_version_of(session, uploaded_file)
     await _check_version_printers(session, version, body.printer_configs, body.model_targets)
     # A pre-sliced archive prints exactly the plate asked for (Bambu is told `Metadata/plate_N.gcode`): a plate the
@@ -407,6 +443,7 @@ async def create_job(
         not_before=body.not_before,
         save_slice=body.save_slice,
         save_slice_name=_clean_save_name(body.save_slice_name) if body.save_slice else None,
+        eligibility_confirmed=bool(body.confirm_unknown_eligibility and is_presliced_file(uploaded_file)),
         created_at=now,
         updated_at=now,
     )
@@ -782,6 +819,7 @@ class JobConfigsUpdate(BaseModel):
     printer_configs: list[PrinterConfigInput] = []
     model_targets: list[ModelTargetInput] = []
     overrides: dict | None = None
+    confirm_unknown_eligibility: bool | None = None     # None = keep the job's current confirmation
 
 
 @router.patch(
@@ -811,6 +849,9 @@ async def update_job_configs(
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
     edited_file = await session.get(UploadedFile, job.uploaded_file_id)
     await _check_gcode_printers(session, edited_file, body.printer_configs, body.model_targets)
+    confirmed = job.eligibility_confirmed if body.confirm_unknown_eligibility is None else body.confirm_unknown_eligibility
+    await _check_machine_eligibility(session, edited_file, body.printer_configs, body.model_targets, confirmed)
+    job.eligibility_confirmed = bool(confirmed and is_presliced_file(edited_file))
     await _check_version_printers(
         session, await _cached_version_of(session, edited_file), body.printer_configs, body.model_targets)
 

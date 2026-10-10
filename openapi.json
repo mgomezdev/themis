@@ -3202,6 +3202,36 @@
               "default": "all",
               "title": "Kind"
             }
+          },
+          {
+            "name": "eligible_model",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only pre-sliced files eligible for this printer-model UUID",
+              "title": "Eligible Model"
+            },
+            "description": "Only pre-sliced files eligible for this printer-model UUID"
+          },
+          {
+            "name": "include_unknown_eligibility",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "description": "With eligible_model: also list pre-sliced files whose eligibility is unknown",
+              "default": false,
+              "title": "Include Unknown Eligibility"
+            },
+            "description": "With eligible_model: also list pre-sliced files whose eligibility is unknown"
           }
         ],
         "responses": {
@@ -3287,7 +3317,7 @@
           "files"
         ],
         "summary": "Upload a file",
-        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.",
+        "description": "Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists\nin the target folder the existing record is returned (deduplication by SHA-256).\nThumbnail generation is triggered in the background for (unsliced) .3mf files.\nA pre-sliced file may carry `eligible_model_uuids` (printer-model registry ids it may be sent to); without them its machine\neligibility is unknown until set (BIZ-263).",
         "operationId": "upload_file_api_v1_files_upload_post",
         "requestBody": {
           "content": {
@@ -3314,6 +3344,103 @@
           },
           "422": {
             "description": "Unsupported file type (only .3mf, .stl and .gcode accepted)"
+          }
+        }
+      }
+    },
+    "/api/v1/files/{file_id}/eligibility": {
+      "get": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Machine eligibility of a pre-sliced G-code file",
+        "description": "`{known, models: [{model_uuid, source, display_name, manufacturer_name}]}`. `known: false` = legacy/unknown: it is never\ntreated as a confirmed match, and a job for it needs explicit confirmation.",
+        "operationId": "get_eligibility_api_v1_files__file_id__eligibility_get",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Eligibility Api V1 Files  File Id  Eligibility Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "files"
+        ],
+        "summary": "Set the printer models a pre-sliced G-code file may be sent to",
+        "description": "Replace the file's eligibility with exactly these registry models. Queued jobs are re-checked at their next queue pull.",
+        "operationId": "put_eligibility_api_v1_files__file_id__eligibility_put",
+        "parameters": [
+          {
+            "name": "file_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "File Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EligibilityBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Put Eligibility Api V1 Files  File Id  Eligibility Put"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "File not found"
+          },
+          "422": {
+            "description": "Not a pre-sliced file, or an unknown model"
           }
         }
       }
@@ -10193,6 +10320,14 @@
             "type": "string",
             "title": "Folder",
             "default": "/Job Uploads"
+          },
+          "eligible_model_uuids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Eligible Model Uuids",
+            "default": []
           }
         },
         "type": "object",
@@ -10559,6 +10694,22 @@
         },
         "type": "object",
         "title": "DraftPatch"
+      },
+      "EligibilityBody": {
+        "properties": {
+          "model_uuids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Model Uuids"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model_uuids"
+        ],
+        "title": "EligibilityBody"
       },
       "EmailChannelConfig": {
         "properties": {
@@ -10932,6 +11083,17 @@
               }
             ],
             "title": "Overrides"
+          },
+          "confirm_unknown_eligibility": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Unknown Eligibility"
           }
         },
         "type": "object",
@@ -11042,6 +11204,11 @@
               }
             ],
             "title": "Save Slice Name"
+          },
+          "confirm_unknown_eligibility": {
+            "type": "boolean",
+            "title": "Confirm Unknown Eligibility",
+            "default": false
           }
         },
         "type": "object",
