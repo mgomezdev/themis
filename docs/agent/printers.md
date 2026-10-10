@@ -19,14 +19,14 @@ The vendor-abstraction is the most-extended part of the codebase. Adding a print
 `get_loaded_filaments()` (AMS), `camera_rtsp_url`/`camera_mjpeg_url`, `home`/`jog_z`/`set_bed_temp`/`list_files`/`delete_file`/`download_file` (capabilities `file_browser`/`file_delete`/`file_download`; Bambu = FTPS `LIST`/`DELE`/`RETR` over root + `/cache`, Snapmaker = Moonraker `/server/files/directory?extended=true` + `/server/files/gcodes/<path>` with inline metadata, Elegoo = SDCP list + delete only; ids are vendor paths — `PrinterFile.id` — handed back verbatim; verified against virtual printers in CI and real ones via `backend/protocol_verification`)/`jog`/`home_axes`/`set_nozzle_temp`/`set_chamber_temp` (console capabilities `axis_jog`/`home_axes`/`nozzle_temp`/`chamber_temp`/`direct_upload`; Bambu + Snapmaker via G-code, Elegoo only `direct_upload` until its SDCP axis/setpoint commands are verified on hardware)/
 `set_fan_speeds`/`set_chamber_light`, `printer_type` (ClassVar, the legacy key rows/backups/discovery still carry),
 `serialize_state(printer_id)` (the vendor's normalized status dict — see below; base default = identity only),
-`camera_stream()` / `camera_snapshot()` / `camera_unavailable_reason()` (the client produces its own camera feed for the core camera hub; defaults proxy `camera_mjpeg_url`; Bambu transcodes RTSP in `plugins/bambu/camera.py`),
+`camera_configured` (default: a camera URL is stored; override when the feed isn't URL-based) / `camera_stream()` / `camera_snapshot()` / `camera_unavailable_reason()` (the client produces its own camera feed for the core camera hub; defaults proxy `camera_mjpeg_url`; Bambu transcodes RTSP in `plugins/bambu/camera.py`),
 `slice_tool_mapping` (ClassVar bool, default False; True = the 3MF's filament→tool routing is baked in at slice time — Snapmaker),
-`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu). The camera routes only serve a client that exposes `camera_mjpeg_url` or `camera_rtsp_url` (404 otherwise); the feed itself comes from the client.
+`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu). The camera routes only serve a client whose `camera_configured` is true (404 otherwise; default = a camera URL is stored); the feed itself comes from the client.
 
 **Callbacks** (set by `printer_manager.connect_printer`, fired from the client's bg thread via
 `run_coroutine_threadsafe(self._loop)`): `_on_state_change(state)`, `_on_print_complete(state)`,
 `_on_ams_change(trays)` (only wired if the client has the attr). They no longer call the manager directly: each publishes a typed
-event on the process bus (`services/events.event_bus` → `PrinterStateChanged` / `PrintCompleted` / `AmsChanged` in
+event on the process bus (`services/events.event_bus` → `PrinterStateChanged` / `PrintCompleted` / `AmsChanged` / `AlarmsReported` (the manager publishes the client's `get_alarms()` on each state change; its handler `on_alarms` feeds the alarm tracker) in
 `services/printer_events.py`), and `PrinterManager.subscribe_events()` (called once in the `main.py` lifespan, idempotent) routes them
 to `on_state_change` / `on_print_complete` / `on_ams_change`. Handlers are isolated tasks; publishers never wait. Each is bounded by the bus's `handler_timeout` (10 s) except the print-completion handler, subscribed with `timeout=None` because completing a job (commit, inventory deduction, webhooks) must never be cut short.
 

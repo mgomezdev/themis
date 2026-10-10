@@ -273,6 +273,12 @@ class AbstractPrinterClient(ABC):
     def camera_rtsp_url(self) -> str | None:
         return None
 
+    @property
+    def camera_configured(self) -> bool:
+        """Whether this printer has a camera source set up. Default: a URL is stored; a plugin whose feed isn't URL-based
+        (a vendor SDK, a local device) overrides this and `camera_stream`/`camera_snapshot`."""
+        return bool(self.camera_mjpeg_url or self.camera_rtsp_url)
+
     def camera_unavailable_reason(self) -> str | None:
         """Why this client's camera cannot be served right now (user-facing), or None."""
         return None

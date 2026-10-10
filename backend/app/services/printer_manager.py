@@ -11,7 +11,7 @@ from .abstract_printer_client import AbstractPrinterClient
 from .events import event_bus
 from .inventory import refs as inventory_refs
 from .printer_client_factory import create_client
-from .printer_events import AmsChanged, PrinterStateChanged, PrintCompleted
+from .printer_events import AlarmsReported, AmsChanged, PrinterStateChanged, PrintCompleted
 from .printer_identity import dormant_reason
 
 logger = logging.getLogger(__name__)
@@ -38,6 +38,7 @@ class PrinterManager:
         # completing a job (DB commit, inventory deduction, webhooks) must never be cut short by the bus's handler timeout
         event_bus.subscribe(PrintCompleted, lambda e: self.on_print_complete(e.printer_id, e.state), timeout=None)
         event_bus.subscribe(AmsChanged, lambda e: self.on_ams_change(e.printer_id, e.trays))
+        event_bus.subscribe(AlarmsReported, lambda e: self.on_alarms(e.printer_id, e.alarms))
 
     def set_broadcast_callback(self, cb: Callable) -> None:
         self._on_state_broadcast = cb
@@ -126,20 +127,26 @@ class PrinterManager:
         return state
 
     async def on_state_change(self, printer_id: int, vendor_state) -> None:
-        await self._observe_alarms(printer_id)
+        client = self._clients.get(printer_id)
+        if client is not None:
+            try:
+                alarms = client.get_alarms()
+            except Exception:
+                logger.exception("Reading alarms failed for printer %s", printer_id)   # never let it break telemetry
+            else:
+                await event_bus.publish(AlarmsReported(printer_id=printer_id, alarms=alarms))
         if self._on_state_broadcast:
             normalized = self.get_normalized_state(printer_id)
             await self._on_state_broadcast("printer_state", normalized)
 
-    async def _observe_alarms(self, printer_id: int) -> None:
+    async def on_alarms(self, printer_id: int, alarms: list) -> None:
         """Feed the printer's current problems to the alarm history. Never lets an alarm failure break telemetry."""
-        client = self._clients.get(printer_id)
-        if client is None or self._session_factory is None:
+        if self._session_factory is None:
             return
         try:
             from .alarms import tracker
             await tracker.observe(
-                self._session_factory, printer_id, client.get_alarms(), self._on_state_broadcast,
+                self._session_factory, printer_id, alarms, self._on_state_broadcast,
                 refresh=lambda: self._clients[printer_id].get_alarms() if printer_id in self._clients else [])
         except Exception:
             logger.exception("Alarm update failed for printer %s", printer_id)

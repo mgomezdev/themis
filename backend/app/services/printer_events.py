@@ -19,3 +19,9 @@ class PrinterStateChanged(Event):
 class AmsChanged(Event):
     printer_id: int
     trays: list
+
+
+class AlarmsReported(Event):
+    """The printer's current problems (neutral `Alarm`s, already translated from the vendor's codes by its plugin)."""
+    printer_id: int
+    alarms: list

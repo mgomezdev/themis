@@ -163,3 +163,16 @@ describe('toFleetPrinter', () => {
     expect(p.bedTempTarget).toBe(0);
   });
 });
+
+describe('toFleetPrinter dormancy', () => {
+  it('carries the dormant reason when the plugin is unavailable', () => {
+    expect(toFleetPrinter({ ...BASE, dormant: true, dormant_reason: 'plugin_disabled' }).dormantReason).toBe('Its plugin is disabled');
+    expect(toFleetPrinter({ ...BASE, dormant: true, dormant_reason: 'plugin_removed' }).dormantReason).toBe('Its plugin is not installed');
+  });
+
+  it('falls back to a generic reason, and is absent for a live printer', () => {
+    expect(toFleetPrinter({ ...BASE, dormant: true, dormant_reason: null }).dormantReason).toBe('Plugin unavailable');
+    expect(toFleetPrinter({ ...BASE, dormant: false, dormant_reason: null }).dormantReason).toBeUndefined();
+    expect(toFleetPrinter(BASE).dormantReason).toBeUndefined();
+  });
+});

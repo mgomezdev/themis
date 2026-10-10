@@ -16,11 +16,12 @@ class _Caps:
 
 class FakeCamClient:
     def __init__(self, *, connected=True, camera=True, mjpeg=None, rtsp=None, reason=None,
-                 snapshot=JPEG_S, snapshot_exc=None):
+                 snapshot=JPEG_S, snapshot_exc=None, configured=None):
         self.connected = connected
         self._camera = camera
         self.camera_mjpeg_url = mjpeg
         self.camera_rtsp_url = rtsp
+        self.camera_configured = bool(mjpeg or rtsp) if configured is None else configured
         self.reason = reason
         self.snapshot = snapshot
         self.snapshot_exc = snapshot_exc
@@ -101,3 +102,11 @@ async def test_snapshot_503_when_the_client_raises(client, printer_id):
     resp = await client.get(f"/api/v1/printers/{printer_id}/snapshot")
     assert resp.status_code == 503
     assert resp.json()["detail"].startswith("Camera unavailable")
+
+
+async def test_a_plugin_feed_that_is_not_url_based_streams_without_any_stored_url(client, printer_id):
+    fake = FakeCamClient(configured=True)            # no mjpeg/rtsp url: the client produces the feed itself
+    printer_manager._clients[printer_id] = fake
+    resp = await client.get(f"/api/v1/printers/{printer_id}/camera")
+    assert resp.status_code == 200
+    assert resp.content == multipart_part(JPEG_A)
