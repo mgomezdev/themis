@@ -20,7 +20,8 @@ from ...models import UploadedFile, Tag, FileTag, Job, Printer, ProjectItem, Sli
 from ...services.library_scanner import (
     LibraryScanner, file_kind, folder_of, is_presliced_name, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
-from ...services import model_targets, slice_cache
+from ...services import gcode_eligibility, model_targets, slice_cache
+from ...services.queue_engine import queue_engine
 from ...services.providers.slicing import get_slicing_provider
 from ...services.thumbnail_regen import regen_file_thumbnails
 
@@ -58,7 +59,8 @@ async def _cache_for(session: AsyncSession, file_ids: list[int]) -> dict:
     """Slicing-cache facts for these files, batched: `counts` = how many cached versions each model has (versions
     whose file is present), `versions` = the version a cached file *is* (BIZ-193/196)."""
     if not file_ids:
-        return {"counts": {}, "versions": {}}
+        return {"counts": {}, "versions": {}, "eligibility": {}}
+    eligibility = await gcode_eligibility.eligibility_for_files(session, file_ids)
     counts = dict((await session.execute(
         select(SlicedVersion.source_file_id, func.count(SlicedVersion.id))
         .join(UploadedFile, UploadedFile.id == SlicedVersion.file_id)
@@ -71,7 +73,7 @@ async def _cache_for(session: AsyncSession, file_ids: list[int]) -> dict:
     source_ids = {v.source_file_id for v in versions.values() if v.source_file_id}
     sources = {f.id: f for f in (await session.execute(
         select(UploadedFile).where(UploadedFile.id.in_(source_ids)))).scalars().all()} if source_ids else {}
-    return {"counts": counts, "versions": versions, "sources": sources}
+    return {"counts": counts, "versions": versions, "sources": sources, "eligibility": eligibility}
 
 
 def _version_summary(v: SlicedVersion, source: UploadedFile | None) -> dict:
@@ -103,6 +105,10 @@ def _to_dict(f: UploadedFile, tags: list[dict], cache: dict | None = None) -> di
         # Slicing cache: how many cached versions this model has / the version this cached file is.
         "sliced_version_count": (cache or {}).get("counts", {}).get(f.id, 0),
         "sliced_version": _version_summary(version, source) if version else None,
+        # Pre-sliced G-code only (BIZ-263): `known` False = legacy/unknown machine eligibility; `model_uuids` = the printer models
+        # it may be sent to (core registry ids). Null for model files, which the slicer targets at the printer.
+        "eligibility": ({"known": bool(f.eligibility_known), "model_uuids": (cache or {}).get("eligibility", {}).get(f.id, [])}
+                        if is_presliced_name(f.original_filename) else None),
         "tags": tags,
         "thumbnail_url": thumb,
         "plate_thumbnails": _plate_thumbnail_urls(f),
@@ -139,6 +145,8 @@ async def list_files(
     search: str | None = None,
     sort: str = "updated",
     kind: Literal["all", "models", "sliced"] = Query("all"),
+    eligible_model: str | None = Query(None, description="Only pre-sliced files eligible for this printer-model UUID"),
+    include_unknown_eligibility: bool = Query(False, description="With eligible_model: also list pre-sliced files whose eligibility is unknown"),
     session: AsyncSession = Depends(get_session),
 ) -> list[dict]:
     """All files in the library. Optional filters: `folder` (prefix match),
@@ -149,6 +157,11 @@ async def list_files(
     if kind != "all":
         want_sliced = kind == "sliced"
         rows = [r for r in rows if is_presliced_name(r.original_filename) == want_sliced]
+    if eligible_model:
+        by_file = await gcode_eligibility.eligibility_for_files(session, [r.id for r in rows])
+        rows = [r for r in rows if is_presliced_name(r.original_filename)
+                and ((r.eligibility_known and eligible_model in by_file.get(r.id, []))
+                     or (include_unknown_eligibility and not r.eligibility_known))]
     if folder:
         rows = [r for r in rows if r.folder == folder or r.folder.startswith(folder.rstrip("/") + "/")]
     if search:
@@ -227,10 +240,15 @@ async def upload_file(
     background_tasks: BackgroundTasks,
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
+    eligible_model_uuids: list[str] = Form([]),
 ) -> dict:
     """Upload a .3mf, .stl, .gcode or .gcode.3mf (sliced archive) file to the library. If identical content already exists
     in the target folder the existing record is returned (deduplication by SHA-256).
-    Thumbnail generation is triggered in the background for (unsliced) .3mf files."""
+    Thumbnail generation is triggered in the background for (unsliced) .3mf files.
+    A pre-sliced file may carry `eligible_model_uuids` (printer-model registry ids it may be sent to); without them its machine
+    eligibility is unknown until set (BIZ-263)."""
+    if not isinstance(eligible_model_uuids, list):    # other routes call this function directly: Form's default object is "none given"
+        eligible_model_uuids = []
     fname = (file.filename or "")
     ext = Path(fname).suffix.lower()
     if ext not in MODEL_EXTS:
@@ -273,6 +291,9 @@ async def upload_file(
                 # stays valid.
                 existing_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(tmp_path), str(existing_path))
+            if eligible_model_uuids and is_presliced_name(existing.original_filename):
+                await _apply_eligibility(session, existing, eligible_model_uuids)
+                await session.commit()
             return _to_dict(existing, [], await _cache_for(session, [existing.id]))
 
         dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
@@ -292,11 +313,54 @@ async def upload_file(
     session.add(record)
     await session.flush()
     record.plates = scanner._parse_plates(dest, record.id)
+    if eligible_model_uuids and is_presliced_name(record.original_filename):
+        try:
+            await _apply_eligibility(session, record, eligible_model_uuids)
+        except HTTPException:
+            dest.unlink(missing_ok=True)       # a rejected eligibility must not leave an unregistered upload behind
+            await session.rollback()
+            raise
     await session.commit()
     await session.refresh(record)
     if file_kind(dest.name) == "3mf":   # a sliced .gcode.3mf already carries its own thumbnails (BIZ-190)
         background_tasks.add_task(regen_file_thumbnails, record.id)
-    return _to_dict(record, [])
+    return _to_dict(record, [], await _cache_for(session, [record.id]))
+
+
+async def _apply_eligibility(session: AsyncSession, record: UploadedFile, model_uuids: list[str]) -> None:
+    try:
+        await gcode_eligibility.set_eligibility(session, record, model_uuids)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+class EligibilityBody(BaseModel):
+    model_uuids: list[str]
+
+
+@router.get("/{file_id}/eligibility", summary="Machine eligibility of a pre-sliced G-code file",
+            responses={404: {"description": "File not found"}}, dependencies=[Depends(require_scope("files:read"))])
+async def get_eligibility(file_id: int, session: AsyncSession = Depends(get_session)) -> dict:
+    """`{known, models: [{model_uuid, source, display_name, manufacturer_name}]}`. `known: false` = legacy/unknown: it is never
+    treated as a confirmed match, and a job for it needs explicit confirmation."""
+    record = await session.get(UploadedFile, file_id)
+    if record is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    return await gcode_eligibility.eligibility_of(session, file_id)
+
+
+@router.put("/{file_id}/eligibility", summary="Set the printer models a pre-sliced G-code file may be sent to",
+            responses={404: {"description": "File not found"}, 422: {"description": "Not a pre-sliced file, or an unknown model"}},
+            dependencies=[Depends(require_scope("files:write"))])
+async def put_eligibility(file_id: int, body: EligibilityBody, session: AsyncSession = Depends(get_session)) -> dict:
+    """Replace the file's eligibility with exactly these registry models. Queued jobs are re-checked at their next queue pull."""
+    record = await session.get(UploadedFile, file_id)
+    if record is None:
+        raise HTTPException(404, f"File {file_id} not found")
+    await _apply_eligibility(session, record, body.model_uuids)
+    await session.commit()
+    queue_engine.wake()
+    return await gcode_eligibility.eligibility_of(session, file_id)
 
 
 # ---------- folders ----------

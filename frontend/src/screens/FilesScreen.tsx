@@ -10,6 +10,7 @@ import {
 } from '../api/files';
 import type { CachedVersionRef, FileKindFilter, SlicedVersion } from '../api/files';
 import { useTags } from '../api/tags';
+import { FileEligibilityEditor } from '../components/FileEligibilityEditor';
 import type { Tag } from '../api/tags';
 
 // -------------------------------------------------------------------------
@@ -401,10 +402,11 @@ interface FileDetailPanelProps {
   onAddTag: (f: LibraryFile, tagId: number) => void;
   onRemoveTag: (f: LibraryFile, tagId: number) => void;
   onUseInJob: (f: LibraryFile) => void;
+  onEligibilitySaved?: () => void;
 }
 
 function FileDetailPanel({
-  file, tags, onClose, onRename, onMove, onDelete, onAddTag, onRemoveTag, onUseInJob,
+  file, tags, onClose, onRename, onMove, onDelete, onAddTag, onRemoveTag, onUseInJob, onEligibilitySaved,
 }: FileDetailPanelProps) {
   const fileTagIds = new Set(file.tags.map(t => t.id));
   const available = tags.filter(t => !fileTagIds.has(t.id));
@@ -495,6 +497,7 @@ function FileDetailPanel({
         </div>
       )}
       {file.sliced_version_count > 0 && <SlicedVersionsList fileId={file.id} />}
+      {file.eligibility && <FileEligibilityEditor key={file.id} fileId={file.id} onSaved={onEligibilitySaved} />}
 
       <div className="col gap-2" style={{ marginTop: 12 }}>
         <div className="row between"><span className="tiny muted">Folder</span>
@@ -783,8 +786,11 @@ export function FilesScreen() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await uploadLibraryFile(file, currentFolder || '/Job Uploads');
+      const uploaded = await uploadLibraryFile(file, currentFolder || '/Job Uploads');
       refetch();
+      // A pre-sliced file arrives with unknown machine eligibility: open its drawer so the user records which printers it is for
+      // right away (BIZ-263). The drawer follows the live row, so it fills in once the refetch lands.
+      if (uploaded?.eligibility && !uploaded.eligibility.known) setSelected(uploaded);
     } catch (err) {
       window.alert(String(err));
     }
@@ -1147,6 +1153,7 @@ export function FilesScreen() {
           onAddTag={handleAddTag}
           onRemoveTag={handleRemoveTag}
           onUseInJob={handleUseInJob}
+          onEligibilitySaved={refetch}
         />
       )}
 

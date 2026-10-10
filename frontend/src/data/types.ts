@@ -175,6 +175,9 @@ export interface LibraryFile {
   sliced_version_count: number;
   /** Slicing cache: set when this file IS a cached version of a model. */
   sliced_version: SlicedVersionSummary | null;
+  /** Pre-sliced G-code only (BIZ-263): `known` false = legacy/unknown machine eligibility; `model_uuids` = printer models it may be
+   *  sent to (registry ids). Null for model files, which the slicer targets at the printer. */
+  eligibility: { known: boolean; model_uuids: string[] } | null;
 }
 
 export interface SlicedVersionSummary {

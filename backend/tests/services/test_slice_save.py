@@ -52,7 +52,7 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
                              size_bytes=st.st_size, mtime=st.st_mtime)   # indexed as it is on disk
             s.add(f)
             await s.flush()
-        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", created_at=_now(),
+        j = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued", eligibility_confirmed=True, created_at=_now(),
                 updated_at=_now(), save_slice=save, save_slice_name=name)
         s.add(j)
         await s.flush()
@@ -424,3 +424,51 @@ def test_the_copy_never_clobbers_a_file_that_appears_between_choosing_and_writin
         dest = slice_saver._copy_exclusive(str(src), tmp_path, "x.gcode")
     assert dest.name == "x (2).gcode" and dest.read_bytes() == GCODE
     assert raced.read_bytes() == b"the other save"
+
+
+@pytest.mark.asyncio
+async def test_a_saved_slice_is_eligible_for_its_target_model_and_only_its_declared_equivalents(session_factory, tmp_path, env):
+    """BIZ-263: the slice's file records the model it was sliced for + registry-declared equivalents (never inferred)."""
+    from app import plugins
+    from app.models import FileMachineEligibility
+    from app.plugins.manifest import Manufacturer, PrinterModel
+    from app.services import printer_model_registry as registry
+    from tests.plugins.dummy_plugin import make_manifest
+    saved = dict(plugins._REGISTRY)
+    plugins.register_plugin(make_manifest("fake_printers", default_enabled=True, manufacturers=(
+        Manufacturer("acme", "Acme", (PrinterModel("x1", "X1", equivalents=("x1_pro",)), PrinterModel("x1_pro", "X1 Pro"),
+                                      PrinterModel("x2", "X2"))),)))
+    try:
+        async with session_factory() as s:
+            await registry.sync_registry(s)
+            models = {m["model_id"]: m["id"] for m in await registry.list_models(s, plugin_id="fake_printers")}
+            s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}, model_uuid=models["x1"],
+                          current_orca_printer_profile=MACHINE,
+                          loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]))
+            await s.commit()
+        qe, _ = _engine(session_factory, tmp_path)
+        job_id = await _seed(session_factory)
+
+        await _run_to_printing(qe, session_factory, job_id)
+
+        (version,) = await _versions(session_factory)
+        async with session_factory() as s:
+            f = await s.get(UploadedFile, version.file_id)
+            rows = (await s.execute(select(FileMachineEligibility).where(FileMachineEligibility.file_id == f.id))).scalars().all()
+        assert f.eligibility_known is True
+        assert {(r.model_uuid, r.source) for r in rows} == {(models["x1"], "target"), (models["x1_pro"], "equivalent")}
+    finally:
+        plugins._REGISTRY.clear()
+        plugins._REGISTRY.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_a_saved_slice_from_a_printer_with_no_registered_model_stays_unknown(session_factory, tmp_path, env):
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed(session_factory)               # the seeded printer has no model_uuid
+
+    await _run_to_printing(qe, session_factory, job_id)
+
+    (version,) = await _versions(session_factory)
+    async with session_factory() as s:
+        assert (await s.get(UploadedFile, version.file_id)).eligibility_known is False

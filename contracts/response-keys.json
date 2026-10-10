@@ -203,7 +203,8 @@
     "plate_thumbnails",
     "kind",
     "sliced_version_count",
-    "sliced_version"
+    "sliced_version",
+    "eligibility"
   ],
   "project_payment": [
     "id",

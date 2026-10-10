@@ -34,10 +34,22 @@ export const getFolderTree = () => request<FolderNode>('/api/v1/files/tree');
 /** Real on-disk folder hierarchy incl. empty folders (for the move picker). */
 export const getFolderDirs = () => request<FolderNode>('/api/v1/files/dirs');
 
-export async function uploadLibraryFile(file: File, folder?: string): Promise<LibraryFile> {
+export interface FileEligibility {
+  known: boolean;
+  models: { model_uuid: string; source: 'manual' | 'target' | 'equivalent' | 'backfill'; display_name: string; manufacturer_name: string }[];
+}
+
+export const getFileEligibility = (id: number) => request<FileEligibility>(`/api/v1/files/${id}/eligibility`);
+
+/** Replace the printer models a pre-sliced file may be sent to (registry UUIDs). */
+export const setFileEligibility = (id: number, modelUuids: string[]) =>
+  request<FileEligibility>(`/api/v1/files/${id}/eligibility`, jsonInit('PUT', { model_uuids: modelUuids }));
+
+export async function uploadLibraryFile(file: File, folder?: string, eligibleModelUuids: string[] = []): Promise<LibraryFile> {
   const body = new FormData();
   body.append('file', file);
   if (folder) body.append('folder', folder);
+  for (const u of eligibleModelUuids) body.append('eligible_model_uuids', u);
   return request<LibraryFile>('/api/v1/files/upload', { method: 'POST', body });
 }
 

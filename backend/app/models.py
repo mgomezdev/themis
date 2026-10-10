@@ -57,6 +57,19 @@ class PrinterModelRecord(Base):
     declared: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class FileMachineEligibility(Base):
+    """Which printer models a pre-sliced G-code file may be sent to (BIZ-263). A file is `eligibility_known` once a user set
+    it or Themis recorded it from a slice; known + these rows is the whole set (core model UUIDs, never free text).
+    `source`: manual | target (the model it was sliced for) | equivalent (a registry-declared equivalent of the target) | backfill."""
+    __tablename__ = "file_machine_eligibility"
+    __table_args__ = (UniqueConstraint("file_id", "model_uuid"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id", ondelete="CASCADE"), index=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    source: Mapped[str] = mapped_column(String(16), default="manual")
+
+
 class UploadedFile(Base):
     __tablename__ = "uploaded_files"
 
@@ -78,6 +91,9 @@ class UploadedFile(Base):
     content_hash: Mapped[str] = mapped_column(String(64), default="")
     mtime: Mapped[float] = mapped_column(Float, default=0.0)
     missing: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Pre-sliced G-code only (BIZ-263): False = legacy/unknown machine eligibility (never treated as a confirmed match);
+    # True = `file_machine_eligibility` is the complete set of printer models this file may be sent to.
+    eligibility_known: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     # Project-generated packs only (BIZ-193): hash of the pack inputs (STL hashes x quantities, bed, pack mode), so an
     # identical later generation can reuse this 3MF instead of re-packing.
     pack_recipe_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -167,6 +183,8 @@ class Job(Base):
     status: Mapped[str] = mapped_column(String(20), default="queued")
     project_id: Mapped[Optional[int]] = mapped_column(ForeignKey("projects.id", ondelete="SET NULL"), nullable=True)
     block_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The user confirmed sending a pre-sliced file whose machine eligibility is unknown (BIZ-263).
+    eligibility_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
     overrides: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))

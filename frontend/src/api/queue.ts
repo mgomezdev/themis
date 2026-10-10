@@ -237,6 +237,8 @@ export async function createJob(body: {
   overrides?: Record<string, string> | null;
   save_slice?: boolean;
   save_slice_name?: string | null;
+  /** Pre-sliced file with unknown machine eligibility: the user confirmed it fits the chosen printers (BIZ-263). */
+  confirm_unknown_eligibility?: boolean;
 }): Promise<ApiJob> {
   return request('/api/v1/jobs', {
     method: 'POST',

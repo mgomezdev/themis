@@ -326,3 +326,43 @@ describe('NewJobScreen - several plates', () => {
     expect(plates).toEqual([1, 2, 2]);                                // plate 1 once; plate 2 failed, then went through
   });
 });
+
+describe('NewJobScreen - unknown machine eligibility (BIZ-263)', () => {
+  const DETAIL = 'part.gcode has no recorded machine eligibility — confirm it fits Barnabus, or set the printer models it is for';
+
+  it('asks before sending a file whose machine is unknown, and resends with the confirmation only after the user says so', async () => {
+    let calls = 0;
+    const api = open([plate(1)], {
+      'POST /api/v1/jobs': () => (++calls === 1 ? new Reply(409, JSON.stringify({ detail: DETAIL })) : { id: 1, status: 'queued' }),
+    });
+    await upload();
+    await configureActivePlate();
+
+    await userEvent.click(addButton());
+
+    const prompt = await screen.findByTestId('eligibility-prompt');
+    expect(prompt.textContent).toContain(DETAIL);
+    expect(screen.queryByText(/Failed to create job/)).toBeNull();                      // not an error: a question
+    expect(jobPosts(api)[0].body).not.toHaveProperty('confirm_unknown_eligibility');
+
+    await userEvent.click(screen.getByRole('button', { name: /Send anyway/ }));
+
+    await screen.findByText(/1 job added to queue/);
+    expect(jobPosts(api)).toHaveLength(2);
+    expect(jobPosts(api)[1].body).toMatchObject({ confirm_unknown_eligibility: true });
+  });
+
+  it('cancel keeps nothing queued and an incompatible-machine refusal (422) stays an ordinary error', async () => {
+    const api = open([plate(1)], {
+      'POST /api/v1/jobs': new Reply(422, JSON.stringify({ detail: "Barnabus can't take part.gcode: it is for Acme X1" })),
+    });
+    await upload();
+    await configureActivePlate();
+
+    await userEvent.click(addButton());
+
+    expect(await screen.findByText(/Failed to create job: 422/)).toBeTruthy();
+    expect(screen.queryByTestId('eligibility-prompt')).toBeNull();
+    expect(jobPosts(api)).toHaveLength(1);
+  });
+});
