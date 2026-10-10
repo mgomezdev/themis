@@ -14,7 +14,7 @@ from ..plugins.host import plugin_host
 
 logger = logging.getLogger("app")
 
-CHANNEL_TIMEOUT_S = 15.0
+CHANNEL_TIMEOUT_S = 30.0          # the SMTP timeout is per socket operation (10 s), so a whole send can take longer than one
 _SEEN_LIMIT = 1000
 _seen: OrderedDict[str, None] = OrderedDict()
 
@@ -41,7 +41,7 @@ async def notify(event: str, job_id: int | None, title: str, message: str, *, me
         if not _first_time(message_id):
             return outcome
         msg = ChannelMessage(event, title, message, job_id, message_id)
-        results = await plugin_host.fan_out(NOTIFY_CHANNEL, lambda p: p.deliver(msg), timeout=CHANNEL_TIMEOUT_S)
+        results = await plugin_host.fan_out(NOTIFY_CHANNEL, lambda p: p.deliver(msg), timeout=CHANNEL_TIMEOUT_S, record=False)
         for plugin_id, res in results.items():
             if not res.ok:
                 outcome[plugin_id] = redact_error(res.error or "failed")
@@ -52,7 +52,7 @@ async def notify(event: str, job_id: int | None, title: str, message: str, *, me
             if outcome[plugin_id] not in ("ok", "skipped"):
                 logger.warning("Notification channel %s failed for %s: %s", plugin_id, event, outcome[plugin_id])
                 await plugin_host.record_state(plugin_id, last_error=outcome[plugin_id], last_error_at=_now())   # shows on its settings page
-            elif outcome[plugin_id] == "ok":
+            elif outcome[plugin_id] == "ok":                    # a real send succeeded; a skipped one proves nothing either way
                 await plugin_host.record_state(plugin_id, last_error=None, last_ok_at=_now())
     except Exception:
         logger.exception("Could not send the %s notification", event)

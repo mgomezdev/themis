@@ -37,14 +37,19 @@ async def up(conn) -> None:
     def clean(d: dict) -> dict:
         return {k: v for k, v in d.items() if v is not None}
 
+    def in_range(value, lo: int, hi: int):
+        """The old API never bounds-checked these; a value the new settings model would reject is dropped rather than copied (it
+        would put the whole channel into a build error)."""
+        return value if isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi else None
+
     channels = {
         "notify_ntfy": (bool(row["ntfy_enabled"]),
-                        clean({"server_url": row["ntfy_server_url"], "topic": row["ntfy_topic"], "priority": row["ntfy_priority"],
+                        clean({"server_url": row["ntfy_server_url"], "topic": row["ntfy_topic"], "priority": in_range(row["ntfy_priority"], 1, 5),
                                "events": _events(row["ntfy_events"])}), {}),
         "notify_discord": (bool(row["discord_enabled"]), {"events": _events(row["discord_events"])},
                            clean({"webhook_url": row["discord_webhook_url"]})),
         "notify_email": (bool(row["email_enabled"]),
-                         clean({"host": row["email_host"], "port": row["email_port"], "username": row["email_username"],
+                         clean({"host": row["email_host"], "port": in_range(row["email_port"], 1, 65535), "username": row["email_username"],
                                 "from_addr": row["email_from_addr"], "to_addrs": _events(row["email_to_addrs"]),
                                 "events": _events(row["email_events"])}),
                          clean({"password": row["email_password"]})),

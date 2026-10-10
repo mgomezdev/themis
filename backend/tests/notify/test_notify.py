@@ -29,7 +29,6 @@ class FakeChannel(FilteredChannel):
         self.settings = settings
         self.secrets = (settings.api_token or "",)
         self.inbox = FakeChannel.inboxes.setdefault(settings.mode + str(id(self)), [])
-        FakeChannel.last = self
 
     def configured(self) -> bool:
         return True
@@ -184,3 +183,35 @@ async def test_channel_settings_and_events_are_discoverable_from_the_plugin_deta
     props = body["settings_schema"]["properties"]
     assert props["events"]["items"]["enum"][:2] == ["job.complete", "job.failed"]
     assert body["secret_fields"] == ["api_token"] and [p["capability"] for p in body["provides"]] == ["notify.channel"]
+
+
+async def test_a_skipped_delivery_neither_clears_a_failure_nor_counts_as_a_success(client):
+    plugins.register_plugin(manifest("fake_state"))
+    await enable("fake_state", events=["job.failed"], mode="raise")
+
+    await notify("job.failed", 1, "T", "M")                                   # a real failure is recorded
+    failed = (await client.get("/api/v1/plugins/fake_state")).json()["state"]
+    await notify("job.blocked", 1, "T", "M")                                   # an event this channel does not want: skipped
+    after_skip = (await client.get("/api/v1/plugins/fake_state")).json()["state"]
+
+    assert failed["last_error"] and after_skip["last_error"] == failed["last_error"]
+    assert "last_ok_at" not in after_skip                                      # nothing was ever delivered successfully
+
+
+async def test_a_successful_send_clears_the_error_and_stamps_last_ok(client):
+    plugins.register_plugin(manifest("fake_recover"))
+    await enable("fake_recover", events=["job.complete"], mode="raise")
+    await notify("job.complete", 1, "T", "M")
+    assert (await client.get("/api/v1/plugins/fake_recover")).json()["state"]["last_error"]
+
+    await plugin_host.update_config("fake_recover", settings={"events": ["job.complete"], "mode": "ok"})
+    await notify("job.complete", 2, "T", "M")
+
+    state = (await client.get("/api/v1/plugins/fake_recover")).json()["state"]
+    assert state["last_error"] is None and state["last_ok_at"]
+
+
+def test_httpx_request_urls_are_kept_out_of_the_logs_because_webhook_urls_carry_tokens():
+    import app.main  # noqa: F401  (configures logging)
+    assert logging.getLogger("httpx").getEffectiveLevel() >= logging.WARNING
+    assert logging.getLogger("httpcore").getEffectiveLevel() >= logging.WARNING

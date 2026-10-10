@@ -144,3 +144,18 @@ async def test_a_channel_plugin_lists_its_settings_page_and_a_secret_is_never_ec
     listing = {p["id"]: p for p in (await client.get("/api/v1/plugins")).json()["plugins"]}
     assert {"notify_ntfy", "notify_discord", "notify_email"} <= set(listing)
     assert all(listing[i]["enabled"] for i in ("notify_ntfy", "notify_discord", "notify_email"))
+
+
+async def test_values_the_old_api_accepted_but_the_new_settings_reject_are_dropped_not_copied(conn):
+    await _legacy(conn, ntfy_enabled=1, ntfy_server_url="https://n", ntfy_topic="t", ntfy_priority=9, ntfy_events=json.dumps(["job.complete"]),
+                  email_enabled=1, email_host="smtp.test", email_port=99999, email_from_addr="a@x.test",
+                  email_to_addrs=json.dumps(["b@x.test"]), email_events=json.dumps(["job.complete"]))
+
+    await mig.up(conn)
+
+    rows = await _rows(conn)
+    assert "priority" not in rows["notify_ntfy"][1] and "port" not in rows["notify_email"][1]
+    from app.plugins.notify_email.settings import EmailSettings
+    from app.plugins.notify_ntfy.settings import NtfySettings
+    NtfySettings(**rows["notify_ntfy"][1])                      # the migrated settings actually build
+    EmailSettings(**rows["notify_email"][1])

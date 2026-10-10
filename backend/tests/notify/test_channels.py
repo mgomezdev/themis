@@ -153,3 +153,57 @@ async def test_email_failures_do_not_leak_the_password(monkeypatch):
     result = await email().deliver(MSG)
 
     assert result.ok is False and "smtp-pass-123" not in result.error
+
+
+# --- SMTP behaviour (parity with the removed sender) --------------------------------------------------------------
+
+class FakeSMTP:
+    instances: list = []
+
+    def __init__(self, host, port, timeout=None):
+        self.host, self.port, self.timeout, self.calls = host, port, timeout, []
+        self.refuse_starttls = False
+        FakeSMTP.instances.append(self)
+
+    def starttls(self):
+        import smtplib
+        self.calls.append("starttls")
+        if self.refuse_starttls:
+            raise smtplib.SMTPNotSupportedError("no STARTTLS")
+
+    def login(self, user, password):
+        self.calls.append(("login", user, password))
+
+    def send_message(self, msg):
+        self.calls.append(("send", msg["Subject"], msg["To"], msg["From"], msg.get_payload()))
+
+    def quit(self):
+        self.calls.append("quit")
+
+
+@pytest.fixture
+def smtp(monkeypatch):
+    FakeSMTP.instances = []
+    monkeypatch.setattr(email_mod.smtplib, "SMTP", FakeSMTP)
+    return FakeSMTP
+
+
+def test_smtp_uses_starttls_logs_in_only_with_both_credentials_and_always_quits(smtp):
+    email_mod._send_sync("smtp.test", 587, "u", "p", "a@x.test", ["b@x.test", "c@x.test"], "Subject", "Body")
+    email_mod._send_sync("smtp.test", 25, "u", None, "a@x.test", ["b@x.test"], "S", "B")        # username without password: no login
+
+    first, second = smtp.instances
+    assert (first.host, first.port, first.timeout) == ("smtp.test", 587, 10)
+    assert first.calls == ["starttls", ("login", "u", "p"), ("send", "Subject", "b@x.test, c@x.test", "a@x.test", "Body"), "quit"]
+    assert not any(isinstance(c, tuple) and c[0] == "login" for c in second.calls)
+
+
+def test_a_server_without_starttls_is_still_used(monkeypatch, smtp):
+    class NoTls(FakeSMTP):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.refuse_starttls = True
+
+    monkeypatch.setattr(email_mod.smtplib, "SMTP", NoTls)
+    email_mod._send_sync("smtp.test", 25, None, None, "a@x.test", ["b@x.test"], "S", "B")
+    assert NoTls.instances[-1].calls == ["starttls", ("send", "S", "b@x.test", "a@x.test", "B"), "quit"]

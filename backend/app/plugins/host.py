@@ -478,14 +478,15 @@ class PluginHost:
         return await self.call_for(cap_id, r.plugin_id, fn, timeout=timeout)
 
     async def fan_out(self, cap: RoutedCapability[P] | str, fn: Callable[[P], R], *,
-                      timeout: float = DEFAULT_TIMEOUT_S) -> dict[str, CallResult[R]]:
+                      timeout: float = DEFAULT_TIMEOUT_S, record: bool = True) -> dict[str, CallResult[R]]:
         """Deliver to every enabled provider of a fan-out capability concurrently. Each call is contained on its own, so a
-        provider that fails or times out never blocks or fails the others."""
+        provider that fails or times out never blocks or fails the others. `record=False`: the caller records each provider's
+        health itself (a call that merely returned is not proof the provider is healthy, e.g. "skipped" or a reported failure)."""
         cap_id = cap.id if isinstance(cap, RoutedCapability) else cap
         if self._mode(cap_id) != "fan_out":
             return {}
         ids = self.active_providers(cap_id)
-        results = await asyncio.gather(*(self.call_for(cap_id, pid, fn, timeout=timeout) for pid in ids))
+        results = await asyncio.gather(*(self.call_for(cap_id, pid, fn, timeout=timeout, record=record) for pid in ids))
         return dict(zip(ids, results))
 
     # --- events (BIZ-249) ----------------------------------------------------------------------------------------
@@ -536,7 +537,7 @@ class PluginHost:
         return await self._contained(active.manifest.id, active.instance, method, lambda: fn(*args, **kwargs), timeout)
 
     async def call_for(self, cap: RoutedCapability[P] | str, plugin_id: str, fn: Callable[[P], R], *,
-                       timeout: float = DEFAULT_TIMEOUT_S) -> CallResult[R]:
+                       timeout: float = DEFAULT_TIMEOUT_S, record: bool = True) -> CallResult[R]:
         """Run `fn` against the routed capability `cap` as served by `plugin_id` (the provider bound to the resource).
 
         `fn` takes the provider and returns its result; a blocking method runs in a worker thread so the event loop is never
@@ -552,29 +553,30 @@ class PluginHost:
             out = await asyncio.to_thread(fn, active.part)
             return await out if inspect.isawaitable(out) else out
 
-        return await self._contained(plugin_id, active.instance, cap_id, run, timeout)
+        return await self._contained(plugin_id, active.instance, cap_id, run, timeout, record=record)
 
     async def _contained(self, plugin_id: str, instance: Any, what: str, run: Callable[[], Awaitable[Any]],
-                         timeout: float) -> CallResult:
+                         timeout: float, record: bool = True) -> CallResult:
         try:
             value = await asyncio.wait_for(run(), timeout=timeout)
         except asyncio.TimeoutError:
-            return await self._failed(plugin_id, instance, f"{what} timed out after {timeout:g}s", "timeout")
+            return await self._failed(plugin_id, instance, f"{what} timed out after {timeout:g}s", "timeout", record=record)
         except asyncio.CancelledError:
             task = asyncio.current_task()
             if task is not None and task.cancelling():          # *we* were cancelled: propagate
                 raise
-            return await self._failed(plugin_id, instance, f"{what} was cancelled inside the plugin", "error")
+            return await self._failed(plugin_id, instance, f"{what} was cancelled inside the plugin", "error", record=record)
         except Exception as e:
-            return await self._failed(plugin_id, instance, f"{what} failed: {self._describe(e)}", "error", exc=e)
-        if self._instances.get(plugin_id) is instance:
+            return await self._failed(plugin_id, instance, f"{what} failed: {self._describe(e)}", "error", exc=e, record=record)
+        if record and self._instances.get(plugin_id) is instance:
             await self._record(plugin_id, last_error=None, last_ok_at=_now())
         return CallResult(True, value=value)
 
-    async def _failed(self, plugin_id: str, instance: Any, message: str, reason: str, exc: Exception | None = None) -> CallResult:
+    async def _failed(self, plugin_id: str, instance: Any, message: str, reason: str, exc: Exception | None = None,
+                      record: bool = True) -> CallResult:
         message = self._redact(plugin_id, message)
         logger.warning("Plugin %s: %s", plugin_id, message)
-        if self._instances.get(plugin_id) is instance:          # a call that straddled a reload must not blame the new instance
+        if record and self._instances.get(plugin_id) is instance:   # a call that straddled a reload must not blame the new instance
             await self._record(plugin_id, last_error=message, last_error_at=_now())
         return CallResult(False, error=message, reason=reason, exception=exc)  # type: ignore[arg-type]
 
