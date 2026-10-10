@@ -61,6 +61,9 @@ class PrinterModel:
     # Ids of OTHER models of this plugin that run the same G-code (BIZ-263), e.g. a rebrand or a bed-size variant. Symmetric:
     # declaring it on one side is enough. Only these explicit declarations ever widen a G-code file's machine eligibility.
     equivalents: tuple[str, ...] = ()
+    # True for a generic/user-defined model: its bed size (and any capability the plugin lets the user state) is the user's input
+    # when the printer is added, not a vendor fact. The add-printer flow asks for it; it is stored on the printer row.
+    custom: bool = False
 
 
 @dataclass(frozen=True)

@@ -164,3 +164,20 @@ async def test_imported_printers_are_registered_with_the_manager_and_a_broken_cl
     assert (resp.status_code, resp.json()["imported"]) == (200, 1)  # imported, just not connected
     assert printer_manager._clients == {}
     assert "C" in [p["name"] for p in await _fleet(client)]
+
+
+async def test_a_backed_up_moonraker_printer_with_its_identity_imports_bound_to_that_provider(client):
+    resp = await _import(client, _backup({**_printer("Voron", "moonraker"), "plugin_id": "moonraker", "manufacturer_id": "voron",
+                                          "model_id": "v2_4_300"}))
+
+    assert resp.status_code == 200 and resp.json()["imported"] == 1
+    printer = next(p for p in (await client.get("/api/v1/printers")).json() if p["name"] == "Voron")
+    assert (printer["plugin_id"], printer["manufacturer_id"], printer["model_id"]) == ("moonraker", "voron", "v2_4_300")
+
+
+async def test_an_old_backup_entry_whose_legacy_type_merely_matches_a_plugin_id_is_not_adopted_by_that_plugin(client):
+    """`printer_type: moonraker` has no legacy mapping: with no identity it must be skipped, not silently bound to a provider."""
+    resp = await _import(client, _backup(_printer("Old Klipper", "moonraker")))
+
+    assert resp.json()["imported"] == 0 and resp.json()["skipped"] == 1
+    assert [p for p in (await client.get("/api/v1/printers")).json() if p["name"] == "Old Klipper"] == []

@@ -9,7 +9,7 @@ from tests.plugins.dummy_plugin import make_manifest
 
 FAKE = "fake_printer"
 TYPE_KEYS = {"plugin_id", "manufacturer_id", "manufacturer_name", "model_id", "display_name",
-             "bed_mm", "toolheads", "connection_fields", "plugin_enabled", "model_uuid", "model_enabled"}
+             "bed_mm", "toolheads", "connection_fields", "plugin_enabled", "model_uuid", "model_enabled", "custom"}
 
 
 @pytest.fixture(autouse=True)

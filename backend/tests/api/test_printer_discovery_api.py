@@ -125,3 +125,11 @@ async def test_discovered_free_text_model_matches_the_registry_when_unambiguous_
 
     assert by_ip["192.168.7.20"]["model_uuid"] == p1s["id"]         # "P1S" -> the one known Bambu P1S
     assert by_ip["192.168.7.30"]["model_uuid"] is None              # unmatched: the UI shows the explicit custom path
+
+
+async def test_a_moonraker_host_is_offered_once_per_moonraker_provider_so_the_connection_path_is_the_users_explicit_choice(client, lan):
+    body = (await client.post("/api/v1/printers/discover", json={"ranges": ["192.168.7.0/24"]})).json()
+
+    moonraker_hits = sorted((f["plugin_id"], f["printer_type"]) for f in body["found"] if f["ip"] == "192.168.7.30")
+
+    assert moonraker_hits == [("moonraker", "moonraker"), ("snapmaker", "snapmaker_extended")]

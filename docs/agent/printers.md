@@ -39,8 +39,8 @@ layer_inspect, timelapse, use_ams`. The queue engine fills `plate_id`/`gcode_pat
 
 A printer plugin's `MANIFEST.factory` **is the client class** (never instantiated by the host — a client is built per printer row) and
 its `manufacturers` declare the models it supports (`Manufacturer(id, name, models=(PrinterModel(id, name, bed_mm, toolheads),))`;
-ids unique per plugin). Bundled: `app/plugins/{bambu,elegoo_centauri,snapmaker,mock}/`. `default_enabled=True` for the first three (so
-existing printers are not dormant after upgrade); `mock` is enabled only when `THEMIS_MOCK_PRINTERS` is set (tests/dev).
+ids unique per plugin). Bundled: `app/plugins/{bambu,elegoo_centauri,snapmaker,moonraker,mock}/`. `default_enabled=True` for all but `mock` (so
+existing printers are not dormant after upgrade; `moonraker` too); `mock` is enabled only when `THEMIS_MOCK_PRINTERS` is set (tests/dev).
 
 `printers` rows carry `plugin_id` + `manufacturer_id` + `model_id` (+ `model_uuid`, the core registry's stable id — `services/printer_model_registry.py`, `GET/PATCH /printer-models`; see data-model.md) (v042 backfilled from the legacy `printer_type`:
 `bambu`→bambu/bambu/p1s, `elegoo_centauri`→elegoo_centauri/elegoo/centauri, `snapmaker_extended`→snapmaker/snapmaker/u1_extended,
@@ -54,6 +54,42 @@ existing printers are not dormant after upgrade); `mock` is enabled only when `T
   `dormant_reason(plugin_id)` (`plugin_removed` | `plugin_disabled` | None), `printer_model_catalog()` (what `GET /printers/types` returns).
 - **Dormancy:** a printer whose plugin is disabled/removed keeps its row + identity but `printer_manager.is_printer_ready` is False and
   `/fleet` flags `dormant`/`dormant_reason`. `printer_manager.set_printer_plugin(id, plugin_id)` records the mapping (create, import, startup).
+
+## Moonraker protocol family (BIZ-148)
+
+`app/services/moonraker/` is the shared transport: `client.MoonrakerClientBase` (WebSocket JSON-RPC subscribe + reconnect, HTTP control via
+`httpx`, file browser/upload/download/delete, completion + klippy-state reconciliation, camera discovery via `server.webcams.list`,
+normalised `klipper_alarms`), `files.py` (gcodes-root helpers), `alarms.py`. A plugin subclasses it for what is its own:
+`app/plugins/snapmaker/client.py` (four tools, `print_task_config` trays, fixed camera URL, tool-mapping — behaviour unchanged) and
+`app/plugins/moonraker/` — the **generic provider**: the plugin boundary is the protocol, not a maker. `printer_type` key `moonraker`.
+
+* **Models** (registry identities `moonraker/<mfr>/<model>`): Voron 2.4 (300 mm) and Trident (300 mm), Sovol SV08, and the explicit
+  generic path `generic/custom_klipper` (`PrinterModel(custom=True)`). Declared models are exercised against the *virtual* Moonraker
+  (`tests/virtual_printers/fake_moonraker.py`); **no hardware verification is claimed** — add a protocol-verification check under
+  `backend/protocol_verification/` when a device is available. Support is never inferred from "it runs Klipper".
+* **Multi-toolhead limits:** `toolheads` lives in `connection_config` only (the registry's per-model `toolheads` column is the *declared* value and
+  stays 1 for `custom_klipper`); it sets how many `extruderN` objects are subscribed and reported (clamped to 8). Telemetry and `multi_nozzle`
+  follow it, but **loaded-filament tracking and slice-time tool mapping are not supported** for generic Klipper printers (those are the
+  Snapmaker U1's own, `slice_tool_mapping`/`print_task_config`): a multi-tool Klipper printer prints single-material jobs.
+* **Backups:** a printer exports/imports with its identity triple, so a Moonraker printer re-imports bound to `moonraker`. An old backup entry
+  with only a legacy `printer_type` is mapped through `LEGACY_IDENTITY`; one with **no mapping is skipped, never adopted** by a plugin that
+  happens to share the key (`printer_type: moonraker` in a pre-plugin backup is not a Moonraker-plugin printer).
+* **Verification status:** Voron / Sovol / custom are validated against the virtual Moonraker only — no real-hardware protocol check exists
+  yet (`backend/protocol_verification/` has none for the generic plugin); do not read "declared" as "hardware verified".
+* **Custom model:** the add flow asks for bed X/Y (stored on the printer row, `PrinterCreate.bed_x_mm/bed_y_mm`) and the form has a
+  `toolheads` field (stored in `connection_config`, default = the declared model's count via `connection_fields_for(model)`). Both are
+  user-owned and survive edits/upgrades.
+* **Optional hardware** (fan, extra extruders, chamber, webcam, filament sensors) is tolerated when absent: Moonraker omits unknown objects,
+  telemetry reads only what is present, and `get_capabilities()` reports `fan_control`/`camera`/`multi_nozzle` from what was actually seen
+  (`set_fan_speeds` refuses when there is no `fan` object). An update for an extruder the printer wasn't declared with is ignored.
+* **Discovery:** a Moonraker host answers every Moonraker-protocol plugin's probe, so `/printers/discover` lists it once **per plugin**
+  (`snapmaker_extended` and `moonraker`); the user picks the connection path. A printer is never rebound to another provider: `plugin_id`
+  is immutable, `PATCH` can only move to another model the *same* plugin declares, and the same hardware offered by two plugins is two
+  registry identities (`tests/api/test_moonraker_plugin_api.py`).
+* **Jobs:** raw `.gcode` only (`raw_gcode_supported`, no sliced archive); G-code machine eligibility (BIZ-263) and the normal queue/slicing
+  resolution apply before dispatch. Completion = `print_stats.state` → `complete` (fires once); `cancelled`/`error` → FAILED.
+* **Setup:** Moonraker listens on 7125; if `[authorization]` requires an API key, paste it in the form (stored as the password field
+  `api_key`, never returned by the API). Printers on a different VLAN need the range passed to discovery.
 
 ## Status serialization (`AbstractPrinterClient.serialize_state`)
 

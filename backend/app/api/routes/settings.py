@@ -18,7 +18,7 @@ from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.notification_service import send_discord, send_email, send_ntfy
 from ...services.printer_client_factory import client_class, create_client
-from ...services.printer_identity import IdentityError, resolve_legacy
+from ...services.printer_identity import IdentityError, LEGACY_IDENTITY, resolve_legacy
 from ...services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -475,7 +475,10 @@ async def fleet_import(
         pname = pr.get("name") or "Unnamed Printer"
         ptype = pr.get("printer_type", "")
 
-        if client_class(ptype) is None:
+        has_identity = bool(pr.get("plugin_id") and pr.get("manufacturer_id") and pr.get("model_id"))
+        # An old backup carries only the legacy `printer_type`; one with no legacy mapping must not be adopted by whichever plugin
+        # happens to share that key now (that would silently pick a connection provider): it is skipped, never guessed.
+        if client_class(ptype) is None or (not has_identity and ptype not in LEGACY_IDENTITY):
             warnings.append(f"'{pname}': skipped — unknown printer type '{ptype}'")
             skipped += 1
             continue
