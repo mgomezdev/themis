@@ -138,7 +138,8 @@ describe('Settings → Notifications page', () => {
     // ntfy's enable switch is the first switch; its three event toggles follow.
     const switches = screen.getAllByRole('switch');
     const [, ntfyEv1, ntfyEv2, ntfyEv3] = switches;
-    expect(ntfyEv1.getAttribute('aria-checked')).toBe('false');
+    // the URL input renders with defaults before the saved config arrives: wait for the loaded (empty) events, don't race it
+    await waitFor(() => expect(ntfyEv1.getAttribute('aria-checked')).toBe('false'));
     expect(ntfyEv2.getAttribute('aria-checked')).toBe('false');
     expect(ntfyEv3.getAttribute('aria-checked')).toBe('false');
 

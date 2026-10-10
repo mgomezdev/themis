@@ -55,9 +55,34 @@ async def test_a_custom_klipper_printer_persists_the_dimensions_and_toolheads_th
     assert (patched.json()["bed_x_mm"], patched.json()["connection_config"]["toolheads"]) == (410.0, 2)     # survives an unrelated edit
 
 
-async def test_a_declared_model_defaults_to_its_own_bed_when_the_user_gives_none(client):
-    r = await add(client, (await models(client))[("generic", "custom_klipper")]["id"])
-    assert (r.json()["bed_x_mm"], r.json()["bed_y_mm"]) == (250.0, 250.0)
+async def test_a_model_defaults_to_its_own_bed_when_the_user_gives_none(client):
+    reg = await models(client)
+    custom = await add(client, reg[("generic", "custom_klipper")]["id"])
+    sovol = await add(client, reg[("sovol", "sv08")]["id"])
+    assert (custom.json()["bed_x_mm"], custom.json()["bed_y_mm"]) == (250.0, 250.0)        # the custom model's placeholder
+    assert (sovol.json()["bed_x_mm"], sovol.json()["bed_y_mm"]) == (350.0, 350.0)
+
+
+@pytest.mark.parametrize("bad", [0, -5])
+async def test_a_user_stated_bed_must_be_positive_on_create_and_edit(client, bad):
+    custom = (await models(client))[("generic", "custom_klipper")]["id"]
+    assert (await add(client, custom, bed_x_mm=bad)).status_code == 422
+    assert (await add(client, custom, bed_y_mm=bad)).status_code == 422
+    ok = (await add(client, custom, bed_x_mm=300, bed_y_mm=300)).json()
+    assert (await client.patch(f"/api/v1/printers/{ok['id']}", json={"bed_x_mm": bad})).status_code == 422
+    assert (await client.get(f"/api/v1/printers/{ok['id']}")).json()["bed_x_mm"] == 300
+
+
+async def test_the_stored_toolhead_count_reaches_the_client_the_factory_builds(client):
+    from app.models import Printer
+    from app.services.printer_client_factory import create_client
+    custom = (await models(client))[("generic", "custom_klipper")]["id"]
+    created = (await add(client, custom, connection_config={"ip_address": "192.168.1.70", "toolheads": "3", "api_key": "k"})).json()
+
+    built = create_client(Printer(plugin_id=created["plugin_id"], printer_type=created["printer_type"],
+                                  connection_config=created["connection_config"]))
+
+    assert [e for e in built._extruders] == ["extruder", "extruder1", "extruder2"] and built._api_key == "k"
 
 
 async def test_the_legacy_printer_type_key_does_not_silently_pick_the_moonraker_provider(client):

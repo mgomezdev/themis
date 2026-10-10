@@ -56,8 +56,8 @@ class PrinterCreate(BaseModel):
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
-    bed_x_mm: float | None = None         # default: the declared model's bed
-    bed_y_mm: float | None = None
+    bed_x_mm: float | None = Field(default=None, gt=0)         # default: the declared model's bed
+    bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)
 
 
@@ -73,8 +73,8 @@ class PrinterUpdate(BaseModel):
     loaded_filaments: list[dict] | None = None
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool | None = None
-    bed_x_mm: float | None = None
-    bed_y_mm: float | None = None
+    bed_x_mm: float | None = Field(default=None, gt=0)
+    bed_y_mm: float | None = Field(default=None, gt=0)
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None

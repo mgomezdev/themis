@@ -84,7 +84,7 @@ def test_telemetry_is_normalised_for_a_dual_extruder_printer():
     assert c.get_capabilities().multi_nozzle is True
 
 
-def test_missing_optional_objects_never_fail_telemetry_and_capabilities_degrade():
+def test_missing_optional_objects_never_fail_telemetry_and_capabilities_degrade(server):
     c = ready(client())
     c._on_ws_message(None, fm.status_frame(print_stats={"state": "standby"}, extruder={"temperature": 24.0, "target": 0.0}))   # no bed, fan, display
 
@@ -94,6 +94,18 @@ def test_missing_optional_objects_never_fail_telemetry_and_capabilities_degrade(
     assert d["state"] == "IDLE" and d["fan_model"] == 0 and d["temperatures"]["bed"] == 0.0
     assert (caps.fan_control, caps.multi_nozzle, caps.camera) == (False, False, False)
     assert c.set_fan_speeds(50, 0, 0) is False                           # refuses instead of sending a command nothing honours
+    assert server.gcode_scripts == [] and server.requests == []          # ...and nothing reached the printer at all
+
+
+def test_with_a_part_cooling_fan_the_speed_is_scaled_to_the_m106_range(server):
+    c = ready(client())
+    c._apply_status({"fan": {"speed": 0.0}})
+    assert c.get_capabilities().fan_control is True
+
+    assert c.set_fan_speeds(50, 0, 0) and server.gcode_scripts == ["M106 S128"]
+    assert c.set_fan_speeds(100, 0, 0) and server.gcode_scripts[-1] == "M106 S255"
+    assert c.set_fan_speeds(250, 0, 0) and server.gcode_scripts[-1] == "M106 S255"      # clamped, never above 100 %
+    assert c.set_fan_speeds(-5, 0, 0) and server.gcode_scripts[-1] == "M106 S0"
 
 
 def test_an_update_for_an_extruder_the_printer_was_not_declared_with_is_ignored_not_an_error():
@@ -277,3 +289,40 @@ async def test_discovery_finds_a_moonraker_and_flags_one_that_needs_a_key():
     assert (locked.printer_type, locked.note) == ("moonraker", "Requires an API key")
     assert (open_.printer_type, open_.connection_config) == ("moonraker", {"ip_address": "192.168.7.31", "port": 7125})
     assert nothing is None
+
+
+# --- the WebSocket + lifecycle ------------------------------------------------------------------------------------------------
+
+def test_the_websocket_is_opened_with_the_api_key_header_only_when_one_is_configured(monkeypatch):
+    seen = []
+
+    class FakeApp:
+        def __init__(self, url, header=None, **handlers):
+            seen.append((url, header))
+            self.handlers = handlers
+
+        def run_forever(self, **kw):
+            c._stop_event.set()                  # one connection attempt, then the loop ends
+
+    import app.services.moonraker.client as mod
+    monkeypatch.setattr(mod.websocket, "WebSocketApp", FakeApp)
+    for key in ("s3cret", None):
+        c = client(api_key=key)
+        c._run_ws()
+
+    assert seen == [("ws://192.0.2.30:7125/websocket", ["X-Api-Key: s3cret"]), ("ws://192.0.2.30:7125/websocket", None)]
+
+
+def test_connect_starts_one_named_daemon_thread_and_disconnect_stops_it_and_drops_the_connection(monkeypatch):
+    import threading
+    started = []
+    monkeypatch.setattr(threading.Thread, "start", lambda self: started.append((self.name, self.daemon)))
+    c = ready(client())
+
+    c.connect()
+    ws = fm.FakeWebSocket()
+    c._ws = ws
+    c.disconnect()
+
+    assert started == [("moonraker-192.0.2.30", True)]
+    assert ws.closed is True and c._stop_event.is_set() and c.connected is False

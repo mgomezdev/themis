@@ -238,6 +238,23 @@ describe('PrinterAddForm — model-specific form defaults and custom models (BIZ
     expect(to('POST', '/api/v1/printers')[0].body).toMatchObject({ bed_x_mm: 250, bed_y_mm: 250 });
   });
 
+  it('any plugin\'s form defaults are stored, not only Moonraker\'s: a Bambu default the form shows is the value sent', async () => {
+    const user = userEvent.setup();
+    const { to } = stubFetch({ ...ROUTES, 'POST /api/v1/printers': { id: 1 } });
+    const bambu = printerType({ ...BAMBU_P1S, connection_fields: [IP_FIELD, { ...IP_FIELD, name: 'use_ams', label: 'Use AMS', required: false, default: 1 },
+                                                                   { ...IP_FIELD, name: 'timelapse', label: 'Timelapse', required: false, default: 0 }] });
+    renderForm([bambu]);
+    await run(user);
+    await user.clear(field('Use AMS (optional)'));                                        // a field the user blanks stays blank
+    await user.click(screen.getByRole('button', { name: /^Next/ }));
+    await user.click(screen.getByRole('button', { name: /^Next/ }));
+    await user.click(screen.getByRole('button', { name: /Finish/i }));
+
+    await waitFor(() => expect(to('POST', '/api/v1/printers')).toHaveLength(1));
+    expect((to('POST', '/api/v1/printers')[0].body as Record<string, unknown>).connection_config)
+      .toEqual({ ip_address: '10.0.0.9', use_ams: '', timelapse: '0' });
+  });
+
   it('a declared (non-custom) model never shows the bed inputs', async () => {
     const user = userEvent.setup();
     stubFetch(ROUTES);
