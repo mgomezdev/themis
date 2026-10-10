@@ -10,6 +10,12 @@ CAP_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
 
 P = TypeVar("P")
 
+# exclusive: one provider serves the whole capability (inventory). routed: every enabled provider serves it; a call goes to
+# the provider bound to its resource. choose_one: every enabled provider is built, one eligible provider is picked per
+# operation (per-resource preference -> capability default -> blocked). fan_out: every enabled provider receives each event.
+Mode = Literal["exclusive", "routed", "choose_one", "fan_out"]
+BUILDS_ALL: frozenset[str] = frozenset({"routed", "choose_one", "fan_out"})    # modes where every enabled provider is built
+
 
 @dataclass(frozen=True)
 class CapabilityDef:
@@ -21,9 +27,8 @@ class CapabilityDef:
     # instance is built). Core capabilities with an ABC leave this empty.
     required_methods: tuple[str, ...] = ()
     features: frozenset[str] = frozenset()     # the feature flags a provider may declare for this capability
-    # exclusive: one provider is selected for the whole capability (inventory). routed: every enabled provider serves it and
-    # each call goes to the provider bound to its resource (`PluginHost.call_for`); there is no selection row.
-    mode: Literal["exclusive", "routed"] = "exclusive"
+    # See `Mode`. `routed` and `fan_out` have no selection row; `choose_one` uses the selection row as the capability default.
+    mode: Mode = "exclusive"
     # Typing contract: a `runtime_checkable` Protocol the serving part must satisfy (checked when the instance is built).
     protocol: type | None = None
 

@@ -161,6 +161,14 @@ in the `main.py` lifespan; `configure(SessionLocal)` first):
   must satisfy the capability's `protocol` (runtime-checked when its instance is built; a nonconforming `provides` entry is rejected).
   The bundled printer plugins do not provide `printer.client` yet: they expose their client class as `factory` and the factory resolves it
   per printer row (`printers.md`).
+- **Choose-one and fan-out capabilities (BIZ-250):** `CapabilityDef.mode` is `exclusive | routed | choose_one | fan_out` (`BUILDS_ALL` =
+  the three that build every enabled provider). `choose_one` (e.g. slicing): the selection row is the capability **default**;
+  `host.resolve(cap, preferred=, eligible=)` → `Resolution(plugin_id, outcome)` is per-resource preference → default → blocked, eligibility
+  checked before dispatch, and a dormant/ineligible preference **blocks** (outcomes `preference_dormant|preference_ineligible|
+  default_unavailable|default_ineligible|no_provider`) — never a silent fallback. `host.call_choose(...)` = resolve + `call_for`;
+  `host.eligible_providers(cap, eligible)` feeds selection UIs. `fan_out` (e.g. notifications): no selection row; `await host.fan_out(HANDLE,
+  fn, timeout=)` calls every enabled provider concurrently, each contained on its own (`dict[plugin_id, CallResult]`). Contract tests:
+  `tests/plugins/test_capability_modes.py`. Not yet wired to a core capability (slicing/notifications still use their own paths).
 - **Containment:** every core → provider call is `await host.call(cap, method, *args, timeout=)` (on the part serving `cap`) → `CallResult(ok,
   value, error, reason)`; it never raises (timeout + catch-all), logs with the plugin id and records
   `plugin_configs.state.last_error` (`last_ok_at` on recovery; only transitions are persisted). The queue loop never
