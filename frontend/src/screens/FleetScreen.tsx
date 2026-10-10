@@ -624,6 +624,7 @@ function PrinterExpandedCard({ printer: p, printerTypes, refetchFleet, onCollaps
             </div>
           </div>
           <div className="row gap-2 wrap" style={{ alignItems: 'center' }}>
+            {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
             <AlarmBadge printer={p} />
             <StatusPill status={p.status} />
             {isOffline && (
@@ -838,6 +839,15 @@ function cardCueStyle(p: Printer): React.CSSProperties {
   return {};
 }
 
+function DormantBadge({ reason }: { reason: string }) {
+  return (
+    <span className="tiny" title={reason} style={{
+      padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap',
+      background: 'rgba(148,163,184,0.18)', color: 'var(--text-dim, #94a3b8)', fontWeight: 600,
+    }}>DORMANT</span>
+  );
+}
+
 function QueueOffBadge() {
   return (
     <span className="tiny" style={{
@@ -895,6 +905,7 @@ function PrinterTile({ printer: p, onClick, refetchFleet, snapshotIntervalMs, du
           <span className="tiny muted">{p.badge}</span>
         </div>
         <div className="row gap-2" style={{ alignItems: 'center' }}>
+          {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
           {!p.queueOn && <QueueOffBadge />}
           <AlarmBadge printer={p} />
           <StatusPill status={p.status} />
@@ -980,6 +991,7 @@ function PrinterRow({ printer: p, expanded, onClick, refetchFleet, dueRowsByPrin
       </div>
       <div className="col gap-1" style={{ alignItems: 'flex-start' }}>
         <StatusPill status={p.status} />
+        {p.dormantReason && <DormantBadge reason={p.dormantReason} />}
         {!p.queueOn && <QueueOffBadge />}
       </div>
       <div className="row gap-2" style={{ alignItems: 'center', minWidth: 0 }}>

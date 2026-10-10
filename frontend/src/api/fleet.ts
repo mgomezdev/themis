@@ -8,6 +8,8 @@ export interface FleetPrinter {
   name: string;
   printer_type: string;
   plugin_id: string | null;
+  dormant?: boolean;                    // its plugin is disabled or removed
+  dormant_reason?: string | null;
   enabled: boolean;
   queue_on: boolean;
   connected: boolean;
@@ -63,6 +65,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     nickname: p.name,
     model: p.printer_type,
     pluginId: p.plugin_id ?? undefined,
+    dormantReason: p.dormant ? (p.dormant_reason ?? 'Plugin unavailable') : undefined,
     badge: BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase(),
     buildVolume: '',
     capabilities: Object.entries(p.capabilities ?? {})

@@ -1230,7 +1230,7 @@ async def stream_camera(
     if not caps.camera:
         raise HTTPException(404, "This printer has no camera")
 
-    if not (client.camera_mjpeg_url or client.camera_rtsp_url):
+    if not client.camera_configured:
         raise HTTPException(404, "No camera URL configured")
     reason = client.camera_unavailable_reason()          # e.g. a transcoder the vendor needs is missing
     if reason:

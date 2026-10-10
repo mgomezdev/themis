@@ -21,6 +21,7 @@ def _camera_client(*, connected=True, camera=True, mjpeg=None, rtsp=None) -> Mag
     client.get_capabilities.return_value = MagicMock(camera=camera)
     client.camera_mjpeg_url = mjpeg
     client.camera_rtsp_url = rtsp
+    client.camera_configured = AbstractPrinterClient.camera_configured.fget(client)   # the real base-class rule
     client.camera_unavailable_reason.return_value = None
     # the real base-class feed (the default MJPEG proxy), so these tests keep exercising the hub through the actual path
     client.camera_stream = lambda: AbstractPrinterClient.camera_stream(client)

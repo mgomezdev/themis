@@ -11,6 +11,8 @@ export interface Printer {
   model: string;
   /** The plugin serving this printer (its connection form comes from the plugin's declared models). */
   pluginId?: string;
+  /** Set when the printer's plugin is disabled or removed: the printer takes no work until it is back. */
+  dormantReason?: string;
   badge: string;
   buildVolume: string;
   capabilities: string[];

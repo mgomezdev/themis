@@ -5,6 +5,8 @@
     "name",
     "printer_type",
     "plugin_id",
+    "dormant",
+    "dormant_reason",
     "enabled",
     "queue_on",
     "connected",
