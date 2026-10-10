@@ -9,7 +9,9 @@ event, at least once, each idempotent on the job id:
 * `job_complete.inventory` — plans the spool deduction (`inventory_deduction.plan_completion`; skipped when an outbox write for
   this job and spool already exists). The spool is resolved when the job completes and carried in the payload, not looked up later;
 * `job_complete.notices` — WebSocket broadcast, webhook and notification channels for a real print (not a manual completion).
-  Each is attempted on its own and none can fail the completion; the senders swallow their own errors, so these are not retried.
+  Each is attempted on its own and none can fail the completion; the senders swallow their own errors, so a send failure is logged
+  and not retried. Delivery of the event itself is still at-least-once: a timeout, crash or shutdown mid-handler redelivers it and
+  can repeat a notice (webhook receivers should deduplicate; the notices have no idempotency key).
 
 Importing this module registers the subscribers on the process-wide hub."""
 from __future__ import annotations
@@ -82,7 +84,12 @@ async def deduct_inventory(envelope: EventEnvelope) -> None:
         plan = await inventory_deduction.plan_completion(session, job=job, printer_id=printer_id, spool_ref=str(use["spool_ref"]),
                                                          grams=float(use["grams"]), source=source)
         await session.commit()
-    inventory_deduction.after_commit(plan, factory)
+    if plan.kind == "deferred":
+        # No start snapshot: read the weight and write the outbox row HERE, so the event is acknowledged only once the deduction is
+        # durable (a crash or a provider error before that redelivers it; the outbox-row check makes the retry safe).
+        await inventory_deduction.complete_deferred(factory, plan)
+    else:
+        inventory_deduction.after_commit(plan, factory)
 
 
 async def notify_consumers(envelope: EventEnvelope) -> None:
@@ -90,6 +97,7 @@ async def notify_consumers(envelope: EventEnvelope) -> None:
         return                                                   # a manual completion is an admin action: no integrations
     queue_engine = _engine
     if queue_engine is None:
+        logger.warning("Completion notices for job %s dropped: no queue engine is bound", envelope.entities.get("job_id"))
         return
     job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
     for name, send in (("broadcast", lambda: queue_engine._broadcast_job(job_id)),

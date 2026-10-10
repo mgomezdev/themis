@@ -124,14 +124,14 @@ Subscribers (`app/services/completion_events.py`, registered on import, all idem
 |---|---|---|
 | `job_complete.maintenance` | `printer.lifetime_job_count += 1`, `lifetime_print_seconds += job.actual_seconds` | `UPDATE jobs SET maintenance_accrued=1 WHERE id=? AND status='complete' AND maintenance_accrued=0` in the **same transaction** as the counters (migration v046; already-complete jobs are backfilled as accrued) |
 | `job_complete.inventory` | `inventory_deduction.plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
-| `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none needed: the senders swallow their own errors, each step is attempted independently, so a failure is logged and never retried or propagated |
+| `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none: the senders swallow their own errors and each step is attempted independently, so a send failure is logged, not retried or propagated. A hub-level timeout/crash/shutdown mid-handler redelivers the event and can repeat a notice (at-least-once) |
 
 Crash boundaries (each covered by `tests/services/test_completion_events.py`): *before commit* — job and event roll back together, the
 retry completes it once; *after commit, before handler* — the event and its delivery rows are durable, the dispatcher applies the
 effects after restart; *during a handler* — flag and counters are one transaction, so they roll back together and the delivery is
 retried with backoff (visible in `/events/subscribers` and `/events/deliveries`); *after the side effect, before the acknowledgement* —
-the redelivered event finds the idempotency key and does nothing. The deferred-weight deduction (`complete_deferred`, used when a job has
-no start snapshot) still runs in a host task and is not itself durable; it was not before either.
+the redelivered event finds the idempotency key and does nothing. The deferred-weight deduction (a job with no start snapshot, and every manual completion) now runs *inside* the handler, so the event is
+acknowledged only after its outbox row exists; a crash or provider error before that redelivers it, and the outbox-row check keeps the retry from deducting twice.
 
 Tests that assert on these effects call `tests.waiting.settle_events(factory)` (it runs the dispatcher inline); production delivers
 from the dispatcher loop within milliseconds of the commit.

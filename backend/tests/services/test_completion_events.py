@@ -243,3 +243,57 @@ async def test_migration_v046_backfills_completed_jobs_and_is_idempotent():
         await mig.down(conn)
         assert "maintenance_accrued" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(jobs)"))).fetchall()}
     await engine.dispose()
+
+
+async def test_a_deferred_deduction_is_durable_before_the_event_is_acknowledged(db, monkeypatch):
+    """No start snapshot (e.g. a manual completion): the weight is read and the outbox row written inside the handler, so a crash
+    before that redelivers the event, and a redelivery after it deducts nothing more."""
+    from app.eventing import hub as hubmod
+    from app.services.inventory import deduction as inventory_deduction
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import spool, use_provider
+
+    monkeypatch.setattr(hubmod, "BACKOFF_BASE_S", 60.0)
+    engine, printer_id, job_id = await _seed_completing_job(db)
+    fake = FakeInventoryProvider(spools=[spool("42", 300.0)])
+    await use_provider(fake)
+    real, calls = inventory_deduction.complete_deferred, {"n": 0}
+
+    async def dies_once(factory, plan):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("process died before the outbox row was written")
+        await real(factory, plan)
+
+    monkeypatch.setattr(inventory_deduction, "complete_deferred", dies_once)
+    await engine.handle_print_complete(printer_id)
+    await hub.deliver_pending(db)
+
+    (inv,) = [d for d in (await _events(db))[1] if d.subscriber == "core:job_complete.inventory"]
+    assert inv.status == "pending" and inv.attempts == 1 and await _outbox_rows(db) == []      # not acknowledged, nothing deducted
+
+    async def make_due():
+        async with db() as s:
+            await s.execute(update(EventDelivery).where(EventDelivery.status == "pending")
+                            .values(next_attempt_at="2000-01-01T00:00:00.000000Z"))
+            await s.commit()
+
+    await make_due()
+    await hub.deliver_pending(db)
+    from app.services.inventory import tasks as inventory_tasks
+    await inventory_tasks.drain()
+    assert fake.writes == [("42", pytest.approx(282.5))] and len(await _outbox_rows(db)) == 1
+
+    async with db() as s:                                         # and a redelivery after the acknowledgement was lost
+        await s.execute(update(EventDelivery).values(status="pending", next_attempt_at="2000-01-01T00:00:00.000000Z"))
+        await s.commit()
+    await settle_events(db)
+    assert fake.writes == [("42", pytest.approx(282.5))] and len(await _outbox_rows(db)) == 1
+
+
+async def test_notices_are_dropped_with_a_log_not_silently_when_no_engine_is_bound(db, caplog, monkeypatch):
+    monkeypatch.setattr(completion_events, "_engine", None)
+    envelope = EventEnvelope(name="job.complete", entities={"job_id": 7}, payload={"source": "queue"})
+    with caplog.at_level("WARNING", logger="app"):
+        await completion_events.notify_consumers(envelope)
+    assert "dropped: no queue engine is bound" in caplog.text

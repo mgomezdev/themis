@@ -366,8 +366,8 @@ class EventHub:
         return max(0.01, min(IDLE_WAKE_S, (_parse(nxt) - datetime.now(timezone.utc)).total_seconds()))
 
     async def deliver_pending(self, factory: async_sessionmaker[AsyncSession] | None = None, *, max_rounds: int = 100) -> None:
-        """Deliver everything that is due right now and wait for it (tests; a clean-shutdown flush). Safe alongside the
-        dispatcher loop: a subscriber already mid-delivery is left to it."""
+        """Deliver everything that is due right now and wait for it. For tests (it may swap in `factory` for the call); safe
+        alongside the dispatcher loop, which owns any subscriber already mid-delivery."""
         previous = self._s.factory
         if factory is not None:
             self._s.factory = factory
