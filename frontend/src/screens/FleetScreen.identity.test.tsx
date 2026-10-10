@@ -61,3 +61,23 @@ describe('FleetScreen — edit panel connection by plugin', () => {
     expect(body.printer_type).not.toBe('legacy_voron');
   });
 });
+
+describe('FleetScreen — dormant printers', () => {
+  it('flags a printer whose plugin is disabled, and not a live one', async () => {
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const reply = (b: unknown) => Promise.resolve({ ok: true, json: () => Promise.resolve(b) });
+      if (url === '/api/v1/fleet') return reply([
+        { ...FLEET_PRINTER, dormant: true, dormant_reason: 'plugin_disabled' },
+        { ...FLEET_PRINTER, id: 3, name: 'Live', dormant: false, dormant_reason: null },
+      ]);
+      if (url === '/api/v1/maintenance/status') return reply([]);
+      if (url.includes('/printers/types')) return reply(TYPES);
+      return reply({});
+    }));
+    render(<FleetScreen />);
+    await screen.findByText('Atlas');
+    await screen.findByText('Live');
+    expect(screen.getAllByText('DORMANT')).toHaveLength(1);
+  });
+});

@@ -21,7 +21,7 @@ The vendor-abstraction is the most-extended part of the codebase. Adding a print
 `serialize_state(printer_id)` (the vendor's normalized status dict — see below; base default = identity only),
 `camera_configured` (default: a camera URL is stored; override when the feed isn't URL-based) / `camera_stream()` / `camera_snapshot()` / `camera_unavailable_reason()` (the client produces its own camera feed for the core camera hub; defaults proxy `camera_mjpeg_url`; Bambu transcodes RTSP in `plugins/bambu/camera.py`),
 `slice_tool_mapping` (ClassVar bool, default False; True = the 3MF's filament→tool routing is baked in at slice time — Snapmaker),
-`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu). The camera routes only serve a client that exposes `camera_mjpeg_url` or `camera_rtsp_url` (404 otherwise); the feed itself comes from the client.
+`SSDP_PORTS` (optional ClassVar tuple; discovery listens for announcements on these — Bambu). The camera routes only serve a client whose `camera_configured` is true (404 otherwise; default = a camera URL is stored); the feed itself comes from the client.
 
 **Callbacks** (set by `printer_manager.connect_printer`, fired from the client's bg thread via
 `run_coroutine_threadsafe(self._loop)`): `_on_state_change(state)`, `_on_print_complete(state)`,

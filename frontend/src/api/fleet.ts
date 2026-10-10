@@ -45,6 +45,11 @@ const BADGE: Record<string, string> = {
   bambu: 'P1S',
 };
 
+const DORMANT_TEXT: Record<string, string> = {
+  plugin_disabled: 'Its plugin is disabled',
+  plugin_removed: 'Its plugin is not installed',
+};
+
 function mapStatus(p: FleetPrinter): Printer['status'] {
   if (!p.connected) return 'offline';
   // awaiting_plate_clear is surfaced as its own field/cue, not a status — it can be
@@ -65,7 +70,7 @@ export function toFleetPrinter(p: FleetPrinter): Printer {
     nickname: p.name,
     model: p.printer_type,
     pluginId: p.plugin_id ?? undefined,
-    dormantReason: p.dormant ? (p.dormant_reason ?? 'Plugin unavailable') : undefined,
+    dormantReason: p.dormant ? (DORMANT_TEXT[p.dormant_reason ?? ''] ?? 'Plugin unavailable') : undefined,
     badge: BADGE[p.printer_type] ?? p.printer_type.slice(0, 3).toUpperCase(),
     buildVolume: '',
     capabilities: Object.entries(p.capabilities ?? {})
