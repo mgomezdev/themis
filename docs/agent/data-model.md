@@ -541,3 +541,10 @@ handler runs), `next_attempt_at` (backoff / dormant re-check), `last_error` (red
 `jobs.maintenance_accrued BOOLEAN NOT NULL DEFAULT 0`: set to 1 by the `job_complete.maintenance` subscriber in the same transaction that
 bumps `printers.lifetime_job_count` / `lifetime_print_seconds`, so a redelivered `job.complete` event cannot count a job twice. Jobs
 already `complete` when v046 ran are backfilled to 1 (the old inline path counted them).
+
+### projects.external_ref, idempotency_keys, webhook_destinations  (v047 — BIZ-172)
+
+`projects.external_ref VARCHAR(255)` + partial unique index `ux_projects_source_external_ref (source_app, external_ref) WHERE external_ref IS NOT NULL`.
+`idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
+`webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
+v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).

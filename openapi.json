@@ -5961,51 +5961,58 @@
           "projects"
         ],
         "summary": "List projects",
-        "description": "All projects ordered by creation date descending, each with items, links,\njob counts, and aggregated filament/time estimates.",
+        "description": "All projects ordered by creation date descending, each with items, links,\njob counts, and aggregated filament/time estimates. `?source_app=&external_ref=` looks a project up by the\ncompanion app's own key.",
         "operationId": "list_projects_api_v1_projects_get",
+        "parameters": [
+          {
+            "name": "source_app",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only projects created by this source application",
+              "title": "Source App"
+            },
+            "description": "Only projects created by this source application"
+          },
+          {
+            "name": "external_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the project with this external ref (use with source_app)",
+              "title": "External Ref"
+            },
+            "description": "Only the project with this external ref (use with source_app)"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "additionalProperties": true,
-                    "type": "object"
-                  },
                   "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
                   "title": "Response List Projects Api V1 Projects Get"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "projects"
-        ],
-        "summary": "Create project",
-        "operationId": "create_project_api_v1_projects_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ProjectCreate"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Create Project Api V1 Projects Post"
                 }
               }
             }
@@ -6019,6 +6026,67 @@
                 }
               }
             }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Create project",
+        "description": "Create a project. Retry-safe for companion apps two ways: give it a `source_app` + `external_ref` (a second create with the same\npair returns the existing project, status 200, unchanged) and/or an `Idempotency-Key` header (a repeat returns the first response with\n`Idempotent-Replay: true`).",
+        "operationId": "create_project_api_v1_projects_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat-safe creation: a retry returns the first response",
+              "title": "Idempotency-Key"
+            },
+            "description": "Repeat-safe creation: a retry returns the first response"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Project Api V1 Projects Post"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "A project with this source_app + external_ref already exists: returned unchanged"
+          },
+          "409": {
+            "description": "Another request with this Idempotency-Key is still running"
+          },
+          "422": {
+            "description": "external_ref without source_app, or an Idempotency-Key reused for a different request"
           }
         }
       }
@@ -7146,7 +7214,7 @@
           "projects"
         ],
         "summary": "Pack STLs and queue jobs",
-        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.",
+        "description": "Pack project STL items into 3MF files (one per filament group), save them to the library,\nand queue one job per plate. Returns created job and file IDs plus the bed dimensions used\nfor packing.\nSend an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result\n(`Idempotent-Replay: true`) and creates no further files or jobs.",
         "operationId": "generate_project_api_v1_projects__project_id__generate_post",
         "parameters": [
           {
@@ -7157,6 +7225,24 @@
               "type": "integer",
               "title": "Project Id"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Repeat-safe generation: a retry returns the first result",
+              "title": "Idempotency-Key"
+            },
+            "description": "Repeat-safe generation: a retry returns the first result"
           }
         ],
         "requestBody": {
@@ -7193,6 +7279,9 @@
           },
           "504": {
             "description": "Generation timed out"
+          },
+          "409": {
+            "description": "Project is a draft, or another request with this Idempotency-Key is still running"
           }
         }
       }
@@ -7660,7 +7749,7 @@
           "settings"
         ],
         "summary": "Get webhook config",
-        "description": "Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed\nevent types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged.",
+        "description": "The `default` outbound webhook (see `/api/v1/webhooks` for any number of destinations): endpoint URL, whether an HMAC secret is\nset, and subscribed event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged.",
         "operationId": "get_webhook_config_api_v1_settings_webhook_get",
         "responses": {
           "200": {
@@ -9664,6 +9753,258 @@
         }
       }
     },
+    "/api/v1/webhooks": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List webhook destinations",
+        "operationId": "list_destinations_api_v1_webhooks_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Destinations Api V1 Webhooks Get"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Create a webhook destination",
+        "operationId": "create_destination_api_v1_webhooks_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Destination Api V1 Webhooks Post"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A destination with this name exists"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{destination_id}": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Get a webhook destination",
+        "operationId": "get_destination_api_v1_webhooks__destination_id__get",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Destination Api V1 Webhooks  Destination Id  Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Update a webhook destination",
+        "operationId": "patch_destination_api_v1_webhooks__destination_id__patch",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DestinationPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Destination Api V1 Webhooks  Destination Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "409": {
+            "description": "Name already used"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete a webhook destination",
+        "operationId": "delete_destination_api_v1_webhooks__destination_id__delete",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/webhooks/{destination_id}/test": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Send a test event to a destination",
+        "description": "One signed `webhook.test` POST (no retries), whatever the destination's filter or enabled flag. Returns what the receiver said.",
+        "operationId": "test_destination_api_v1_webhooks__destination_id__test_post",
+        "parameters": [
+          {
+            "name": "destination_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Destination Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Test Destination Api V1 Webhooks  Destination Id  Test Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          },
+          "422": {
+            "description": "The destination has no URL"
+          }
+        }
+      }
+    },
     "/api/v1/plugins/local_inventory/weight-log": {
       "get": {
         "tags": [
@@ -10773,6 +11114,124 @@
         },
         "type": "object",
         "title": "CustomerPatch"
+      },
+      "DestinationIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "events": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Events",
+            "default": []
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "DestinationIn"
+      },
+      "DestinationPatch": {
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "events": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Events"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "title": "DestinationPatch"
       },
       "DiscordChannelConfig": {
         "properties": {
@@ -13276,6 +13735,19 @@
               }
             ],
             "title": "Source Layout Id"
+          },
+          "external_ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 255,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Ref"
           },
           "amount_paid": {
             "anyOf": [

@@ -6,8 +6,9 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
+from tests.webhook_helpers import destination
 from app.models import (
-    InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile, WebhookConfig,
+    InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile,
 )
 from app.plugins.capabilities.filament_inventory import InvSpool, InventoryProviderError
 from app.services.inventory import deduction, outbox, snapshots, tasks
@@ -185,7 +186,7 @@ async def test_deferred_completion_takes_the_weight_at_completion(session_factor
 
 async def _webhook(factory):
     async with factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
 
 

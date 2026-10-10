@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from app.models import WebhookConfig
+from tests.webhook_helpers import destination
 from app.services import webhook_service
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
@@ -86,7 +86,7 @@ async def test_fire_swallows_a_non_2xx_response_and_logs_it(wire, caplog):
 async def test_fire_swallows_a_transport_error_and_logs_it(wire, caplog):
     wire.error = httpx.ConnectError("refused")
     with caplog.at_level(logging.WARNING, logger=webhook_service.logger.name):
-        assert await webhook_service.fire(URL, "s", {"event": "job.complete"}) is None
+        assert await webhook_service.fire(URL, "whsec-value", {"event": "job.complete"}) is None
 
     assert any("Webhook delivery failed" in r.getMessage() and "refused" in r.getMessage() for r in caplog.records)
 
@@ -127,7 +127,7 @@ def engine(session_factory):
 
 async def _configure(session_factory, **fields):
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, **fields))
+        s.add(destination(**fields))
         await s.commit()
 
 
@@ -138,7 +138,9 @@ async def test_engine_schedules_a_webhook_for_a_subscribed_event(engine, session
 
     await engine._fire_webhooks(5, "job.complete")
 
-    schedule.assert_called_once_with(URL, "s", "job.complete", 5)
+    schedule.assert_called_once()
+    assert schedule.call_args.args == (URL, "s", "job.complete", 5, None)
+    assert schedule.call_args.kwargs["destination_id"] and schedule.call_args.kwargs["event_id"]
 
 
 async def test_engine_treats_an_empty_event_list_as_all_events(engine, session_factory, monkeypatch):
@@ -148,7 +150,8 @@ async def test_engine_treats_an_empty_event_list_as_all_events(engine, session_f
 
     await engine._fire_webhooks(5, "job.failed")
 
-    schedule.assert_called_once_with(URL, None, "job.failed", 5)
+    schedule.assert_called_once()
+    assert schedule.call_args.args == (URL, None, "job.failed", 5, None)
 
 
 @pytest.mark.parametrize("config", [

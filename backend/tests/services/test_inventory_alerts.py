@@ -4,7 +4,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.models import InventoryConfig, NotificationConfig, WebhookConfig
+from tests.webhook_helpers import destination
+from app.models import InventoryConfig, NotificationConfig
 from app.plugins.host import plugin_host
 from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
 from app.services.inventory import alerts as spool_alerts
@@ -107,7 +108,7 @@ async def test_no_thresholds_means_no_alerts_and_no_state(session_factory):
 async def test_delivery_fires_the_webhook_and_notification_channels_for_spool_low(session_factory):
     await _row(session_factory, low_stock_default_g=100)
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret="s", events=[EVENT]))
+        s.add(destination(url="http://hook.test", secret="s", events=[EVENT]))
         s.add(NotificationConfig(id=1, ntfy_enabled=True, ntfy_server_url="http://ntfy.test", ntfy_topic="t",
                                  ntfy_events=[EVENT], discord_events=[], email_to_addrs=[], email_events=[]))
         await s.commit()
@@ -130,7 +131,7 @@ async def test_delivery_fires_the_webhook_and_notification_channels_for_spool_lo
 async def test_the_webhook_is_skipped_when_its_event_list_excludes_spool_low(session_factory):
     await _row(session_factory, low_stock_default_g=100)
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=["job.failed"]))
+        s.add(destination(url="http://hook.test", secret=None, events=["job.failed"]))
         await s.commit()
     with patch.object(spool_alerts.webhook_service, "schedule") as schedule:
         await _process(session_factory, [spool(1, 80)])
@@ -140,10 +141,10 @@ async def test_the_webhook_is_skipped_when_its_event_list_excludes_spool_low(ses
 async def test_a_failed_delivery_is_retried_at_the_next_sync_and_does_not_block_other_spools(session_factory):
     await _row(session_factory, low_stock_default_g=100)
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
 
-    def flaky(url, secret, event, job_id, extra):
+    def flaky(url, secret, event, job_id, extra, **kw):
         if extra["spool_id"] == 1:
             raise RuntimeError("boom")
     with patch.object(spool_alerts.webhook_service, "schedule", side_effect=flaky):
@@ -163,7 +164,7 @@ async def test_record_sync_raises_alerts_for_the_spools_it_just_fetched_and_only
     await enable_spoolman()
     await _row(session_factory, low_stock_default_g=900)   # every mock spool is below this
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
     expected = sorted(sp["id"] for sp in spoolman_mock._SPOOLS if sp["remaining_weight"] < 900)
     assert expected   # the fixture really has low spools
@@ -211,7 +212,7 @@ async def test_a_provider_that_does_not_track_weight_never_raises_low_stock_aler
     fake = FakeInventoryProvider(spools=[spool(1, 10)], capabilities=frozenset({REMOTE}))     # no TRACKS_WEIGHT
     await use_provider(fake)
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
     with patch.object(spool_alerts.webhook_service, "schedule") as schedule:
         async with session_factory() as s:

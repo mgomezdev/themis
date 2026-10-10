@@ -379,6 +379,9 @@ class Project(Base):
     source_app: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     source_user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     source_layout_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # The companion app's own id for this project (BIZ-172): unique together with `source_app`, so a retried create returns the
+    # existing project. Separate from the Ordinus-specific `source_layout_id`.
+    external_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))
     updated_at: Mapped[str] = mapped_column(String(32))
     share_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -399,7 +402,11 @@ class Project(Base):
     # Set by migration v032 when this project was created from a legacy customer order (provenance; plain int).
     converted_from_order_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
-    __table_args__ = (UniqueConstraint("share_token", name="uq_projects_share_token"),)
+    __table_args__ = (
+        UniqueConstraint("share_token", name="uq_projects_share_token"),
+        Index("ux_projects_source_external_ref", "source_app", "external_ref", unique=True,
+              sqlite_where=text("external_ref IS NOT NULL")),
+    )
 
 
 class ProjectItem(Base):
@@ -795,3 +802,40 @@ class EventDelivery(Base):
 
     __table_args__ = (UniqueConstraint("outbox_id", "subscriber", name="ux_event_deliveries"),
                       Index("ix_event_deliveries_due", "status", "next_attempt_at"))
+
+
+class WebhookDestination(Base):
+    """An outbound webhook endpoint (BIZ-172). Each has its own secret, event filter (empty = all events) and enabled flag.
+    The legacy single webhook (`webhook_config`) was migrated to the destination named `default`."""
+    __tablename__ = "webhook_destinations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    secret: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    events: Mapped[list] = mapped_column(JSON, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    created_at: Mapped[str] = mapped_column(String(32))
+    updated_at: Mapped[str] = mapped_column(String(32))
+    # Outcome of the most recent delivery (after its bounded retries), so a failing endpoint is visible.
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_success_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    last_status: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class IdempotencyKey(Base):
+    """A client's `Idempotency-Key` for a mutating request (BIZ-172). `in_progress` while the first request runs; `done` keeps its
+    response so a retry gets the same answer instead of repeating the work. Keys are scoped to the endpoint and resource."""
+    __tablename__ = "idempotency_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    scope: Mapped[str] = mapped_column(String(160))
+    key: Mapped[str] = mapped_column(String(200))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    state: Mapped[str] = mapped_column(String(12), default="in_progress", server_default="in_progress")   # in_progress | done | partial
+    status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+    __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)

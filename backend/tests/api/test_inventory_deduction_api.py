@@ -5,7 +5,8 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import select
 
-from app.models import InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile, WebhookConfig
+from tests.webhook_helpers import destination
+from app.models import InventoryPendingWrite, InventorySpoolStatus, Job, JobSpoolSnapshot, Printer, UploadedFile
 from app.plugins.capabilities.filament_inventory import InventoryProviderError, TRACKS_WEIGHT
 from app.services.inventory import deduction, outbox, tasks
 from tests.api.test_inventory_api import _client_with
@@ -101,7 +102,7 @@ async def test_resume_tracking_with_a_corrected_weight_writes_it_clears_the_susp
     await _suspend(session_factory)
     stale = await _queue(session_factory, target=40.0)                  # computed from the old, wrong weight
     async with session_factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
 
     with patch("app.services.webhook_service.schedule") as hook:

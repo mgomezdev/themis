@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy import select
 
-from app.models import NotificationConfig, PrinterAlarm, QueueConfig, WebhookConfig
+from tests.webhook_helpers import destination
+from app.models import WebhookDestination
+from app.models import NotificationConfig, PrinterAlarm, QueueConfig
 from app.services import alarms
 from app.services.abstract_printer_client import Alarm
 from tests.waiting import wait_until
@@ -122,7 +124,7 @@ async def _configure(factory, *, min_sev=None, events=None, webhook=True, ntfy=F
         if min_sev:
             s.add(QueueConfig(id=1, alarm_min_severity=min_sev))
         if webhook:
-            s.add(WebhookConfig(id=1, url="http://hook.test/x", secret=None, events=events or []))
+            s.add(destination(url="http://hook.test/x", secret=None, events=events or []))
         s.add(NotificationConfig(id=1, ntfy_enabled=ntfy, ntfy_server_url="http://ntfy.test", ntfy_topic="t",
                                  ntfy_events=[], discord_events=[], email_to_addrs=[], email_events=[]))
         await s.commit()
@@ -162,12 +164,12 @@ async def test_the_webhook_payload_and_the_event_list(session_factory, create_pr
     with patch("app.services.alarms.webhook_service.schedule") as hook:
         await _deliver(session_factory, pid, A(code="HMS_0700", sev="error", msg="AMS: out", help_url="http://w/1"))
     args = hook.call_args.args
-    assert args[:2] == ("http://hook.test/x", None) and args[2] == "printer.alarm" and args[3] is None
+    assert args[:2] == ("http://hook.test/x", None) and args[2] == "printer.alarm" and args[3] is None and len(args) == 5
     assert args[4] | {"alarm_id": 0} == {"printer_id": pid, "printer_name": "Atlas", "alarm_id": 0, "code": "HMS_0700",
                                           "severity": "error", "message": "AMS: out", "help_url": "http://w/1"}
 
     async with session_factory() as s:                                           # a webhook that doesn't subscribe gets nothing
-        (await s.get(WebhookConfig, 1)).events = ["job.complete"]
+        (await s.get(WebhookDestination, 1)).events = ["job.complete"]
         await s.commit()
     with patch("app.services.alarms.webhook_service.schedule") as hook:
         await _deliver(session_factory, pid, A(code="OTHER", sev="error"))
