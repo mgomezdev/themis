@@ -32,6 +32,44 @@ DEFINITION = CapabilityDef(
     description="Where Themis looks up spools and materials, and keeps their weights up to date.",
     features=ALL_CAPABILITIES)
 
+# Machine-readable contract (BIZ-247): every optional provider method and the one capability flag that gates it. A provider that
+# claims a flag MUST override each method listed for it (the base class raises `NotSupported(flag)`); one that doesn't claim the
+# flag leaves the method alone and core never calls it (it checks `host.has(CAPABILITY, flag)` first). `spool_url` is optional
+# but ungated: the base returns None. Anything not in this map and not abstract is not part of the contract.
+OPTIONAL_METHODS: dict[str, str] = {
+    "set_remaining": WRITE_WEIGHT,
+    "set_profile_links": PROFILE_LINKS_WRITE,
+    "create_material": MANAGE_MATERIALS,
+    "update_material": MANAGE_MATERIALS,
+    "archive_material": MANAGE_MATERIALS,
+    "create_spool": MANAGE_SPOOLS,
+    "update_spool": MANAGE_SPOOLS,
+    "archive_spool": MANAGE_SPOOLS,
+    "parse_label": LABEL_SCAN,
+}
+# Flags that gate *data*, not a method: they promise what list_*/get_spool return (weights; profile links), or how core treats the
+# provider (REMOTE: cache, outbox, disconnect alert).
+DATA_FLAGS = frozenset({TRACKS_WEIGHT, PROFILE_LINKS_READ, REMOTE})
+
+
+def contract_violations(provider: object) -> list[str]:
+    """Why `provider` (an instance, or a class whose `capabilities` is class-level) breaks the capability/method contract (empty =
+    it honours it). Nothing is called, only inspected:
+    * a claimed flag whose gated method is not overridden (the base would raise NotSupported while the flag says it works);
+    * a claimed flag that is not a known flag;
+    * a method overridden while its flag is NOT claimed (core would never call it: dead code that hides a missing flag)."""
+    cls = provider if isinstance(provider, type) else type(provider)
+    claimed = set(getattr(provider, "capabilities", frozenset()))
+    out = [f"claims unknown capability flag {f!r}" for f in sorted(claimed - ALL_CAPABILITIES)]
+    for method, flag in OPTIONAL_METHODS.items():
+        overridden = getattr(cls, method, None) is not getattr(FilamentInventoryProvider, method)
+        if flag in claimed and not overridden:
+            out.append(f"claims {flag} but does not implement {method}()")
+        if overridden and flag not in claimed:
+            out.append(f"implements {method}() but does not claim {flag}")
+    return out
+
+
 MATERIAL_FIELDS = ("name", "material", "color_hex", "vendor", "density", "diameter")     # what create/update_material accept
 SPOOL_FIELDS = ("label", "location")                                                    # what update_spool accepts (weight: set_remaining)
 

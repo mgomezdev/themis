@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 
 from app.plugins.capabilities.filament_inventory import (
-    ALL_CAPABILITIES, CAPABILITY, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
+    ALL_CAPABILITIES, CAPABILITY, DATA_FLAGS, OPTIONAL_METHODS, contract_violations, LABEL_SCAN, MANAGE_MATERIALS, MANAGE_SPOOLS, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, TRACKS_WEIGHT,
     WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft, NotSupported, SpoolDraft,
 )
 from app.plugins.local_inventory import MANIFEST as LOCAL_MANIFEST
@@ -261,6 +261,115 @@ async def test_spools_report_their_initial_weight_when_the_provider_knows_it(pro
         assert s1.initial_g == 1000.0                                  # the filament's weight
     else:
         assert s1.initial_g is None or isinstance(s1.initial_g, float)
+
+
+# --- the machine-readable contract: optional method <-> capability flag (BIZ-247) ---------------------------------------
+
+def test_every_optional_method_maps_to_exactly_one_known_flag_and_every_method_flag_is_covered():
+    assert set(OPTIONAL_METHODS.values()) <= ALL_CAPABILITIES
+    assert all(hasattr(FilamentInventoryProvider, m) for m in OPTIONAL_METHODS)
+    # the only flags without a gated method are the ones that promise data / treatment, listed explicitly
+    assert ALL_CAPABILITIES - set(OPTIONAL_METHODS.values()) == DATA_FLAGS
+
+
+async def test_every_provider_honours_the_flag_method_contract(provider):
+    assert contract_violations(provider) == []
+
+
+async def test_each_claimed_flag_means_its_methods_work_and_each_unclaimed_one_is_refused_with_that_flag(provider):
+    """The flag is the source of truth: claiming it ⇒ the gated call is not NotSupported; not claiming it ⇒ NotSupported(flag)."""
+    calls = {
+        "set_remaining": lambda: provider.set_remaining("1", 100.0),
+        "set_profile_links": lambda: provider.set_profile_links("1", {}),
+        "create_material": lambda: provider.create_material(MaterialDraft(name="Contract probe")),
+        "update_material": lambda: provider.update_material("1", {}),
+        "archive_material": lambda: provider.archive_material("1", False),
+        "create_spool": lambda: provider.create_spool(SpoolDraft(material_ref="1", initial_g=10.0)),
+        "update_spool": lambda: provider.update_spool("1", {}),
+        "archive_spool": lambda: provider.archive_spool("1", False),
+        "parse_label": lambda: provider.parse_label("not a label"),
+    }
+    assert set(calls) == set(OPTIONAL_METHODS)
+    for method, flag in OPTIONAL_METHODS.items():
+        try:
+            out = calls[method]()
+            if hasattr(out, "__await__"):
+                await out
+            refused = None
+        except NotSupported as e:
+            refused = e.capability
+        except Exception:
+            refused = None                       # supported: it ran and failed on the probe input, which is fine here
+        if flag in provider.capabilities:
+            assert refused is None, f"{method} claims {flag} but raised NotSupported"
+        else:
+            assert refused == flag, f"{method} is not advertised so it must raise NotSupported({flag})"
+
+
+def test_a_provider_that_claims_a_flag_but_omits_its_method_is_caught():
+    class Liar(FilamentInventoryProvider):
+        capabilities = frozenset({WRITE_WEIGHT, MANAGE_SPOOLS})
+        async def test_connection(self): return {}
+        async def list_materials(self): return []
+        async def list_spools(self): return []
+        async def get_spool(self, spool_ref): return None
+        async def create_spool(self, draft): ...                      # MANAGE_SPOOLS needs update_spool + archive_spool too
+
+    problems = contract_violations(Liar)
+
+    assert "claims WRITE_WEIGHT but does not implement set_remaining()" in problems
+    assert "claims MANAGE_SPOOLS but does not implement update_spool()" in problems
+    assert "claims MANAGE_SPOOLS but does not implement archive_spool()" in problems
+    assert not any("create_spool" in p for p in problems)
+
+
+def test_an_unsupported_optional_method_that_is_not_advertised_passes_and_an_unadvertised_implementation_is_flagged():
+    class Reader(FilamentInventoryProvider):
+        capabilities = frozenset({TRACKS_WEIGHT})                     # a data flag: no method is owed
+        async def test_connection(self): return {}
+        async def list_materials(self): return []
+        async def list_spools(self): return []
+        async def get_spool(self, spool_ref): return None
+
+    class Sneaky(Reader):
+        async def set_remaining(self, spool_ref, remaining_g): ...    # implemented but WRITE_WEIGHT never claimed
+
+    assert contract_violations(Reader) == []
+    assert contract_violations(Sneaky) == ["implements set_remaining() but does not claim WRITE_WEIGHT"]
+    assert contract_violations(type("Bogus", (Reader,), {"capabilities": frozenset({"NOPE"})})) == ["claims unknown capability flag 'NOPE'"]
+
+
+# --- failures are neutral and never leak the configured secret (BIZ-247) ----------------------------------------------------
+
+SECRET = "s3cr3t-api-key-value"
+
+
+@pytest.mark.parametrize("failure", [
+    pytest.param(lambda request: (_ for _ in ()).throw(httpx.ConnectError(f"refused ({SECRET})")), id="transport"),
+    pytest.param(lambda request: httpx.Response(401, text=f"bad key {SECRET}"), id="http-401"),
+    pytest.param(lambda request: httpx.Response(503, text="down"), id="http-503"),
+])
+async def test_a_spoolman_failure_is_a_neutral_error_with_a_machine_readable_code(spoolman_upstream, failure):
+    spoolman_upstream.handler = failure
+    p = SpoolmanProvider(SpoolmanSettings(url="http://spoolman.test", api_key=SECRET))
+
+    with pytest.raises(InventoryProviderError) as ei:
+        await p.list_spools()
+
+    assert ei.value.code and ei.value.code != "error"
+    assert ei.value.status in (None, 401, 503)
+
+
+async def test_the_host_redacts_the_configured_secret_from_any_provider_failure_message():
+    """What leaves the host (CallResult.error → API/logs/state) is redacted: a provider that echoes its key in an exception is safe."""
+    from app import plugins
+    from app.plugins.host import PluginHost
+    host = PluginHost()
+    host._configs = {"spoolman": type("S", (), {"enabled": True, "settings": {}, "secrets": {"api_key": SECRET}, "state": {}})()}
+    plugins.load_bundled()
+
+    assert SECRET not in host.redact("spoolman", f"HTTP 401 for X-Api-Key: {SECRET}")
+    assert "***" in host.redact("spoolman", f"token={SECRET}")
 
 
 # --- a provider with no optional capabilities is still a valid provider -------------------------------------------------
