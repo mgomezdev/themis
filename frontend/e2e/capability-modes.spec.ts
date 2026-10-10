@@ -17,8 +17,8 @@ test('choose-one shows a dormant default and its reason; fan-out lists every pro
   await mockApi(page);
   await page.route('**/api/v1/capabilities', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ capabilities: [
     cap({ id: 'acme.slicing', label: 'Slicing', mode: 'choose_one', selected: 'gone', status: 'no_provider',
-          dormant_default: { plugin_id: 'gone', reason: 'plugin_disabled' },
-          providers: [prov('laminus', 'Laminus'), prov('gone', 'Gone slicer', { enabled: false, status: 'disabled' }), prov('off', 'Off slicer', { enabled: false, status: 'disabled' })] }),
+          dormant_default: { plugin_id: 'gone', reason: 'plugin_removed' },
+          providers: [prov('laminus', 'Laminus'), prov('off', 'Off slicer', { enabled: false, status: 'disabled' })] }),
     cap({ id: 'acme.notify', label: 'Notifications', mode: 'fan_out', selected: null, status: 'serving',
           providers: [prov('ntfy', 'ntfy'), prov('mail', 'Email', { enabled: false, status: 'disabled' })] }),
   ] }) }));
@@ -26,8 +26,8 @@ test('choose-one shows a dormant default and its reason; fan-out lists every pro
 
   const select = page.getByLabel('Slicing default provider');
   await expect(select).toHaveValue('gone');
-  await expect(select.locator('option')).toHaveText(['None', 'Laminus', 'Gone slicer (unavailable)']);
-  await expect(page.getByRole('alert')).toContainText('its plugin is disabled');
+  await expect(select.locator('option')).toHaveText(['None', 'Laminus', 'gone (unavailable)']);
+  await expect(page.getByRole('alert')).toContainText('no longer installed');
   await expect(page.getByRole('alert')).toContainText('never picks one for you');
 
   const list = page.getByRole('list', { name: 'Notifications providers' });

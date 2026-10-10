@@ -17,7 +17,6 @@ def _second(pid: str) -> PluginManifest:
                           provides={FAN: Provide(), CHOOSE: Provide()})
 
 
-
 def _manifest(*, provides: bool) -> PluginManifest:
     return PluginManifest(id="modes_x", name="modes_x", version="1.0.0", host_api=HOST_API, settings_model=DummySettings,
                           factory=DummyProvider, provides={FAN: Provide(), CHOOSE: Provide()} if provides else {}, defines=DEFS)
@@ -92,3 +91,22 @@ async def test_a_choose_one_default_that_cannot_serve_is_reported_dormant_not_re
     assert disabled["selected"] == "modes_y"                                            # the choice is kept, never silently swapped
     assert {p["plugin_id"]: p["status"] for p in disabled["providers"]}["modes_x"] == "serving"
     assert removed["dormant_default"] == {"plugin_id": "modes_y", "reason": "plugin_removed"} and removed["selected"] == "modes_y"
+
+
+async def test_provider_statuses_distinguish_disabled_failed_and_serving_and_a_failed_default_is_provider_unavailable(client):
+    plugins.register_plugin(_manifest(provides=True))
+    plugins.register_plugin(_second("modes_y"))
+    await plugin_host.update_config("modes_x", enabled=True)
+    await plugin_host.update_config("modes_y", enabled=True, settings={"mode": "bad-config"})       # its factory refuses this configuration
+    await plugin_host.set_provider(CHOOSE, "modes_x")
+
+    cap = await _cap(client, CHOOSE)
+    assert {p["plugin_id"]: p["status"] for p in cap["providers"]} == {"modes_x": "serving", "modes_y": "error"}
+
+    await plugin_host.update_config("modes_x", enabled=False)
+    cap = await _cap(client, CHOOSE)
+    assert {p["plugin_id"]: p["status"] for p in cap["providers"]} == {"modes_x": "disabled", "modes_y": "error"}
+
+    await plugin_host.update_config("modes_x", enabled=True, settings={"mode": "bad-config"})
+    broken = await _cap(client, CHOOSE)
+    assert broken["dormant_default"] == {"plugin_id": "modes_x", "reason": "provider_unavailable"}

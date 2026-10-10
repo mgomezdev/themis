@@ -73,6 +73,10 @@ export function CapabilitiesPage() {
                       {p.name}{p.plugin_id === c.dormant_default?.plugin_id ? ' (unavailable)' : p.enabled ? '' : ' (disabled)'}
                     </option>
                   ))}
+                  {/* A removed plugin is no longer a provider at all, but the stored default must stay visible (not read as "None"). */}
+                  {c.dormant_default && !offered.some(p => p.plugin_id === c.dormant_default!.plugin_id) && (
+                    <option value={c.dormant_default.plugin_id}>{c.dormant_default.plugin_id} (unavailable)</option>
+                  )}
                 </select>
               )}
               {c.providers.length === 0 && c.status !== 'dormant' && <span className="small muted">No plugin provides this</span>}

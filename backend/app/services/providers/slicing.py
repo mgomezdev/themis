@@ -150,10 +150,13 @@ class SlicingProvider(ABC):
         raise NotImplementedError("provider does not support PACK_MODELS")
 
 
+# The registry name of the slicing provider in use. ONE source: `get_slicing_provider`, `get_format_provider` and the identity cache keys
+# carry (`slicing_provider_name`) all read it, so a second adapter is selected here and the cache keys follow.
+ACTIVE_PROVIDER = "laminus"
+
+
 def slicing_provider_name() -> str:
-    """The registry name of the slicing provider in use (the identity cache keys carry). Today `laminus` is the only registered
-    adapter, so this is a constant; a second adapter would select by configuration here and nowhere else."""
-    return "laminus"
+    return ACTIVE_PROVIDER
 
 
 def get_slicing_provider() -> SlicingProvider | None:
@@ -163,7 +166,7 @@ def get_slicing_provider() -> SlicingProvider | None:
     url = config.get_laminus_sidecar_url()
     if not url:
         return None
-    return _REGISTRY["laminus"](url)
+    return _REGISTRY[ACTIVE_PROVIDER](url)
 
 
 def get_format_provider() -> SlicingProvider:
@@ -171,7 +174,7 @@ def get_format_provider() -> SlicingProvider:
     `get_slicing_provider()` it never returns None: format methods don't need a configured server."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    return _REGISTRY["laminus"](config.get_laminus_sidecar_url() or "")
+    return _REGISTRY[ACTIVE_PROVIDER](config.get_laminus_sidecar_url() or "")
 
 
 # name -> adapter class. Adding a provider = one adapter class + one entry here.

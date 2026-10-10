@@ -96,7 +96,7 @@ describe('CapabilitiesPage', () => {
     it('a dormant default stays visible and flagged with why, and says work is blocked rather than falling back', async () => {
       stubFetch({ 'GET /api/v1/plugins': PLUGINS, 'GET /api/v1/capabilities': { capabilities: [slicers({
         selected: 'gone', status: 'no_provider', dormant_default: { plugin_id: 'gone', reason: 'plugin_removed' },
-        providers: [prov('laminus', 'Laminus', { status: 'serving' }), prov('gone', 'Gone slicer', { status: 'disabled', enabled: false })] })] } });
+        providers: [prov('laminus', 'Laminus', { status: 'serving' })] })] } });       // a removed plugin is no longer listed as a provider
       render(<CapabilitiesPage />);
 
       const alert = await screen.findByRole('alert');
@@ -104,7 +104,7 @@ describe('CapabilitiesPage', () => {
       expect(alert.textContent).toMatch(/blocked until you choose another/);
       const select = screen.getByRole('combobox', { name: 'Slicing default provider' });
       expect(select).toHaveValue('gone');
-      expect([...select.querySelectorAll('option')].map(o => o.textContent)).toContain('Gone slicer (unavailable)');
+      expect([...select.querySelectorAll('option')].map(o => o.textContent)).toContain('gone (unavailable)');
     });
 
     it('fan-out and routed capabilities have no provider dropdown: every enabled provider is listed as serving or disabled', async () => {
