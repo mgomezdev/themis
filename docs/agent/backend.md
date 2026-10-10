@@ -165,7 +165,7 @@ in the `main.py` lifespan; `configure(SessionLocal)` first):
   the three that build every enabled provider). `choose_one` (e.g. slicing): the selection row is the capability **default**;
   `host.resolve(cap, preferred=, eligible=)` → `Resolution(plugin_id, outcome)` is per-resource preference → default → blocked, eligibility
   checked before dispatch, and a dormant/ineligible preference **blocks** (outcomes `preference_dormant|preference_ineligible|
-  default_unavailable|default_ineligible|no_provider`) — never a silent fallback. `host.call_choose(...)` = resolve + `call_for`;
+  default_unavailable|default_ineligible|no_provider|not_choose_one`) — never a silent fallback. `host.call_choose(...)` = resolve + `call_for` (a bare `call_for` does not re-check eligibility);
   `host.eligible_providers(cap, eligible)` feeds selection UIs. `fan_out` (e.g. notifications): no selection row; `await host.fan_out(HANDLE,
   fn, timeout=)` calls every enabled provider concurrently, each contained on its own (`dict[plugin_id, CallResult]`). Contract tests:
   `tests/plugins/test_capability_modes.py`. Not yet wired to a core capability (slicing/notifications still use their own paths).

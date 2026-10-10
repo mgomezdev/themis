@@ -56,6 +56,7 @@ def _register():
         plugins.register_plugin(manifest(pid))
     plugins.register_plugin(manifest("p_broken", Broken))
     plugins.register_plugin(manifest("p_slow", Slow))
+    plugins.register_plugin(manifest("p_slow2", Slow))
 
 
 async def enable(host, *ids):
@@ -73,6 +74,9 @@ async def test_exclusive_serves_exactly_one_provider_and_a_second_selection_repl
 
     assert host.active(EXCL).manifest.id == "p_b"
     assert host.selected(EXCL) == "p_b"
+    assert host.active_for(EXCL, "p_a") is None and host.active_providers(EXCL) == []     # exclusive never builds the others for it
+    assert host.resolve(EXCL).outcome == "not_choose_one"
+    assert await host.fan_out(H_EXCL, lambda p: p.ping("e")) == {}
 
 
 # --- choose-one -----------------------------------------------------------------------------------------------
@@ -167,13 +171,32 @@ async def test_fan_out_reaches_every_provider_and_one_failure_or_timeout_does_no
     assert out["p_broken"].reason == "error" and out["p_slow"].reason == "timeout"
 
 
-async def test_fan_out_and_routed_capabilities_cannot_be_given_a_single_provider(host):
+async def test_fan_out_cannot_be_given_a_single_provider(host):
     await host.start()
     await enable(host, "p_a")
 
     with pytest.raises(PluginError):
         await host.set_provider(FAN, "p_a")
     assert host.active(FAN) is None
+
+
+async def test_fan_out_skips_disabled_providers_and_is_empty_with_none(host):
+    await host.start()
+    assert await host.fan_out(H_FAN, lambda p: p.ping("e")) == {}
+    await enable(host, "p_a", "p_b")
+    await host.update_config("p_b", enabled=False)
+
+    assert list(await host.fan_out(H_FAN, lambda p: p.ping("e"))) == ["p_a"]
+
+
+async def test_fan_out_calls_providers_concurrently(host):
+    await host.start()
+    await enable(host, "p_slow", "p_slow2")
+
+    t = asyncio.get_running_loop().time()
+    await host.fan_out(H_FAN, lambda p: p.ping("e"), timeout=0.3)
+
+    assert asyncio.get_running_loop().time() - t < 0.5            # sequential would take ~0.6s
 
 
 async def test_fan_out_only_applies_to_fan_out_capabilities(host):

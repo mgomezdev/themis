@@ -71,9 +71,11 @@ class CapabilityStatus:
 @dataclass(frozen=True)
 class Resolution:
     """Outcome of `PluginHost.resolve`. `plugin_id` is the chosen provider, or None when blocked; `outcome` says why:
-    preferred | default | no_provider | preference_dormant | preference_ineligible | default_unavailable | default_ineligible."""
+    preferred | default | no_provider | preference_dormant | preference_ineligible | default_unavailable | default_ineligible |
+    not_choose_one (the capability is not choose-one). `call_for` does not re-check eligibility: use `call_choose`."""
     plugin_id: str | None
-    outcome: str
+    outcome: Literal["preferred", "default", "no_provider", "preference_dormant", "preference_ineligible",
+                     "default_unavailable", "default_ineligible", "not_choose_one"]
     requested: str | None = None
 
 
