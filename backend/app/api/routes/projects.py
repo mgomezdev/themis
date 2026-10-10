@@ -11,11 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ._materials import material_columns, stored
 from ...services.inventory import refs as inventory_refs
@@ -23,7 +23,7 @@ from ...auth import require_scope
 from ...config import get_library_dir
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
-from ...services import job_costs, model_targets, slice_cache
+from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
@@ -67,6 +67,9 @@ class ProjectCreate(BaseModel):
     source_app: Optional[str] = None
     source_user: Optional[str] = None
     source_layout_id: Optional[int] = None
+    # The companion app's id for this project; with `source_app` it identifies the project, and creating it again returns the
+    # existing one (BIZ-172). Requires `source_app`.
+    external_ref: Optional[str] = Field(default=None, min_length=1, max_length=255)
     amount_paid: Optional[float] = None
     price: Optional[float] = None
     payment_status: str = "unpaid"
@@ -365,6 +368,7 @@ async def _project_dict(project: Project, session: AsyncSession, costs: dict | N
         "source_app": project.source_app,
         "source_user": project.source_user,
         "source_layout_id": project.source_layout_id,
+        "external_ref": project.external_ref,
         "amount_paid": project.amount_paid,
         "price": project.price,
         "payment_status": project.payment_status,
@@ -403,14 +407,20 @@ async def _get_project_or_404(project_id: int, session: AsyncSession) -> Project
 # ---------------------------------------------------------------------------
 
 @router.get("", summary="List projects", dependencies=[Depends(require_scope("projects:read"))])
-async def list_projects(session: AsyncSession = Depends(get_session)) -> list[dict]:
+async def list_projects(
+    source_app: Optional[str] = Query(None, description="Only projects created by this source application"),
+    external_ref: Optional[str] = Query(None, description="Only the project with this external ref (use with source_app)"),
+    session: AsyncSession = Depends(get_session),
+) -> list[dict]:
     """All projects ordered by creation date descending, each with items, links,
-    job counts, and aggregated filament/time estimates."""
-    rows = (
-        await session.execute(
-            select(Project).order_by(Project.created_at.desc())
-        )
-    ).scalars().all()
+    job counts, and aggregated filament/time estimates. `?source_app=&external_ref=` looks a project up by the
+    companion app's own key."""
+    q = select(Project).order_by(Project.created_at.desc())
+    if source_app is not None:
+        q = q.where(Project.source_app == source_app)
+    if external_ref is not None:
+        q = q.where(Project.external_ref == external_ref)
+    rows = (await session.execute(q)).scalars().all()
     # Costs for every listed project in a constant number of queries (not 4 per project).
     ids = [p.id for p in rows]
     jobs_by_project: dict[int, list[Job]] = {i: [] for i in ids}
@@ -421,12 +431,16 @@ async def list_projects(session: AsyncSession = Depends(get_session)) -> list[di
     return [await _project_dict(p, session, costs[p.id]) for p in rows]
 
 
-@router.post("", status_code=201, summary="Create project",
-            dependencies=[Depends(require_scope("projects:write"))])
-async def create_project(
-    body: ProjectCreate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
+async def _find_by_external_ref(session: AsyncSession, source_app: str, external_ref: str) -> Project | None:
+    return (await session.execute(select(Project).where(Project.source_app == source_app, Project.external_ref == external_ref))).scalar_one_or_none()
+
+
+async def _create_project(body: ProjectCreate, session: AsyncSession) -> tuple[dict, bool]:
+    """(project dict, created). With an external ref that already exists, nothing is created and the existing project is returned."""
+    if body.external_ref is not None:
+        existing = await _find_by_external_ref(session, body.source_app or "", body.external_ref)
+        if existing is not None:
+            return await _project_dict(existing, session), False
     now = _now_iso()
     proj = Project(
         name=body.name,
@@ -439,6 +453,7 @@ async def create_project(
         source_app=body.source_app,
         source_user=body.source_user,
         source_layout_id=body.source_layout_id,
+        external_ref=body.external_ref,
         amount_paid=body.amount_paid,
         price=body.price,
         payment_status=body.payment_status,
@@ -448,14 +463,58 @@ async def create_project(
         updated_at=now,
     )
     session.add(proj)
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # A concurrent request with the same (source_app, external_ref) won the unique index: return its project.
+        await session.rollback()
+        existing = await _find_by_external_ref(session, body.source_app or "", body.external_ref or "")
+        if existing is None:
+            raise
+        return await _project_dict(existing, session), False
     if proj.amount_paid and proj.amount_paid > 0:
         # Record what was entered as a real payment so amount paid stays derived from payment rows.
         await adopt_manual_amount(session, proj)
         await sync_project_totals(session, proj)
     await session.commit()
     await session.refresh(proj)
-    return await _project_dict(proj, session)
+    await project_events.publish("project.created", proj, dedup_key=f"project.created:{proj.id}")
+    return await _project_dict(proj, session), True
+
+
+@router.post("", status_code=201, summary="Create project",
+             responses={200: {"description": "A project with this source_app + external_ref already exists: returned unchanged"},
+                        409: {"description": "Another request with this Idempotency-Key is still running"},
+                        422: {"description": "external_ref without source_app, or an Idempotency-Key reused for a different request"}},
+             dependencies=[Depends(require_scope("projects:write"))])
+async def create_project(
+    body: ProjectCreate,
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", description="Repeat-safe creation: a retry returns the first response"),
+) -> dict:
+    """Create a project. Retry-safe for companion apps two ways: give it a `source_app` + `external_ref` (a second create with the same
+    pair returns the existing project, status 200, unchanged) and/or an `Idempotency-Key` header (a repeat returns the first response with
+    `Idempotent-Replay: true`)."""
+    if body.external_ref is not None and not body.source_app:
+        raise HTTPException(422, "external_ref needs a source_app")
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    scope = "POST /api/v1/projects"
+    if idempotency_key:
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(body.model_dump()))
+        if replay is not None:
+            response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
+            return replay.response
+    try:
+        result, created = await _create_project(body, session)
+    except BaseException:
+        if idempotency_key:
+            await idempotency.release(factory, scope, idempotency_key)
+        raise
+    response.status_code = 201 if created else 200
+    if idempotency_key:
+        await idempotency.complete(factory, scope, idempotency_key, response.status_code, result)
+    return result
 
 
 @router.get(
@@ -553,10 +612,13 @@ async def promote_project(
     current = PROJECT_STAGES.index(proj.stage) if proj.stage in PROJECT_STAGES else -1
     if body.stage not in PROJECT_STAGES or PROJECT_STAGES.index(body.stage) != current + 1:
         raise HTTPException(409, f"Cannot move project from {proj.stage!r} to {body.stage!r}")
+    previous_stage = proj.stage
     proj.stage = body.stage
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)
+    await project_events.publish("project.stage_changed", proj, previous_stage=previous_stage,
+                                 dedup_key=f"project.stage_changed:{proj.id}:{proj.stage}")
     if proj.stage == "queued":
         queue_engine.wake()
     return await _project_dict(proj, session)
@@ -1121,6 +1183,7 @@ def _filament_label(fil_type: str, fil_color: str, mat: tuple[str, str] | None) 
         422: {"description": "Project has no items or contains non-STL files"},
         502: {"description": "Orca sidecar error during generation"},
         504: {"description": "Generation timed out"},
+        409: {"description": "Project is a draft, or another request with this Idempotency-Key is still running"},
     },
     dependencies=[Depends(require_scope("projects:write"))],
 )
@@ -1128,11 +1191,34 @@ async def generate_project(
     project_id: int,
     body: GenerateRequest,
     background_tasks: BackgroundTasks,
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", description="Repeat-safe generation: a retry returns the first result"),
 ) -> dict:
     """Pack project STL items into 3MF files (one per filament group), save them to the library,
     and queue one job per plate. Returns created job and file IDs plus the bed dimensions used
-    for packing."""
+    for packing.
+    Send an `Idempotency-Key` header to make the call safe to retry: a repeat with the same key and body returns the first result
+    (`Idempotent-Replay: true`) and creates no further files or jobs."""
+    factory = async_sessionmaker(session.bind, expire_on_commit=False)
+    scope = f"POST /api/v1/projects/{project_id}/generate"
+    if idempotency_key:
+        replay = await idempotency.claim(factory, scope, idempotency_key, idempotency.request_hash(project_id, body.model_dump()))
+        if replay is not None:
+            response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
+            return replay.response
+    try:
+        result = await _generate_project(project_id, body, background_tasks, session)
+    except BaseException:
+        if idempotency_key:
+            await idempotency.release(factory, scope, idempotency_key)
+        raise
+    if idempotency_key:
+        await idempotency.complete(factory, scope, idempotency_key, 200, result)
+    return result
+
+
+async def _generate_project(project_id: int, body: GenerateRequest, background_tasks: BackgroundTasks, session: AsyncSession) -> dict:
     proj = await _get_project_or_404(project_id, session)
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
@@ -1415,6 +1501,8 @@ async def generate_project(
 
     proj.updated_at = _now_iso()
     await session.commit()
+    if jobs_out:
+        await project_events.publish("project.generated", proj, job_ids=[j["id"] for j in jobs_out])
 
     return {
         "project_id": proj.id,

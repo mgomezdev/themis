@@ -153,6 +153,10 @@ class EventHub:
     def has_subscriber(self, name: str) -> bool:
         return f"core:{name}" in self._core
 
+    def configure(self, factory: async_sessionmaker[AsyncSession] | None) -> None:
+        """Set the database handlers use without starting the dispatcher (tests, and `start` does it too)."""
+        self._s.factory = factory
+
     @property
     def session_factory(self) -> async_sessionmaker[AsyncSession]:
         """The database the outbox lives in: core handlers open their sessions here, so they work on the same DB as the event."""
@@ -330,6 +334,7 @@ class EventHub:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         self._lanes.clear()
+        self._published.clear()                                   # the publish-level dedup memory is per run
         self._s = _State()
 
     async def _dispatch_loop(self) -> None:

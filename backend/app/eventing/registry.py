@@ -1,7 +1,7 @@
 """The event catalog: core events plus every registered plugin's `defines_events` (BIZ-249). Publication is validated against it."""
 from __future__ import annotations
 
-from .core_payloads import JobCompletePayload
+from .core_payloads import JobCompletePayload, ProjectPayload
 from .definitions import EventDef
 from .envelope import EventEnvelope, EventError
 
@@ -15,6 +15,9 @@ CORE_EVENTS: dict[str, EventDef] = {d.name: d for d in (
     EventDef("job.blocked", description="A job was blocked (slicing failure or no eligible printer)."),
     EventDef("printer.alarm", description="A printer raised or escalated an alarm."),
     EventDef("spool.low", description="A spool fell below its low-stock threshold."),
+    EventDef("project.created", payload_model=ProjectPayload, description="A project was created (not published for an idempotent repeat)."),
+    EventDef("project.generated", payload_model=ProjectPayload, description="Jobs were generated for a project (`job_ids`)."),
+    EventDef("project.stage_changed", payload_model=ProjectPayload, description="A project was promoted to its next stage."),
 )}
 
 

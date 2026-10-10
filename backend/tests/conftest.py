@@ -64,10 +64,19 @@ async def session_factory(tmp_path, _schema_template) -> AsyncGenerator[async_se
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     plugin_host._reset()
     plugin_host.configure(factory)
+    from app.eventing.hub import hub as event_hub
+    event_hub.configure(factory)                            # core event handlers open sessions on THIS test's database
     try:
         yield factory
     finally:
+        from app.services import webhook_service
         from app.services.inventory import tasks as inventory_tasks
+        try:
+            await event_hub.drain(timeout=10)               # best-effort lanes and deliveries must not outlive the test DB
+        except Exception:
+            pass
+        await event_hub.stop()
+        await webhook_service.drain()
         await inventory_tasks.drain()                       # background snapshot/flush tasks must not outlive the test DB
         await plugin_host.stop()
         plugin_host._reset()

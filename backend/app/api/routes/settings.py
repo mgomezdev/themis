@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import CostConfig, NotificationConfig, Printer, QueueConfig, WebhookConfig
+from ...models import CostConfig, NotificationConfig, Printer, QueueConfig
+from ...services import webhook_service
 from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.notification_service import send_discord, send_email, send_ntfy
@@ -133,25 +134,17 @@ class WebhookConfigIn(BaseModel):
     events: list[str] | None = None
 
 
-async def _get_or_create_webhook(session: AsyncSession) -> WebhookConfig:
-    row = await session.get(WebhookConfig, 1)
-    if row is None:
-        row = WebhookConfig(id=1, events=[])
-        session.add(row)
-        await session.flush()
-    return row
-
-
-def _webhook_out(row: WebhookConfig) -> WebhookConfigOut:
-    return WebhookConfigOut(url=row.url, has_secret=row.secret is not None, events=row.events)
+def _webhook_out(row) -> WebhookConfigOut:
+    return WebhookConfigOut(url=row.url if row else None, has_secret=bool(row and row.secret is not None),
+                            events=list(row.events or []) if row else [])
 
 
 @router.get("/webhook", response_model=WebhookConfigOut, summary="Get webhook config",
            dependencies=[Depends(require_scope("settings:read"))])
 async def get_webhook_config(session: AsyncSession = Depends(get_session)):
-    """Outbound webhook settings: endpoint URL, whether an HMAC secret is set, and subscribed
-    event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged."""
-    return _webhook_out(await _get_or_create_webhook(session))
+    """The `default` outbound webhook (see `/api/v1/webhooks` for any number of destinations): endpoint URL, whether an HMAC secret is
+    set, and subscribed event types. The secret itself never round-trips - omit `secret` on PUT to leave it unchanged."""
+    return _webhook_out(await webhook_service.default_destination(session))
 
 
 @router.put("/webhook", response_model=WebhookConfigOut, summary="Update webhook config",
@@ -162,13 +155,14 @@ async def update_webhook_config(
 ):
     """Update webhook settings. Omitted fields (including `secret`) are left unchanged; an
     empty string for `secret` clears it."""
-    row = await _get_or_create_webhook(session)
+    row = await webhook_service.default_destination(session, create=True)
     if body.url is not None:
         row.url = body.url or None
     if body.secret is not None:
         row.secret = body.secret or None
     if body.events is not None:
         row.events = body.events
+    row.updated_at = webhook_service._now()
     await session.commit()
     await session.refresh(row)
     return _webhook_out(row)

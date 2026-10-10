@@ -25,7 +25,6 @@ from ..models import (
     QueueConfig,
     SlicedVersion,
     UploadedFile,
-    WebhookConfig,
 )
 from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
@@ -1533,14 +1532,23 @@ class QueueEngine:
 
         event_hub.wake()
 
-    async def _fire_webhooks(self, job_id: int, event: str) -> None:
+    async def _fire_webhooks(self, job_id: int, event: str, event_id: str | None = None) -> None:
         try:
             async with self._factory() as session:
-                cfg = await session.get(WebhookConfig, 1)
-            if cfg and cfg.url and (not cfg.events or event in cfg.events):
-                webhook_service.schedule(cfg.url, cfg.secret, event, job_id)
+                extra = await self._job_webhook_fields(session, job_id)
+                await webhook_service.dispatch(session, event, job_id, extra or None, event_id=event_id)
         except Exception:
-            logger.exception("Failed to load webhook config for job %s", job_id)
+            logger.exception("Failed to dispatch webhooks for job %s", job_id)
+
+    @staticmethod
+    async def _job_webhook_fields(session: AsyncSession, job_id: int) -> dict:
+        """What a companion app needs to correlate a job event with its own record: the project, its source app and external ref."""
+        job = await session.get(Job, job_id)
+        project = await session.get(Project, job.project_id) if job is not None and job.project_id is not None else None
+        if project is None:
+            return {}
+        return {k: v for k, v in (("project_id", project.id), ("source_app", project.source_app),
+                                  ("external_ref", project.external_ref)) if v is not None}
 
     async def _fire_notifications(
         self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None

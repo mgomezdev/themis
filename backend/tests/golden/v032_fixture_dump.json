@@ -219,6 +219,7 @@
       "customer": "",
       "customer_id": null,
       "due_date": null,
+      "external_ref": null,
       "id": 1,
       "machine_uuid": null,
       "name": "Fixture project",
