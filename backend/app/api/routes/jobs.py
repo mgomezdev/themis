@@ -18,7 +18,8 @@ from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
-from ...services import slice_cache, slice_saver
+from ...services import completion_events, slice_cache, slice_saver
+from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
 from ...services.mesh_3mf_builder import source_has_project_settings
@@ -1245,25 +1246,21 @@ async def complete_job_manually(
     job.outcome = None
     job.updated_at = datetime.now(timezone.utc).isoformat()
 
-    printer.lifetime_job_count += 1
-    printer.lifetime_print_seconds += secs or 0
     printer.awaiting_plate_clear = True
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
-    plan = None
+    # Wear counters and the spool deduction run from the durable `job.complete` event written in this transaction.
+    inventory_use = None
     if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
         slot = _slot_for_config(config, printer.loaded_filaments or [])
         raw_spool_id = inventory_refs.slot_spool_ref(slot) if slot is not None else None
         if raw_spool_id is not None:
-            plan = await inventory_deduction.plan_completion(
-                session, job=job, printer_id=body.printer_id, spool_ref=str(raw_spool_id), grams=grams,
-                source="manual_complete")
+            inventory_use = {"spool_ref": str(raw_spool_id), "grams": grams}
+    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use)
 
     await session.commit()
     await session.refresh(job)
-
-    if plan is not None:
-        inventory_deduction.after_commit(plan, inventory_deduction.factory_for(session))
+    event_hub.wake()
 
     return _to_dict(job)
 

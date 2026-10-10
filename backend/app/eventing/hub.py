@@ -150,6 +150,16 @@ class EventHub:
     def unsubscribe(self, name: str) -> None:
         self._core.pop(f"core:{name}", None)
 
+    def has_subscriber(self, name: str) -> bool:
+        return f"core:{name}" in self._core
+
+    @property
+    def session_factory(self) -> async_sessionmaker[AsyncSession]:
+        """The database the outbox lives in: core handlers open their sessions here, so they work on the same DB as the event."""
+        if self._s.factory is None:
+            raise RuntimeError("the event hub has no session factory (not started)")
+        return self._s.factory
+
     def subscribers_for(self, event: str) -> list[Subscriber]:
         """Everyone who would receive `event` right now: core subscribers, then running plugins' subscriptions."""
         out = [s for s in self._core.values() if s.event == event]
@@ -355,7 +365,24 @@ class EventHub:
             return IDLE_WAKE_S
         return max(0.01, min(IDLE_WAKE_S, (_parse(nxt) - datetime.now(timezone.utc)).total_seconds()))
 
-    async def _dispatch_due(self) -> None:
+    async def deliver_pending(self, factory: async_sessionmaker[AsyncSession] | None = None, *, max_rounds: int = 100) -> None:
+        """Deliver everything that is due right now and wait for it. For tests (it may swap in `factory` for the call); safe
+        alongside the dispatcher loop, which owns any subscriber already mid-delivery."""
+        previous = self._s.factory
+        if factory is not None:
+            self._s.factory = factory
+        try:
+            for _ in range(max_rounds):
+                started = await self._dispatch_due()
+                await self.drain()
+                if not started:
+                    return
+        finally:
+            if factory is not None:
+                self._s.factory = previous
+
+    async def _dispatch_due(self) -> int:
+        """Start a delivery task for every idle subscriber with due work; returns how many were started."""
         s = self._s
         assert s.factory is not None
         groups: dict[str, list[int]] = {}
@@ -373,6 +400,7 @@ class EventHub:
             task = asyncio.get_running_loop().create_task(self._deliver_group(subscriber, ids), name=f"event-deliver-{subscriber}")
             s.inflight[subscriber] = task
             task.add_done_callback(lambda _t, k=subscriber: (s.inflight.pop(k, None), self.wake()))
+        return sum(1 for subscriber in groups if subscriber in s.inflight)
 
     async def _deliver_group(self, subscriber: str, delivery_ids: list[int]) -> None:
         for delivery_id in delivery_ids:

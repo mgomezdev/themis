@@ -151,7 +151,7 @@ async def test_publish_rejects_a_malformed_or_misrouted_envelope_and_a_durable_e
     with pytest.raises(EventError, match="unknown event"):
         await hub.publish(EventEnvelope(name="job.nope"))
     with pytest.raises(EventError, match="durable"):
-        await hub.publish(EventEnvelope(name="job.complete"))
+        await hub.publish(EventEnvelope(name="job.complete", payload={"source": "queue"}))
 
 
 async def test_core_subscriber_registration_is_validated(hub):

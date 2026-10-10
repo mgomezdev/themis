@@ -198,6 +198,9 @@ class Job(Base):
     deduction_skipped: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     # Why filament usage was not recorded for this job (inventory tracking suspended / no starting weight); null otherwise.
     deduction_note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set (once) by the `job_complete.maintenance` subscriber in the transaction that bumps the printer's wear counters: the
+    # idempotency key that keeps a redelivered `job.complete` event from counting the job twice (BIZ-269).
+    maintenance_accrued: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # --- Estimate values (set after background test slice) ---
     estimate_token: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     estimate_status: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)

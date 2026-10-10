@@ -2,6 +2,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.waiting import settle_events
+
 
 async def _pending_writes(session_factory):
     from sqlalchemy import select
@@ -38,7 +40,7 @@ async def test_complete_manually_happy_path(client, tmp_path, session_factory, u
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
     from app.services.inventory import tasks as inventory_tasks
-    await inventory_tasks.drain()
+    await settle_events(session_factory)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -285,7 +287,7 @@ async def test_complete_manually_deducts_spoolman_filament(client, tmp_path, ses
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
     from app.services.inventory import tasks as inventory_tasks
-    await inventory_tasks.drain()
+    await settle_events(session_factory)
 
     assert resp.status_code == 200
     # No print-start snapshot exists for a manual completion: the weight is taken now, then the absolute target
@@ -317,7 +319,7 @@ async def test_complete_manually_skips_deduction_when_spoolman_disabled(client, 
             f"/api/v1/jobs/{job_id}/complete-manually", json={"printer_id": printer_id},
         )
     from app.services.inventory import tasks as inventory_tasks
-    await inventory_tasks.drain()
+    await settle_events(session_factory)
 
     assert resp.status_code == 200
     assert await _pending_writes(session_factory) == []

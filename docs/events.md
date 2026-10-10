@@ -3,8 +3,7 @@
 Design note for the versioned event contract used by core and plugins. Code: `backend/app/eventing/` (`envelope`, `registry`,
 `hub`, `redaction`, `definitions`), routes `app/api/routes/events.py`, tables `event_outbox` / `event_deliveries` (migration v045).
 Epic: BIZ-266. Consumers migrate separately (BIZ-269 print completion, BIZ-252 notification channels, BIZ-172 project webhooks);
-**in this change nothing in core publishes or subscribes yet**, so completion, inventory deduction, maintenance, webhooks and
-notifications behave exactly as before.
+BIZ-249 itself wired nothing in core; BIZ-269 (below) is the first consumer: print-completion effects.
 
 The older `services/events.py` bus (typed Python events between printer clients and `PrinterManager`) is unchanged. It carries
 *internal callbacks*, not domain events: no envelope, no persistence, in-process only.
@@ -107,3 +106,32 @@ settings, replay and external sinks are **out of scope** (BIZ-270 decides them).
 
 SSE / WebSocket live updates are **not** part of this contract and make no delivery promise: a reconnecting client re-fetches
 state. They may subscribe as best-effort consumers later (BIZ-269).
+
+
+## First consumer: print completion (BIZ-269)
+
+`queue_engine.handle_print_complete` (a real print) and `POST /jobs/{id}/complete-manually` (an admin completing a job without
+printing it) each write a durable `job.complete` event **inside the job's completion transaction** (`completion_events.enqueue_job_complete`,
+then `hub.wake()` after the commit). The state change, the printer's `awaiting_plate_clear`, the gcode cleanup and the atomic
+completion claim (`UPDATE jobs … WHERE status='printing'`, whose loser returns without publishing) stay in that transaction; the
+event's `dedup_key` is `job.complete:<job id>`, so duplicate printer callbacks, a reconciliation pass and a manual completion racing a real one
+yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `inventory` (`{spool_ref, grams}` or
+null: the spool in the printing slot, resolved at completion, not when the event is handled).
+
+Subscribers (`app/services/completion_events.py`, registered on import, all idempotent on the job id):
+
+| Subscriber | Effect | Idempotency key |
+|---|---|---|
+| `job_complete.maintenance` | `printer.lifetime_job_count += 1`, `lifetime_print_seconds += job.actual_seconds` | `UPDATE jobs SET maintenance_accrued=1 WHERE id=? AND status='complete' AND maintenance_accrued=0` in the **same transaction** as the counters (migration v046; already-complete jobs are backfilled as accrued) |
+| `job_complete.inventory` | `inventory_deduction.plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
+| `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none: the senders swallow their own errors and each step is attempted independently, so a send failure is logged, not retried or propagated. A hub-level timeout/crash/shutdown mid-handler redelivers the event and can repeat a notice (at-least-once) |
+
+Crash boundaries (each covered by `tests/services/test_completion_events.py`): *before commit* — job and event roll back together, the
+retry completes it once; *after commit, before handler* — the event and its delivery rows are durable, the dispatcher applies the
+effects after restart; *during a handler* — flag and counters are one transaction, so they roll back together and the delivery is
+retried with backoff (visible in `/events/subscribers` and `/events/deliveries`); *after the side effect, before the acknowledgement* —
+the redelivered event finds the idempotency key and does nothing. The deferred-weight deduction (a job with no start snapshot, and every manual completion) now runs *inside* the handler, so the event is
+acknowledged only after its outbox row exists; a crash or provider error before that redelivers it, and the outbox-row check keeps the retry from deducting twice.
+
+Tests that assert on these effects call `tests.waiting.settle_events(factory)` (it runs the dispatcher inline); production delivers
+from the dispatcher loop within milliseconds of the commit.
