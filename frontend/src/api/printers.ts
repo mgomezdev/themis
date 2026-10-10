@@ -35,6 +35,7 @@ export interface PrinterType {
   plugin_enabled: boolean;            // a disabled plugin's models are listed but cannot be added
   model_uuid: string | null;          // the core registry's stable id for this model
   model_enabled: boolean;             // the user's subset: only enabled models are offered when adding a printer
+  custom: boolean;                    // a user-defined model: the add flow asks for its bed size (stored with the printer)
 }
 
 /** A registry entry (`GET /printer-models`): a stable UUID plus whether the model is usable right now. */
@@ -107,6 +108,8 @@ export interface CreatePrinterBody {
   manufacturer_id: string;
   model_id: string;
   connection_config: Record<string, unknown>;
+  bed_x_mm?: number;                    // default: the declared model's bed (a custom model's is the user's input)
+  bed_y_mm?: number;
   orca_printer_profiles?: string[];
   current_orca_printer_profile?: string | null;
   loaded_filaments?: LoadedFilament[];

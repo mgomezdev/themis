@@ -88,7 +88,25 @@ interface WizardData {
   printerType: PrinterType | null;
   nickname: string;
   connectionConfig: Record<string, string>;
+  /** A custom (user-defined) model only: the bed the user states, as typed. Blank = the model's placeholder. */
+  bedX?: string;
+  bedY?: string;
 }
+
+/** The connection values to send: what the user typed plus the form's defaults for anything left untouched, so a default the form
+ *  SHOWS (e.g. a declared model's toolhead count) is the value that is stored. */
+function withDefaults(type: PrinterType, typed: Record<string, string>): Record<string, string> {
+  const out = { ...typed };
+  for (const f of type.connection_fields) {
+    if (out[f.name] === undefined && f.default != null) out[f.name] = String(f.default);
+  }
+  return out;
+}
+
+const positive = (v: string | undefined, fallback: number): number => {
+  const n = Number(v ?? '');
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
 
 // ---------------------------------------------------------------------------
 // EditForm — inline edit for an existing printer
@@ -288,7 +306,7 @@ export function PrinterAddForm({
     try {
       const result = await testConnection({
         printer_type: data.printerType.plugin_id,
-        connection_config: data.connectionConfig,
+        connection_config: withDefaults(data.printerType, data.connectionConfig),
       });
       if (result.ok) {
         setConnStatus('success');
@@ -330,7 +348,11 @@ export function PrinterAddForm({
         plugin_id: data.printerType.plugin_id,
         manufacturer_id: data.printerType.manufacturer_id,
         model_id: data.printerType.model_id,
-        connection_config: data.connectionConfig,
+        connection_config: withDefaults(data.printerType, data.connectionConfig),
+        ...(data.printerType.custom ? {
+          bed_x_mm: positive(data.bedX, data.printerType.bed_mm[0]),
+          bed_y_mm: positive(data.bedY, data.printerType.bed_mm[1]),
+        } : {}),
         current_orca_printer_profile: machinePreset || null,
         orca_printer_profiles: machinePreset ? [machinePreset] : [],
       });
@@ -471,6 +493,25 @@ export function PrinterAddForm({
                   {f.help_text && <div className="tiny muted" style={{ marginTop: 4 }}>{f.help_text}</div>}
                 </div>
               ))}
+              {data.printerType.custom && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                  <div>
+                    <label className="label" htmlFor="custom-bed-x">Bed width X (mm)</label>
+                    <input id="custom-bed-x" className="input" type="number" min={1}
+                           value={data.bedX ?? String(data.printerType.bed_mm[0])}
+                           onChange={e => setData({ ...data, bedX: e.target.value })} />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="custom-bed-y">Bed depth Y (mm)</label>
+                    <input id="custom-bed-y" className="input" type="number" min={1}
+                           value={data.bedY ?? String(data.printerType.bed_mm[1])}
+                           onChange={e => setData({ ...data, bedY: e.target.value })} />
+                  </div>
+                  <div className="tiny muted" style={{ gridColumn: '1 / -1' }}>
+                    A custom printer has no vendor-declared size: what you enter here is stored with the printer.
+                  </div>
+                </div>
+              )}
             </div>
 
             {connStatus === 'success' && (

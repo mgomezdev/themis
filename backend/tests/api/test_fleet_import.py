@@ -60,14 +60,14 @@ async def test_invalid_backups_are_400_and_leave_the_fleet_untouched(client, pay
 
 async def test_unknown_printer_types_are_skipped_with_a_warning_while_the_rest_import(client):
     resp = await _import(client, _backup(
-        _printer("Legacy Klipper", "moonraker"),
+        _printer("Legacy Klipper", "klipperish"),
         _printer("Good One", "mock"),
         {"name": "No Type"},
     ))
 
     assert resp.status_code == 200
     assert resp.json() == {"imported": 1, "skipped": 2, "warnings": [
-        "'Legacy Klipper': skipped — unknown printer type 'moonraker'",
+        "'Legacy Klipper': skipped — unknown printer type 'klipperish'",
         "'No Type': skipped — unknown printer type ''",
     ]}
     assert [p["name"] for p in await _fleet(client)] == ["Good One"]

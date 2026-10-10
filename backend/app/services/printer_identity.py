@@ -51,18 +51,19 @@ def dormant_reason(plugin_id: str | None) -> str | None:
     return None
 
 
-def _connection_fields(manifest: PluginManifest) -> list[dict[str, Any]]:
-    factory_fields = getattr(manifest.factory, "connection_fields", None)
+def _connection_fields(manifest: PluginManifest, model: PrinterModel | None = None) -> list[dict[str, Any]]:
+    """The form for a plugin's printers; a client may tailor it per declared model (`connection_fields_for(model)`)."""
+    per_model = getattr(manifest.factory, "connection_fields_for", None)
+    factory_fields = per_model if (model is not None and callable(per_model)) else getattr(manifest.factory, "connection_fields", None)
     if not callable(factory_fields):
         return []
-    return [asdict(f) for f in factory_fields()]
+    return [asdict(f) for f in (factory_fields(model) if factory_fields is per_model else factory_fields())]
 
 
 def printer_model_catalog() -> list[dict]:
     """Every model every registered plugin declares, enabled or not (the UI greys out disabled plugins)."""
     out: list[dict] = []
     for manifest in registered_plugins():
-        fields = _connection_fields(manifest)
         enabled = plugin_host.is_enabled(manifest.id)
         for mfr in manifest.manufacturers:
             for model in mfr.models:
@@ -74,7 +75,8 @@ def printer_model_catalog() -> list[dict]:
                     "display_name": model.name,
                     "bed_mm": list(model.bed_mm),
                     "toolheads": model.toolheads,
-                    "connection_fields": fields,
+                    "custom": model.custom,
+                    "connection_fields": _connection_fields(manifest, model),
                     "plugin_enabled": enabled,
                 })
     return sorted(out, key=lambda e: (e["manufacturer_name"], e["display_name"]))

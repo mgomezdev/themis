@@ -176,6 +176,77 @@ describe('PrinterAddForm — create body', () => {
   });
 });
 
+describe('PrinterAddForm — model-specific form defaults and custom models (BIZ-148)', () => {
+  const TOOLHEADS = (n: number) => ({ ...IP_FIELD, name: 'toolheads', label: 'Toolheads', required: false, default: n });
+  const DUAL = printerType({ plugin_id: 'moonraker', manufacturer_id: 'acme', manufacturer_name: 'Acme', model_id: 'dual', display_name: 'Dual',
+    toolheads: 2, connection_fields: [IP_FIELD, TOOLHEADS(2)] });
+  const CUSTOM = printerType({ plugin_id: 'moonraker', manufacturer_id: 'generic', manufacturer_name: 'Generic', model_id: 'custom_klipper',
+    display_name: 'Custom Klipper printer', custom: true, bed_mm: [250, 250], connection_fields: [IP_FIELD, TOOLHEADS(1)] });
+
+  async function run(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: /^Next/ }));      // → connect
+    await user.type(field('IP Address'), '10.0.0.9');
+  }
+  const finishFromConnect = async (user: ReturnType<typeof userEvent.setup>) => {
+    await user.click(screen.getByRole('button', { name: /^Next/ }));      // → profile
+    await user.click(screen.getByRole('button', { name: /^Next/ }));      // → review
+    await user.click(screen.getByRole('button', { name: /Finish/i }));
+  };
+
+  it('stores the default the form shows (a declared model\'s toolhead count) even if the user never touches the field', async () => {
+    const user = userEvent.setup();
+    const { to } = stubFetch({ ...ROUTES, 'POST /api/v1/printers': { id: 1 } });
+    renderForm([DUAL]);
+    await run(user);
+
+    expect(field('Toolheads (optional)').value).toBe('2');
+    await finishFromConnect(user);
+
+    await waitFor(() => expect(to('POST', '/api/v1/printers')).toHaveLength(1));
+    const body = to('POST', '/api/v1/printers')[0].body as Record<string, any>;
+    expect(body.connection_config).toEqual({ ip_address: '10.0.0.9', toolheads: '2' });
+    expect(body).not.toHaveProperty('bed_x_mm');                                    // a declared model's bed comes from the declaration
+  });
+
+  it('a custom model asks for the bed size, starts at the placeholder and sends exactly what the user states', async () => {
+    const user = userEvent.setup();
+    const { to } = stubFetch({ ...ROUTES, 'POST /api/v1/printers': { id: 1 } });
+    renderForm([CUSTOM]);
+    await run(user);
+
+    const x = screen.getByLabelText('Bed width X (mm)') as HTMLInputElement;
+    expect(x.value).toBe('250');
+    await user.clear(x);
+    await user.type(x, '410');
+    await user.clear(screen.getByLabelText('Bed depth Y (mm)'));
+    await user.type(screen.getByLabelText('Bed depth Y (mm)'), '205.5');
+    await finishFromConnect(user);
+
+    await waitFor(() => expect(to('POST', '/api/v1/printers')).toHaveLength(1));
+    expect(to('POST', '/api/v1/printers')[0].body).toMatchObject({ model_id: 'custom_klipper', bed_x_mm: 410, bed_y_mm: 205.5 });
+  });
+
+  it('a nonsense bed value falls back to the placeholder instead of sending 0 or NaN', async () => {
+    const user = userEvent.setup();
+    const { to } = stubFetch({ ...ROUTES, 'POST /api/v1/printers': { id: 1 } });
+    renderForm([CUSTOM]);
+    await run(user);
+    await user.clear(screen.getByLabelText('Bed width X (mm)'));
+    await finishFromConnect(user);
+
+    await waitFor(() => expect(to('POST', '/api/v1/printers')).toHaveLength(1));
+    expect(to('POST', '/api/v1/printers')[0].body).toMatchObject({ bed_x_mm: 250, bed_y_mm: 250 });
+  });
+
+  it('a declared (non-custom) model never shows the bed inputs', async () => {
+    const user = userEvent.setup();
+    stubFetch(ROUTES);
+    renderForm([DUAL]);
+    await run(user);
+    expect(screen.queryByLabelText('Bed width X (mm)')).toBeNull();
+  });
+});
+
 describe('PrinterAddForm — discovery pre-fill by plugin', () => {
   const found = (over: Record<string, unknown>) => ({
     ranges: ['192.168.7.0/24'], scanned: 254, truncated: false,

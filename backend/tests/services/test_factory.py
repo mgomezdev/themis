@@ -111,6 +111,6 @@ def test_create_client_from_config_unknown_type_raises():
 
 
 def test_create_client_unknown_type_raises():
-    printer = _printer("moonraker", {"port": 7125})
+    printer = _printer("klipperish", {"port": 7125})
     with pytest.raises(ValueError, match="Unknown printer type"):
         create_client(printer)

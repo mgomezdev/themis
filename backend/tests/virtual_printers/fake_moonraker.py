@@ -15,6 +15,9 @@ class VirtualMoonraker:
         self.api_key = api_key
         self.started: list[str] = []
         self.requests: list[tuple[str, str]] = []
+        self.print_state = "standby"          # Klipper print_stats.state, driven by start/pause/resume/cancel
+        self.gcode_scripts: list[str] = []
+        self.fail_paths: dict[str, int] = {}  # path -> HTTP status to answer with (error injection)
 
     def _resp(self, req: httpx.Request, status: int, body) -> httpx.Response:
         return httpx.Response(status, json=body, request=req) if isinstance(body, (dict, list)) \
@@ -26,6 +29,8 @@ class VirtualMoonraker:
         parsed = urllib.parse.urlparse(url)
         path = urllib.parse.unquote(parsed.path)
         self.requests.append((method, path))
+        if path in self.fail_paths:
+            return self._resp(req, self.fail_paths[path], {"error": {"code": self.fail_paths[path], "message": "injected failure"}})
         if self.api_key and (headers or {}).get("X-Api-Key") != self.api_key:
             return self._resp(req, 401, {"error": {"code": 401, "message": "Unauthorized"}})
 
@@ -74,6 +79,18 @@ class VirtualMoonraker:
 
         if method == "POST" and path == "/printer/print/start":
             self.started.append((params or {}).get("filename", ""))
+            self.print_state = "printing"
+            return self._resp(req, 200, {"result": "ok"})
+        transitions = {"/printer/print/pause": ("printing", "paused"), "/printer/print/resume": ("paused", "printing"),
+                       "/printer/print/cancel": (None, "cancelled")}
+        if method == "POST" and path in transitions:
+            needs, to = transitions[path]
+            if needs is not None and self.print_state != needs:
+                return self._resp(req, 400, {"error": {"code": 400, "message": f"Klippy Request Error: not {needs}"}})
+            self.print_state = to
+            return self._resp(req, 200, {"result": "ok"})
+        if method == "POST" and path == "/printer/gcode/script":
+            self.gcode_scripts.append((params or {}).get("script", ""))
             return self._resp(req, 200, {"result": "ok"})
         return self._resp(req, 404, {"error": {"code": 404, "message": f"Not found: {method} {path}"}})
 
@@ -94,6 +111,29 @@ def install(monkeypatch, server: VirtualMoonraker):
     monkeypatch.setattr(httpx, "get", lambda url, **kw: server.handle("GET", url, **kw))
     monkeypatch.setattr(httpx, "delete", lambda url, **kw: server.handle("DELETE", url, **kw))
     monkeypatch.setattr(httpx, "post", lambda url, **kw: server.handle("POST", url, **kw))
+
+
+def status_frame(**objects) -> str:
+    """A `notify_status_update` WebSocket frame carrying these Klipper objects (what Moonraker pushes after subscribe)."""
+    import json
+    return json.dumps({"jsonrpc": "2.0", "method": "notify_status_update", "params": [objects, 1.0]})
+
+
+class FakeWebSocket:
+    """Captures what a client sends over the Moonraker WebSocket (JSON-RPC)."""
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+        self.closed = False
+
+    def send(self, text: str) -> None:
+        import json
+        self.sent.append(json.loads(text))
+
+    def close(self) -> None:
+        self.closed = True
+
+    def methods(self) -> list[str]:
+        return [m["method"] for m in self.sent]
 
 
 def make_client(api_key: str | None = None):

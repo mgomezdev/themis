@@ -13,6 +13,7 @@ export function printerType(over: Partial<PrinterType> & Pick<PrinterType, 'plug
     plugin_enabled: true,
     model_uuid: null,
     model_enabled: true,
+    custom: false,
     ...over,
   };
 }
