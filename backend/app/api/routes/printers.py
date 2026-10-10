@@ -24,6 +24,7 @@ from ...services.providers.slicing import Catalog, get_format_provider
 from ...services.printer_client_factory import (
     client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
+from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
 from ...services import scheduling
 from ...services.printer_manager import printer_manager
@@ -47,6 +48,7 @@ class PrinterCreate(BaseModel):
     plugin_id: str | None = None
     manufacturer_id: str | None = None
     model_id: str | None = None
+    model_uuid: str | None = None         # the registry's stable id for the model, instead of the triple
     printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
@@ -137,6 +139,7 @@ def _to_dict(p: Printer) -> dict:
         "plugin_id": p.plugin_id,
         "manufacturer_id": p.manufacturer_id,
         "model_id": p.model_id,
+        "model_uuid": p.model_uuid,
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "orca_printer_profiles": p.orca_printer_profiles,
@@ -169,10 +172,15 @@ def _get_connected_client(printer_id: int):
     return client
 
 
-def _identity_for_create(body: PrinterCreate):
+def _identity_for_create(body: PrinterCreate, registered=None):
     """(plugin_id, manufacturer_id, model_id, stored printer_type, declared model). A legacy printer_type is mapped; an
     explicit triple must be declared by its plugin. Raises IdentityError (-> 422) before anything is stored."""
-    if body.plugin_id is None and body.printer_type is not None:
+    if body.model_uuid is not None and body.plugin_id is None and not body.manufacturer_id and not body.model_id:
+        if registered is None:
+            raise IdentityError(f"Unknown printer model: {body.model_uuid!r}")
+        plugin_id, manufacturer_id, model_id = registered.plugin_id, registered.manufacturer_id, registered.model_id
+        printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
+    elif body.plugin_id is None and body.printer_type is not None:
         plugin_id, manufacturer_id, model_id = resolve_legacy(body.printer_type)
         printer_type = body.printer_type
     elif body.plugin_id is not None and body.manufacturer_id and body.model_id:
@@ -180,7 +188,7 @@ def _identity_for_create(body: PrinterCreate):
         # the legacy column keeps the client's own key (e.g. snapmaker_extended), which badges and old consumers still read
         printer_type = getattr(client_class(plugin_id), "printer_type", plugin_id)
     else:
-        raise IdentityError("Give plugin_id, manufacturer_id and model_id, or a legacy printer_type")
+        raise IdentityError("Give model_uuid, plugin_id + manufacturer_id + model_id, or a legacy printer_type")
     _, model = declared_model(plugin_id, manufacturer_id, model_id)
     if dormant_reason(plugin_id) == "plugin_disabled":
         raise IdentityError(f"Plugin {plugin_id!r} is disabled; enable it before adding printers")
@@ -188,9 +196,17 @@ def _identity_for_create(body: PrinterCreate):
 
 
 @router.get("/types", summary="List printer models every plugin declares", dependencies=[Depends(require_scope("printers:read"))])
-async def list_printer_types() -> list[dict]:
-    """Available printer driver types with display name and required connection config fields."""
-    return printer_model_catalog()
+async def list_printer_types(session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Available printer driver types with display name and required connection config fields. Each entry carries the
+    registry's stable `model_uuid` and whether the user has `model_enabled` it for setup (the add-printer flow offers only those)."""
+    await registry.sync_registry(session)
+    await session.commit()
+    ids = {(m["plugin_id"], m["manufacturer_id"], m["model_id"]): m for m in await registry.list_models(session)}
+    out = []
+    for entry in printer_model_catalog():
+        reg = ids.get((entry["plugin_id"], entry["manufacturer_id"], entry["model_id"]))
+        out.append({**entry, "model_uuid": reg["id"] if reg else None, "model_enabled": reg["enabled"] if reg else True})
+    return out
 
 
 def _stem(name: str) -> str:
@@ -271,11 +287,18 @@ async def create_printer(
 ) -> dict:
     """Register a new printer and attempt an immediate connection. Connection failure
     is non-fatal — the printer is saved and will retry on next restart."""
+    await registry.sync_registry(session)
+    registered = await registry.get_model(session, body.model_uuid) if body.model_uuid else None
     try:
-        plugin_id, manufacturer_id, model_id, printer_type, model = _identity_for_create(body)
+        plugin_id, manufacturer_id, model_id, printer_type, model = _identity_for_create(body, registered)
     except IdentityError as e:
         raise HTTPException(422, str(e))
+    model_uuid = await registry.model_uuid_for(session, plugin_id, manufacturer_id, model_id)
+    record = await registry.get_model(session, model_uuid) if model_uuid else None
+    if record is not None and not record.enabled and body.printer_type is None:
+        raise HTTPException(422, f"Model {record.display_name!r} is disabled in the printer-model registry")
     printer = Printer(
+        model_uuid=model_uuid,
         name=body.name,
         printer_type=printer_type,
         plugin_id=plugin_id,
@@ -411,9 +434,16 @@ async def discover_printers(body: DiscoverRequest, session: AsyncSession = Depen
                 existing.add(str(cfg[key]).strip())
     names = printer_type_names()
     plugin_ids = printer_type_plugins()
+    await registry.sync_registry(session)
+    await session.commit()
+    # A discovered free-text model matches a registry entry only when exactly one enabled model fits; otherwise the UI offers
+    # the explicit custom/unmatched path (`model_uuid` is None).
+    matches = {d.ip: await registry.match_free_text(session, d.model, plugin_id=plugin_ids.get(d.printer_type))
+               for d in result.found}
     return {
         "ranges": ranges, "scanned": result.scanned, "truncated": result.truncated,
         "found": [{
+            "model_uuid": matches[d.ip],
             "printer_type": d.printer_type, "plugin_id": plugin_ids.get(d.printer_type),
             "display_name": names.get(d.printer_type, d.printer_type),
             "ip": d.ip, "model": d.model, "name": d.name, "serial": d.serial,
@@ -553,6 +583,8 @@ async def update_printer(
         except IdentityError as e:
             raise HTTPException(422, str(e))
         printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
+        await registry.sync_registry(session)
+        printer.model_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:

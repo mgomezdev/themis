@@ -8,7 +8,7 @@ const TYPES: PrinterType[] = [
   printerType({ plugin_id: 'bambu', manufacturer_id: 'bambu', manufacturer_name: 'Bambu Lab', model_id: 'p1s', display_name: 'P1S' }),
 ];
 const PRINTER: ApiPrinter = {
-  id: 7, name: 'Iris', printer_type: 'bambu', plugin_id: 'bambu', manufacturer_id: 'bambu', model_id: 'p1s', connection_config: {},
+  id: 7, name: 'Iris', printer_type: 'bambu', plugin_id: 'bambu', manufacturer_id: 'bambu', model_id: 'p1s', model_uuid: null, connection_config: {},
   awaiting_plate_clear: false, orca_printer_profiles: [], current_orca_printer_profile: 'Bambu Lab P1S 0.4 nozzle',
   enabled: true, queue_on: true, connected: true,
   loaded_filaments: [{ slot: 0, filament_id: 'GFL99', name: 'PLA', type: 'PLA', color: '#fff' }],

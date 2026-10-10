@@ -42,7 +42,7 @@ its `manufacturers` declare the models it supports (`Manufacturer(id, name, mode
 ids unique per plugin). Bundled: `app/plugins/{bambu,elegoo_centauri,snapmaker,mock}/`. `default_enabled=True` for the first three (so
 existing printers are not dormant after upgrade); `mock` is enabled only when `THEMIS_MOCK_PRINTERS` is set (tests/dev).
 
-`printers` rows carry `plugin_id` + `manufacturer_id` + `model_id` (v042 backfilled from the legacy `printer_type`:
+`printers` rows carry `plugin_id` + `manufacturer_id` + `model_id` (+ `model_uuid`, the core registry's stable id — `services/printer_model_registry.py`, `GET/PATCH /printer-models`; see data-model.md) (v042 backfilled from the legacy `printer_type`:
 `bambu`→bambu/bambu/p1s, `elegoo_centauri`→elegoo_centauri/elegoo/centauri, `snapmaker_extended`→snapmaker/snapmaker/u1_extended,
 `mock`→mock/mock/mock; the Bambu plugin offers every Bambu model). `printer_identity.LEGACY_IDENTITY` is that mapping. A printer created from an identity triple stores its client's own `printer_type` (e.g. `snapmaker_extended` for plugin `snapmaker`) so badges and old consumers keyed on it keep working; creating one on a **disabled** plugin is a 422. Fleet backup carries the triple; import keeps a backup's triple verbatim (an uninstalled plugin ⇒ imported dormant) and maps an old backup's `printer_type` through `LEGACY_IDENTITY`.
 

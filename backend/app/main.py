@@ -34,6 +34,7 @@ from .api.routes.labor import router as labor_router
 from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
+from .api.routes.printer_models import router as printer_models_router
 from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
@@ -132,6 +133,13 @@ async def lifespan(app: FastAPI):
         await plugin_host.start()
     except Exception:
         logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
+    try:
+        from .services.printer_model_registry import sync_registry
+        async with SessionLocal() as session:
+            await sync_registry(session)
+            await session.commit()
+    except Exception:
+        logging.getLogger("app").exception("Printer-model registry sync failed; continuing")
 
     inventory_sync_loop.configure(SessionLocal)
     await inventory_sync_loop.start()
@@ -193,6 +201,7 @@ app.include_router(customer_portal_router)
 app.include_router(session_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
+app.include_router(printer_models_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)

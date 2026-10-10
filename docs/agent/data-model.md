@@ -1,11 +1,11 @@
 # Data Model Reference
 
 SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Migrations run automatically at
-startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v042, in
+startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v043, in
 `backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
 existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (29)
+## Tables (30)
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,
@@ -25,6 +25,7 @@ job_model_targets   (job_id CASCADE; v031)
 gcode_files
 sliced_versions     (file_id CASCADE → uploaded_files, source_file_id SET NULL → uploaded_files; v033)
 plugin_configs      (plugin_id PK; enabled, settings, secrets, state JSON; v034)   — no FKs
+printer_models      (id UUID PK; unique (plugin_id, manufacturer_id, model_id); v043 — see its own section)
 capability_selections (capability PK → plugin_id NULL, explicit; v040, replaced extension_slots)
 plugin_schema_versions (plugin_id, version PK; plugin-owned migrations; v034)
 inventory_config    (id=1 singleton; deduct_on_complete, low_stock_default_g, low_stock_overrides, low_stock_alerted; v035)
@@ -44,6 +45,14 @@ maintenance_items       ← maintenance_triggers.maintenance_item_id, printer_ma
 maintenance_triggers    (child: maintenance_item_id CASCADE, trigger_type, amount, unit)
 printer_maintenance_state (child: printer_id CASCADE, maintenance_item_id CASCADE, UNIQUE(printer_id, maintenance_item_id))
 ```
+
+### printer_models (BIZ-262)
+Core-owned registry: `id` (UUID4 string, **never changes**), `plugin_id, manufacturer_id, model_id` (the supplying plugin's own key, unique
+together), `manufacturer_name, display_name, bed_x_mm, bed_y_mm, toolheads` (refreshed from the manifest on every sync), `enabled` (the
+user's subset for setup/eligibility pickers; default true, preserved across upgrades), `declared` (False once no registered plugin
+declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed|plugin_disabled|model_removed`) is computed, not stored.
+`printers.model_uuid` points at the row (v043 backfilled from the v042 triple; set on create/identity change). Synced by
+`services/printer_model_registry.sync_registry` at startup, on `GET /printer-models`, `GET /printers/types`, printer create and discover.
 
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,

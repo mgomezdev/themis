@@ -316,7 +316,9 @@ async def _dump(conn, tables) -> dict:
 
 async def _v042_backfill(conn):
     from app.migrations.v042_printer_model_identity import up
+    from app.migrations.v043_printer_model_registry import up as up43
     await up(conn)
+    await up43(conn)       # v043 registers the model keys v042 just backfilled (also a one-shot data step)
 
 
 async def test_every_migration_up_twice_is_a_noop():

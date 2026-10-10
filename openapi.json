@@ -1216,7 +1216,7 @@
           "printers"
         ],
         "summary": "List printer models every plugin declares",
-        "description": "Available printer driver types with display name and required connection config fields.",
+        "description": "Available printer driver types with display name and required connection config fields. Each entry carries the\nregistry's stable `model_uuid` and whether the user has `model_enabled` it for setup (the add-printer flow offers only those).",
         "operationId": "list_printer_types_api_v1_printers_types_get",
         "responses": {
           "200": {
@@ -2872,6 +2872,144 @@
           },
           "503": {
             "description": "Printer not connected or camera unavailable"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List the printer-model registry",
+        "description": "Every known model with its stable UUID. `enabled` filters the user's subset; `usable` also drops dormant models\n(plugin removed/disabled, or no longer declared). Dormant models stay listed otherwise: printers and files reference them.",
+        "operationId": "list_printer_models_api_v1_printer_models_get",
+        "parameters": [
+          {
+            "name": "enabled",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Enabled"
+            }
+          },
+          {
+            "name": "plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "usable",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Usable"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Printer Models Api V1 Printer Models Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}": {
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Enable or disable a model for setup and eligibility pickers",
+        "operationId": "patch_printer_model_api_v1_printer_models__model_uuid__patch",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Printer Model Api V1 Printer Models  Model Uuid  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
           },
           "422": {
             "description": "Validation Error",
@@ -11471,6 +11609,19 @@
         "title": "MaterialPatch",
         "description": "Partial update: only the fields sent change; `null` clears an optional one."
       },
+      "ModelPatch": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ModelPatch"
+      },
       "ModelTargetInput": {
         "properties": {
           "machine_profile": {
@@ -12397,6 +12548,17 @@
               }
             ],
             "title": "Model Id"
+          },
+          "model_uuid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Uuid"
           },
           "printer_type": {
             "anyOf": [
