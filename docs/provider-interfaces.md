@@ -69,9 +69,9 @@ optional method is valid.
 
 `tests/plugins/test_filament_inventory_contract.py` runs the same suite against an in-memory fake, a fake library provider, **Spoolman**
 and **Local inventory**: DTO shape and string refs, claimed flag ⇒ the gated call works / unclaimed ⇒ `NotSupported(flag)`,
-`contract_violations == []`, neutral `InventoryProviderError(code, status)` mapping, and secret redaction (`PluginHost.redact` masks the
-configured secret in any failure message). `tests/test_no_provider_in_core.py` and `tests/test_provider_boundary.py` prove core imports
-or branches on neither plugin id.
+`contract_violations == []`, neutral `InventoryProviderError(code, status)` mapping, and secret redaction at the real exits (`plugin_host.call` → `CallResult.error`, `describe_failure`, persisted plugin state: a provider may echo
+its key in an exception — the **host is the redaction boundary**, the provider is not). `tests/test_no_provider_in_core.py` (textual scan, both plugin
+ids) proves core names neither plugin; `tests/test_provider_boundary.py` proves core reaches past the Spoolman adapter package nowhere.
 
 DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
 `InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. Refs are strings. `raw` is

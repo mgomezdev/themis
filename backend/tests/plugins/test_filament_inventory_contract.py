@@ -358,10 +358,47 @@ async def test_a_spoolman_failure_is_a_neutral_error_with_a_machine_readable_cod
 
     assert ei.value.code and ei.value.code != "error"
     assert ei.value.status in (None, 401, 503)
+    # By design the PROVIDER maps the raw exception text through unchanged; the HOST is the redaction boundary (next tests).
+
+
+@pytest.mark.parametrize("failure", [
+    pytest.param(lambda request: (_ for _ in ()).throw(httpx.ConnectError(f"refused ({SECRET})")), id="transport"),
+    pytest.param(lambda request: httpx.Response(500, text=f"boom {SECRET}"), id="http-500"),
+])
+async def test_the_configured_secret_never_leaves_the_host_in_a_failure_message(session_factory, spoolman_upstream, failure):
+    """The real exit paths: `plugin_host.call` → `CallResult.error` (what the API/state/logs get) and the sync status
+    (`describe_failure`). A provider that echoes its API key inside an exception must not leak it."""
+    from app.services.inventory import provider as inventory_provider
+    from tests.inventory_helpers import enable_spoolman
+    await enable_spoolman(api_key=SECRET)
+    spoolman_upstream.handler = failure
+
+    result = await inventory_provider.call("list_spools")
+    code, message = inventory_provider.describe_failure(result)
+
+    assert result.ok is False and result.reason == "error"
+    assert SECRET not in (result.error or "") and SECRET not in message
+    assert code and code != "error"
+    from app.plugins.host import plugin_host
+    assert SECRET not in json.dumps(plugin_host.state("spoolman"))                # nor persisted in the plugin's state (last_error)
+
+
+async def test_local_inventory_failures_are_neutral_errors_through_the_host(session_factory):
+    from app.plugins.host import plugin_host
+    from app.services.inventory import provider as inventory_provider
+    await plugin_host.update_config("local_inventory", enabled=True)
+    await plugin_host.set_provider(CAPABILITY, "local_inventory")
+
+    missing = await inventory_provider.call("set_remaining", "999", 10.0)
+    invalid = await inventory_provider.call("create_spool", SpoolDraft(material_ref="999", initial_g=10.0))
+
+    assert (missing.ok, invalid.ok) == (False, False)
+    assert inventory_provider.describe_failure(missing)[0] == "404"                # neutral code: unknown ref
+    assert inventory_provider.describe_failure(invalid)[0] in ("404", "422")
 
 
 async def test_the_host_redacts_the_configured_secret_from_any_provider_failure_message():
-    """What leaves the host (CallResult.error → API/logs/state) is redacted: a provider that echoes its key in an exception is safe."""
+    """The redaction primitive itself (unit): configured secret values are masked in any text."""
     from app import plugins
     from app.plugins.host import PluginHost
     host = PluginHost()
