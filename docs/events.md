@@ -87,10 +87,10 @@ One failing, hanging or slow subscriber affects only itself: separate lanes (bes
 
 **8. Operator visibility.** `GET /api/v1/events/catalog`, `GET /api/v1/events/subscribers` (per subscriber since startup:
 `delivered/failed/timed_out/dropped/skipped_inactive`, `queue_depth`, redacted `last_error`, `last_ok_at`, and from the outbox
-`durable_pending`/`durable_dead`; also lists a plugin handler that is missing or not `async`), `GET /api/v1/events/deliveries?status=dead|pending|delivered`,
+`durable_pending`/`durable_dead`; also lists a plugin handler that is missing or not `async`), `GET /api/v1/events/deliveries?status=dead|pending|delivered` (+ filters `entity=job_id:42`, `event_id`, `dedup_key`, `name`, `subscriber`; rows carry `entities` and `correlation_id`),
 `POST /api/v1/events/deliveries/{id}/retry`. Scopes `settings:read` / `settings:write`. A plugin's handler failures also show as the
-plugin's `last_error`. Counters are in-memory (reset on restart); the outbox is the durable record. A queryable log/UI, retention
-settings, replay and external sinks are **out of scope** (BIZ-270 decides them).
+plugin's `last_error` (and its successes as `last_ok_at`). Counters are in-memory (reset on restart); the outbox is the durable record. A queryable log/UI, retention
+settings, replay and external sinks are **out of scope**: decided in `docs/event-diagnostics-decision.md` (BIZ-270).
 
 ## Delivery guarantees at a glance
 

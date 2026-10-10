@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
+from ...eventing.envelope import ENTITY_KEYS
 from ...eventing.hub import hub
 from ...eventing.redaction import redact_error
 from ...eventing.registry import CORE_EVENTS, definer_of_event, event_catalog
@@ -51,16 +52,32 @@ async def subscribers(session: AsyncSession = Depends(get_session)) -> list[dict
 
 
 @router.get("/deliveries", dependencies=[Depends(require_scope("settings:read"))])
-async def deliveries(status: str = Query("dead"), subscriber: str | None = None, limit: int = Query(100, ge=1, le=500),
-                     session: AsyncSession = Depends(get_session)) -> list[dict]:
-    """Durable deliveries, newest first. `status` is pending | delivered | dead (default dead: what needs attention)."""
+async def deliveries(status: str = Query("dead"), subscriber: str | None = None, name: str | None = None,
+                     event_id: str | None = None, dedup_key: str | None = None,
+                     entity: str | None = Query(None, description="`<key>:<id>`, e.g. `job_id:42`"),
+                     limit: int = Query(100, ge=1, le=500), session: AsyncSession = Depends(get_session)) -> list[dict]:
+    """Durable deliveries, newest first, with the event's entity references. `status` is pending | delivered | dead (default dead:
+    what needs attention). Filter by `subscriber`, event `name`, `event_id`, `dedup_key` or `entity` (one `<key>:<id>`), e.g.
+    `?status=delivered&entity=job_id:42` answers "did job 42's completion reach everyone?"."""
     if status not in STATUSES:
         raise HTTPException(422, f"status must be one of {', '.join(STATUSES)}")
     q = (select(EventDelivery, EventOutbox).join(EventOutbox, EventOutbox.id == EventDelivery.outbox_id)
          .where(EventDelivery.status == status).order_by(EventDelivery.id.desc()).limit(limit))
     if subscriber:
         q = q.where(EventDelivery.subscriber == subscriber)
+    if name:
+        q = q.where(EventOutbox.name == name)
+    if event_id:
+        q = q.where(EventOutbox.event_id == event_id)
+    if dedup_key:
+        q = q.where(EventOutbox.dedup_key == dedup_key)
+    if entity:
+        key, _, value = entity.partition(":")
+        if key not in ENTITY_KEYS or not value:
+            raise HTTPException(422, f"entity must be <key>:<id> with key one of {', '.join(sorted(ENTITY_KEYS))}")
+        q = q.where(func.json_extract(EventOutbox.envelope, f"$.entities.{key}") == (int(value) if value.isdigit() else value))
     return [{"id": d.id, "event_id": o.event_id, "name": o.name, "dedup_key": o.dedup_key, "occurred_at": o.occurred_at,
+             "entities": (o.envelope or {}).get("entities", {}), "correlation_id": (o.envelope or {}).get("correlation_id"),
              "subscriber": d.subscriber, "status": d.status, "attempts": d.attempts, "next_attempt_at": d.next_attempt_at,
              "last_attempt_at": d.last_attempt_at, "delivered_at": d.delivered_at,
              "last_error": redact_error(d.last_error) if d.last_error else None}

@@ -9536,7 +9536,7 @@
           "events"
         ],
         "summary": "Deliveries",
-        "description": "Durable deliveries, newest first. `status` is pending | delivered | dead (default dead: what needs attention).",
+        "description": "Durable deliveries, newest first, with the event's entity references. `status` is pending | delivered | dead (default dead:\nwhat needs attention). Filter by `subscriber`, event `name`, `event_id`, `dedup_key` or `entity` (one `<key>:<id>`), e.g.\n`?status=delivered&entity=job_id:42` answers \"did job 42's completion reach everyone?\".",
         "operationId": "deliveries_api_v1_events_deliveries_get",
         "parameters": [
           {
@@ -9564,6 +9564,72 @@
               ],
               "title": "Subscriber"
             }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Name"
+            }
+          },
+          {
+            "name": "event_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Event Id"
+            }
+          },
+          {
+            "name": "dedup_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Dedup Key"
+            }
+          },
+          {
+            "name": "entity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`<key>:<id>`, e.g. `job_id:42`",
+              "title": "Entity"
+            },
+            "description": "`<key>:<id>`, e.g. `job_id:42`"
           },
           {
             "name": "limit",
