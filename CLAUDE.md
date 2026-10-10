@@ -90,7 +90,7 @@ Recipes live in `docs/agent/conventions.md` (§ Tests) and the two review checkl
   code (mutate the line and re-run) isn't a test. Assert state (re-read the row / response body), not just
   a status code or "didn't raise".
 - **Run a real check before reporting done:** the tests, type-check, or build that exercises your change
-  (see Commands). Install missing dependencies (`pip install -e ".[dev]"` / `npm install`); if a check can't run
+  (see Commands). Install missing dependencies (`pip install -e ".[dev]"` in `backend/`, `npm install` in `frontend/`); if a check can't run
   here, say which one and why instead of reporting the change complete.
 - **Test DB:** the shared `session_factory` (`backend/tests/conftest.py`) is a per-test SQLite *file* with
   the app's production pragmas (foreign keys ON, a connection per session). Never use `sqlite+aiosqlite:///:memory:`
@@ -129,7 +129,7 @@ blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShel
 records `{"sha": "<current HEAD>", "verdict": "clean", "checks": "pass"}` (`checks`: the Commands-section
 suites ran green at that sha; `"n/a"` only when the diff touches nothing they cover). Every PR needs a review, trivial ones included. If the marker matches
 `HEAD` with `verdict: "clean"` and `checks` `pass`/`n/a`, skip the reviewer and create the PR; if it is
-missing, stale, or not clean, review first. Write `verdict: clean` yourself only after a reviewer pass, once
+missing, stale, or not clean, review first; if only `checks` is missing, run the suites and set it — no new review. Write `verdict: clean` yourself only after a reviewer pass, once
 Critical/Important findings are addressed and the suites are green; any later commit invalidates it. The hook is a forgetting-guard, not a security boundary — raw
 `gh api ... pulls` calls bypass it but are still against this policy.
 
