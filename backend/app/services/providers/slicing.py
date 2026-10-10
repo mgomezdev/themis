@@ -150,6 +150,12 @@ class SlicingProvider(ABC):
         raise NotImplementedError("provider does not support PACK_MODELS")
 
 
+def slicing_provider_name() -> str:
+    """The registry name of the slicing provider in use (the identity cache keys carry). Today `laminus` is the only registered
+    adapter, so this is a constant; a second adapter would select by configuration here and nowhere else."""
+    return "laminus"
+
+
 def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
     from . import laminus  # noqa: F401  (registers the adapter)

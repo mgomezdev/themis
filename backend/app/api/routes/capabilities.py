@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from starlette.routing import compile_path
 
 from ...auth import require_any_key, require_scope
-from ...plugins import PluginError, capability_catalog, definer_of, providers_of, registered_plugins
+from ...plugins import PluginError, capability_catalog, definer_of, get_plugin, providers_of, registered_plugins
 from ...plugins.capabilities.definition import CapabilityDef
 from ...plugins.host import plugin_host
 from ...plugins.manifest import PluginManifest
@@ -28,12 +28,28 @@ class ProviderBody(BaseModel):
 def _view(cap: CapabilityDef) -> dict:
     st = plugin_host.status(cap.id)
     selected = plugin_host.selected(cap.id)
+    multi = cap.mode in ("routed", "choose_one", "fan_out")      # every enabled provider is built, not just the selected one
+
+    def provider_status(m: PluginManifest) -> str:
+        if not multi:
+            return st.state if selected == m.id else "not_selected"
+        if plugin_host.active_for(cap.id, m.id) is not None:
+            return "serving"
+        return "disabled" if not plugin_host.is_enabled(m.id) else ("waiting" if plugin_host.unmet(m.id) else "error")
+
     providers = [{"plugin_id": m.id, "name": m.name, "version": m.provides[cap.id].version, "enabled": plugin_host.is_enabled(m.id),
-                  "status": st.state if selected == m.id else "not_selected", "waiting_on": list(plugin_host.unmet(m.id))}
+                  "status": provider_status(m), "waiting_on": list(plugin_host.unmet(m.id))}
                  for m in providers_of(cap.id)]
+    # A choose-one default that cannot serve (disabled, removed, failed) is surfaced, never replaced: operations that would use it
+    # are blocked until the user chooses (`PluginHost.resolve`), so the UI says so instead of showing a healthy-looking page.
+    dormant_default = None
+    if cap.mode == "choose_one" and selected is not None and plugin_host.active_for(cap.id, selected) is None:
+        dormant_default = {"plugin_id": selected, "reason": "plugin_removed" if get_plugin(selected) is None else
+                           ("plugin_disabled" if not plugin_host.is_enabled(selected) else "provider_unavailable")}
     requires_by = [{"plugin_id": m.id, "min_version": r.min_version}
                    for m in registered_plugins() for r in m.requires if r.capability == cap.id]
     return {"id": cap.id, "version": cap.version, "label": cap.label, "description": cap.description, "definer": definer_of(cap.id),
+            "mode": cap.mode, "dormant_default": dormant_default,
             "features": sorted(cap.features), "required_methods": list(cap.required_methods), "selected": selected,
             "explicit": plugin_host.is_explicit(cap.id), "status": st.state, "waiting_on": list(st.waiting_on), "error": st.error,
             "providers": providers, "requires_by": requires_by}
@@ -50,7 +66,8 @@ async def list_capabilities():
         if cap not in catalog:
             items.append({"id": cap, "version": 0, "label": cap, "description": "", "definer": None, "features": [],
                           "required_methods": [], "selected": pid, "explicit": plugin_host.is_explicit(cap), "status": "dormant",
-                          "waiting_on": [], "error": None, "providers": [], "requires_by": []})
+                          "waiting_on": [], "error": None, "providers": [], "requires_by": [], "mode": "exclusive",
+                          "dormant_default": None})
     return {"capabilities": items}
 
 

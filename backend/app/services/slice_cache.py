@@ -22,7 +22,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
 
-from .providers.slicing import SlicingProvider
+from .providers.slicing import SlicingProvider, slicing_provider_name
 from .slicer_service import SliceRequest, _export_3mf_name
 
 logger = logging.getLogger("app.services.slice_cache")
@@ -53,6 +53,9 @@ def sha256_of(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
+DEFAULT_PROVIDER = "laminus"      # the slicing provider every cached slice saved before BIZ-250 came from
+
+
 @dataclass(frozen=True)
 class CacheKeyInputs:
     """Everything that changes a slice's output. Build it with `key_inputs` from the exact `SliceRequest` the queue
@@ -66,15 +69,22 @@ class CacheKeyInputs:
     tool_index: int | None
     filament_map: list | None
     artifact_kind: str   # gcode | gcode_3mf
+    # The slicing provider that produced the output (BIZ-250: a cache-bearing capability keys on provider identity, so a different
+    # provider never serves another's slice). The default is left OUT of the hashed dict, which keeps every key that was saved before
+    # this field existed valid; any other provider id changes the key.
+    provider: str = DEFAULT_PROVIDER
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["filament_presets"] = list(self.filament_presets)
+        if d["provider"] == DEFAULT_PROVIDER:
+            del d["provider"]
         return d
 
 
 def key_inputs(
     req: SliceRequest, source_content_hash: str | None, tool_index: int | None, filament_map: list | None,
+    provider: str | None = None,
 ) -> CacheKeyInputs | None:
     """`tool_index`/`filament_map` aren't on the request (they reach the slicer as a 3MF remap via `prepare_hook`) but
     they change the output, so they're part of the key. `filament_map` must be the RESOLVED map (slot indices, after
@@ -94,6 +104,7 @@ def key_inputs(
         tool_index=tool_index,
         filament_map=list(filament_map) if filament_map else None,
         artifact_kind="gcode_3mf" if _export_3mf_name(req.export_args) is not None else "gcode",
+        provider=provider or slicing_provider_name(),
     )
 
 
@@ -113,6 +124,7 @@ def key_fields(inputs: CacheKeyInputs) -> dict:
         "filament_map_hash": sha256_of(inputs.filament_map) if inputs.filament_map else None,
         "tool_index": inputs.tool_index,
         "artifact_kind": inputs.artifact_kind,
+        "provider": inputs.provider,
     }
 
 

@@ -8,7 +8,7 @@ import { Reply, stubFetch } from '../test/fetchStub';
 const prov = (plugin_id: string, name: string, over: Record<string, unknown> = {}) =>
   ({ plugin_id, name, version: 1, enabled: true, status: 'not_selected', waiting_on: [], ...over });
 const cap = (over: Record<string, unknown> & { id: string }) => ({
-  version: 1, label: over.id, description: '', definer: null, features: [], required_methods: [], selected: null, explicit: false,
+  mode: 'exclusive', dormant_default: null, version: 1, label: over.id, description: '', definer: null, features: [], required_methods: [], selected: null, explicit: false,
   status: 'none_selected', waiting_on: [], error: null, providers: [], requires_by: [], ...over,
 });
 const INV = cap({ id: 'inventory.filament', label: 'Filament inventory', selected: 'spoolman', status: 'serving',
@@ -76,5 +76,47 @@ describe('CapabilitiesPage', () => {
     stubFetch({ 'GET /api/v1/plugins': PLUGINS, 'GET /api/v1/capabilities': new Reply(403, { detail: 'missing scope' }) });
     render(<CapabilitiesPage />);
     expect(await screen.findByRole('alert')).toHaveTextContent('missing scope');
+  });
+
+  describe('resolution modes (BIZ-250)', () => {
+    const slicers = (over: Record<string, unknown> = {}) => cap({
+      id: 'acme.slicing', label: 'Slicing', mode: 'choose_one', selected: 'laminus', status: 'serving',
+      providers: [prov('laminus', 'Laminus', { status: 'serving' }), prov('other', 'Other slicer', { status: 'serving' }),
+                  prov('off', 'Off slicer', { enabled: false, status: 'disabled' })], ...over });
+
+    it('a choose-one capability offers only providers that can serve as its default', async () => {
+      stubFetch({ 'GET /api/v1/plugins': PLUGINS, 'GET /api/v1/capabilities': { capabilities: [slicers()] } });
+      render(<CapabilitiesPage />);
+
+      const select = await screen.findByRole('combobox', { name: 'Slicing default provider' });
+      expect([...select.querySelectorAll('option')].map(o => o.textContent)).toEqual(['None', 'Laminus', 'Other slicer']);
+      expect(screen.getByText(/never swapped for another/)).toBeInTheDocument();
+    });
+
+    it('a dormant default stays visible and flagged with why, and says work is blocked rather than falling back', async () => {
+      stubFetch({ 'GET /api/v1/plugins': PLUGINS, 'GET /api/v1/capabilities': { capabilities: [slicers({
+        selected: 'gone', status: 'no_provider', dormant_default: { plugin_id: 'gone', reason: 'plugin_removed' },
+        providers: [prov('laminus', 'Laminus', { status: 'serving' }), prov('gone', 'Gone slicer', { status: 'disabled', enabled: false })] })] } });
+      render(<CapabilitiesPage />);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toMatch(/“gone” is unavailable: its plugin is no longer installed/);
+      expect(alert.textContent).toMatch(/blocked until you choose another/);
+      const select = screen.getByRole('combobox', { name: 'Slicing default provider' });
+      expect(select).toHaveValue('gone');
+      expect([...select.querySelectorAll('option')].map(o => o.textContent)).toContain('Gone slicer (unavailable)');
+    });
+
+    it('fan-out and routed capabilities have no provider dropdown: every enabled provider is listed as serving or disabled', async () => {
+      stubFetch({ 'GET /api/v1/plugins': PLUGINS, 'GET /api/v1/capabilities': { capabilities: [cap({
+        id: 'acme.notify', label: 'Notifications', mode: 'fan_out', status: 'serving',
+        providers: [prov('ntfy', 'ntfy', { status: 'serving' }), prov('mail', 'Email', { enabled: false, status: 'disabled' })] })] } });
+      render(<CapabilitiesPage />);
+
+      const list = await screen.findByRole('list', { name: 'Notifications providers' });
+      expect(list.textContent).toMatch(/ntfy\s*— serving/);
+      expect(list.textContent).toMatch(/Email\s*— disabled/);
+      expect(screen.queryByRole('combobox', { name: /Notifications/ })).toBeNull();
+    });
   });
 });
