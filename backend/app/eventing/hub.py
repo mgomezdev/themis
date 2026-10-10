@@ -289,7 +289,11 @@ class EventHub:
         async def _wait() -> None:
             for lane in list(self._lanes.values()):
                 await lane.queue.join()
-            while self._s.inflight:
+            while True:
+                for key in [k for k, t in self._s.inflight.items() if t.done()]:     # a finished task's callback may never have run
+                    self._s.inflight.pop(key, None)
+                if not self._s.inflight:
+                    return
                 await asyncio.gather(*list(self._s.inflight.values()), return_exceptions=True)
         await asyncio.wait_for(_wait(), timeout=timeout)
 

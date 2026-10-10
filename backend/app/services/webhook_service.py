@@ -159,16 +159,20 @@ def schedule(url: str, secret: str | None, event: str, job_id: int | None, extra
 
 async def drain() -> None:
     """Wait for every queued delivery (tests, shutdown)."""
-    while _tasks:
+    while True:
+        _tasks.difference_update({t for t in _tasks if t.done()})        # a finished task whose loop is gone never runs its callback
+        if not _tasks:
+            return
         await asyncio.gather(*list(_tasks), return_exceptions=True)
 
 
 async def cancel_all() -> None:
     """Abandon deliveries that are still waiting to retry (shutdown, tests)."""
-    pending = list(_tasks)
+    pending = [t for t in _tasks if not t.done()]
     for t in pending:
         t.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+    _tasks.clear()
 
 
 async def destinations_for(session: AsyncSession, event: str) -> list[WebhookDestination]:
