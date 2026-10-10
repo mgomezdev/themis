@@ -582,8 +582,8 @@ async def update_printer(
             declared_model(printer.plugin_id or "", manufacturer_id, model_id)
         except IdentityError as e:
             raise HTTPException(422, str(e))
+        await registry.sync_registry(session)      # commits: done before any field below is touched
         printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
-        await registry.sync_registry(session)
         printer.model_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
     if body.name is not None:
         printer.name = body.name

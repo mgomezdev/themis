@@ -134,3 +134,35 @@ async def test_a_disabled_plugin_makes_its_models_dormant_without_touching_their
 
     assert [m["dormant_reason"] for m in listed] == ["plugin_disabled"]
     assert listed[0]["id"] == before[("fake_printers", "acme", "x1")].id
+
+
+async def test_two_concurrent_first_syncs_create_each_model_once_and_neither_fails(session_factory):
+    import asyncio
+
+    async def one():
+        async with session_factory() as s:
+            return await registry.sync_registry(s)
+
+    created = await asyncio.gather(one(), one(), one())
+
+    got = await rows(session_factory)
+    assert sum(created) == len([k for k in got if k[0] == "fake_printers"]) + sum(1 for k in got if k[0] != "fake_printers")
+    assert len([k for k in got if k[0] == "fake_printers"]) == 3
+
+
+async def test_free_text_matching_two_known_models_is_ambiguous_so_nothing_is_guessed(session_factory):
+    plugins.register_plugin(make_manifest("fake_printers_b", default_enabled=True, manufacturers=(
+        Manufacturer("globex", "Globex", (PrinterModel("g1", "G1"),)),)))
+    await sync(session_factory)
+    async with session_factory() as s:
+        assert await registry.match_free_text(s, "Globex G1") is None                      # two plugins declare it
+        assert await registry.match_free_text(s, "Globex G1", plugin_id="fake_printers") is not None
+
+
+async def test_a_disabled_model_is_never_auto_matched(session_factory):
+    await sync(session_factory)
+    async with session_factory() as s:
+        x1 = (await registry.match_free_text(s, "Acme X1", plugin_id="fake_printers"))
+        await registry.set_enabled(s, x1, False)
+        await s.commit()
+        assert await registry.match_free_text(s, "Acme X1", plugin_id="fake_printers") is None

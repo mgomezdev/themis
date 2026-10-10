@@ -6,6 +6,7 @@ survives restarts, plugin upgrades and plugin removal. Nothing here imports a pl
 Rows are never deleted or re-keyed."""
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 
@@ -17,9 +18,22 @@ from ..plugins import get_plugin, registered_plugins
 from ..plugins.host import plugin_host
 
 
+_sync_lock = asyncio.Lock()
+
+
 async def sync_registry(session: AsyncSession) -> int:
     """Upsert every declared model (no duplicates; existing UUIDs and the user's `enabled` choice are kept) and mark rows no
-    registered plugin declares any more as not `declared`. Idempotent; returns how many rows were created. Caller commits."""
+    registered plugin declares any more as not `declared`. Idempotent; returns how many rows were created.
+
+    Several handlers call this (GETs included), so it is serialised and COMMITS before releasing the lock: two concurrent first
+    requests would otherwise both insert the same new key and the loser would hit the UNIQUE constraint."""
+    async with _sync_lock:
+        created = await _sync_locked(session)
+        await session.commit()
+    return created
+
+
+async def _sync_locked(session: AsyncSession) -> int:
     existing = {(r.plugin_id, r.manufacturer_id, r.model_id): r
                 for r in (await session.execute(select(PrinterModelRecord))).scalars()}
     seen: set[tuple[str, str, str]] = set()

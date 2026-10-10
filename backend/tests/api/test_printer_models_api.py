@@ -103,3 +103,48 @@ async def test_removing_the_plugin_keeps_the_uuid_on_the_printer_and_marks_the_m
     assert listed[uuid_before]["dormant_reason"] == "plugin_removed" and listed[uuid_before]["printer_count"] == 1
     assert (await client.get(f"/api/v1/printers/{r.json()['id']}")).json()["model_uuid"] == uuid_before
     assert await models(client, plugin_id="fake_printers", usable="true") == []
+
+
+async def test_changing_a_printers_model_moves_its_model_uuid_with_it(client, two_vendor_plugin):
+    by_model = {m["model_id"]: m["id"] for m in await models(client, plugin_id="fake_printers")}
+    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": {}})).json()
+
+    r = await client.patch(f"/api/v1/printers/{created['id']}", json={"model_id": "x1_pro"})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["model_uuid"] == by_model["x1_pro"]
+    assert (await client.get(f"/api/v1/printers/{created['id']}")).json()["model_uuid"] == by_model["x1_pro"]
+
+
+async def test_a_rejected_model_change_leaves_the_uuid_untouched(client, two_vendor_plugin):
+    by_model = {m["model_id"]: m["id"] for m in await models(client, plugin_id="fake_printers")}
+    created = (await client.post("/api/v1/printers", json={"name": "X", "model_uuid": by_model["x1"], "connection_config": {}})).json()
+
+    r = await client.patch(f"/api/v1/printers/{created['id']}", json={"model_id": "nope"})
+
+    assert r.status_code == 422
+    assert (await client.get(f"/api/v1/printers/{created['id']}")).json()["model_uuid"] == by_model["x1"]
+
+
+async def test_types_entries_for_every_declared_model_carry_a_registry_uuid(client, two_vendor_plugin):
+    types = [t for t in (await client.get("/api/v1/printers/types")).json() if t["plugin_id"] == "fake_printers"]
+    reg = {m["model_id"]: m["id"] for m in await models(client, plugin_id="fake_printers")}
+
+    assert {t["model_id"]: t["model_uuid"] for t in types} == reg
+    assert all(t["model_enabled"] is True for t in types)
+
+
+async def test_model_registry_writes_need_the_printers_write_scope(client, session_factory, two_vendor_plugin):
+    from app.models import ApiKey
+    from app.services.api_key_service import generate_key, hash_key
+
+    raw, prefix = generate_key()
+    async with session_factory() as s:
+        s.add(ApiKey(name="ro", key_prefix=prefix, key_hash=hash_key(raw), scopes=["printers:read"], enabled=True,
+                     created_at="2026-01-01T00:00:00"))
+        await s.commit()
+    m = (await models(client, plugin_id="fake_printers"))[0]
+
+    ro = {"X-Api-Key": raw}
+    assert (await client.get("/api/v1/printer-models", headers=ro)).status_code == 200
+    assert (await client.patch(f"/api/v1/printer-models/{m['id']}", json={"enabled": False}, headers=ro)).status_code == 403

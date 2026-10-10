@@ -61,6 +61,20 @@ describe('PrinterAddForm — discovery', () => {
     expect(screen.getByText('Connect to X1 Carbon')).toBeTruthy();
   });
 
+  it('an announcement the registry and the name match both miss stays on the model step with an explicit "choose the model" notice', async () => {
+    const user = userEvent.setup();
+    const found = { ...FOUND, found: [{ ...FOUND.found[0], model: 'Codename C99', model_uuid: null }] };
+    stubFetch({ 'GET /api/v1/printers/orca-machine-catalog': [], 'POST /api/v1/printers/discover': found });
+    render(<PrinterAddForm types={TYPES} onCancel={() => {}} onCreated={() => {}} />);
+
+    await user.click(screen.getByRole('button', { name: /scan network for printers/i }));
+    await user.click(screen.getByRole('button', { name: 'Scan' }));
+    await user.click(await screen.findByRole('button', { name: 'Use 192.168.7.20' }));
+
+    expect(screen.getByRole('status').textContent).toMatch(/could not tell which model/);
+    expect(screen.queryByText(/^Connect to /)).toBeNull();                                // not advanced to the connect step
+  });
+
   it('keeps a nickname the user already typed', async () => {
     const user = userEvent.setup();
     const { calls } = stubFetch({ 'GET /api/v1/printers/orca-machine-catalog': [], 'POST /api/v1/printers/discover': FOUND });
