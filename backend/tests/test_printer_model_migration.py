@@ -89,3 +89,37 @@ async def test_v042_is_idempotent_on_rerun(v041_db):
     assert second == first
     assert {(r["plugin_id"], r["manufacturer_id"], r["model_id"]) for r in second} == \
         {expected for _, expected in LEGACY.values()}
+
+
+def _v043():
+    mod = next((m for m in _MIGRATIONS if m.version == 43), None)
+    assert mod is not None, "v043 printer-model registry migration is not registered"
+    return mod
+
+
+async def test_v043_creates_one_registry_row_per_model_key_and_points_every_printer_at_it(v041_db):
+    async with v041_db.begin() as conn:
+        await _v042().up(conn)
+        await conn.execute(text(  # a second Bambu on the same model must share the registry row
+            "INSERT INTO printers (id, name, printer_type, connection_config, loaded_filaments, orca_printer_profiles,"
+            " awaiting_plate_clear, enabled, queue_on, no_snapshots_while_idle, bed_x_mm, bed_y_mm, lifetime_job_count,"
+            " lifetime_print_seconds, plugin_id, manufacturer_id, model_id) VALUES (105, 'B2', 'bambu', '{}', '[]', '[]', 0, 1, 1,"
+            " 0, 256, 256, 0, 0, 'bambu', 'bambu', 'p1s')"))
+        await _v043().up(conn)
+        models = (await conn.execute(text("SELECT id, plugin_id, manufacturer_id, model_id, enabled FROM printer_models"))).fetchall()
+        printers = {r[0]: r[1] for r in (await conn.execute(text("SELECT id, model_uuid FROM printers WHERE id >= 101"))).fetchall()}
+    assert len(models) == len(LEGACY) and all(m[4] == 1 for m in models)
+    by_key = {(m[1], m[2], m[3]): m[0] for m in models}
+    assert printers[101] == printers[105] == by_key[("bambu", "bambu", "p1s")]
+    assert {printers[pid] for pid in LEGACY} == set(by_key.values())
+
+
+async def test_v043_is_idempotent_and_keeps_uuids_on_rerun(v041_db):
+    async with v041_db.begin() as conn:
+        await _v042().up(conn)
+        await _v043().up(conn)
+        first = (await conn.execute(text("SELECT id, model_uuid FROM printers WHERE id >= 101 ORDER BY id"))).fetchall()
+        await _v043().up(conn)
+        second = (await conn.execute(text("SELECT id, model_uuid FROM printers WHERE id >= 101 ORDER BY id"))).fetchall()
+        n = (await conn.execute(text("SELECT COUNT(*) FROM printer_models"))).scalar()
+    assert second == first and n == len(LEGACY)

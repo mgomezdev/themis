@@ -100,6 +100,12 @@ describe('PrinterAddForm — step 1 manufacturer/model', () => {
     expect(optionTexts(select('Model'))).toEqual(['P1S']);
   });
 
+  it('does not offer a model the user disabled in the registry, while its enabled siblings stay', () => {
+    stubFetch(ROUTES);
+    renderForm([BAMBU_P1S, printerType({ ...BAMBU_X1C, model_enabled: false })]);
+    expect(optionTexts(select('Model'))).toEqual(['P1S']);
+  });
+
   it('with no enabled entry shows a notice and disables Next', () => {
     stubFetch(ROUTES);
     renderForm([DISABLED]);

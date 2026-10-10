@@ -178,6 +178,7 @@ const INTEGRATION_PRINTER: ApiPrinter = {
   plugin_id: 'bambu',
   manufacturer_id: 'bambu',
   model_id: 'p1s',
+  model_uuid: null,
   connection_config: { ip_address: '192.168.2.50', access_code: 'xyz', serial_number: 'SN007' },
   awaiting_plate_clear: false,
   orca_printer_profiles: [],

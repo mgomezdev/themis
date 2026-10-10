@@ -183,6 +183,7 @@
       "machine_rate_per_hour": null,
       "manufacturer_id": null,
       "model_id": null,
+      "model_uuid": null,
       "name": "Fixture P1",
       "no_snapshots_while_idle": 0,
       "orca_printer_profiles": "[]",

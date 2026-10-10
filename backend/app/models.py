@@ -14,6 +14,8 @@ class Printer(Base):
     plugin_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     manufacturer_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     model_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The core registry's stable UUID for this model (BIZ-262); survives plugin upgrade/removal. Set on create from the identity.
+    model_uuid: Mapped[str | None] = mapped_column(String(36), nullable=True)
     connection_config: Mapped[dict] = mapped_column(JSON)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
@@ -32,6 +34,27 @@ class Printer(Base):
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
     # Per-printer override of the shop-wide machine rate ($ per hour of print time); null = use the shop rate.
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+
+class PrinterModelRecord(Base):
+    """A printer model known to Themis (BIZ-262): a stable UUID keyed to the supplying plugin's own model key. Plugins contribute
+    declarations; core owns the identity. Rows are never deleted or re-keyed: `declared` goes False when no registered plugin
+    declares the key any more (the model is dormant while printers/files reference it). `enabled` is the user's subset for
+    setup and eligibility pickers."""
+    __tablename__ = "printer_models"
+    __table_args__ = (UniqueConstraint("plugin_id", "manufacturer_id", "model_id"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    plugin_id: Mapped[str] = mapped_column(String(64))
+    manufacturer_id: Mapped[str] = mapped_column(String(64))
+    model_id: Mapped[str] = mapped_column(String(64))
+    manufacturer_name: Mapped[str] = mapped_column(String(255), default="")
+    display_name: Mapped[str] = mapped_column(String(255), default="")
+    bed_x_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    bed_y_mm: Mapped[float] = mapped_column(Float, default=256.0)
+    toolheads: Mapped[int] = mapped_column(Integer, default=1)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    declared: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class UploadedFile(Base):

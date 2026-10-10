@@ -33,6 +33,24 @@ export interface PrinterType {
   toolheads: number;
   connection_fields: ConnectionField[];
   plugin_enabled: boolean;            // a disabled plugin's models are listed but cannot be added
+  model_uuid: string | null;          // the core registry's stable id for this model
+  model_enabled: boolean;             // the user's subset: only enabled models are offered when adding a printer
+}
+
+/** A registry entry (`GET /printer-models`): a stable UUID plus whether the model is usable right now. */
+export interface PrinterModelEntry {
+  id: string;
+  plugin_id: string;
+  manufacturer_id: string;
+  manufacturer_name: string;
+  model_id: string;
+  display_name: string;
+  bed_mm: [number, number];
+  toolheads: number;
+  enabled: boolean;
+  dormant: boolean;
+  dormant_reason: 'plugin_removed' | 'plugin_disabled' | 'model_removed' | null;
+  printer_count: number;              // printers that reference this model (a dormant model stays while referenced)
 }
 
 export interface LoadedFilament {
@@ -65,6 +83,7 @@ export interface ApiPrinter {
   plugin_id: string | null;
   manufacturer_id: string | null;
   model_id: string | null;
+  model_uuid: string | null;
   connection_config: Record<string, unknown>;
   awaiting_plate_clear: boolean;
   orca_printer_profiles: string[];
@@ -130,6 +149,16 @@ export function rescanProfiles(): Promise<{ machine_presets: number }> {
 
 export function fetchPrinterTypes(): Promise<PrinterType[]> {
   return request(`${BASE}/types`);
+}
+
+export function fetchPrinterModels(): Promise<PrinterModelEntry[]> {
+  return request('/api/v1/printer-models');
+}
+
+export function setPrinterModelEnabled(id: string, enabled: boolean): Promise<PrinterModelEntry> {
+  return request(`/api/v1/printer-models/${encodeURIComponent(id)}`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }),
+  });
 }
 
 export function fetchPrinters(): Promise<ApiPrinter[]> {
@@ -274,6 +303,7 @@ export function markPlateCleared(id: string | number): Promise<{ ok: boolean }> 
 }
 
 export interface DiscoveredPrinter {
+  model_uuid: string | null;       // the registry model the announcement matched, or null (the user picks a model / custom)
   printer_type: string;
   plugin_id: string | null;
   display_name: string;

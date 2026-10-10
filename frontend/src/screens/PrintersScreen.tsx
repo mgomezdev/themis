@@ -49,8 +49,8 @@ function SlotSwatch({ color, name, type }: { color: string; name: string; type: 
 
 type ConnStatus = 'idle' | 'testing' | 'success' | 'error';
 
-/** Models a user may add: those whose plugin is enabled (a disabled plugin's models are listed by the API but not offered). */
-const addable = (types: PrinterType[]) => types.filter(t => t.plugin_enabled);
+/** Models a user may add: the registry's enabled subset whose plugin is enabled (the API lists the rest, the wizard does not). */
+const addable = (types: PrinterType[]) => types.filter(t => t.plugin_enabled && t.model_enabled);
 
 function manufacturersOf(types: PrinterType[]): { id: string; name: string }[] {
   const seen = new Map<string, string>();
@@ -307,7 +307,8 @@ export function PrinterAddForm({
   function applyDiscovered(p: DiscoveredPrinter) {
     const ofPlugin = addable(types).filter(t => t.plugin_id === p.plugin_id);
     if (ofPlugin.length === 0) return;
-    const matched = matchModel(ofPlugin, p.model);
+    // the server's registry match wins (stable UUID); the name match covers an older server / a model it could not place
+    const matched = ofPlugin.find(t => p.model_uuid && t.model_uuid === p.model_uuid) ?? matchModel(ofPlugin, p.model);
     setData({
       printerType: matched ?? ofPlugin[0],
       nickname: data.nickname || p.name || p.model || '',

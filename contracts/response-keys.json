@@ -36,6 +36,7 @@
     "plugin_id",
     "manufacturer_id",
     "model_id",
+    "model_uuid",
     "connection_config",
     "awaiting_plate_clear",
     "orca_printer_profiles",

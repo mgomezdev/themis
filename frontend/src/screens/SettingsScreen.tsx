@@ -14,6 +14,7 @@ import {
 } from '../api/notifications';
 import { Icons, Icon } from '../components/icons';
 import { FieldRow, PageHeader, Toggle } from '../components/settingsUi';
+import { PrinterModelsPanel } from './PrinterModelsPanel';
 import { FilamentInventoryPage } from './FilamentInventoryPage';
 import { PluginsPage } from './PluginsPage';
 import { CapabilitiesPage } from './CapabilitiesPage';
@@ -1152,6 +1153,15 @@ function MaintenanceItemRow({ item, onEdit, onDelete, onToggle }: {
   );
 }
 
+function PrinterModelsPage() {
+  return (
+    <div className="col gap-4">
+      <PageHeader title="Printer models" sub="Only enabled models are offered when adding a printer or choosing which machines a G-code file fits." />
+      <PrinterModelsPanel />
+    </div>
+  );
+}
+
 function MaintenancePage() {
   const { items, refetch } = useMaintenanceItems();
   const [templates, setTemplates] = useState<MaintenanceTemplate[]>([]);
@@ -1689,7 +1699,7 @@ function AdminAccountPage() {
 // Settings screen shell
 // =========================================================================
 
-type PageId = 'tags' | 'print' | 'costs' | 'maintenance' | 'inventory' | 'plugins' | 'capabilities' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
+type PageId = 'tags' | 'print' | 'costs' | 'printer-models' | 'maintenance' | 'inventory' | 'plugins' | 'capabilities' | 'webhook' | 'notifications' | 'fleet-backup' | 'api-keys' | 'admin-account' | 'about';
 
 interface NavItem {
   id: PageId;
@@ -1703,7 +1713,7 @@ interface NavSection {
   items: NavItem[];
 }
 
-const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'maintenance', 'inventory', 'plugins', 'capabilities', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
+const PAGE_IDS: PageId[] = ['tags', 'print', 'costs', 'printer-models', 'maintenance', 'inventory', 'plugins', 'capabilities', 'webhook', 'notifications', 'fleet-backup', 'api-keys', 'admin-account', 'about'];
 
 function pageFromPath(pathname: string): PageId {
   const seg = pathname.replace(/^\/settings\/?/, '').split('/')[0];
@@ -1726,6 +1736,7 @@ export function SettingsScreen() {
         { id: 'tags',          label: 'Tags',           icon: SettingsIcons.tag,     sub: 'Manage labels across files & jobs' },
         { id: 'print',         label: 'Print defaults', icon: Icons.printer,         sub: 'Queue interval & profile rescan' },
         { id: 'costs',         label: 'Costs',          icon: Icons.layers,          sub: 'Machine & labour rates' },
+        { id: 'printer-models', label: 'Printer models', icon: Icons.printer,       sub: 'Which models appear when adding a printer' },
         { id: 'maintenance',   label: 'Maintenance',    icon: SettingsIcons.maintenance, sub: 'Recurring printer upkeep & schedules' },
       ],
     },
@@ -1783,6 +1794,7 @@ export function SettingsScreen() {
       {activePage === 'tags'              && <TagsPage />}
       {activePage === 'print'             && <PrintDefaultsPage />}
       {activePage === 'costs'             && <CostSettings />}
+      {activePage === 'printer-models'    && <PrinterModelsPage />}
       {activePage === 'maintenance'        && <MaintenancePage />}
       {activePage === 'inventory'         && <FilamentInventoryPage />}
       {activePage === 'plugins'           && <PluginsPage />}
