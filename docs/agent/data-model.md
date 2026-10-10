@@ -315,17 +315,7 @@ queue engine fires a signed `POST` on `job.complete`, `job.failed`, and `job.blo
 list — **empty list means all**). Signature header: `X-Webhook-Signature: sha256=<hmac-sha256>`.
 Managed via `GET/PUT /api/v1/settings/webhook`.
 
-`notification_config` (singleton id=1) — three independent built-in channels, additive alongside
-`webhook_config` (not a replacement): `ntfy_{enabled,server_url,topic,priority,events}`,
-`discord_{enabled,webhook_url,events}`, `email_{enabled,host,port,username,password,from_addr,
-to_addrs,events}`. Each channel's own `*_events: JSON[str]` list is evaluated independently —
-**empty list means *none*, the opposite of `webhook_config.events`'s "empty means all"**; this is an
-intentional per-channel opt-in, not a bug, but don't assume the two behave the same way. Dispatch:
-`notification_service.dispatch(cfg, event, ...)` fans out to whichever channels are enabled and have
-the firing event in their own list; fired via `asyncio.create_task` (never awaited directly) from
-`queue_engine._fire_notifications`, alongside `_fire_webhooks`, on the same three job events as
-`webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
-`POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
+`notification_config` (singleton id=1) — **legacy since v048 (BIZ-252), no longer read or written.** Migration v048 copied each configured channel into the `plugin_configs` row of its plugin (`notify_ntfy`, `notify_discord`, `notify_email`): enabled flag, settings (server/topic/priority, host/port/user/from/to, `events` allow-list) and secrets (the Discord webhook URL, the SMTP password) preserved; an untouched channel got no row (the plugins are default-enabled with an empty `events` list, which sends nothing). The table stays for downgrade safety.
 
 ### Job costing (v028): cost_config, project_labor, printers.machine_rate_per_hour, project_parts.unit_cost
 A project's real cost = **filament** (manually entered `jobs.filament_cost`) + **machine** (each *completed* job's

@@ -398,6 +398,7 @@
     "version",
     "features",
     "selected",
+    "mode",
     "status",
     "waiting_on"
   ],

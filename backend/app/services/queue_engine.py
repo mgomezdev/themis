@@ -19,7 +19,6 @@ from ..models import (
     GcodeFile,
     Job,
     JobPrinterConfig,
-    NotificationConfig,
     Printer,
     Project,
     QueueConfig,
@@ -34,7 +33,10 @@ from .inventory import config as inventory_config, deduction as inventory_deduct
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver
-from . import completion_events, notification_service
+from . import completion_events
+from .notify import notify
+from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
+from ..plugins.host import plugin_host
 from ..eventing.hub import hub as event_hub
 from . import scheduling
 from . import webhook_service
@@ -1551,13 +1553,12 @@ class QueueEngine:
                                   ("external_ref", project.external_ref)) if v is not None}
 
     async def _fire_notifications(
-        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None
+        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None
     ) -> None:
         try:
+            if not plugin_host.active_providers(NOTIFY_CHANNEL.id):
+                return                                  # no notification channel is enabled: nothing to build
             async with self._factory() as session:
-                cfg = await session.get(NotificationConfig, 1)
-                if not cfg or not (cfg.ntfy_enabled or cfg.discord_enabled or cfg.email_enabled):
-                    return
                 job = await session.get(Job, job_id)
                 if job is None:
                     return
@@ -1574,7 +1575,7 @@ class QueueEngine:
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
             # which runs before new jobs are claimed each _process_queue iteration).
             # dispatch() already swallows every per-channel exception itself.
-            asyncio.create_task(notification_service.dispatch(cfg, event, job_id, title, message))
+            asyncio.create_task(notify(event, job_id, title, message, message_id=event_id))
         except Exception:
             logger.exception("Failed to dispatch notifications for job %s", job_id)
 

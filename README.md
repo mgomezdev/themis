@@ -31,7 +31,7 @@ external services required.
 | **Maintenance tracking** | Per-printer or per-model maintenance items on calendar / job-count / job-time triggers; due items surface on the Fleet screen. |
 | **Spoolman integration** | Source filament choices from your Spoolman catalog; store per-filament OrcaSlicer profile mappings back to Spoolman; a job bound to a spool gets a low-stock warning if it won't have enough filament left. |
 | **Per-color filament assignment** | For multi-material jobs, map each model-filament color to a specific printer tool/slot; stored as `filament_map` and rewritten into the sliceable 3MF before slicing. |
-| **Notifications** | Job complete/failed/blocked events fire to a generic signed webhook and/or built-in ntfy, Discord, and email channels. |
+| **Notifications** | Job complete/failed/blocked events fire to a generic signed webhook and/or ntfy, Discord and email channel plugins. |
 | **Accounts & API-key auth** | An `admin` account (local-network devices skip sign-in by default; password recovery works fully offline via `docker compose exec themis python -m app.admin reset-password` or a one-time code in the server log), customer accounts with a restricted portal, and scoped API keys for integrations. |
 | **Live camera & telemetry** | MJPEG passthrough or RTSP→MJPEG transcode, plus temps, fans, progress over WebSocket. |
 | **Capability-driven UI** | Every control renders from a printer's capability flags — never a hard-coded vendor check. |
@@ -50,7 +50,7 @@ external services required.
 | **History** | Completed / failed / cancelled job history, with an outcome note recorded on failure. |
 | **Fleet** | Printer cards with live camera + telemetry; queue-off cue + **Ready for new work** button; loaded-filament + OrcaSlicer filament-profile picker; edit a printer via a make → model → nozzle picker; due-maintenance indicator. |
 | **Files** | 3MF/STL model library with folder tree, search, tagging, rename, and download. |
-| **Settings** | Workshop defaults, queue check interval, **Rescan profiles**, tag management, Spoolman integration + per-model profile mappings, maintenance items, API keys, notification channels, and a fleet config backup/import. |
+| **Settings** | Workshop defaults, queue check interval, **Rescan profiles**, tag management, Spoolman integration + per-model profile mappings, maintenance items, API keys, notification channel plugins, and a fleet config backup/import. |
 
 ---
 
@@ -167,7 +167,7 @@ backend/app
     │   ├── slicing.py  filament_inventory.py
     │   ├── laminus/              # adapter, sidecar client, Orca gcode/override logic
     │   └── spoolman/             # adapter, Spoolman client
-    ├── webhook_service.py        notification_service.py
+    ├── webhook_service.py        notify.py
     ├── maintenance_service.py    thumbnail_regen.py
     ├── library_scanner.py        camera_proxy.py
     ├── api_key_service.py

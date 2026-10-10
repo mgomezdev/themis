@@ -13,13 +13,17 @@ import { InventoryProviderPanel } from './InventoryProviderPanel';
 
 type Draft = Record<string, unknown>;
 
-function propType(p: JsonSchemaProperty): 'boolean' | 'number' | 'text' {
+type PropKind = 'boolean' | 'number' | 'text' | 'choices' | 'list';
+
+function propType(p: JsonSchemaProperty): PropKind {
   const types = [p.type, ...(p.anyOf ?? []).map(a => a.type)].flat().filter((t): t is string => !!t && t !== 'null');
+  if (types.includes('array')) return p.items?.enum?.length ? 'choices' : 'list';
   if (types.includes('boolean')) return 'boolean';
   if (types.includes('integer') || types.includes('number')) return 'number';
   return 'text';
 }
 
+const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
 export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
@@ -27,12 +31,13 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const [plugin, setPlugin] = useState<PluginDetail | null>(null);
   const [draft, setDraft] = useState<Draft>({});
   const [secretDraft, setSecretDraft] = useState<Record<string, string>>({});
+  const [listText, setListText] = useState<Record<string, string>>({});       // what the user typed in a comma-separated list field
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
-  const adopt = useCallback((d: PluginDetail) => { setPlugin(d); setDraft(d.settings); setSecretDraft({}); }, []);
+  const adopt = useCallback((d: PluginDetail) => { setPlugin(d); setDraft(d.settings); setSecretDraft({}); setListText({}); }, []);
 
   useEffect(() => {
     let alive = true;
@@ -53,7 +58,9 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const pluginId_ = plugin.id;
 
   const required = new Set(plugin.settings_schema?.required ?? []);
-  const unselected = plugin.provides.filter(p => !p.selected);            // capabilities this plugin could serve but does not
+  // Capabilities this plugin could serve but is not the chosen provider of. (`routed` / `fan_out` ones have no choice to make:
+  // every enabled provider serves them, so there is nothing to select.)
+  const unselected = plugin.provides.filter(p => !p.selected && p.mode !== 'fan_out' && p.mode !== 'routed');
   const isSelected = plugin.provides.some(p => p.selected);
   const health: { tone: string; label: string } = plugin.error ? { tone: 'err', label: 'Problem' }
     : !plugin.enabled ? { tone: 'idle', label: 'Disabled' }
@@ -63,7 +70,10 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
     const settings: Draft = {};
     for (const [k, p] of fields) {
       const v = draft[k];
-      settings[k] = propType(p) === 'number' ? (v === '' || v == null ? null : Number(v)) : (v === '' ? null : v);
+      const kind = propType(p);
+      settings[k] = kind === 'number' ? (v === '' || v == null ? null : Number(v))
+        : kind === 'choices' || kind === 'list' ? asList(v)
+        : (v === '' ? null : v);
     }
     return { settings, secrets: secretDraft };
   };
@@ -130,6 +140,27 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
           <FieldRow key={key} label={`${label}${required.has(key) ? ' *' : ''}`} hint={prop.description}>
             {type === 'boolean'
               ? <Toggle checked={!!draft[key]} onChange={v => setDraft(d => ({ ...d, [key]: v }))} />
+              : type === 'choices'
+              ? <div className="col" style={{ gap: 10 }} role="group" aria-label={label}>
+                  {(prop.items?.enum ?? []).map(choice => (
+                    <label key={choice} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }}>
+                      <Toggle checked={asList(draft[key]).includes(choice)}
+                              onChange={on => setDraft(d => {
+                                const cur = asList(d[key]);
+                                return { ...d, [key]: on ? [...cur, choice] : cur.filter(c => c !== choice) };
+                              })} />
+                      <span style={{ fontSize: 13, fontFamily: 'monospace', color: 'var(--text-1)' }}>{choice}</span>
+                    </label>
+                  ))}
+                </div>
+              : type === 'list'
+              ? <input className="input" aria-label={label} type="text" placeholder="a, b, c"
+                       value={listText[key] ?? asList(draft[key]).join(', ')}
+                       onChange={e => {
+                         const text = e.target.value;
+                         setListText(t => ({ ...t, [key]: text }));          // keep exactly what was typed (commas, spaces) on screen
+                         setDraft(d => ({ ...d, [key]: text.split(',').map(x => x.trim()).filter(Boolean) }));
+                       }} />
               : <input className="input" aria-label={label} type={type === 'number' ? 'number' : 'text'}
                        min={type === 'number' ? prop.minimum : undefined}
                        value={draft[key] == null ? '' : String(draft[key])}

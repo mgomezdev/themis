@@ -1,0 +1,7 @@
+id = "notify_email"
+name = "Email"
+version = "1.0.0"
+provides = ["notify.channel@1"]
+host_api = 1
+entry = "app.plugins.notify_email:MANIFEST"
+publisher = "Themis"

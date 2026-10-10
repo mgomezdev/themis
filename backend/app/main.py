@@ -13,6 +13,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logging.getLogger("app").setLevel(logging.INFO)
+# httpx logs every request URL at INFO, and a Discord webhook URL / ntfy topic URL carries a token: keep them out of the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
