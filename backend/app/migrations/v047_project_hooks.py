@@ -55,6 +55,7 @@ async def up(conn) -> None:
 
 
 async def down(conn) -> None:
+    # Note: destinations edited after the upgrade are lost; the old `webhook_config` row is whatever it was before v047.
     await conn.execute(text("DROP TABLE IF EXISTS webhook_destinations"))
     await conn.execute(text("DROP TABLE IF EXISTS idempotency_keys"))
     await conn.execute(text("DROP INDEX IF EXISTS ux_projects_source_external_ref"))

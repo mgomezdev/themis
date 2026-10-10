@@ -168,6 +168,8 @@ async def lifespan(app: FastAPI):
 
     await inventory_sync_loop.stop()
     await event_hub.stop()
+    from .services import webhook_service as _webhooks
+    await _webhooks.cancel_all()
     await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):

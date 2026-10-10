@@ -833,7 +833,7 @@ class IdempotencyKey(Base):
     scope: Mapped[str] = mapped_column(String(160))
     key: Mapped[str] = mapped_column(String(200))
     request_hash: Mapped[str] = mapped_column(String(64))
-    state: Mapped[str] = mapped_column(String(12), default="in_progress", server_default="in_progress")
+    state: Mapped[str] = mapped_column(String(12), default="in_progress", server_default="in_progress")   # in_progress | done | partial
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     response: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[str] = mapped_column(String(32))

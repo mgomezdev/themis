@@ -15,7 +15,7 @@ from ...database import get_session
 from ...eventing.definitions import EVENT_NAME_RE
 from ...models import WebhookDestination
 from ...services import webhook_service
-from ...services.webhook_service import _now
+from ...services.webhook_service import now_iso as _now
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["webhooks"])
 

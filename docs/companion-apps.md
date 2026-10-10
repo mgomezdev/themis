@@ -41,8 +41,9 @@ For calls that have no natural key — notably **`POST /projects/{id}/generate`*
 * same key, same request again: **the stored response** is returned with `Idempotent-Replay: true`; nothing else is created;
 * same key while the first is still running: `409`; retry after a moment;
 * same key with a *different* body: `422`;
-* the first request failed (any non-2xx): the key is released and the retry runs for real;
-* stored responses are kept 24 hours; a claim abandoned by a crash is taken over after 15 minutes.
+* the first request failed **before changing anything**: the key is released and the retry runs for real;
+* the first request failed **after committing part of its work** (e.g. `generate` made the jobs for one filament group, then the sidecar failed): the key is kept and a retry gets `409` explaining how many jobs exist — look at the project, then retry with a *new* key. A key therefore never repeats work that already happened;
+* stored responses (and partial markers) are kept 24 hours; a claim abandoned by a crash is taken over, by one request only, after 15 minutes.
 
 It is also accepted on `POST /api/v1/projects`. Keys are scoped to the endpoint (and project), so reusing a string elsewhere is harmless.
 Without the header, `generate` is not idempotent: calling it twice generates twice.
@@ -62,6 +63,7 @@ A JSON `POST` to your URL. **Body**:
 { "event": "project.created", "event_id": "5f0c…", "schema_version": 1, "timestamp": "2026-10-10T09:00:00+00:00",
   "project_id": 12, "name": "Order 1001", "stage": "queued", "source_app": "shopconnector", "external_ref": "order-1001",
   "occurred_at": "2026-10-10T09:00:00.123456Z" }
+// `source_app` and `external_ref` are always present; they are null for a project made in the UI or the customer portal.
 ```
 
 **Headers**: `X-Webhook-Id` (= `event_id`), `X-Webhook-Event`, `X-Webhook-Timestamp`, and — when the destination has a secret —
@@ -72,7 +74,7 @@ constant-time comparison; reject a missing or wrong signature.
 
 | Event | When | Extra fields |
 |---|---|---|
-| `project.created` | a project is created (not for an idempotent repeat) | `project_id, name, stage, source_app, external_ref` |
+| `project.created` | a project is created by the API or the customer portal (not for an idempotent repeat) | `project_id, name, stage, source_app, external_ref` |
 | `project.stage_changed` | `POST /projects/{id}/promote` | same + `previous_stage` |
 | `project.generated` | `POST /projects/{id}/generate` created jobs | same + `job_ids` |
 | `job.complete`, `job.failed`, `job.blocked` | job state changes | `job_id`, and for a job in a project `project_id, source_app, external_ref` |
@@ -85,6 +87,10 @@ constant-time comparison; reject a missing or wrong signature.
 `429` or `5xx`. Any other response, including other `4xx`, is final. Answer within 5 seconds. After the last attempt Themis gives up and
 records the failure on the destination; deliveries still waiting to retry are lost if Themis restarts, so reconcile with
 `GET /projects?source_app=…` if you must not miss one. Delivery order across events is not guaranteed.
+
+Webhook URLs are not restricted to public addresses (a LAN receiver is a normal setup), and `POST /webhooks/{id}/test` reports the
+receiver's status: only give `settings:write` to people trusted to point Themis at internal hosts. Keep tokens in the secret, not in the
+URL; logs show the URL without its query string.
 
 ## 5. What Themis guarantees, and what it does not
 
