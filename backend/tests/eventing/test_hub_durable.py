@@ -1,6 +1,7 @@
 """Durable delivery (BIZ-249): the outbox is written in the publisher's transaction, delivered at least once, retried, and
 survives a subscriber being disabled; a failing subscriber never blocks another."""
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -77,8 +78,8 @@ async def test_a_rolled_back_transaction_publishes_nothing(hub, session_factory)
     async with session_factory() as s:
         await hub.enqueue_durable(s, complete(1))
         await s.rollback()
-    hub.wake()
-    await asyncio.sleep(0.1)
+    await hub._dispatch_due()
+    await hub.drain()
     assert got == [] and await deliveries(session_factory) == []
     async with session_factory() as s:
         assert (await s.execute(select(EventOutbox))).first() is None
@@ -95,7 +96,8 @@ async def test_the_same_logical_event_is_stored_once_and_delivered_once(hub, ses
     assert await publish(hub, session_factory, first) is True
     assert await publish(hub, session_factory, complete(9)) is False                 # a duplicate completion callback
     await wait_until(lambda: got, what="delivery")
-    await asyncio.sleep(0.1)
+    await hub._dispatch_due()
+    await hub.drain()
     assert got == [first.id] and len(await deliveries(session_factory)) == 1
     async with session_factory() as s:
         assert len((await s.execute(select(EventOutbox))).all()) == 1
@@ -223,7 +225,8 @@ async def test_a_plugin_subscriber_receives_a_durable_event_and_a_disabled_one_w
         plugin_host._configs["sub_dur"].enabled = False
         await s.commit()
     hub.wake()
-    await asyncio.sleep(0.2)
+    await wait_until(lambda: hub._stats.get("plugin:sub_dur:on_event") and hub._stats["plugin:sub_dur:on_event"].skipped_inactive,
+                     what="the dormant delivery to be looked at")
     pending = [d for d in await deliveries(session_factory) if d.status == "pending"]
     assert len(pending) == 1 and pending[0].attempts == 0 and inst2.got == []
 
@@ -279,3 +282,154 @@ async def test_a_plugin_defined_durable_event_is_enqueued_by_its_owner_only(hub,
     hub.wake()
     await wait_until(lambda: inst.got, what="namespaced durable delivery")
     assert inst.got[0].id == ev.id
+
+
+# --- dispatcher robustness ---------------------------------------------------------------------------------------
+
+async def _set(session_factory, model, row_id, **values):
+    async with session_factory() as s:
+        row = await s.get(model, row_id)
+        for k, v in values.items():
+            setattr(row, k, v)
+        await s.commit()
+
+
+async def _stage(hub, session_factory, envelope) -> None:
+    """Commit a durable event WITHOUT waking the dispatcher, so a test can edit the rows before delivery."""
+    async with session_factory() as s:
+        await hub.enqueue_durable(s, envelope)
+        await s.commit()
+
+
+async def test_the_dispatcher_does_not_busy_poll_while_a_handler_is_in_flight(hub, session_factory):
+    started = asyncio.Event()
+
+    async def hang(e):
+        started.set()
+        await asyncio.sleep(60)
+
+    hub.subscribe("job.complete", hang, name="t.busy", timeout=30)
+    await publish(hub, session_factory, complete(1))
+    await started.wait()
+    assert await hub._next_due_delay() > 1                       # the only pending row belongs to a subscriber mid-delivery
+
+
+async def test_a_subscriber_with_a_backlog_cannot_starve_another(hub, session_factory, monkeypatch):
+    monkeypatch.setattr(hubmod, "PER_SUBSCRIBER_BATCH", 2)
+    got = []
+    started = asyncio.Event()
+
+    async def slow(e):
+        started.set()
+        await asyncio.sleep(60)
+
+    async def ok(e):
+        got.append(e.entities["job_id"])
+
+    hub.subscribe("job.complete", slow, name="t.slow_first", timeout=30)
+    for n in range(1, 7):
+        await _stage(hub, session_factory, complete(n))           # only the slow subscriber has rows for these
+    hub.subscribe("job.complete", ok, name="t.late")
+    await publish(hub, session_factory, complete(7))
+    await publish(hub, session_factory, complete(8))
+    await wait_until(lambda: got == [7, 8], what="the late subscriber to be served despite the older backlog")
+
+
+async def test_an_unreadable_stored_envelope_goes_dead_without_calling_the_handler(hub, session_factory):
+    calls = []
+
+    async def handler(e):
+        calls.append(e)
+
+    hub.subscribe("job.complete", handler, name="t.corrupt")
+    await _stage(hub, session_factory, complete(1))
+    async with session_factory() as s:
+        o = (await s.execute(select(EventOutbox))).scalar_one()
+        o.envelope = {"name": "job.complete", "mystery_field": 1}
+        await s.commit()
+    hub.wake()
+    (d,) = await wait_until(lambda: _with_status(session_factory, "dead"), what="dead delivery")
+    assert calls == [] and "unreadable envelope" in d.last_error
+
+
+async def _with_status(session_factory, status):
+    return [d for d in await deliveries(session_factory) if d.status == status] or None
+
+
+async def test_an_unexpected_failure_outside_the_handler_is_backed_off_not_hot_looped(hub, session_factory, monkeypatch):
+    monkeypatch.setattr(hubmod, "DORMANT_RECHECK_S", 30.0)
+    calls = []
+
+    async def exploding_invoke(sub, envelope):
+        calls.append(envelope.id)
+        raise RuntimeError("database exploded password=hunter2")
+
+    async def handler(e): ...
+
+    hub.subscribe("job.complete", handler, name="t.park")
+    monkeypatch.setattr(hub, "_invoke", exploding_invoke)
+    await publish(hub, session_factory, complete(1))
+    (d,) = await wait_until(lambda: _parked(session_factory), what="a parked delivery")
+    await hub.drain()
+    assert d.status == "pending" and "hunter2" not in d.last_error and d.last_error.startswith("RuntimeError")
+    assert len(calls) == 1                                         # not retried in a tight loop
+
+
+async def _parked(session_factory):
+    return [d for d in await deliveries(session_factory) if d.last_error and d.status == "pending"] or None
+
+
+async def test_a_delivery_that_already_used_all_its_attempts_is_dead_without_running_again(hub, session_factory, monkeypatch):
+    monkeypatch.setattr(hubmod, "MAX_ATTEMPTS", 3)
+    calls = []
+
+    async def handler(e):
+        calls.append(e)
+
+    hub.subscribe("job.complete", handler, name="t.exhausted")
+    await _stage(hub, session_factory, complete(1))
+    (d,) = await deliveries(session_factory)
+    await _set(session_factory, EventDelivery, d.id, attempts=3)   # as left by a handler that killed the process three times
+    hub.wake()
+    (d,) = await wait_until(lambda: _with_status(session_factory, "dead"), what="dead delivery")
+    assert calls == [] and "attempts exhausted" in d.last_error
+
+
+async def test_a_delivery_whose_subscriber_stays_unavailable_for_a_week_goes_dead(hub, session_factory):
+    async def handler(e): ...
+
+    hub.subscribe("job.complete", handler, name="t.gone_for_good")
+    await _stage(hub, session_factory, complete(1))
+    hub.unsubscribe("t.gone_for_good")
+    async with session_factory() as s:
+        o = (await s.execute(select(EventOutbox))).scalar_one()
+        o.created_at = hubmod._iso(datetime.now(timezone.utc) - timedelta(days=8))
+        await s.commit()
+    hub.wake()
+    (d,) = await wait_until(lambda: _with_status(session_factory, "dead"), what="dead delivery")
+    assert "unavailable" in d.last_error
+
+
+async def test_purge_drops_old_finished_events_but_keeps_pending_and_recent_dead_ones(hub, session_factory):
+    async def handler(e): ...
+
+    hub.subscribe("job.complete", handler, name="t.purge")
+    ages = {1: ("delivered", 8), 2: ("delivered", 1), 3: ("pending", 40), 4: ("dead", 8), 5: ("dead", 31)}
+    for n in ages:
+        await _stage(hub, session_factory, complete(n))
+    async with session_factory() as s:
+        outbox = {o.dedup_key: o for o in (await s.execute(select(EventOutbox))).scalars()}
+        for d in (await s.execute(select(EventDelivery))).scalars():
+            key = (await s.get(EventOutbox, d.outbox_id)).dedup_key
+            status, days = ages[int(key.split(":")[1])]
+            d.status = status
+            outbox[key].created_at = hubmod._iso(datetime.now(timezone.utc) - timedelta(days=days))
+        await s.commit()
+
+    hub._s.last_purge = None
+    await hub._maybe_purge()
+
+    async with session_factory() as s:
+        kept = {o.dedup_key for o in (await s.execute(select(EventOutbox))).scalars()}
+        rows = len((await s.execute(select(EventDelivery))).all())
+    assert kept == {"job.complete:2", "job.complete:3", "job.complete:4"} and rows == 3

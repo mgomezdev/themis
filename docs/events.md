@@ -58,14 +58,14 @@ current state by `entities` and use `occurred_at`/`id` to ignore stale work.
 **3. Backpressure.** The publisher never waits. Best-effort lanes are bounded (`queue_size`, default 1000): a full lane drops the
 *new* event, counts it (`dropped`) and logs (first, then every 100th). Durable events are never dropped: the backlog lives in the
 database (`durable_pending` is exposed; a warning threshold exists); durable classes are low-volume by definition (job completions).
-A slow subscriber only fills its own lane / its own pending rows.
+A slow subscriber only fills its own lane / its own pending rows; the dispatcher picks due deliveries per subscriber, so a large backlog never crowds out another subscriber. A warning is logged (checked hourly) when one subscriber has more than 10 000 undelivered durable events.
 
 **4. Retries and idempotency.** Best-effort: no retry. Durable: delivery is retried with exponential backoff (5 s · 2^(n-1), cap
-15 min) up to 8 attempts, then `dead` until an operator retries it (`POST /events/deliveries/{id}/retry`). The attempt counter is
-committed **before** the handler runs, so a handler that crashes the process cannot loop forever across restarts. Delivery is
+15 min) up to 8 attempts, then `dead` until an operator retries it (`POST /events/deliveries/{id}/retry`; retrying a delivery that is being delivered right now can run the handler twice, which at-least-once already allows). The attempt counter is
+committed **before** the handler runs, so a handler that crashes the process cannot loop forever across restarts. An unexpected failure outside the handler (unreadable stored envelope → `dead`; database error → backed off a minute) never hot-loops. Delivery is
 at-least-once: a crash after the side effect but before the acknowledgement redelivers, so **handlers must be idempotent**, keyed
 on `envelope.id` (or `dedup_key`). Publisher-side duplicates are collapsed: best-effort by `dedup_key`/`id` (in-memory, 10 000
-remembered); durable by a unique `dedup_key` on the outbox (`INSERT … ON CONFLICT DO NOTHING`; the second publication stores
+remembered); durable by a unique `dedup_key` on the outbox (`INSERT … ON CONFLICT DO NOTHING`; remembered only while the outbox row exists, i.e. 7–30 days; the second publication stores
 nothing and returns `False` without disturbing the caller's transaction). Making the *publisher* emit one logical event for
 duplicate printer callbacks is the publisher's job (BIZ-269 keeps the existing atomic completion claim and uses `job.complete:<id>`).
 
@@ -78,7 +78,7 @@ plugin that is not installed or is disabled: it is simply dormant (nothing is ev
 a *subscriber* stops delivery at once (subscribers are resolved from the plugin host at delivery time, nothing is unregistered).
 Best-effort events queued for it are skipped (`skipped_inactive`). A durable delivery already created for it stays `pending`,
 costs no attempt, is re-checked every minute and resumes when the plugin is enabled again; after 7 days unavailable it goes `dead`
-(finished outbox rows are purged after 7 days). A disabled *definer* cannot publish. A plugin cannot define a core name.
+(outbox rows are purged hourly: 7 days after creation once every delivery succeeded, 30 days when one is `dead` so an operator can still retry it; a pending one is never purged). A disabled *definer* cannot publish. A plugin cannot define a core name.
 
 **7. Containment and redaction.** Every handler runs with a timeout (`EventSubscription.timeout`, core default 10 s). A plugin
 handler goes through `PluginHost._contained` like any provider call (timeout, exceptions caught, recorded in the plugin's state);

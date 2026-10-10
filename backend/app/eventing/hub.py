@@ -38,7 +38,9 @@ BACKOFF_BASE_S = 5.0                # durable retry delay: base * 2**(attempt-1)
 BACKOFF_CAP_S = 900.0
 DORMANT_RECHECK_S = 60.0            # durable: a delivery whose subscriber is not running is looked at again after this long
 DORMANT_DEAD_AFTER = timedelta(days=7)
-RETENTION = timedelta(days=7)       # finished outbox rows are purged after this
+RETENTION = timedelta(days=7)       # outbox rows whose deliveries all succeeded are purged after this
+DEAD_RETENTION = timedelta(days=30)  # rows with a dead delivery are kept this long so an operator can retry them
+PER_SUBSCRIBER_BATCH = 200          # durable: due deliveries picked per subscriber per cycle
 PUBLISHED_MEMORY = 10_000           # best_effort: logical events remembered for publish-level deduplication
 BACKLOG_WARN = 10_000               # durable: pending deliveries per subscriber that earn a warning
 IDLE_WAKE_S = 30.0
@@ -238,7 +240,7 @@ class EventHub:
             if res.ok:
                 return _Outcome(True)
             return _Outcome(False, res.reason if res.reason in ("timeout", "inactive") else "error",
-                            redact_error(res.error or "failed", secrets=tuple(plugin_host._secrets_of(sub.plugin_id))))
+                            redact_error(plugin_host.redact(sub.plugin_id, res.error or "failed")))
         assert sub.handler is not None
         try:
             await asyncio.wait_for(sub.handler(envelope), timeout=sub.timeout)
@@ -345,7 +347,10 @@ class EventHub:
         """Seconds until the earliest pending delivery is due (so a retry fires on time), at most `IDLE_WAKE_S`."""
         assert self._s.factory is not None
         async with self._s.factory() as session:
-            nxt = (await session.execute(select(func.min(EventDelivery.next_attempt_at)).where(EventDelivery.status == "pending"))).scalar()
+            q = select(func.min(EventDelivery.next_attempt_at)).where(EventDelivery.status == "pending")
+            if self._s.inflight:                                  # a subscriber mid-delivery wakes the loop itself when it finishes
+                q = q.where(EventDelivery.subscriber.not_in(list(self._s.inflight)))
+            nxt = (await session.execute(q)).scalar()
         if nxt is None:
             return IDLE_WAKE_S
         return max(0.01, min(IDLE_WAKE_S, (_parse(nxt) - datetime.now(timezone.utc)).total_seconds()))
@@ -353,14 +358,15 @@ class EventHub:
     async def _dispatch_due(self) -> None:
         s = self._s
         assert s.factory is not None
-        async with s.factory() as session:
-            rows = (await session.execute(
-                select(EventDelivery.id, EventDelivery.subscriber).where(
-                    EventDelivery.status == "pending", EventDelivery.next_attempt_at <= _now())
-                .order_by(EventDelivery.outbox_id, EventDelivery.id).limit(500))).all()
         groups: dict[str, list[int]] = {}
-        for delivery_id, subscriber in rows:
-            groups.setdefault(subscriber, []).append(delivery_id)
+        async with s.factory() as session:
+            due = EventDelivery.status == "pending", EventDelivery.next_attempt_at <= _now()
+            idle = EventDelivery.subscriber.not_in(list(s.inflight)) if s.inflight else EventDelivery.id > 0
+            subscribers = [r[0] for r in (await session.execute(select(EventDelivery.subscriber).where(*due, idle).distinct())).all()]
+            for subscriber in subscribers:                        # per subscriber, so one with a huge backlog never crowds out another
+                groups[subscriber] = [r[0] for r in (await session.execute(
+                    select(EventDelivery.id).where(*due, EventDelivery.subscriber == subscriber)
+                    .order_by(EventDelivery.outbox_id, EventDelivery.id).limit(PER_SUBSCRIBER_BATCH))).all()]
         for subscriber, ids in groups.items():                    # one task per subscriber: a slow one never delays another
             if subscriber in s.inflight:
                 continue
@@ -376,8 +382,22 @@ class EventHub:
                 await self._deliver_one(delivery_id)
             except asyncio.CancelledError:
                 raise
-            except Exception:
+            except Exception as e:
                 logger.exception("Durable delivery %s failed unexpectedly", delivery_id)
+                await self._park(delivery_id, e)
+
+    async def _park(self, delivery_id: int, exc: Exception) -> None:
+        """A delivery failed outside its handler (unreadable envelope, database error): back it off so it cannot hot-loop."""
+        try:
+            assert self._s.factory is not None
+            async with self._s.factory() as session:
+                d = await session.get(EventDelivery, delivery_id)
+                if d is not None and d.status == "pending":
+                    d.last_error = redact_error(exc)
+                    d.next_attempt_at = _iso(datetime.now(timezone.utc) + timedelta(seconds=DORMANT_RECHECK_S))
+                    await session.commit()
+        except Exception:
+            logger.exception("Could not park delivery %s", delivery_id)
 
     async def _deliver_one(self, delivery_id: int) -> None:
         factory = self._s.factory
@@ -394,7 +414,12 @@ class EventHub:
                 delivery.status, delivery.last_error = "dead", delivery.last_error or "gave up: attempts exhausted"
                 await session.commit()
                 return
-            envelope = EventEnvelope.model_validate(outbox.envelope)
+            try:
+                envelope = EventEnvelope.model_validate(outbox.envelope)
+            except ValueError as e:                              # stored under a schema this build no longer reads: never deliverable
+                delivery.status, delivery.last_error = "dead", redact_error(f"unreadable envelope: {e}")
+                await session.commit()
+                return
             sub = self._resolve(delivery.subscriber, envelope.name)
             if sub is None:                                      # plugin disabled/removed: dormant, not failed
                 age = now - _parse(outbox.created_at)
@@ -445,11 +470,17 @@ class EventHub:
         if s.factory is None or (s.last_purge is not None and now - s.last_purge < timedelta(hours=1)):
             return
         s.last_purge = now
-        cutoff = _iso(now - RETENTION)
         async with s.factory() as session:
+            for subscriber, n in (await session.execute(select(EventDelivery.subscriber, func.count()).where(
+                    EventDelivery.status == "pending").group_by(EventDelivery.subscriber))).all():
+                if n > BACKLOG_WARN:
+                    logger.warning("Event subscriber %s has %d undelivered durable events", subscriber, n)
             unfinished = select(EventDelivery.outbox_id).where(EventDelivery.status == "pending")
-            old = select(EventOutbox.id).where(EventOutbox.created_at < cutoff, EventOutbox.id.not_in(unfinished))
-            ids = [r[0] for r in (await session.execute(old)).all()]
+            troubled = select(EventDelivery.outbox_id).where(EventDelivery.status == "dead")
+            ids = [r[0] for r in (await session.execute(select(EventOutbox.id).where(
+                EventOutbox.id.not_in(unfinished),
+                (EventOutbox.created_at < _iso(now - DEAD_RETENTION))
+                | ((EventOutbox.created_at < _iso(now - RETENTION)) & EventOutbox.id.not_in(troubled))))).all()]
             if ids:
                 await session.execute(delete(EventDelivery).where(EventDelivery.outbox_id.in_(ids)))
                 await session.execute(delete(EventOutbox).where(EventOutbox.id.in_(ids)))

@@ -169,7 +169,7 @@ class PluginManifest:
                 raise PluginError(f"plugin {self.id!r}: cannot redefine the core event {e.name!r}")
             if not e.name.startswith(f"{self.id}.") or not EVENT_NAME_RE.match(e.name) or e.name in defined or e.version < 1:
                 raise PluginError(f"plugin {self.id!r}: defined event {e.name!r} must be a unique name starting '{self.id}.' "
-                                  "with a version >= 1")
+                                  "(lower-case letters, digits and underscores in dotted segments) with a version >= 1")
             if e.durability not in ("best_effort", "durable"):
                 raise PluginError(f"plugin {self.id!r}: event {e.name!r} has unknown durability {e.durability!r}")
             defined.add(e.name)
