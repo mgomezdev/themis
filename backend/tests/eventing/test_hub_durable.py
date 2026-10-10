@@ -180,10 +180,15 @@ async def test_a_failing_or_hanging_subscriber_does_not_delay_or_block_another(h
     await publish(hub, session_factory, complete(1))
     await publish(hub, session_factory, complete(2))
     await wait_until(lambda: len(good) == 2, what="the healthy subscriber to finish both")
-    by_sub = {}
-    for d in await deliveries(session_factory):
-        by_sub.setdefault(d.subscriber, []).append(d.status)
-    assert by_sub["core:t.ok"] == ["delivered", "delivered"] and by_sub["core:t.hang"][0] == "pending"
+
+    async def by_subscriber():
+        out = {}
+        for d in await deliveries(session_factory):
+            out.setdefault(d.subscriber, []).append(d.status)
+        return out if out.get("core:t.ok") == ["delivered", "delivered"] else None
+
+    by_sub = await wait_until(by_subscriber, what="both healthy deliveries acknowledged")
+    assert by_sub["core:t.hang"][0] == "pending"
 
 
 async def test_deliveries_to_one_subscriber_keep_commit_order_on_first_attempts(hub, session_factory):
