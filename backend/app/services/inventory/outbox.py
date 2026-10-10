@@ -52,6 +52,14 @@ def enqueue(session: AsyncSession, provider_id: str, spool_ref: str, target_g: f
     return row
 
 
+async def exists_for_job(session: AsyncSession, provider_id: str, spool_ref: str, job_id: int) -> bool:
+    """Has this job's deduction already been enqueued for the spool (in any state)? The idempotency check that keeps a
+    redelivered completion event from deducting twice."""
+    return (await session.execute(select(InventoryPendingWrite.id).where(
+        InventoryPendingWrite.provider == provider_id, InventoryPendingWrite.spool_ref == spool_ref,
+        InventoryPendingWrite.job_id == job_id).limit(1))).first() is not None
+
+
 def flush_soon(factory: async_sessionmaker[AsyncSession]) -> None:
     tasks.spawn(flush(factory), name="inventory-outbox-flush")
 

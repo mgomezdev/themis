@@ -52,7 +52,7 @@ async def test_dead_deliveries_are_listed_and_can_be_retried(client, hub, sessio
 
     hub.subscribe("job.complete", handler, name="api.dur")
     async with session_factory() as s:
-        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", entities={"job_id": 5}, dedup_key="job.complete:5"))
+        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", entities={"job_id": 5}, dedup_key="job.complete:5", payload={"source": "queue"}))
         await s.commit()
     hub.wake()
 
@@ -82,7 +82,7 @@ async def test_deliveries_validate_status_and_retry_404s_for_unknown(client, hub
 async def test_durable_rows_of_an_unregistered_subscriber_are_still_reported(client, hub, session_factory):
     hub.subscribe("job.complete", _noop, name="api.gone")
     async with session_factory() as s:
-        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", dedup_key="job.complete:1"))
+        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", dedup_key="job.complete:1", payload={"source": "queue"}))
         await s.commit()
     hub.unsubscribe("api.gone")                                  # e.g. a plugin uninstalled with work still queued
     hub._stats.pop("core:api.gone")

@@ -535,3 +535,9 @@ a second publication of the same logical event stores nothing), `name`, `schema_
 `core:<name>` | `plugin:<id>:<handler>`) — unique together; `status` `pending|delivered|dead`, `attempts` (committed before the
 handler runs), `next_attempt_at` (backoff / dormant re-check), `last_error` (redacted), `last_attempt_at`, `delivered_at`. Index
 `(status, next_attempt_at)`. Finished outbox rows are purged after 7 days.
+
+### jobs.maintenance_accrued  (v046 — BIZ-269)
+
+`jobs.maintenance_accrued BOOLEAN NOT NULL DEFAULT 0`: set to 1 by the `job_complete.maintenance` subscriber in the same transaction that
+bumps `printers.lifetime_job_count` / `lifetime_print_seconds`, so a redelivered `job.complete` event cannot count a job twice. Jobs
+already `complete` when v046 ran are backfilled to 1 (the old inline path counted them).

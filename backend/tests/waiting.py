@@ -40,3 +40,15 @@ async def settle_background_tasks(*, timeout: float = 5.0) -> None:
         if remaining <= 0:
             raise TimeoutError(f"{len(pending)} background task(s) still running after {timeout}s: {pending}")
         await asyncio.wait(pending, timeout=remaining)
+
+
+async def settle_events(factory) -> None:
+    """Deliver every due durable event (e.g. a job's `job.complete` effects) and the inventory work it spawns, then return.
+
+    Production delivers these from the dispatcher loop shortly after the completion commits; tests that assert on the effects
+    call this once instead of racing it."""
+    from app.eventing.hub import hub
+    from app.services.inventory import tasks as inventory_tasks
+    await hub.deliver_pending(factory)
+    await inventory_tasks.drain()
+    await hub.deliver_pending(factory)                  # a delivery can enqueue work that is itself due

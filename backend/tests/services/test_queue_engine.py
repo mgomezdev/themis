@@ -13,7 +13,7 @@ from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
-from tests.waiting import settle_background_tasks, wait_until
+from tests.waiting import settle_background_tasks, settle_events, wait_until
 
 
 @pytest_asyncio.fixture
@@ -180,6 +180,7 @@ async def test_handle_print_complete_transitions_job(db):
         await session.commit()
 
     await qe.handle_print_complete(1)
+    await settle_events(db)
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -1063,6 +1064,7 @@ async def test_handle_print_complete_writes_the_snapshot_minus_grams(db):
     await _snapshot(db, job_id, 300.0)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == [("42", pytest.approx(282.5))]
@@ -1084,6 +1086,7 @@ async def test_handle_print_complete_holds_the_write_when_the_spool_was_changed_
     await _snapshot(db, job_id, 300.0)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == []
@@ -1160,6 +1163,7 @@ async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the
         fake.calls.clear()
         spawned.clear()
         await engine.handle_print_complete(printer_id)
+        await settle_events(db)
         assert fake.calls == [] and fake.writes == []                     # completion called no provider method
         rows = await _outbox_rows(db)
         assert [(r.spool_ref, r.target_g, r.status) for r in rows] == [("42", pytest.approx(482.5), "pending")]
@@ -1197,6 +1201,7 @@ async def test_completion_sets_the_spool_weight_through_the_inventory_provider(d
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == [("42", pytest.approx(482.5))]
@@ -1218,6 +1223,7 @@ async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabil
         await use_provider(fake)
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert await _outbox_rows(db) == []
     if fake is not None:
@@ -1240,6 +1246,7 @@ async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
 
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert await _outbox_rows(db) == []
@@ -1258,6 +1265,7 @@ async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provide
     await use_provider(other, plugin_id="other_inventory")
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert await _outbox_rows(db) == []
     assert other.calls == [] and other.writes == []
@@ -1277,6 +1285,7 @@ async def test_a_failing_provider_never_breaks_completion(db):
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert "get_spool" in fake.calls
 
@@ -1316,6 +1325,7 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     from app.services.inventory import tasks as inventory_tasks
     await inventory_tasks.drain()
 
@@ -1375,6 +1385,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
                 if not state["second_ran"]:
                     state["second_ran"] = True
                     await engine.handle_print_complete(printer_id)
+                    await settle_events(db)
                 return result
 
             session.execute = spy_execute
@@ -1383,6 +1394,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     engine._factory = wrapped_factory
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
 
     assert len(await _outbox_rows(db)) == 1
     async with db() as session:
@@ -1626,6 +1638,7 @@ async def test_handle_print_complete_accrues_lifetime_counters(db):
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
@@ -1648,6 +1661,7 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
