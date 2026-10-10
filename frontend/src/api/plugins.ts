@@ -21,6 +21,8 @@ export interface PluginProvides {
   features: string[];
   /** This plugin is the stored choice for the capability. */
   selected: boolean;
+  /** `routed` / `fan_out` capabilities have no single selected provider: every enabled one serves them. */
+  mode?: 'exclusive' | 'routed' | 'choose_one' | 'fan_out';
   status: 'serving' | 'waiting' | 'error' | 'disabled' | 'none_selected' | 'no_provider' | 'dormant' | 'not_selected';
   waiting_on: string[];
 }
@@ -65,6 +67,8 @@ export interface JsonSchemaProperty {
   description?: string;
   default?: unknown;
   minimum?: number;
+  /** `array` settings: a fixed set of choices renders as checkboxes, anything else as a comma-separated list. */
+  items?: { type?: string; enum?: string[] };
 }
 export interface JsonSchema { properties?: Record<string, JsonSchemaProperty>; required?: string[] }
 

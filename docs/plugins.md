@@ -179,9 +179,20 @@ functionality lives in the neutral API (`/api/v1/inventory/*`); the old `/api/v1
 | `exclusive` (default) | exactly one active; selecting another replaces it | `host.call(cap, ...)` / `host.part(cap)` | `inventory.filament` |
 | `routed` | every enabled plugin | the provider bound to the resource: `host.call_for(HANDLE, plugin_id, fn)` | `printer.client` |
 | `choose_one` | every enabled plugin built; the selection row is the **default** | `host.resolve(cap, preferred=, eligible=)` / `call_choose`: per-resource preference → default → blocked. Eligibility is checked first; a dormant (disabled/removed) or ineligible preference **blocks**, never falls back to another implementation | slicing |
-| `fan_out` | every enabled plugin | `host.fan_out(HANDLE, fn)`: each provider is called independently (own timeout/containment), one failing never blocks the rest | notifications |
+| `fan_out` | every enabled plugin | `host.fan_out(HANDLE, fn)`: each provider is called independently (own timeout/containment), one failing never blocks the rest | notifications (`notify.channel`, BIZ-252) |
 
 Disabling or uninstalling a provider keeps resource references (printer bindings, preferences) as dormant data and surfaces the
 state; the host never silently selects another implementation. Printer models are core-owned (`printer_models`, BIZ-262): plugins
 contribute `Manufacturer`/`PrinterModel` declarations (optionally `equivalents=` for G-code compatibility, BIZ-263) and Themis assigns
 the stable UUIDs.
+
+### Notification channels (`notify.channel`, BIZ-252)
+
+A **fan-out** capability: every enabled provider receives every human-facing notification, independently. Bundled providers: `notify_ntfy`,
+`notify_discord`, `notify_email` (default-enabled; each has its own Settings page and an `events` allow-list, empty = sends nothing).
+To add a channel, write a plugin that provides `notify.channel@1` with a settings model that subclasses `ChannelSettings` (it gets the
+`events` checkboxes) and a factory returning a `FilteredChannel` subclass: implement `configured()` and `async send(message)` (raise on
+failure). Core never changes. `deliver(ChannelMessage)` returns `ChannelResult` (`skipped` = not for this channel / not configured);
+`test_connection()` powers the page's **Test connection** button. Secrets belong in `secret_fields` (write-only; errors are redacted).
+A channel failure shows as the plugin's `last_error`; `ChannelMessage.message_id` is stable per notification if a channel retries.
+Webhooks for companion apps are a separate mechanism (`docs/companion-apps.md`).

@@ -125,7 +125,7 @@ const PLUGIN_SUMMARY = {
   id: 1, name: 1, version: 1, description: 1, docs_url: 1, source: 1, loaded: 1, install: 1, provides: 1, requires: 1, optional: 1,
   defines: 1, ui: 1, enabled: 1, active: 1, error: 1,
 } satisfies Record<keyof PluginSummary, 1>;
-const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
+const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
 const CAPABILITY_INFO = {
   id: 1, version: 1, label: 1, description: 1, definer: 1, features: 1, required_methods: 1, selected: 1, explicit: 1, status: 1,
   waiting_on: 1, error: 1, providers: 1, requires_by: 1, mode: 1, dormant_default: 1,

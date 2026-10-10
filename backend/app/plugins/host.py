@@ -143,6 +143,11 @@ class PluginHost:
                     await s.delete(r)
                     selections.pop(r.capability, None)
                     explicit.pop(r.capability, None)
+            have = {r.plugin_id for r in (await s.execute(select(PluginConfig))).scalars()}
+            for m in registered_plugins():                  # a default-enabled provider needs a row so its instance is built
+                if m.default_enabled and m.provides and m.id not in have:
+                    s.add(PluginConfig(plugin_id=m.id, enabled=True, settings={}, secrets={}, state={}, updated_at=_now()))
+            await s.flush()
             configs = {r.plugin_id: _Snapshot(bool(r.enabled), dict(r.settings or {}), dict(r.secrets or {}),
                                               dict(r.state or {}))
                        for r in (await s.execute(select(PluginConfig))).scalars()}

@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models import InventoryConfig
-from app.services import notification_service, webhook_service
+from app.services import webhook_service
 from app.services.inventory.sync import record_sync
 from tests import spoolman_mock
 from tests.api.test_jobs_api import _seed_spool_warning_fixture
@@ -90,18 +90,17 @@ async def test_golden_spool_low_webhook_and_notification(session_factory, spoolm
         sent.append({"url": url, "secret": secret, "payload": mask(payload, _TIMESTAMPS)})
         return webhook_service.Outcome(True, 200)
 
-    async def dispatch(notif, event, job_id, title, message):
+    async def notify(event, job_id, title, message, **kw):
         notified.append({"event": event, "job_id": job_id, "title": title, "message": message})
 
-    from app.models import NotificationConfig
+    from app.services.inventory import alerts as spool_alerts
     from tests.webhook_helpers import destination
     async with session_factory() as s:
         s.add(InventoryConfig(id=1, deduct_on_complete=True, low_stock_default_g=600.0, low_stock_overrides={},
                               low_stock_alerted=[]))
         s.add(destination(url="http://hook.test/x", secret="whsec"))
-        s.add(NotificationConfig(id=1, ntfy_enabled=True))
         await s.commit()
-        with patch.object(webhook_service, "attempt", attempt), patch.object(notification_service, "dispatch", dispatch):
+        with patch.object(webhook_service, "attempt", attempt), patch.object(spool_alerts, "notify", notify):
             await record_sync(s)
             await wait_until(lambda: sent and notified)
         assert (await s.get(InventoryConfig, 1)).low_stock_alerted == ["spoolman:2"]

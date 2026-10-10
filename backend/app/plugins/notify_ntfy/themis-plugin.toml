@@ -1,0 +1,7 @@
+id = "notify_ntfy"
+name = "ntfy"
+version = "1.0.0"
+provides = ["notify.channel@1"]
+host_api = 1
+entry = "app.plugins.notify_ntfy:MANIFEST"
+publisher = "Themis"

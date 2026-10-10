@@ -54,6 +54,51 @@ describe('PluginSettingsPage', () => {
     expect(screen.getByRole('switch', { name: '' , checked: false })).toBeTruthy();       // the boolean (and the enable switch is checked)
   });
 
+  it('renders an array setting with fixed choices as switches and a free list as comma-separated text, and saves both as arrays', async () => {
+    const channel = detail({
+      settings: { events: ['job.complete'], to_addrs: ['a@x.test'] }, secrets: {}, secret_fields: [],
+      settings_schema: { properties: {
+        events: { type: 'array', title: 'Events', items: { type: 'string', enum: ['job.complete', 'job.failed', 'spool.low'] } },
+        to_addrs: { type: 'array', title: 'To addresses', items: { type: 'string' } },
+      } },
+    });
+    const api = stubFetch(routes(channel, { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...channel, ...c.body as object }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    const group = await screen.findByRole('group', { name: 'Events' });
+    expect(within(group).getByRole('switch', { name: 'job.complete' }).getAttribute('aria-checked')).toBe('true');
+    expect(within(group).getByRole('switch', { name: 'job.failed' }).getAttribute('aria-checked')).toBe('false');
+
+    await userEvent.click(within(group).getByRole('switch', { name: 'spool.low' }));
+    await userEvent.click(within(group).getByRole('switch', { name: 'job.complete' }));
+    const addrs = screen.getByLabelText('To addresses') as HTMLInputElement;
+    expect(addrs.value).toBe('a@x.test');
+    await userEvent.clear(addrs);
+    await userEvent.type(addrs, 'b@x.test, c@x.test');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(api.to('PUT', '/api/v1/plugins/demo_inv')).toHaveLength(1));
+    expect((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { settings: object }).settings)
+      .toEqual({ events: ['spool.low'], to_addrs: ['b@x.test', 'c@x.test'] });
+  });
+
+  it('offers no "Use for" choice for a fan-out capability: every enabled provider serves it', async () => {
+    const base = detail();
+    const fanOut = detail({ provides: [{ capability: 'notify.channel', version: 1, features: [], selected: false, mode: 'fan_out', status: 'disabled', waiting_on: [] }] });
+    const exclusive = detail({ provides: [{ ...base.provides[0], selected: false, mode: 'exclusive', status: 'not_selected' }] });
+
+    stubFetch(routes(fanOut));
+    const { unmount } = render(<PluginSettingsPage pluginId="demo_inv" />);
+    await screen.findByRole('heading', { name: 'Demo inventory' });
+    expect(screen.queryByRole('button', { name: /^Use / })).toBeNull();
+    unmount();
+    resetPluginStore();
+
+    stubFetch(routes(exclusive));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+    expect(await screen.findByRole('button', { name: /^Use / })).toBeTruthy();         // an exclusive capability still offers it
+  });
+
   it('never shows a stored secret; saving untouched sends no secrets, replacing sends the new value, clearing sends ""', async () => {
     const api = stubFetch(routes(detail(), { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...detail(), ...c.body as object }) }));
     render(<PluginSettingsPage pluginId="demo_inv" />);

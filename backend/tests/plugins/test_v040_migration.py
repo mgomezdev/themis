@@ -65,7 +65,7 @@ async def test_rolling_back_past_v035_and_migrating_up_again_boots(tmp_path):
     engine = create_async_engine(f"sqlite+aiosqlite:///{path}")
     async with engine.begin() as conn:
         await run_migrations(conn)
-        for _ in range(13):                                             # v047 .. v035
+        for _ in range(14):                                             # v048 .. v035
             await rollback_last(conn)
         await run_migrations(conn)                                      # must not crash on the missing slot / selection tables
         assert (await conn.execute(text("SELECT plugin_id FROM capability_selections WHERE capability='inventory.filament'"))).scalar() == "spoolman"

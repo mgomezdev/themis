@@ -15,8 +15,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import NotificationConfig, Printer, PrinterAlarm, QueueConfig
-from . import notification_service, webhook_service
+from ..models import Printer, PrinterAlarm, QueueConfig
+from . import webhook_service
+from .notify import notify
 from .abstract_printer_client import SEVERITIES, Alarm
 
 logger = logging.getLogger("app")
@@ -94,16 +95,14 @@ async def deliver(session: AsyncSession, printer: Printer | None, row: PrinterAl
     try:
         if rank(row.severity) < rank(await min_severity(session)):
             return False
-        notif = await session.get(NotificationConfig, 1)
         name = printer.name if printer else f"printer {row.printer_id}"
         await webhook_service.dispatch(session, EVENT, None, {
             "printer_id": row.printer_id, "printer_name": name, "alarm_id": row.id, "code": row.code,
             "severity": row.severity, "message": row.message, "help_url": row.help_url})
-        if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
-            title = f"Themis: {row.severity} on {name}"
-            task = asyncio.create_task(notification_service.dispatch(notif, EVENT, None, title, row.message))
-            _delivery_tasks.add(task)
-            task.add_done_callback(_delivery_tasks.discard)
+        title = f"Themis: {row.severity} on {name}"
+        task = asyncio.create_task(notify(EVENT, None, title, row.message))
+        _delivery_tasks.add(task)
+        task.add_done_callback(_delivery_tasks.discard)
         return True
     except Exception:
         logger.exception("Could not deliver alarm %s for printer %s", row.code, row.printer_id)

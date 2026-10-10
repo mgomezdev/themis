@@ -44,7 +44,8 @@ HTTPX_ALLOWED = {
     "app.plugins.elegoo_centauri.client": "Elegoo printer API",
     "app.plugins.snapmaker.client": "Moonraker printer API (kept so tests can patch httpx through it)",
     "app.services.moonraker.client": "Moonraker printer API (shared transport)",
-    "app.services.notification_service": "ntfy/Discord notifications",
+    "app.plugins.notify_ntfy.channel": "ntfy notifications (a notify.channel plugin)",
+    "app.plugins.notify_discord.channel": "Discord notifications (a notify.channel plugin)",
     "app.services.webhook_service": "outbound webhooks",
     "app.plugins.installer": "GitHub plugin download",
 }

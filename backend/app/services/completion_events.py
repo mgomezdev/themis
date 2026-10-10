@@ -102,7 +102,8 @@ async def notify_consumers(envelope: EventEnvelope) -> None:
     job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
     for name, send in (("broadcast", lambda: queue_engine._broadcast_job(job_id)),
                        ("webhooks", lambda: queue_engine._fire_webhooks(job_id, EVENT, event_id=envelope.id)),
-                       ("notifications", lambda: queue_engine._fire_notifications(job_id, EVENT, printer_id=printer_id))):
+                       ("notifications", lambda: queue_engine._fire_notifications(job_id, EVENT, printer_id=printer_id,
+                                                                                  event_id=envelope.id))):
         try:
             await send()
         except Exception:                                        # each is independent; none may fail the others or the completion

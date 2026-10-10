@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from tests.webhook_helpers import destination
-from app.models import InventoryConfig, NotificationConfig
+from app.models import InventoryConfig
 from app.plugins.host import plugin_host
 from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
 from app.services.inventory import alerts as spool_alerts
@@ -109,12 +109,10 @@ async def test_delivery_fires_the_webhook_and_notification_channels_for_spool_lo
     await _row(session_factory, low_stock_default_g=100)
     async with session_factory() as s:
         s.add(destination(url="http://hook.test", secret="s", events=[EVENT]))
-        s.add(NotificationConfig(id=1, ntfy_enabled=True, ntfy_server_url="http://ntfy.test", ntfy_topic="t",
-                                 ntfy_events=[EVENT], discord_events=[], email_to_addrs=[], email_events=[]))
         await s.commit()
 
     with patch.object(spool_alerts.webhook_service, "schedule") as schedule, \
-         patch.object(spool_alerts.notification_service, "dispatch", new=AsyncMock()) as dispatch:
+         patch.object(spool_alerts, "notify", new=AsyncMock()) as dispatch:
         await _process(session_factory, [spool(1, 80, location="Shelf B")])
         await asyncio.sleep(0)   # let the fire-and-forget dispatch task run
 
@@ -123,7 +121,7 @@ async def test_delivery_fires_the_webhook_and_notification_channels_for_spool_lo
     assert extra == {"spool_id": 1, "filament_id": 1, "name": "Elegoo PLA 1", "remaining_g": 80.0,
                      "threshold_g": 100.0, "location": "Shelf B",
                      "provider": "spoolman", "spool_ref": "1", "material_ref": "1"}
-    (_cfg, event, job_id, title, message), _ = dispatch.call_args
+    (event, job_id, title, message), _ = dispatch.call_args
     assert (event, job_id, title) == ("spool.low", None, "Themis: spool running low")
     assert message == "Elegoo PLA 1 (Shelf B) has 80 g left (alert below 100 g)."
 
