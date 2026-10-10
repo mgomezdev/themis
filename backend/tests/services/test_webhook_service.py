@@ -86,7 +86,7 @@ async def test_fire_swallows_a_non_2xx_response_and_logs_it(wire, caplog):
 async def test_fire_swallows_a_transport_error_and_logs_it(wire, caplog):
     wire.error = httpx.ConnectError("refused")
     with caplog.at_level(logging.WARNING, logger=webhook_service.logger.name):
-        assert await webhook_service.fire(URL, "s", {"event": "job.complete"}) is None
+        assert await webhook_service.fire(URL, "whsec-value", {"event": "job.complete"}) is None
 
     assert any("Webhook delivery failed" in r.getMessage() and "refused" in r.getMessage() for r in caplog.records)
 
