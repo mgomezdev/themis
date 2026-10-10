@@ -2,7 +2,7 @@
 
 A plugin is an in-process Python package that Themis loads at startup. It declares the **capabilities** it provides, requires
 and defines (there is no plugin "kind"). A capability is a named, versioned service contract such as `inventory.filament` v1
-(see `provider-interfaces.md` for that contract's ABC and feature flags); exactly one plugin serves each capability at a time.
+(see `provider-interfaces.md` for that contract's ABC and feature flags); a capability declares how its providers are selected (`CapabilityDef.mode`, below) — for `inventory.filament` exactly one plugin serves it at a time.
 Bundled plugins (`spoolman`, `local_inventory`) live in `backend/app/plugins/<id>/` and use the **same package format** as
 installed ones. Design: Linear "Plugin architecture — design spec" (BIZ-202), §3.1 and §3.11.
 
@@ -160,3 +160,19 @@ capability, so a client keeps working when the provider is swapped. Every `inven
 `Provide.routers`). Anything a provider adds beyond that (Local inventory's `weight-log`) is optional and answers 404 from a provider
 without it; nothing selected answers 409. A plugin route `PUT /provider` is never exposed there (the selection route owns it). Common
 functionality lives in the neutral API (`/api/v1/inventory/*`); the old `/api/v1/spoolman/*` paths are deprecated aliases.
+
+## Capability resolution modes (BIZ-250)
+
+`CapabilityDef.mode` states the cardinality and dispatch policy, enforced by the host (`tests/plugins/test_capability_modes.py`):
+
+| Mode | Providers | Dispatch | Example |
+|---|---|---|---|
+| `exclusive` (default) | exactly one active; selecting another replaces it | `host.call(cap, ...)` / `host.part(cap)` | `inventory.filament` |
+| `routed` | every enabled plugin | the provider bound to the resource: `host.call_for(HANDLE, plugin_id, fn)` | `printer.client` |
+| `choose_one` | every enabled plugin built; the selection row is the **default** | `host.resolve(cap, preferred=, eligible=)` / `call_choose`: per-resource preference → default → blocked. Eligibility is checked first; a dormant (disabled/removed) or ineligible preference **blocks**, never falls back to another implementation | slicing |
+| `fan_out` | every enabled plugin | `host.fan_out(HANDLE, fn)`: each provider is called independently (own timeout/containment), one failing never blocks the rest | notifications |
+
+Disabling or uninstalling a provider keeps resource references (printer bindings, preferences) as dormant data and surfaces the
+state; the host never silently selects another implementation. Printer models are core-owned (`printer_models`, BIZ-262): plugins
+contribute `Manufacturer`/`PrinterModel` declarations (optionally `equivalents=` for G-code compatibility, BIZ-263) and Themis assigns
+the stable UUIDs.

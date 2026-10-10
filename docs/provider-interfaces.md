@@ -56,7 +56,22 @@ see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 
 Capabilities (`frozenset` class attr; the manifest declares the same set): `TRACKS_WEIGHT`, `WRITE_WEIGHT`,
 `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (can be unreachable → sync loop, health, later the offline cache), `MANAGE_MATERIALS`, `MANAGE_SPOOLS` (the provider owns its library; a provider without them is still valid — its library is managed in the external system).
-Optional methods raise `NotSupported(capability)` by default; callers check `provider.has(cap)` first.
+Optional methods raise `NotSupported(capability)` by default; callers check `host.has("inventory.filament", flag)` first.
+
+### The verified contract (BIZ-247)
+
+The method↔flag map is machine-readable: `OPTIONAL_METHODS` in `filament_inventory.py` maps **every optional method to exactly one flag**
+(`set_remaining`→`WRITE_WEIGHT`, `set_profile_links`→`PROFILE_LINKS_WRITE`, `create/update/archive_material`→`MANAGE_MATERIALS`,
+`create/update/archive_spool`→`MANAGE_SPOOLS`, `parse_label`→`LABEL_SCAN`); `DATA_FLAGS` (`TRACKS_WEIGHT`, `PROFILE_LINKS_READ`, `REMOTE`)
+gate data / treatment, not a method. `contract_violations(provider)` reports a provider that **claims a flag without implementing its
+method**, implements a method **without claiming the flag**, or claims an unknown flag; a provider that simply doesn't advertise an
+optional method is valid.
+
+`tests/plugins/test_filament_inventory_contract.py` runs the same suite against an in-memory fake, a fake library provider, **Spoolman**
+and **Local inventory**: DTO shape and string refs, claimed flag ⇒ the gated call works / unclaimed ⇒ `NotSupported(flag)`,
+`contract_violations == []`, neutral `InventoryProviderError(code, status)` mapping, and secret redaction at the real exits (`plugin_host.call` → `CallResult.error`, `describe_failure`, persisted plugin state: a provider may echo
+its key in an exception — the **host is the redaction boundary**, the provider is not). `tests/test_no_provider_in_core.py` (textual scan, both plugin
+ids) proves core names neither plugin; `tests/test_provider_boundary.py` proves core reaches past the Spoolman adapter package nowhere.
 
 DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
 `InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. Refs are strings. `raw` is
