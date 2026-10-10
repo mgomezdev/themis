@@ -12,6 +12,11 @@ FAN, CHOOSE = "modes_x.fan", "modes_x.choose"
 DEFS = (CapabilityDef(FAN, 1, "Fan", mode="fan_out"), CapabilityDef(CHOOSE, 1, "Choose", mode="choose_one"))
 
 
+def _second(pid: str) -> PluginManifest:
+    return PluginManifest(id=pid, name=pid, version="1.0.0", host_api=HOST_API, settings_model=DummySettings, factory=DummyProvider,
+                          provides={FAN: Provide(), CHOOSE: Provide()})
+
+
 def _manifest(*, provides: bool) -> PluginManifest:
     return PluginManifest(id="modes_x", name="modes_x", version="1.0.0", host_api=HOST_API, settings_model=DummySettings,
                           factory=DummyProvider, provides={FAN: Provide(), CHOOSE: Provide()} if provides else {}, defines=DEFS)
@@ -49,3 +54,59 @@ async def test_provider_selection_is_refused_for_fan_out_and_sets_the_default_fo
     assert (await client.put(f"/api/v1/capabilities/{FAN}/provider", json={"plugin_id": "modes_x"})).status_code == 422
     ok = await client.put(f"/api/v1/capabilities/{CHOOSE}/provider", json={"plugin_id": "modes_x"})
     assert ok.status_code == 200 and ok.json()["plugin_id"] == "modes_x"
+
+
+async def _cap(client, cap_id):
+    await plugin_host.reload()
+    return next(c for c in (await client.get("/api/v1/capabilities")).json()["capabilities"] if c["id"] == cap_id)
+
+
+async def test_the_listing_declares_each_capabilitys_mode_and_every_enabled_provider_of_a_multi_provider_capability_is_serving(client):
+    plugins.register_plugin(_manifest(provides=True))
+    plugins.register_plugin(_second("modes_y"))
+    for pid in ("modes_x", "modes_y"):
+        await plugin_host.update_config(pid, enabled=True)
+
+    fan, choose, inv = await _cap(client, FAN), await _cap(client, CHOOSE), await _cap(client, "inventory.filament")
+
+    assert (fan["mode"], choose["mode"], inv["mode"]) == ("fan_out", "choose_one", "exclusive")
+    assert {p["plugin_id"]: p["status"] for p in fan["providers"]} == {"modes_x": "serving", "modes_y": "serving"}
+    assert {p["plugin_id"]: p["status"] for p in choose["providers"]} == {"modes_x": "serving", "modes_y": "serving"}
+
+
+async def test_a_choose_one_default_that_cannot_serve_is_reported_dormant_not_replaced(client):
+    plugins.register_plugin(_manifest(provides=True))          # modes_x also DEFINES the capabilities, so it stays registered
+    plugins.register_plugin(_second("modes_y"))
+    for pid in ("modes_x", "modes_y"):
+        await plugin_host.update_config(pid, enabled=True)
+    await plugin_host.set_provider(CHOOSE, "modes_y")
+    assert (await _cap(client, CHOOSE))["dormant_default"] is None
+
+    await plugin_host.update_config("modes_y", enabled=False)
+    disabled = await _cap(client, CHOOSE)
+    plugins._REGISTRY.pop("modes_y")
+    removed = await _cap(client, CHOOSE)
+
+    assert disabled["dormant_default"] == {"plugin_id": "modes_y", "reason": "plugin_disabled"}
+    assert disabled["selected"] == "modes_y"                                            # the choice is kept, never silently swapped
+    assert {p["plugin_id"]: p["status"] for p in disabled["providers"]}["modes_x"] == "serving"
+    assert removed["dormant_default"] == {"plugin_id": "modes_y", "reason": "plugin_removed"} and removed["selected"] == "modes_y"
+
+
+async def test_provider_statuses_distinguish_disabled_failed_and_serving_and_a_failed_default_is_provider_unavailable(client):
+    plugins.register_plugin(_manifest(provides=True))
+    plugins.register_plugin(_second("modes_y"))
+    await plugin_host.update_config("modes_x", enabled=True)
+    await plugin_host.update_config("modes_y", enabled=True, settings={"mode": "bad-config"})       # its factory refuses this configuration
+    await plugin_host.set_provider(CHOOSE, "modes_x")
+
+    cap = await _cap(client, CHOOSE)
+    assert {p["plugin_id"]: p["status"] for p in cap["providers"]} == {"modes_x": "serving", "modes_y": "error"}
+
+    await plugin_host.update_config("modes_x", enabled=False)
+    cap = await _cap(client, CHOOSE)
+    assert {p["plugin_id"]: p["status"] for p in cap["providers"]} == {"modes_x": "disabled", "modes_y": "error"}
+
+    await plugin_host.update_config("modes_x", enabled=True, settings={"mode": "bad-config"})
+    broken = await _cap(client, CHOOSE)
+    assert broken["dormant_default"] == {"plugin_id": "modes_x", "reason": "provider_unavailable"}

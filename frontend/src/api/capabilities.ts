@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { pluginRequest, usePlugins, type CapabilityRef } from './plugins';
 
+export type CapabilityMode = 'exclusive' | 'routed' | 'choose_one' | 'fan_out';
 export type CapabilityStatus = 'serving' | 'waiting' | 'error' | 'disabled' | 'none_selected' | 'no_provider' | 'dormant';
 
 export interface CapabilityProvider {
@@ -17,6 +18,10 @@ export interface CapabilityInfo {
   status: CapabilityStatus; waiting_on: string[]; error: string | null;
   providers: CapabilityProvider[];
   requires_by: { plugin_id: string; min_version: number }[];
+  /** exclusive: one provider; routed / fan_out: every enabled provider serves it; choose_one: `selected` is the DEFAULT (BIZ-250). */
+  mode: CapabilityMode;
+  /** A choose-one default that cannot serve right now. Never replaced silently: operations that would use it are blocked. */
+  dormant_default: { plugin_id: string; reason: 'plugin_removed' | 'plugin_disabled' | 'provider_unavailable' } | null;
 }
 export type { CapabilityRef };
 

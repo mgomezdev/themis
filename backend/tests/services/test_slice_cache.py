@@ -225,3 +225,37 @@ def test_the_fingerprint_memo_is_keyed_per_provider_identity():
         for provider in (a1, a2, b, None):
             sc.cached_fingerprint("M", "P", ["F"], provider)
     assert fp.call_count == 3
+
+
+# --- provider identity in the key (BIZ-250) --------------------------------------------------------------------------------------
+
+def _inputs(**over):
+    base = dict(source_content_hash="h", plate_number=1, machine_preset="M", process_preset="P", filament_presets=("F",),
+                extra_config={}, tool_index=None, filament_map=None, artifact_kind="gcode")
+    return sc.CacheKeyInputs(**{**base, **over})
+
+
+def test_a_different_slicing_provider_never_shares_a_cache_key():
+    assert sc.cache_key(_inputs(provider="other_slicer")) != sc.cache_key(_inputs())
+    assert sc.cache_key(_inputs(provider="other_slicer")) == sc.cache_key(_inputs(provider="other_slicer"))
+
+
+def test_the_default_provider_leaves_every_pre_existing_cache_key_unchanged():
+    legacy = {"source_content_hash": "h", "plate_number": 1, "machine_preset": "M", "process_preset": "P", "filament_presets": ["F"],
+              "extra_config": {}, "tool_index": None, "filament_map": None, "artifact_kind": "gcode"}     # the dict before the field existed
+
+    assert sc.cache_key(_inputs()) == sc.sha256_of(legacy)
+    assert sc.cache_key(_inputs(provider="laminus")) == sc.sha256_of(legacy)
+
+
+def test_key_inputs_carry_the_active_providers_name_and_a_saved_dict_round_trips_it():
+    from app.services.slice_saver import inputs_from_dict
+    from app.services.slicer_service import SliceRequest
+    req = _req()
+
+    default = sc.key_inputs(req, "h", None, None)
+    other = sc.key_inputs(req, "h", None, None, provider="other_slicer")
+
+    assert default.provider == "laminus" and other.provider == "other_slicer"
+    assert inputs_from_dict(other.as_dict()) == other and inputs_from_dict(default.as_dict()) == default
+    assert sc.key_fields(other)["provider"] == "other_slicer"
