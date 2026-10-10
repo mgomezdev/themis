@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..models import CapabilitySelection, PluginConfig
 from . import PluginError, capability_catalog, get_plugin, providers_of
 from . import migrations as plugin_migrations
-from .capabilities.definition import CapabilityDef, RoutedCapability
+from .capabilities.definition import BUILDS_ALL, CapabilityDef, RoutedCapability
 from .manifest import PluginManifest, Provide
 
 logger = logging.getLogger("app")
@@ -66,6 +66,17 @@ class CapabilityStatus:
     plugin_id: str | None = None
     waiting_on: tuple[str, ...] = ()
     error: str | None = None
+
+
+@dataclass(frozen=True)
+class Resolution:
+    """Outcome of `PluginHost.resolve`. `plugin_id` is the chosen provider, or None when blocked; `outcome` says why:
+    preferred | default | no_provider | preference_dormant | preference_ineligible | default_unavailable | default_ineligible |
+    not_choose_one (the capability is not choose-one). `call_for` does not re-check eligibility: use `call_choose`."""
+    plugin_id: str | None
+    outcome: Literal["preferred", "default", "no_provider", "preference_dormant", "preference_ineligible",
+                     "default_unavailable", "default_ineligible", "not_choose_one"]
+    requested: str | None = None
 
 
 def _part_of(instance: Any, provide: Provide) -> Any:
@@ -135,7 +146,7 @@ class PluginHost:
                                               dict(r.state or {}))
                        for r in (await s.execute(select(PluginConfig))).scalars()}
             for cap, d in capability_catalog().items():  # auto-select the unambiguous case only (spec decision 5)
-                if cap in selections or d.mode == "routed":
+                if cap in selections or d.mode in ("routed", "fan_out"):
                     continue
                 enabled = [m.id for m in providers_of(cap) if configs.get(m.id) and configs[m.id].enabled]
                 if len(enabled) == 1:
@@ -144,7 +155,7 @@ class PluginHost:
             await s.commit()
         self._selections, self._explicit, self._configs = selections, explicit, configs
         for _ in range(len(selections) + 1):          # a provider that fails to build takes its dependents down in the same pass
-            candidates = {p for p in selections.values() if p} | set(configs)     # routed providers are never selected
+            candidates = {p for p in selections.values() if p} | set(configs)     # routed/fan-out providers are never selected
             wanted = {pid for pid in candidates
                       if self._is_enabled(pid) and self._serves_any(pid) and not self.unmet(pid)}
             for plugin_id in [p for p in self._instances if p not in wanted]:
@@ -180,7 +191,7 @@ class PluginHost:
 
     def _serves_any(self, plugin_id: str) -> bool:
         m, catalog = get_plugin(plugin_id), capability_catalog()
-        return m is not None and any(cap in catalog and (catalog[cap].mode == "routed" or self._selections.get(cap) == plugin_id)
+        return m is not None and any(cap in catalog and (catalog[cap].mode in BUILDS_ALL or self._selections.get(cap) == plugin_id)
                                      for cap in m.provides)
 
     def unmet(self, plugin_id: str, _seen: frozenset[str] = frozenset()) -> tuple[str, ...]:
@@ -276,13 +287,22 @@ class PluginHost:
 
     # --- the active rule ---------------------------------------------------------------------------------------
 
-    def _is_routed(self, cap: str) -> bool:
+    def _mode(self, cap: str) -> str | None:
         d = capability_catalog().get(cap)
-        return d is not None and d.mode == "routed"
+        return d.mode if d else None
+
+    def _is_routed(self, cap: str) -> bool:
+        return self._mode(cap) == "routed"
+
+    def _builds_all(self, cap: str) -> bool:
+        return self._mode(cap) in BUILDS_ALL
+
+    def _unselectable(self, cap: str) -> bool:
+        return self._mode(cap) in ("routed", "fan_out")
 
     def active(self, cap: str) -> ActivePlugin | None:
-        if self._is_routed(cap):
-            return None                                       # a routed capability has one provider per resource, not one overall
+        if self._unselectable(cap):
+            return None                                       # routed/fan-out: one provider per resource (or all), not one overall
         pid = self._selections.get(cap)
         m = get_plugin(pid) if pid else None
         prov = m.provides.get(cap) if m else None
@@ -294,8 +314,8 @@ class PluginHost:
         return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
 
     def active_for(self, cap: str, plugin_id: str) -> ActivePlugin | None:
-        """The routed capability `cap` as served by `plugin_id`, or None when that plugin is not an active provider of it."""
-        if not self._is_routed(cap) or not self._is_enabled(plugin_id):
+        """The multi-provider capability `cap` as served by `plugin_id`, or None when that plugin is not an active provider of it."""
+        if not self._builds_all(cap) or not self._is_enabled(plugin_id):
             return None
         m, inst = get_plugin(plugin_id), self._instances.get(plugin_id)
         prov = m.provides.get(cap) if m else None
@@ -304,7 +324,7 @@ class PluginHost:
         return ActivePlugin(m, inst, cap, _part_of(inst, prov), prov.features)
 
     def active_providers(self, cap: str) -> list[str]:
-        """Ids of the enabled, built providers of a routed capability (what a resource may be bound to)."""
+        """Ids of the enabled, built providers of a routed/choose-one/fan-out capability (what a resource may be bound to)."""
         return [m.id for m in providers_of(cap) if self.active_for(cap, m.id) is not None]
 
     def has(self, cap: str, feature: str) -> bool:
@@ -328,7 +348,7 @@ class PluginHost:
     def status(self, cap: str) -> CapabilityStatus:
         if cap not in capability_catalog():
             return CapabilityStatus("dormant", self._selections.get(cap))
-        if self._is_routed(cap):
+        if self._unselectable(cap):
             if not providers_of(cap):
                 return CapabilityStatus("no_provider")
             return CapabilityStatus("serving") if self.active_providers(cap) else CapabilityStatus("disabled")
@@ -409,6 +429,56 @@ class PluginHost:
         # Fresh locks: a lock is bound to the event loop that first contended it, and a task killed mid-hold when a
         # test's loop closes would leave it locked forever for the next test.
         self._lock, self._state_lock = asyncio.Lock(), asyncio.Lock()
+
+    # --- choose-one and fan-out dispatch -------------------------------------------------------------------------
+
+    def resolve(self, cap: str, *, preferred: str | None = None,
+                eligible: Callable[[str], bool] = lambda plugin_id: True) -> Resolution:
+        """Pick the provider of a choose-one capability for one operation: the resource's `preferred` provider, else the
+        capability default (the selection row), else blocked. Eligibility is checked before dispatch, and an explicit
+        preference that is dormant (disabled/removed) or ineligible BLOCKS rather than silently falling back to another
+        implementation. Pure and synchronous: nothing is called."""
+        if self._mode(cap) != "choose_one":
+            return Resolution(None, "not_choose_one")
+        if preferred is not None:
+            if self.active_for(cap, preferred) is None:
+                return Resolution(None, "preference_dormant", preferred)
+            if not eligible(preferred):
+                return Resolution(None, "preference_ineligible", preferred)
+            return Resolution(preferred, "preferred", preferred)
+        default = self._selections.get(cap)
+        if default is None:
+            return Resolution(None, "no_provider")
+        if self.active_for(cap, default) is None:
+            return Resolution(None, "default_unavailable", default)
+        if not eligible(default):
+            return Resolution(None, "default_ineligible", default)
+        return Resolution(default, "default", default)
+
+    def eligible_providers(self, cap: str, eligible: Callable[[str], bool] = lambda plugin_id: True) -> list[str]:
+        """What a selection UI may offer: the enabled, built providers that pass `eligible`."""
+        return [pid for pid in self.active_providers(cap) if eligible(pid)]
+
+    async def call_choose(self, cap: RoutedCapability[P] | str, fn: Callable[[P], R], *, preferred: str | None = None,
+                          eligible: Callable[[str], bool] = lambda plugin_id: True,
+                          timeout: float = DEFAULT_TIMEOUT_S) -> CallResult[R]:
+        """`resolve` then `call_for`. A blocked resolution is `reason="inactive"` with the outcome in `error`."""
+        cap_id = cap.id if isinstance(cap, RoutedCapability) else cap
+        r = self.resolve(cap_id, preferred=preferred, eligible=eligible)
+        if r.plugin_id is None:
+            return CallResult(False, error=f"{cap_id}: {r.outcome}" + (f" ({r.requested})" if r.requested else ""), reason="inactive")
+        return await self.call_for(cap_id, r.plugin_id, fn, timeout=timeout)
+
+    async def fan_out(self, cap: RoutedCapability[P] | str, fn: Callable[[P], R], *,
+                      timeout: float = DEFAULT_TIMEOUT_S) -> dict[str, CallResult[R]]:
+        """Deliver to every enabled provider of a fan-out capability concurrently. Each call is contained on its own, so a
+        provider that fails or times out never blocks or fails the others."""
+        cap_id = cap.id if isinstance(cap, RoutedCapability) else cap
+        if self._mode(cap_id) != "fan_out":
+            return {}
+        ids = self.active_providers(cap_id)
+        results = await asyncio.gather(*(self.call_for(cap_id, pid, fn, timeout=timeout) for pid in ids))
+        return dict(zip(ids, results))
 
     # --- containment -------------------------------------------------------------------------------------------
 
@@ -535,8 +605,8 @@ class PluginHost:
                 await self._forget_selection(cap)
                 return
             raise PluginError(f"unknown capability {cap!r}")
-        if self._is_routed(cap):
-            raise PluginError(f"{cap} is routed: every enabled provider serves it; enable the plugin instead")
+        if self._unselectable(cap):
+            raise PluginError(f"{cap} is {self._mode(cap).replace('_', '-')}: every enabled provider serves it; enable the plugin instead")
         if plugin_id is not None:
             manifest = get_plugin(plugin_id)
             if manifest is None or cap not in manifest.provides:
