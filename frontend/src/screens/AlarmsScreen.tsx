@@ -57,7 +57,7 @@ export function AlarmsScreen() {
           {SEVERITIES.map(s => <option key={s} value={s}>{s} and above</option>)}
         </select>
         <span className="tiny muted" style={{ flexBasis: '100%', textAlign: 'right' }}>
-          Notification channels (Settings → Notifications) only receive alarms when “printer.alarm” is ticked there.
+          Notification channels (Settings → ntfy / Discord / Email) only receive alarms when “printer.alarm” is ticked in their Events.
         </span>
         <button className="btn sm" disabled={!alarms.some(a => a.active && !a.acknowledged_at)}
                 onClick={() => void run(() => acknowledgeAll(printerId))}>Acknowledge all</button>

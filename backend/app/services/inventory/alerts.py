@@ -11,9 +11,9 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...models import NotificationConfig, WebhookConfig
 from ...plugins.capabilities.filament_inventory import InvSpool
-from .. import notification_service, webhook_service
+from .. import webhook_service
+from ..notify import notify
 from . import config as inv_config
 
 logger = logging.getLogger("app")
@@ -87,13 +87,11 @@ async def process(session: AsyncSession, provider_id: str, spools: list[InvSpool
     already = {inv_config.split_ns(k)[1] for k in stored if mine(k)}
     still_low = {l.spool_ref for l in low}
     fresh = [l for l in low if l.spool_ref not in already]
-    webhook = await session.get(WebhookConfig, 1) if fresh else None
-    notif = await session.get(NotificationConfig, 1) if fresh else None
 
     delivered: list[LowSpool] = []
     for l in fresh:
         try:
-            _deliver(webhook, notif, l)
+            await _deliver(session, l)
             delivered.append(l)
         except Exception:
             logger.exception("Low-stock alert for spool %s could not be sent; will retry at the next sync", l.spool_ref)
@@ -105,13 +103,11 @@ async def process(session: AsyncSession, provider_id: str, spools: list[InvSpool
     return delivered
 
 
-def _deliver(webhook: WebhookConfig | None, notif: NotificationConfig | None, low: LowSpool) -> None:
-    if webhook and webhook.url and (not webhook.events or EVENT in webhook.events):
-        webhook_service.schedule(webhook.url, webhook.secret, EVENT, None, {
+async def _deliver(session: AsyncSession, low: LowSpool) -> None:
+    await webhook_service.dispatch(session, EVENT, None, {
             "spool_id": low.spool_id, "filament_id": low.filament_id, "name": low.name,
             "remaining_g": low.remaining_g, "threshold_g": low.threshold_g, "location": low.location,
             # provider-namespaced refs (additive; `spool_id`/`filament_id` stay for existing consumers)
             "provider": low.provider, "spool_ref": low.spool_ref, "material_ref": low.material_ref})
-    if notif and (notif.ntfy_enabled or notif.discord_enabled or notif.email_enabled):
-        title, message = message_for(low)
-        asyncio.create_task(notification_service.dispatch(notif, EVENT, None, title, message))
+    title, message = message_for(low)
+    asyncio.create_task(notify(EVENT, None, title, message))

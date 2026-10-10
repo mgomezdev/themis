@@ -19,13 +19,11 @@ from ..models import (
     GcodeFile,
     Job,
     JobPrinterConfig,
-    NotificationConfig,
     Printer,
     Project,
     QueueConfig,
     SlicedVersion,
     UploadedFile,
-    WebhookConfig,
 )
 from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
@@ -35,7 +33,11 @@ from .inventory import config as inventory_config, deduction as inventory_deduct
 from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver
-from . import notification_service
+from . import completion_events
+from .notify import notify
+from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
+from ..plugins.host import plugin_host
+from ..eventing.hub import hub as event_hub
 from . import scheduling
 from . import webhook_service
 
@@ -257,6 +259,7 @@ class QueueEngine:
         self._slice_seq: itertools.count = itertools.count()
         self._slice_worker_task: asyncio.Task | None = None
         self._estimate_tasks: set[asyncio.Task] = set()
+        completion_events.bind_engine(self)      # the `job_complete.notices` subscriber sends through the engine that was last built
 
     async def _slice_worker(self) -> None:
         while True:
@@ -1462,7 +1465,6 @@ class QueueEngine:
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
         job_id = None
-        deduction_plan = None
 
         async with self._factory() as session:
             result = await session.execute(
@@ -1490,14 +1492,11 @@ class QueueEngine:
             if claim.rowcount == 0:
                 return  # already claimed by a concurrent completion path
 
-            # Accrue lifetime wear counters for maintenance tracking — every
-            # successfully completed job, regardless of inventory config.
+            # The wear counters, the spool deduction and the notices are effects of the durable `job.complete` event written below,
+            # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. Which spool
+            # was in use is resolved now, because the loaded slot may change once the print is over.
             printer = await session.get(Printer, printer_id)
-            if printer is not None:
-                printer.lifetime_job_count += 1
-                printer.lifetime_print_seconds += job.actual_seconds or 0
-
-            # Collect inventory deduction data before session closes
+            inventory_use = None
             actual_grams = job.actual_filament_grams
             if actual_grams is not None and inventory_deduction.can_deduct() \
                     and await inventory_config.deduct_enabled(session):
@@ -1514,9 +1513,7 @@ class QueueEngine:
                     if slot is not None:
                         raw_spool_id = inventory_refs.slot_spool_ref(slot)
                         if raw_spool_id is not None:
-                            deduction_plan = await inventory_deduction.plan_completion(
-                                session, job=job, printer_id=printer_id, spool_ref=str(raw_spool_id),
-                                grams=actual_grams, source="queue")
+                            inventory_use = {"spool_ref": str(raw_spool_id), "grams": actual_grams}
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1532,32 +1529,36 @@ class QueueEngine:
                 except OSError:
                     pass
                 await session.delete(gcode)
+            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", inventory=inventory_use)
             await session.commit()
 
-        if deduction_plan is not None:
-            inventory_deduction.after_commit(deduction_plan, self._factory)
+        event_hub.wake()
 
-        await self._broadcast_job(job_id)
-        await self._fire_webhooks(job_id, "job.complete")
-        await self._fire_notifications(job_id, "job.complete", printer_id=printer_id)
-
-    async def _fire_webhooks(self, job_id: int, event: str) -> None:
+    async def _fire_webhooks(self, job_id: int, event: str, event_id: str | None = None) -> None:
         try:
             async with self._factory() as session:
-                cfg = await session.get(WebhookConfig, 1)
-            if cfg and cfg.url and (not cfg.events or event in cfg.events):
-                webhook_service.schedule(cfg.url, cfg.secret, event, job_id)
+                extra = await self._job_webhook_fields(session, job_id)
+                await webhook_service.dispatch(session, event, job_id, extra or None, event_id=event_id)
         except Exception:
-            logger.exception("Failed to load webhook config for job %s", job_id)
+            logger.exception("Failed to dispatch webhooks for job %s", job_id)
+
+    @staticmethod
+    async def _job_webhook_fields(session: AsyncSession, job_id: int) -> dict:
+        """What a companion app needs to correlate a job event with its own record: the project, its source app and external ref."""
+        job = await session.get(Job, job_id)
+        project = await session.get(Project, job.project_id) if job is not None and job.project_id is not None else None
+        if project is None:
+            return {}
+        return {k: v for k, v in (("project_id", project.id), ("source_app", project.source_app),
+                                  ("external_ref", project.external_ref)) if v is not None}
 
     async def _fire_notifications(
-        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None
+        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None
     ) -> None:
         try:
+            if not plugin_host.active_providers(NOTIFY_CHANNEL.id):
+                return                                  # no notification channel is enabled: nothing to build
             async with self._factory() as session:
-                cfg = await session.get(NotificationConfig, 1)
-                if not cfg or not (cfg.ntfy_enabled or cfg.discord_enabled or cfg.email_enabled):
-                    return
                 job = await session.get(Job, job_id)
                 if job is None:
                     return
@@ -1574,7 +1575,7 @@ class QueueEngine:
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,
             # which runs before new jobs are claimed each _process_queue iteration).
             # dispatch() already swallows every per-channel exception itself.
-            asyncio.create_task(notification_service.dispatch(cfg, event, job_id, title, message))
+            asyncio.create_task(notify(event, job_id, title, message, message_id=event_id))
         except Exception:
             logger.exception("Failed to dispatch notifications for job %s", job_id)
 

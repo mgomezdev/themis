@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from app.models import InventoryPendingWrite, WebhookConfig
+from tests.webhook_helpers import destination
+from app.models import InventoryPendingWrite
 from app.plugins.host import plugin_host
 from app.plugins.capabilities.filament_inventory import REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT, InventoryProviderError
 from app.services.inventory import cache, outbox, read, snapshots, sync, tasks
@@ -151,7 +152,7 @@ async def _alerting(factory, minutes=10):
     await use_provider(fake)
     await plugin_host.update_config("spoolman", settings={"max_disconnect_minutes": minutes})
     async with factory() as s:
-        s.add(WebhookConfig(id=1, url="http://hook.test", secret=None, events=[]))
+        s.add(destination(url="http://hook.test", secret=None, events=[]))
         await s.commit()
     return fake
 

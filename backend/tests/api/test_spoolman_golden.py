@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.models import InventoryConfig
-from app.services import notification_service, webhook_service
+from app.services import webhook_service
 from app.services.inventory.sync import record_sync
 from tests import spoolman_mock
 from tests.api.test_jobs_api import _seed_spool_warning_fixture
@@ -19,7 +19,7 @@ from tests.inventory_helpers import enable_spoolman, spool as make_spool, use_pr
 from tests.golden import assert_golden, mask
 from tests.waiting import wait_until
 
-_TIMESTAMPS = {"last_sync_at", "last_attempt_at", "timestamp"}
+_TIMESTAMPS = {"last_sync_at", "last_attempt_at", "timestamp", "event_id"}
 
 
 @pytest.fixture(autouse=True)
@@ -86,20 +86,21 @@ async def test_golden_spool_low_webhook_and_notification(session_factory, spoolm
     await enable_spoolman()
     sent, notified = [], []
 
-    async def fire(url, secret, payload):
+    async def attempt(url, secret, payload):
         sent.append({"url": url, "secret": secret, "payload": mask(payload, _TIMESTAMPS)})
+        return webhook_service.Outcome(True, 200)
 
-    async def dispatch(notif, event, job_id, title, message):
+    async def notify(event, job_id, title, message, **kw):
         notified.append({"event": event, "job_id": job_id, "title": title, "message": message})
 
-    from app.models import NotificationConfig, WebhookConfig
+    from app.services.inventory import alerts as spool_alerts
+    from tests.webhook_helpers import destination
     async with session_factory() as s:
         s.add(InventoryConfig(id=1, deduct_on_complete=True, low_stock_default_g=600.0, low_stock_overrides={},
                               low_stock_alerted=[]))
-        s.add(WebhookConfig(id=1, url="http://hook.test/x", secret="whsec"))
-        s.add(NotificationConfig(id=1, ntfy_enabled=True))
+        s.add(destination(url="http://hook.test/x", secret="whsec"))
         await s.commit()
-        with patch.object(webhook_service, "fire", fire), patch.object(notification_service, "dispatch", dispatch):
+        with patch.object(webhook_service, "attempt", attempt), patch.object(spool_alerts, "notify", notify):
             await record_sync(s)
             await wait_until(lambda: sent and notified)
         assert (await s.get(InventoryConfig, 1)).low_stock_alerted == ["spoolman:2"]

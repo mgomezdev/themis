@@ -13,7 +13,7 @@ from app.models import Job, JobPrinterConfig, Printer, UploadedFile, GcodeFile
 from app.services.queue_engine import QueueEngine
 from app.services.printer_manager import PrinterManager
 from app.services.slicer_service import SliceError, SlicerService
-from tests.waiting import settle_background_tasks, wait_until
+from tests.waiting import settle_background_tasks, settle_events, wait_until
 
 
 @pytest_asyncio.fixture
@@ -180,6 +180,7 @@ async def test_handle_print_complete_transitions_job(db):
         await session.commit()
 
     await qe.handle_print_complete(1)
+    await settle_events(db)
 
     async with db() as session:
         job = await session.get(Job, job_id)
@@ -1063,6 +1064,7 @@ async def test_handle_print_complete_writes_the_snapshot_minus_grams(db):
     await _snapshot(db, job_id, 300.0)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == [("42", pytest.approx(282.5))]
@@ -1084,6 +1086,7 @@ async def test_handle_print_complete_holds_the_write_when_the_spool_was_changed_
     await _snapshot(db, job_id, 300.0)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == []
@@ -1160,6 +1163,7 @@ async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the
         fake.calls.clear()
         spawned.clear()
         await engine.handle_print_complete(printer_id)
+        await settle_events(db)
         assert fake.calls == [] and fake.writes == []                     # completion called no provider method
         rows = await _outbox_rows(db)
         assert [(r.spool_ref, r.target_g, r.status) for r in rows] == [("42", pytest.approx(482.5), "pending")]
@@ -1197,6 +1201,7 @@ async def test_completion_sets_the_spool_weight_through_the_inventory_provider(d
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert fake.writes == [("42", pytest.approx(482.5))]
@@ -1218,6 +1223,7 @@ async def test_completion_skips_deduction_when_the_provider_lacks_weight_capabil
         await use_provider(fake)
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert await _outbox_rows(db) == []
     if fake is not None:
@@ -1240,6 +1246,7 @@ async def test_completion_skips_deduction_when_deduct_on_complete_is_off(db):
 
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
 
     assert await _outbox_rows(db) == []
@@ -1258,6 +1265,7 @@ async def test_a_slot_bound_to_a_spoolman_spool_is_ignored_while_another_provide
     await use_provider(other, plugin_id="other_inventory")
     from app.services.inventory import tasks as inventory_tasks
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert await _outbox_rows(db) == []
     assert other.calls == [] and other.writes == []
@@ -1277,6 +1285,7 @@ async def test_a_failing_provider_never_breaks_completion(db):
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     await inventory_tasks.drain()
     assert "get_spool" in fake.calls
 
@@ -1316,6 +1325,7 @@ async def test_handle_print_complete_skips_deduction_when_grams_none(db):
     await use_provider(fake)
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
     from app.services.inventory import tasks as inventory_tasks
     await inventory_tasks.drain()
 
@@ -1375,6 +1385,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
                 if not state["second_ran"]:
                     state["second_ran"] = True
                     await engine.handle_print_complete(printer_id)
+                    await settle_events(db)
                 return result
 
             session.execute = spy_execute
@@ -1383,6 +1394,7 @@ async def test_handle_print_complete_concurrent_callers_dont_double_deduct(db):
     engine._factory = wrapped_factory
 
     await engine.handle_print_complete(printer_id)
+    await settle_events(db)
 
     assert len(await _outbox_rows(db)) == 1
     async with db() as session:
@@ -1626,6 +1638,7 @@ async def test_handle_print_complete_accrues_lifetime_counters(db):
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
@@ -1648,6 +1661,7 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
     mgr = _make_mock_printer_manager([])
     qe = QueueEngine(db, mgr, MagicMock())
     await qe.handle_print_complete(printer_id)
+    await settle_events(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
@@ -1657,132 +1671,79 @@ async def test_handle_print_complete_accrues_job_count_even_without_actual_secon
 
 # --- Notification dispatch wiring -------------------------------------------------
 
+def _channels(active):
+    """Pretend these notification channel plugins are enabled (the engine skips building a message when none is)."""
+    from unittest.mock import patch
+    return patch("app.services.queue_engine.plugin_host.active_providers", return_value=list(active))
+
+
 @pytest.mark.asyncio
-async def test_fire_notifications_dispatches_when_channel_enabled_and_event_matches(db):
+async def test_fire_notifications_sends_a_neutral_message_when_a_channel_is_active(db):
     from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
 
     job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
-            ntfy_topic="themis", ntfy_events=["job.complete"],
-        ))
-        await session.commit()
-
     qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
 
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
+        await qe._fire_notifications(job_id, "job.complete", printer_id=1, event_id="evt-1")
+        await asyncio.sleep(0)                              # notify runs as a background task (fire-and-forget)
+
+    mock_notify.assert_awaited_once()
+    event, job_id_arg, title, message = mock_notify.call_args.args
+    assert (event, job_id_arg) == ("job.complete", job_id) and "test.3mf" in message
+    assert mock_notify.call_args.kwargs == {"message_id": "evt-1"}
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_does_not_block_on_a_slow_channel(db):
+    """_fire_notifications must return without waiting for channel delivery: it is awaited from _reconcile_printing_jobs, which
+    runs before new jobs are claimed each _process_queue iteration, so a slow ntfy/Discord/SMTP call must not stall claiming."""
+    from unittest.mock import patch
+
+    job_id = await _seed_job(db, printer_id=1)
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+    started, may_finish = asyncio.Event(), asyncio.Event()
+
+    async def slow_notify(*args, **kwargs):
+        started.set()
+        await may_finish.wait()
+
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", side_effect=slow_notify):
+        await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+    may_finish.set()                                        # let the background task finish cleanly
+
+
+@pytest.mark.asyncio
+async def test_fire_notifications_builds_nothing_when_no_channel_is_active(db):
+    from unittest.mock import patch, AsyncMock
+
+    job_id = await _seed_job(db, printer_id=1)
+    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
+
+    with _channels([]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
         await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
         await asyncio.sleep(0)
 
-    mock_dispatch.assert_awaited_once()
-    args = mock_dispatch.call_args[0]
-    cfg_arg, event_arg, job_id_arg, title_arg, message_arg = args
-    assert event_arg == "job.complete"
-    assert job_id_arg == job_id
-    assert "test.3mf" in message_arg
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_does_not_block_on_slow_dispatch(db):
-    """_fire_notifications must return without waiting for channel delivery to
-    finish — it's awaited from _reconcile_printing_jobs, which runs before new
-    jobs are claimed each _process_queue iteration, so a slow ntfy/Discord/SMTP
-    call must not stall claiming work onto idle printers."""
-    from unittest.mock import patch
-    from app.models import NotificationConfig
-
-    job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, ntfy_enabled=True, ntfy_server_url="https://ntfy.sh",
-            ntfy_topic="themis", ntfy_events=["job.complete"],
-        ))
-        await session.commit()
-
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    dispatch_started = asyncio.Event()
-    dispatch_may_finish = asyncio.Event()
-
-    async def slow_dispatch(*args, **kwargs):
-        dispatch_started.set()
-        await dispatch_may_finish.wait()
-
-    with patch("app.services.queue_engine.notification_service.dispatch", side_effect=slow_dispatch):
-        # If _fire_notifications blocked on dispatch, this would hang until the
-        # timeout since dispatch_may_finish is never set beforehand.
-        await asyncio.wait_for(qe._fire_notifications(job_id, "job.complete", printer_id=1), timeout=1.0)
-        await asyncio.wait_for(dispatch_started.wait(), timeout=1.0)
-
-    dispatch_may_finish.set()  # let the background task finish cleanly
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_noop_when_all_channels_disabled(db):
-    from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
-
-    job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(id=1))  # all channels default disabled
-        await session.commit()
-
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
-        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-
-    mock_dispatch.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_fire_notifications_noop_when_no_config_row(db):
-    from unittest.mock import patch, AsyncMock
-
-    job_id = await _seed_job(db, printer_id=1)
-    qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
-
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
-        await qe._fire_notifications(job_id, "job.complete", printer_id=1)
-
-    mock_dispatch.assert_not_awaited()
+    mock_notify.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_fail_job_post_slice_fires_notifications(db):
-    """Integration-style: the real _fail_job_post_slice call site actually
-    triggers _fire_notifications when the job reaches 'failed'."""
+    """Integration-style: the real _fail_job_post_slice call site actually triggers _fire_notifications when the job fails."""
     from unittest.mock import patch, AsyncMock
-    from app.models import NotificationConfig
 
     job_id = await _seed_job(db, printer_id=1)
-
-    async with db() as session:
-        session.add(NotificationConfig(
-            id=1, email_enabled=True, email_host="smtp.example.com", email_port=587,
-            email_from_addr="themis@example.com", email_to_addrs=["me@example.com"],
-            email_events=["job.failed"],
-        ))
-        await session.commit()
-
     qe = QueueEngine(db, _make_mock_printer_manager([]), MagicMock())
 
-    with patch("app.services.queue_engine.notification_service.dispatch", new_callable=AsyncMock) as mock_dispatch:
+    with _channels(["notify_test"]), patch("app.services.queue_engine.notify", new_callable=AsyncMock) as mock_notify:
         await qe._fail_job_post_slice(job_id, 1, "printer disconnected")
-        # dispatch runs as a background task (fire-and-forget); yield once so it runs.
         await asyncio.sleep(0)
 
-    mock_dispatch.assert_awaited_once()
-    args = mock_dispatch.call_args[0]
-    assert args[1] == "job.failed"
-    assert args[2] == job_id
-    assert "printer disconnected" in args[4]
+    mock_notify.assert_awaited_once()
+    event, job_id_arg, _title, message = mock_notify.call_args.args
+    assert (event, job_id_arg) == ("job.failed", job_id) and "printer disconnected" in message
 
 
 @pytest.mark.asyncio

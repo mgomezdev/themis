@@ -64,6 +64,8 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
         return Plan("skipped")
     if await is_suspended(session, pid, spool_ref):
         return _skip(job, NOTE_SUSPENDED)
+    if await outbox.exists_for_job(session, pid, spool_ref, job.id):     # a redelivered completion event: already planned
+        return Plan("skipped")
     snap = await snapshots.get(session, job.id, pid, spool_ref)
     job.deduction_skipped = False
     job.deduction_note = None
@@ -97,6 +99,8 @@ async def complete_deferred(factory: async_sessionmaker[AsyncSession], plan: Pla
     pre, _ = await snapshots.read_pre_weight(factory, plan.provider, plan.spool_ref)     # no session during provider I/O
     async with factory() as session:
         job = await session.get(Job, plan.job_id)
+        if await outbox.exists_for_job(session, plan.provider, plan.spool_ref, plan.job_id):
+            return                                                       # another delivery of the same completion got here first
         if pre is None:
             await suspend(session, plan.provider, plan.spool_ref, NOTE_NO_WEIGHT, job)
             await session.commit()

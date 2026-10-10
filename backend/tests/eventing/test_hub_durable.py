@@ -16,7 +16,7 @@ from tests.waiting import wait_until
 
 
 def complete(job_id: int = 1) -> EventEnvelope:
-    return EventEnvelope(name="job.complete", entities={"job_id": job_id}, dedup_key=f"job.complete:{job_id}")
+    return EventEnvelope(name="job.complete", entities={"job_id": job_id}, dedup_key=f"job.complete:{job_id}", payload={"source": "queue"})
 
 
 @pytest.fixture(autouse=True)

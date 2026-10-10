@@ -315,17 +315,7 @@ queue engine fires a signed `POST` on `job.complete`, `job.failed`, and `job.blo
 list — **empty list means all**). Signature header: `X-Webhook-Signature: sha256=<hmac-sha256>`.
 Managed via `GET/PUT /api/v1/settings/webhook`.
 
-`notification_config` (singleton id=1) — three independent built-in channels, additive alongside
-`webhook_config` (not a replacement): `ntfy_{enabled,server_url,topic,priority,events}`,
-`discord_{enabled,webhook_url,events}`, `email_{enabled,host,port,username,password,from_addr,
-to_addrs,events}`. Each channel's own `*_events: JSON[str]` list is evaluated independently —
-**empty list means *none*, the opposite of `webhook_config.events`'s "empty means all"**; this is an
-intentional per-channel opt-in, not a bug, but don't assume the two behave the same way. Dispatch:
-`notification_service.dispatch(cfg, event, ...)` fans out to whichever channels are enabled and have
-the firing event in their own list; fired via `asyncio.create_task` (never awaited directly) from
-`queue_engine._fire_notifications`, alongside `_fire_webhooks`, on the same three job events as
-`webhook_config`. Managed via `GET/PUT /api/v1/settings/notifications`,
-`POST /api/v1/settings/notifications/test` (send-test with unsaved in-form values, not read from DB).
+`notification_config` (singleton id=1) — **legacy since v048 (BIZ-252), no longer read or written.** Migration v048 copied each configured channel into the `plugin_configs` row of its plugin (`notify_ntfy`, `notify_discord`, `notify_email`): enabled flag, settings (server/topic/priority, host/port/user/from/to, `events` allow-list) and secrets (the Discord webhook URL, the SMTP password) preserved; an untouched channel got no row (the plugins are default-enabled with an empty `events` list, which sends nothing). The table stays for downgrade safety.
 
 ### Job costing (v028): cost_config, project_labor, printers.machine_rate_per_hour, project_parts.unit_cost
 A project's real cost = **filament** (manually entered `jobs.filament_cost`) + **machine** (each *completed* job's
@@ -535,3 +525,16 @@ a second publication of the same logical event stores nothing), `name`, `schema_
 `core:<name>` | `plugin:<id>:<handler>`) — unique together; `status` `pending|delivered|dead`, `attempts` (committed before the
 handler runs), `next_attempt_at` (backoff / dormant re-check), `last_error` (redacted), `last_attempt_at`, `delivered_at`. Index
 `(status, next_attempt_at)`. Finished outbox rows are purged after 7 days.
+
+### jobs.maintenance_accrued  (v046 — BIZ-269)
+
+`jobs.maintenance_accrued BOOLEAN NOT NULL DEFAULT 0`: set to 1 by the `job_complete.maintenance` subscriber in the same transaction that
+bumps `printers.lifetime_job_count` / `lifetime_print_seconds`, so a redelivered `job.complete` event cannot count a job twice. Jobs
+already `complete` when v046 ran are backfilled to 1 (the old inline path counted them).
+
+### projects.external_ref, idempotency_keys, webhook_destinations  (v047 — BIZ-172)
+
+`projects.external_ref VARCHAR(255)` + partial unique index `ux_projects_source_external_ref (source_app, external_ref) WHERE external_ref IS NOT NULL`.
+`idempotency_keys{id, scope, key, request_hash, state in_progress|done, status_code, response JSON, created_at}` unique `(scope, key)`.
+`webhook_destinations{id, name UNIQUE, url, secret, events JSON ([] = all), enabled, created_at, updated_at, last_attempt_at, last_success_at, last_status, last_error}`;
+v047 copies a configured legacy `webhook_config` row (id 1) into the destination named `default` (the old table stays, unused).

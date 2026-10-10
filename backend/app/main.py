@@ -13,6 +13,9 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logging.getLogger("app").setLevel(logging.INFO)
+# httpx logs every request URL at INFO, and a Discord webhook URL / ntfy topic URL carries a token: keep them out of the logs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -45,6 +48,7 @@ from .api.routes.plugins import router as plugins_router
 from .api.routes import capabilities as capabilities_mod
 from .api.routes.capabilities import router as capabilities_router
 from .api.routes.events import router as events_router
+from .api.routes.webhooks import router as webhooks_router
 from .api.routes.plugin_install import router as plugin_install_router
 from .api.routes.tags import router as tags_router
 from .api.websocket import connection_manager, websocket_endpoint
@@ -167,6 +171,8 @@ async def lifespan(app: FastAPI):
 
     await inventory_sync_loop.stop()
     await event_hub.stop()
+    from .services import webhook_service as _webhooks
+    await _webhooks.cancel_all()
     await plugin_host.stop()
     await queue_engine.stop()
     for pid in list(printer_manager._clients.keys()):
@@ -223,6 +229,7 @@ app.include_router(plugin_install_router)
 app.include_router(plugins_router)
 app.include_router(capabilities_router)
 app.include_router(events_router)
+app.include_router(webhooks_router)
 
 # Plugins register at import time too (not only in init_db) so their routers can be mounted before the app starts.
 from .plugins import load_bundled, registered_plugins  # noqa: E402

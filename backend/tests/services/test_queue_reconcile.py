@@ -13,6 +13,7 @@ from app.models import GcodeFile, Job, Printer, UploadedFile
 from app.services.abstract_printer_client import PrinterCapabilities
 from app.services.printer_manager import PrinterManager
 from app.services.queue_engine import QueueEngine
+from tests.waiting import settle_events
 
 FAILURE_REASON = "print cancelled or ended with failure on the printer"
 
@@ -110,6 +111,7 @@ async def test_idle_printer_in_normal_state_completes_the_job_and_accrues_wear_c
     mgr._clients[1] = _client(state="IDLE")
 
     await engine._reconcile_printing_jobs()
+    await settle_events(session_factory)
 
     job = await _job(session_factory, job_id)
     assert job.status == "complete"

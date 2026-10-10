@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import InstalledPlugin
-from ...plugins import PluginError, get_plugin, registered_plugins
+from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins
 from ...plugins.host import plugin_host
 from ...plugins.manifest import PluginManifest
 
@@ -39,9 +39,17 @@ def install_info(row: InstalledPlugin | None) -> dict | None:
 def _provides(m: PluginManifest) -> list[dict]:
     out = []
     for cap, p in sorted(m.provides.items()):
+        d = capability_catalog().get(cap)
+        mode = d.mode if d else "exclusive"
+        if mode in ("routed", "fan_out"):                 # no selection: every enabled provider serves it
+            serving = plugin_host.active_for(cap, m.id) is not None
+            state = "serving" if serving else ("error" if plugin_host.build_error(m.id) else "disabled")
+            out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": serving, "mode": mode,
+                        "status": state, "waiting_on": []})
+            continue
         st = plugin_host.status(cap)
         mine = st.plugin_id == m.id and st.state != "dormant"
-        out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": mine,
+        out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": mine, "mode": mode,
                     "status": st.state if mine else "not_selected", "waiting_on": list(st.waiting_on) if mine else []})
     return out
 
