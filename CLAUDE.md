@@ -13,6 +13,10 @@ Simplified Gitflow: `main` (releases only) + `develop` (integration) + `feature/
   the linked issue when there is one).
 - PR feature branches back into `develop`. Delete the feature branch once merged — don't leave merged
   branches lying around.
+- **Linear sync:** when working off a Linear issue (tracker ID in the request or branch name), keep its
+  status current via the Linear MCP (`save_issue`): move to *In Progress* when work starts, *In Review*
+  when the PR is opened (link the PR), *Done* once merged into `develop`. If blocked or abandoned, set it
+  back and leave a comment saying why. Skip if the issue has no matching workflow state; say so instead of guessing.
 - `develop` merges to `main` only to cut a release. No `release/*` or `hotfix/*` branches — this repo
   doesn't carry enough concurrent in-flight work to justify them; revisit if that changes.
 - Before deleting any branch, confirm it's actually merged (`git merge-base --is-ancestor <branch>
