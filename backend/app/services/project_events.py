@@ -33,8 +33,12 @@ async def publish(name: str, project: Project, *, job_ids: list[int] | None = No
 
 
 def webhook_body(envelope: EventEnvelope) -> dict:
-    body = {"project_id": envelope.entities.get("project_id")}
-    body.update({k: v for k, v in envelope.payload.items() if v is not None})
+    body = {"project_id": envelope.entities.get("project_id"), "name": envelope.payload.get("name"),
+            "stage": envelope.payload.get("stage"),
+            "source_app": envelope.payload.get("source_app"), "external_ref": envelope.payload.get("external_ref")}   # null when UI-made
+    for optional in ("job_ids", "previous_stage"):                  # only on the events they belong to
+        if envelope.payload.get(optional) is not None:
+            body[optional] = envelope.payload[optional]
     body["occurred_at"] = envelope.occurred_at
     return body
 

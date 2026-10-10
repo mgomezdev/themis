@@ -160,7 +160,7 @@ async def update_webhook_config(
         row.secret = body.secret or None
     if body.events is not None:
         row.events = body.events
-    row.updated_at = webhook_service._now()
+    row.updated_at = webhook_service.now_iso()
     await session.commit()
     await session.refresh(row)
     return _webhook_out(row)

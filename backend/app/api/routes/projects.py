@@ -431,11 +431,24 @@ async def list_projects(
     return [await _project_dict(p, session, costs[p.id]) for p in rows]
 
 
+async def _remember(factory: async_sessionmaker[AsyncSession], scope: str, key: str, status_code: int, result: dict) -> None:
+    """Store the response under the key. The work is already committed, so a failure here is logged, not raised."""
+    try:
+        await idempotency.complete(factory, scope, key, status_code, result)
+    except Exception:
+        logger.exception("Could not store the idempotent response for %s", scope)
+
+
+async def _job_count(factory: async_sessionmaker[AsyncSession], project_id: int) -> int:
+    async with factory() as s:
+        return (await s.execute(select(func.count()).select_from(Job).where(Job.project_id == project_id))).scalar_one()
+
+
 async def _find_by_external_ref(session: AsyncSession, source_app: str, external_ref: str) -> Project | None:
     return (await session.execute(select(Project).where(Project.source_app == source_app, Project.external_ref == external_ref))).scalar_one_or_none()
 
 
-async def _create_project(body: ProjectCreate, session: AsyncSession) -> tuple[dict, bool]:
+async def _create_project(body: ProjectCreate, session: AsyncSession, progress: dict) -> tuple[dict, bool]:
     """(project dict, created). With an external ref that already exists, nothing is created and the existing project is returned."""
     if body.external_ref is not None:
         existing = await _find_by_external_ref(session, body.source_app or "", body.external_ref)
@@ -477,8 +490,9 @@ async def _create_project(body: ProjectCreate, session: AsyncSession) -> tuple[d
         await adopt_manual_amount(session, proj)
         await sync_project_totals(session, proj)
     await session.commit()
+    progress["created_id"] = proj.id                       # from here on a failure must not be retried under the same Idempotency-Key
     await session.refresh(proj)
-    await project_events.publish("project.created", proj, dedup_key=f"project.created:{proj.id}")
+    await project_events.publish("project.created", proj)
     return await _project_dict(proj, session), True
 
 
@@ -505,15 +519,20 @@ async def create_project(
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
+    progress: dict = {}
     try:
-        result, created = await _create_project(body, session)
+        result, created = await _create_project(body, session, progress)
     except BaseException:
         if idempotency_key:
-            await idempotency.release(factory, scope, idempotency_key)
+            if progress.get("created_id") is not None:
+                await idempotency.partial(factory, scope, idempotency_key, f"Project {progress['created_id']} was already created by this "
+                                          "request before it failed: fetch it instead of retrying with this key")
+            else:
+                await idempotency.release(factory, scope, idempotency_key)
         raise
     response.status_code = 201 if created else 200
     if idempotency_key:
-        await idempotency.complete(factory, scope, idempotency_key, response.status_code, result)
+        await _remember(factory, scope, idempotency_key, response.status_code, result)
     return result
 
 
@@ -617,8 +636,7 @@ async def promote_project(
     proj.updated_at = _now_iso()
     await session.commit()
     await session.refresh(proj)
-    await project_events.publish("project.stage_changed", proj, previous_stage=previous_stage,
-                                 dedup_key=f"project.stage_changed:{proj.id}:{proj.stage}")
+    await project_events.publish("project.stage_changed", proj, previous_stage=previous_stage)
     if proj.stage == "queued":
         queue_engine.wake()
     return await _project_dict(proj, session)
@@ -1207,14 +1225,20 @@ async def generate_project(
         if replay is not None:
             response.status_code, response.headers["Idempotent-Replay"] = replay.status_code, "true"
             return replay.response
+    jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
     try:
         result = await _generate_project(project_id, body, background_tasks, session)
     except BaseException:
         if idempotency_key:
-            await idempotency.release(factory, scope, idempotency_key)
+            created = await _job_count(factory, project_id) - jobs_before
+            if created > 0:       # some groups were committed: a retry under this key would generate them again
+                await idempotency.partial(factory, scope, idempotency_key, f"This request created {created} job(s) for project {project_id} "
+                                          "before it failed: check the project's jobs, then retry with a new Idempotency-Key")
+            else:
+                await idempotency.release(factory, scope, idempotency_key)
         raise
     if idempotency_key:
-        await idempotency.complete(factory, scope, idempotency_key, 200, result)
+        await _remember(factory, scope, idempotency_key, 200, result)
     return result
 
 

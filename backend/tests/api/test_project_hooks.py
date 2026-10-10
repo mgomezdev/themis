@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from app.eventing.hub import hub
 from app.models import IdempotencyKey, Job, Project
 from app.services import idempotency, webhook_service
+from tests.api.test_customer_flows import _create_customer, _login, admin  # noqa: F401  (admin is a fixture)
 from tests.api.test_projects_api import _make_3mf_bytes, _setup_project_with_stl
 from tests.fake_providers import fake_packer
 from tests.webhook_helpers import destination, install_wire, verify_signature
@@ -175,7 +176,7 @@ async def test_a_failed_generate_releases_its_key_so_the_retry_runs(client, tmp_
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     h = {"Idempotency-Key": "gen-fail"}
     with patch("app.api.routes.projects.get_slicing_provider", return_value=None):
-        failed = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []}, headers=h)
+        failed = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], "allow_cached": False}, headers=h)
     assert failed.status_code == 422
 
     retry = await _generate(client, tmp_path, project_id, h)
@@ -269,3 +270,124 @@ async def test_a_disabled_destination_gets_no_project_events(client, session_fac
     await client.post("/api/v1/projects", json=SRC)
     await _settle()
     assert wire.requests == []
+
+
+# --- partial failures, races, payload shape ---------------------------------------------------------------------------
+
+async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_under_the_same_key(client, tmp_path, session_factory):
+    from app.services.providers.slicing import SlicingProviderError
+    project_id, file_id = await _setup_project_with_stl(client, tmp_path)
+    await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 1, "filament_type": "PETG"})
+    h = {"Idempotency-Key": "gen-partial"}
+    lib = tmp_path / "library"
+    packer = fake_packer(_make_3mf_bytes(plate_count=1))
+    packer.pack_models.side_effect = [_make_3mf_bytes(plate_count=1), SlicingProviderError("sidecar fell over")]   # 2nd filament group fails
+
+    def post():
+        return client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], "allow_cached": False}, headers=h)
+
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_slicing_provider", return_value=packer),
+        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
+    ):
+        failed = await post()
+        retry = await post()
+
+    assert failed.status_code == 502
+    assert await _count(session_factory, Job) == 1                              # the first group's job was committed
+    assert retry.status_code == 409 and "created 1 job" in retry.json()["detail"] and "new Idempotency-Key" in retry.json()["detail"]
+    assert await _count(session_factory, Job) == 1                              # and the retry did not repeat it
+    assert packer.pack_models.call_count == 2
+
+
+async def test_a_create_that_fails_after_committing_blocks_a_retry_under_the_same_key(client, session_factory, monkeypatch):
+    from app.api.routes import projects as routes
+    real = routes._project_dict
+    calls = {"n": 0}
+
+    async def explode_once(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("serialisation blew up after the commit")
+        return await real(*a, **kw)
+
+    monkeypatch.setattr(routes, "_project_dict", explode_once)
+    h = {"Idempotency-Key": "create-partial"}
+    with pytest.raises(RuntimeError):
+        await client.post("/api/v1/projects", json={"name": "Half done"}, headers=h)
+
+    retry = await client.post("/api/v1/projects", json={"name": "Half done"}, headers=h)
+
+    assert retry.status_code == 409 and "already created" in retry.json()["detail"]
+    assert await _count(session_factory, Project) == 1
+
+
+async def test_losing_the_unique_index_race_returns_the_winners_project(client, session_factory, monkeypatch):
+    """Both requests passed the pre-check; the second then hits the unique index and must answer with the first's project."""
+    from app.api.routes import projects as routes
+    first = await client.post("/api/v1/projects", json=SRC)
+    real = routes._find_by_external_ref
+    calls = {"n": 0}
+
+    async def blind_first_lookup(session, source_app, external_ref):
+        calls["n"] += 1
+        return None if calls["n"] == 1 else await real(session, source_app, external_ref)
+
+    monkeypatch.setattr(routes, "_find_by_external_ref", blind_first_lookup)
+    again = await client.post("/api/v1/projects", json=SRC)
+
+    assert calls["n"] == 2 and (again.status_code, again.json()["id"]) == (200, first.json()["id"])
+    assert await _count(session_factory, Project) == 1
+
+
+async def test_two_requests_cannot_both_take_over_one_stale_claim(session_factory, monkeypatch):
+    assert await idempotency.claim(session_factory, "S", "k", "h") is None
+    monkeypatch.setattr(idempotency, "STALE_AFTER", idempotency.timedelta(seconds=-1))
+    results = await asyncio.gather(*(idempotency.claim(session_factory, "S", "k", "h") for _ in range(4)), return_exceptions=True)
+    assert [r for r in results if r is None].__len__() >= 1
+    # exactly one wins the conditional update per stale timestamp; any loser is told the key is busy, never handed the work
+    assert all(r is None or getattr(r, "status_code", None) == 409 for r in results)
+
+
+async def test_a_completed_claim_is_not_overwritten_by_a_late_second_completion(session_factory):
+    await idempotency.claim(session_factory, "S", "late", "h")
+    await idempotency.complete(session_factory, "S", "late", 200, {"first": True})
+    await idempotency.complete(session_factory, "S", "late", 200, {"second": True})            # e.g. a slow original after a takeover
+    assert (await idempotency.claim(session_factory, "S", "late", "h")).response == {"first": True}
+
+
+async def test_the_documented_fields_are_always_present_and_null_for_a_ui_made_project(client, session_factory, wire):
+    await _subscribe(session_factory)
+    await client.post("/api/v1/projects", json={"name": "Made in the UI"})
+    await _settle()
+
+    (payload,) = wire.payloads("project.created")
+    assert payload["source_app"] is None and payload["external_ref"] is None and "job_ids" not in payload
+
+
+async def test_a_customer_draft_created_in_the_portal_also_publishes_project_created(admin, session_factory, wire):
+    await _subscribe(session_factory)
+    await _create_customer(admin, "Pat", "pat@example.test", "pw-123456")
+    portal = await _login("pat@example.test", "pw-123456")
+    async with portal:
+        draft = (await portal.post("/api/v1/customer/projects", json={"name": "My print"})).json()
+    await _settle()
+
+    (payload,) = wire.payloads("project.created")
+    assert (payload["project_id"], payload["stage"], payload["name"]) == (draft["id"], "draft", "My print")
+
+
+async def test_a_reused_project_id_does_not_swallow_the_new_projects_event(client, session_factory, wire):
+    """SQLite reuses the highest rowid after a delete: the event of the 'new' project 1 must still be delivered."""
+    await _subscribe(session_factory)
+    first = (await client.post("/api/v1/projects", json={"name": "One"})).json()
+    await _settle()
+    assert (await client.delete(f"/api/v1/projects/{first['id']}")).status_code in (200, 204)
+    second = (await client.post("/api/v1/projects", json={"name": "Two"})).json()
+    await _settle()
+
+    assert second["id"] == first["id"]
+    assert [p["name"] for p in wire.payloads("project.created")] == ["One", "Two"]

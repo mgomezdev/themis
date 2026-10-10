@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_customer
 from ...database import get_session
 from ...models import Job, Project, ProjectItem, ProjectPayment, UploadedFile
+from ...services import project_events
 from ...services.library_scanner import is_presliced_name
 from ...services.payments import outstanding, paid_amount
 from .files import upload_file
@@ -137,6 +138,7 @@ async def create_draft(body: DraftCreate, customer_id: int = Depends(require_cus
     session.add(p)
     await session.commit()
     await session.refresh(p)
+    await project_events.publish("project.created", p)
     return await _project_dict(p, session)
 
 

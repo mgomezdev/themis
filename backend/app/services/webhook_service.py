@@ -18,6 +18,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass
+from urllib.parse import urlsplit, urlunsplit
 from datetime import datetime, timezone
 
 import httpx
@@ -44,6 +45,16 @@ def _signature(secret: str, body: bytes) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+now_iso = _now
+
+
+def _safe_url(url: str) -> str:
+    """The URL without credentials or query string (a token often rides there), for logs."""
+    p = urlsplit(url)
+    host = p.hostname or ""
+    return urlunsplit((p.scheme, f"{host}:{p.port}" if p.port else host, p.path, "", ""))
 
 
 @dataclass(frozen=True)
@@ -86,10 +97,10 @@ async def attempt(url: str, secret: str | None, payload: dict) -> Outcome:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(url, content=body, headers=headers)
     except Exception as exc:
-        logger.warning("Webhook delivery failed for %s: %s", url, exc)
+        logger.warning("Webhook delivery failed for %s: %s", _safe_url(url), redact_error(exc, secrets=(secret or "",)))
         return Outcome(False, None, redact_error(exc, secrets=(secret or "",)))
     if not resp.is_success:
-        logger.warning("Webhook POST %s → %s", url, resp.status_code)
+        logger.warning("Webhook POST %s → %s", _safe_url(url), resp.status_code)
         return Outcome(False, resp.status_code, f"HTTP {resp.status_code}")
     return Outcome(True, resp.status_code)
 
@@ -110,7 +121,7 @@ async def deliver(url: str, secret: str | None, payload: dict, *, destination_id
         if not outcome.retryable:
             break
     if outcome.retryable:
-        logger.warning("Webhook %s to %s gave up after %d attempts", payload.get("event"), url, MAX_ATTEMPTS)
+        logger.warning("Webhook %s to %s gave up after %d attempts", payload.get("event"), _safe_url(url), MAX_ATTEMPTS)
     if destination_id is not None and factory is not None:
         await _record(factory, destination_id, outcome)
     return outcome
@@ -148,16 +159,20 @@ def schedule(url: str, secret: str | None, event: str, job_id: int | None, extra
 
 async def drain() -> None:
     """Wait for every queued delivery (tests, shutdown)."""
-    while _tasks:
+    while True:
+        _tasks.difference_update({t for t in _tasks if t.done()})        # a finished task whose loop is gone never runs its callback
+        if not _tasks:
+            return
         await asyncio.gather(*list(_tasks), return_exceptions=True)
 
 
 async def cancel_all() -> None:
     """Abandon deliveries that are still waiting to retry (shutdown, tests)."""
-    pending = list(_tasks)
+    pending = [t for t in _tasks if not t.done()]
     for t in pending:
         t.cancel()
     await asyncio.gather(*pending, return_exceptions=True)
+    _tasks.clear()
 
 
 async def destinations_for(session: AsyncSession, event: str) -> list[WebhookDestination]:
