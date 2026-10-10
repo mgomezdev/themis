@@ -757,3 +757,38 @@ class InventoryCache(Base):
     kind: Mapped[str] = mapped_column(String(16), primary_key=True)          # spools | materials
     payload: Mapped[list] = mapped_column(JSON)
     fetched_at: Mapped[str] = mapped_column(String(32))
+
+
+class EventOutbox(Base):
+    """A durable event (BIZ-249): the envelope, written in the publisher's own transaction. `dedup_key` is unique, so publishing
+    the same logical event twice stores it once."""
+    __tablename__ = "event_outbox"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(32), unique=True)
+    dedup_key: Mapped[Optional[str]] = mapped_column(String(255), unique=True, nullable=True)
+    name: Mapped[str] = mapped_column(String(128))
+    schema_version: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(64))
+    occurred_at: Mapped[str] = mapped_column(String(32))
+    envelope: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[str] = mapped_column(String(32))
+
+
+class EventDelivery(Base):
+    """One subscriber's pending/finished delivery of one outbox event. status: pending -> delivered | dead (attempts exhausted;
+    an operator can retry it). Unique per (event, subscriber), so a restart never creates a second delivery."""
+    __tablename__ = "event_deliveries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    outbox_id: Mapped[int] = mapped_column(ForeignKey("event_outbox.id", ondelete="CASCADE"))
+    subscriber: Mapped[str] = mapped_column(String(160))
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[str] = mapped_column(String(32))
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_attempt_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    delivered_at: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+
+    __table_args__ = (UniqueConstraint("outbox_id", "subscriber", name="ux_event_deliveries"),
+                      Index("ix_event_deliveries_due", "status", "next_attempt_at"))

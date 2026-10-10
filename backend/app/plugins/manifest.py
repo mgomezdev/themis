@@ -11,6 +11,7 @@ from typing import Any, Callable, Literal
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from ..eventing.definitions import EVENT_NAME_RE, EventDef, EventSubscription
 from .capabilities import CORE
 from .capabilities.definition import CAP_ID_RE, CapabilityDef
 
@@ -127,6 +128,10 @@ class PluginManifest:
     manufacturers: tuple[Manufacturer, ...] = ()   # printer models this plugin supports (new-printer dropdowns)
     # Enabled when no config row exists yet (bundled printer vendors: their printers must not go dormant on upgrade).
     default_enabled: bool = False
+    # Events (BIZ-249, docs/events.md). `defines_events`: event classes this plugin publishes (names start "<id>."); `subscribes`:
+    # handlers (`async def name(self, envelope)` on the instance) for core or other plugins' events. Not part of themis-plugin.toml.
+    defines_events: tuple[EventDef, ...] = ()
+    subscribes: tuple[EventSubscription, ...] = ()
 
     def __post_init__(self) -> None:
         if not ID_RE.match(self.id):
@@ -157,6 +162,24 @@ class PluginManifest:
             if not CAP_ID_RE.match(d.id) or d.version < 1 or d.id in seen:
                 raise PluginError(f"plugin {self.id!r}: bad or duplicate defined capability {d.id!r}")
             seen.add(d.id)
+        from ..eventing.registry import CORE_EVENTS
+        defined: set[str] = set()
+        for e in self.defines_events:
+            if e.name in CORE_EVENTS:
+                raise PluginError(f"plugin {self.id!r}: cannot redefine the core event {e.name!r}")
+            if not e.name.startswith(f"{self.id}.") or not EVENT_NAME_RE.match(e.name) or e.name in defined or e.version < 1:
+                raise PluginError(f"plugin {self.id!r}: defined event {e.name!r} must be a unique name starting '{self.id}.' "
+                                  "with a version >= 1")
+            if e.durability not in ("best_effort", "durable"):
+                raise PluginError(f"plugin {self.id!r}: event {e.name!r} has unknown durability {e.durability!r}")
+            defined.add(e.name)
+        seen_subs: set[tuple[str, str]] = set()
+        for sub in self.subscribes:
+            if not EVENT_NAME_RE.match(sub.event) or not sub.handler.isidentifier() or (sub.event, sub.handler) in seen_subs:
+                raise PluginError(f"plugin {self.id!r}: bad or duplicate subscription {sub.event!r} -> {sub.handler!r}")
+            if sub.timeout <= 0 or sub.queue_size < 1:
+                raise PluginError(f"plugin {self.id!r}: subscription {sub.event!r} needs a positive timeout and queue_size")
+            seen_subs.add((sub.event, sub.handler))
         for r in (*self.requires, *self.optional):
             if r.capability in self.provides:
                 raise PluginError(f"plugin {self.id!r}: lists {r.capability!r} as required or optional, which it provides itself")
