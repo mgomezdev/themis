@@ -2,6 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Communication style
+When reporting information, be extremely concise and sacrifice grammar for the sake of concision.
+
 ## Git workflow
 
 Simplified Gitflow: `main` (releases only) + `develop` (integration) + `feature/*` (per-change).
@@ -33,7 +36,7 @@ uvicorn app.main:app --reload --port 8001
 pytest -v
 
 # Run a single test
-pytest tests/test_models.py::test_create_printer -v
+pytest tests/api/test_printers_api.py::test_create_printer -v
 ```
 
 > **Windows venv:** build it from the **python.org** interpreter (`py -0` lists them), not the Microsoft Store Python. The Store build's AppContainer sandbox hides `C:\Program Files` (OrcaSlicer not found) and `--reload` spawns its worker through it, so code changes don't take effect and slicing fails with `[WinError 2]`.
@@ -59,7 +62,7 @@ docker compose up --build    # rebuild image first
 
 Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker container. FastAPI serves the built React app as static files in production (`THEMIS_STATIC_DIR=/frontend/dist`); in development, Vite's dev server proxies `/api` to the FastAPI process on port 8001. Per-area detail lives in `docs/agent/` (`backend.md`, `frontend.md`, `printers.md`, `data-model.md`); the invariants below are the ones not obvious from the code.
 
-**Vendor/provider boundaries:** printers are one **plugin per vendor** (`backend/app/plugins/{bambu,elegoo_centauri,snapmaker,mock}/`) behind `AbstractPrinterClient`, resolved by `printer_client_factory` from the printer's `plugin_id`; a disabled/removed plugin makes its printers dormant. Filament inventory is a core capability (`inventory.filament`) reached only through the plugin host (`app/plugins/host.py`); Spoolman is the bundled provider. Slicing (Laminus) sits behind `SlicingProvider` in `backend/app/services/providers/`. Core names no vendor and never imports a vendor client or branches on a plugin id — `tests/test_vendor_extraction_boundary.py`, `tests/test_provider_boundary.py` and `tests/test_no_provider_in_core.py` enforce it. Adding a vendor, inventory provider, or slicing adapter = one package/adapter, nothing else changes. See `docs/printer-interface.md`, `docs/provider-interfaces.md`, `docs/plugins.md`.
+**Vendor/provider boundaries:** printers are one **plugin per vendor** (`backend/app/plugins/{bambu,elegoo_centauri,snapmaker,mock}/`) behind `AbstractPrinterClient`, resolved by `printer_client_factory` from the printer's `plugin_id`; a disabled/removed plugin makes its printers dormant. Filament inventory is a core capability (`inventory.filament`) reached only through the plugin host (`app/plugins/host.py`); Spoolman and Local inventory are the bundled providers. Slicing (Laminus) sits behind `SlicingProvider` in `backend/app/services/providers/`. Core names no vendor and never imports a vendor client or branches on a plugin id — `tests/test_vendor_extraction_boundary.py`, `tests/test_provider_boundary.py` and `tests/test_no_provider_in_core.py` enforce it. Adding a vendor or inventory provider = one plugin package; a slicing provider = one adapter + one registry entry. Nothing else changes. See `docs/printer-interface.md`, `docs/provider-interfaces.md`, `docs/plugins.md`.
 
 **Queue engine:** single asyncio background task (`queue_loop`) woken by an `asyncio.Event`. A printer is eligible for a new job only when `is_idle == True` AND `awaiting_plate_clear == False`. Slicing runs in a `ThreadPoolExecutor` so it never blocks the event loop.
 
@@ -87,7 +90,7 @@ Recipes live in `docs/agent/conventions.md` (§ Tests) and the two review checkl
   code (mutate the line and re-run) isn't a test. Assert state (re-read the row / response body), not just
   a status code or "didn't raise".
 - **Run a real check before reporting done:** the tests, type-check, or build that exercises your change
-  (see Commands). Install missing dependencies with the project's package manager; if a check can't run
+  (see Commands). Install missing dependencies (`pip install -e ".[dev]"` / `npm install`); if a check can't run
   here, say which one and why instead of reporting the change complete.
 - **Test DB:** the shared `session_factory` (`backend/tests/conftest.py`) is a per-test SQLite *file* with
   the app's production pragmas (foreign keys ON, a connection per session). Never use `sqlite+aiosqlite:///:memory:`
@@ -115,19 +118,19 @@ Plan and implement directly in one session — no backend/frontend overseer spli
 for cross-cutting work. For non-trivial changes: design → document → implement → review → commit.
 
 - **Design + document**: `brainstorming` then `writing-plans`, plan saved to `docs/superpowers/plans/`; use `themis-planning` to scope against `docs/agent/` first.
-- **Implement**: execute the plan in the main session, running the real test/build commands (see Commands) before handoff.
+- **Implement**: execute the plan in the main session.
 - **Review**: exactly one fresh, non-fork subagent, one pass. Hand over by reference, not paste:
   base/head SHA, the plan file path, and `docs/agent/backend-review.md` / `docs/agent/frontend-review.md`
   as applicable. It also reviews the tests — a weak or unfalsifiable test is a defect, so a test-only diff still gets a review.
 - **Commit**: main session, after addressing whatever the reviewer flags.
 
 **PR gate:** a `PreToolUse` hook (`.claude/hooks/gate-pr-review.js`, wired in `.claude/settings.json`)
-blocks `gh pr create` and `mcp__github__create_pull_request` unless `.claude/review-state.json` (gitignored)
+blocks `gh pr create` and `mcp__github__create_pull_request` (Bash and PowerShell both covered) unless `.claude/review-state.json` (gitignored)
 records `{"sha": "<current HEAD>", "verdict": "clean", "checks": "pass"}` (`checks`: the Commands-section
-suites ran green at that sha; `"n/a"` only when the diff touches nothing they cover). If the marker matches
-`HEAD` with `verdict: "clean"`, skip the reviewer and create the PR; if it is missing, stale, or not clean,
-review first. Write the marker yourself once Critical/Important findings are addressed and the suites are
-green; any later commit invalidates it. The hook is a forgetting-guard, not a security boundary — raw
+suites ran green at that sha; `"n/a"` only when the diff touches nothing they cover). Every PR needs a review, trivial ones included. If the marker matches
+`HEAD` with `verdict: "clean"` and `checks` `pass`/`n/a`, skip the reviewer and create the PR; if it is
+missing, stale, or not clean, review first. Write `verdict: clean` yourself only after a reviewer pass, once
+Critical/Important findings are addressed and the suites are green; any later commit invalidates it. The hook is a forgetting-guard, not a security boundary — raw
 `gh api ... pulls` calls bypass it but are still against this policy.
 
 ## Review guidelines
