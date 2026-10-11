@@ -41,6 +41,60 @@ flags), `requires` / `optional` (`Requirement(capability, min_version)`), `defin
 required_methods)`), `ui` (`UiContribution`: a `section` on Settings → Plugins or its own `page` with tabs), `routers` (mounted under
 `/api/v1/plugins/<id>/…`), `migrations`, `table_prefix` (default `<id>_`).
 
+### Providing filament inventory (`inventory.filament`)
+
+There is no core capability named `library.filament`; the capability for filament materials and spools is **`inventory.filament` v1**. To claim it, declare it in both package metadata and the runtime manifest, and have the plugin factory return an implementation of `FilamentInventoryProvider`:
+
+```toml
+# themis-plugin.toml
+provides = ["inventory.filament@1"]
+```
+
+```python
+from app.plugins.capabilities.filament_inventory import (
+    FilamentInventoryProvider, InvMaterial, InvSpool,
+)
+from app.plugins.capabilities.inventory_routes import shared_router
+from app.plugins.manifest import HOST_API, PluginManifest, Provide
+
+class MyInventory(FilamentInventoryProvider):
+    # Advertise only optional behavior this implementation really supports.
+    capabilities = frozenset()  # e.g. TRACKS_WEIGHT, WRITE_WEIGHT
+
+    def __init__(self, settings):
+        self.settings = settings
+
+    async def test_connection(self) -> dict:
+        ...
+
+    async def list_materials(self) -> list[InvMaterial]:
+        ...
+
+    async def list_spools(self) -> list[InvSpool]:
+        ...
+
+    async def get_spool(self, spool_ref: str) -> InvSpool | None:
+        ...
+
+MANIFEST = PluginManifest(
+    id="my_inventory",
+    name="My Inventory",
+    version="1.0.0",
+    host_api=HOST_API,
+    settings_model=MySettings,
+    factory=MyInventory,
+    provides={"inventory.filament": Provide(
+        version=1,
+        features=MyInventory.capabilities,
+        routers=(shared_router,),
+    )},
+)
+```
+
+The four async methods above are the required provider surface. Return neutral `InvMaterial` / `InvSpool` DTOs and stable, provider-opaque string refs; `get_spool` returns `None` for an unknown spool. The `capabilities` class attribute must contain only supported feature flags, and `Provide.features` must expose the same set to core. Each optional flag adds methods and semantics: for example, `WRITE_WEIGHT` requires `set_remaining(spool_ref, remaining_g)` to set an **absolute** weight, and `MANAGE_MATERIALS` requires the material create/update/archive methods. The full flag-to-method map and DTO fields are in [provider interfaces](provider-interfaces.md#filament-inventory-provider-methods-and-http-routes). Run the provider contract suite when implementing a provider.
+
+`Provide.routers` is how a provider opts into extra capability-dispatched HTTP routes. The `shared_router` example exposes low-stock settings at `/api/v1/capabilities/inventory.filament/low-stock`; it is not required for the provider methods to work. The core `/api/v1/inventory/*` API already dispatches to the active provider. A capability declaration alone does not create plugin HTTP routes. The active exclusive provider is selected in Settings → Capabilities. Integrations can inspect `GET /api/v1/capabilities` and should handle `409 capability_unavailable` when no provider is active or a requested feature is absent.
+
 ### Capabilities, selection and dependencies
 
 * **One plugin = one settings model, one `factory`, one enabled flag, one instance.** Selection is per capability: a plugin that
@@ -163,12 +217,12 @@ Out of scope (tracked): private GitHub repos (BIZ-199), declared permissions (BI
 
 ## Capability paths (replaceable providers)
 
-`/api/v1/capabilities/<capability>/…` is the provider-independent path: it is forwarded to whichever plugin is selected for the
-capability, so a client keeps working when the provider is swapped. Every `inventory.filament` provider serves the shared routes
-(`low-stock` GET/PUT, neutral `inventory:*` scopes: `app/plugins/capabilities/inventory_routes.py:shared_router`, listed in its
-`Provide.routers`). Anything a provider adds beyond that (Local inventory's `weight-log`) is optional and answers 404 from a provider
-without it; nothing selected answers 409. A plugin route `PUT /provider` is never exposed there (the selection route owns it). Common
-functionality lives in the neutral API (`/api/v1/inventory/*`); the old `/api/v1/spoolman/*` paths are deprecated aliases.
+`/api/v1/capabilities/<capability>/…` is the provider-independent dispatch path for routes listed in the selected provider's
+`Provide.routers`. For filament inventory, the bundled providers include the shared `low-stock` GET/PUT routes
+(`app/plugins/capabilities/inventory_routes.py:shared_router`), but third-party providers must opt in by listing that router.
+Provider-specific routes such as Local inventory's `weight-log` are optional and answer 404 when the active provider does not expose
+them; no selected provider answers 409. A plugin route `PUT /provider` is never exposed there (the selection route owns it). Common
+functionality lives in the neutral core API (`/api/v1/inventory/*`); the old `/api/v1/spoolman/*` paths are deprecated aliases.
 
 ## Capability resolution modes (BIZ-250)
 

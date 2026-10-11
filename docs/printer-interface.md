@@ -1,6 +1,6 @@
 # Printer Interface Architecture
 
-This document describes the vendor-agnostic printer abstraction layer in GroundsKeeper. It is detailed enough to recreate the pattern in another codebase or language.
+This is the current Themis printer-client and plugin reference. The core contract is `backend/app/services/abstract_printer_client.py`; bundled printer implementations live under `backend/app/plugins/`. For the current installed model list and runtime capability state, use the app's printer-model and capability APIs.
 
 ---
 

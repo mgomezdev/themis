@@ -3,7 +3,7 @@
 FastAPI app at `backend/app/main.py`. Routes under `app/api/routes/`, business logic under
 `app/services/`, ORM in `app/models.py`, engine/session/migrate in `app/database.py`, env config in
 `app/config.py`. All routers + the `/ws` endpoint are registered in `main.py`; the `lifespan` wires
-the three subsystems and connects enabled printers. `main.py` also serves the built SPA when `STATIC_DIR` exists:
+the queue, printer manager, plugin host, event hub, inventory sync, and sidecar warm-up. `main.py` also serves the built SPA when `STATIC_DIR` exists:
 `register_spa(app, static_dir)` mounts `/assets` and falls every other GET back to `index.html` (no-cache);
 `_resolve_within(root, path)` rejects `..`/absolute/symlink escapes before a file is served. Unknown `/api/*` GETs
 fall through to that catch-all too (200 + index.html, not 404).
@@ -13,9 +13,9 @@ then `"unknown"`). The sidebar footer and Settings → About render it.
 
 ## Routes (`app/api/routes/`)
 
-Each module = one `APIRouter(prefix="/api/v1/<x>")`. Endpoints below are the public contract.
+Routes are split across `app/api/routes/` and plugin-provided routers. The table below is an implementation-oriented route map, not a complete generated API specification; plugins and some capability-specific routes are mounted dynamically. Use the committed or running OpenAPI schema for the exact HTTP contract.
 
-17 route modules, all registered in `main.py`.
+Core route modules are registered in `main.py`; plugin routes may be mounted during app initialization.
 
 | Module | Prefix | Key endpoints (method path → purpose) |
 |---|---|---|
