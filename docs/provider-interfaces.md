@@ -1,4 +1,4 @@
-# Provider Interfaces (Laminus & filament inventory)
+# Provider interfaces: slicing and filament inventory
 
 Themis core never talks to Laminus (slicing) or to an inventory system (Spoolman, Local inventory...) directly.
 Slicing goes through `backend/app/services/providers/slicing.py` (an ABC, capability flags, a registry + accessor, the
@@ -22,23 +22,23 @@ providers/laminus/                              │ registry (plugins/__init__.p
   gcode.py overrides.py profile_index.py preset_resolver.py
 ```
 
-**Scope.** Laminus keeps its `/api/v1/laminus/*` paths and response shapes (the adapter re-serializes via the DTOs' `raw`
-field). The deprecated `/api/v1/spoolman/*` + `/api/v1/settings/spoolman*` aliases keep their shapes too (byte-for-byte
-goldens in `tests/golden/`), now relayed through the inventory provider. Persisted ids (`loaded_filaments[].spoolman_spool_id`,
-`filament_id` columns, preset names, `machine_uuid`/`process_uuid`) stay opaque refs for now (BIZ-217 adds provider-namespaced ones).
+**Scope.** Laminus keeps its `/api/v1/laminus/*` paths and response shapes. Legacy `/api/v1/spoolman/*` and
+`/api/v1/settings/spoolman*` aliases are supplied by the bundled Spoolman plugin; provider-neutral integrations should use
+`/api/v1/inventory/*`. Provider-issued IDs are opaque references: pass them back to the provider-facing API that returned them.
 
 ## The boundary (enforced)
 
-`backend/tests/test_provider_boundary.py` walks every module under `app/` and fails if code **outside**
-`app/services/providers/laminus/` or `app/plugins/spoolman/` imports an adapter-internal module (the sidecar client, the Spoolman
+`backend/tests/test_provider_boundary.py` walks every module under `app/` and fails if code outside the relevant adapter
+boundaries imports an adapter-internal module (the sidecar client, the Spoolman
 client, the Orca override/gcode/preset logic, or their old `app/services/*` paths), names a vendor symbol
 (`LaminusSidecarClient`, `SidecarError`, `parse_gcode_estimates`, `get_laminus_sidecar_url`), or imports
 `httpx` without being on the `HTTPX_ALLOWED` list (printers, webhooks, notifications, camera, discovery).
-Only the two accessor modules (`providers/slicing.py`, `providers/filament_inventory.py`) may import an
-adapter package, to register it. The test is in CI (`pytest`) and has planted-violation cases proving it
-can fail. Importing the DTOs / ABCs from `providers.slicing` / `providers.filament_inventory` is always fine.
+Slicing adapters are registered through `services/providers/slicing.py`; inventory is accessed through
+`services/inventory/provider.py` and the plugin host. Import neutral contracts from their contract modules, not a concrete adapter.
 
-## `FilamentInventoryProvider` — async (the `inventory.filament` capability)
+## Filament inventory provider methods and HTTP routes
+
+The core capability ID is `inventory.filament` v1. A provider does **not** implement HTTP endpoints to claim this capability: it implements the async Python contract below. The core `/api/v1/inventory/*` routes call the currently selected provider. Routers in `Provide.routers` are optional additions, not the required capability surface.
 
 `plugins/capabilities/filament_inventory.py` (spec: Linear "Plugin architecture — design spec" §3.2). Core and the frontend only
 see the neutral DTOs and branch on **capabilities**, never on a plugin id.
@@ -55,7 +55,7 @@ see the neutral DTOs and branch on **capabilities**, never on a plugin id.
 | `parse_label(text)` / `spool_url(ref)` | `ref \| None` / `url \| None` | `LABEL_SCAN` / optional deep link. |
 
 Capabilities (`frozenset` class attr; the manifest declares the same set): `TRACKS_WEIGHT`, `WRITE_WEIGHT`,
-`PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (can be unreachable → sync loop, health, later the offline cache), `MANAGE_MATERIALS`, `MANAGE_SPOOLS` (the provider owns its library; a provider without them is still valid — its library is managed in the external system).
+`PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `LABEL_SCAN`, `REMOTE` (remote availability, sync loop, offline cache and disconnect handling), `MANAGE_MATERIALS`, `MANAGE_SPOOLS` (the provider owns its library; a provider without them is still valid — its library is managed in the external system).
 Optional methods raise `NotSupported(capability)` by default; callers check `host.has("inventory.filament", flag)` first.
 
 ### The verified contract (BIZ-247)
@@ -112,8 +112,22 @@ loop + health in `plugin_configs.state`), `deduction.py` + `snapshots.py` + `out
 (double-JSON-encoded). Only the Spoolman plugin encodes/decodes it; core reads `InvMaterial.profile_links` and writes via
 `set_profile_links` (drift repair in `laminus.py` confirm-remap; the catalog drift check needs `PROFILE_LINKS_READ`).
 
-Neutral API: `/api/v1/inventory/{materials,spools,sync-now,sync-status,resolve-label,settings}`, `PATCH …/materials/{ref}/profile-links`, and library management (`POST/PATCH /materials[/{ref}]`, `POST /materials/{ref}/archive`, `POST/PATCH /spools[/{ref}]`, `POST /spools/{ref}/archive`, `PUT /spools/{ref}/remaining`; 409 `capability_unavailable` without `MANAGE_*`/`WRITE_WEIGHT`)
-(scopes `inventory:read/write`); plugin management `/api/v1/plugins…` `GET /api/v1/capabilities` and `PUT /api/v1/capabilities/{cap}/provider` (scopes `settings:*`).
+### HTTP routes that use the provider
+
+These are core routes, not routes a provider implements. The active `inventory.filament` provider is called underneath them. Requests require the corresponding `inventory:read` or `inventory:write` scope; feature-specific operations can return `409 capability_unavailable` when the provider lacks the needed feature.
+
+| Route | Provider behavior used |
+|---|---|
+| `GET /api/v1/inventory/materials`, `GET /api/v1/inventory/spools` | `list_materials`, `list_spools` (plus `TRACKS_WEIGHT` / `PROFILE_LINKS_READ` data when declared). |
+| `GET /api/v1/inventory/sync-status`, `POST /api/v1/inventory/sync-now` | Provider identity and `REMOTE` sync/health behavior. |
+| `PATCH /api/v1/inventory/materials/{ref}/profile-links` | `set_profile_links`; requires `PROFILE_LINKS_WRITE`. |
+| `POST/PATCH /api/v1/inventory/materials[/{ref}]`, `POST …/materials/{ref}/archive` | `create_material`, `update_material`, `archive_material`; requires `MANAGE_MATERIALS`. |
+| `POST/PATCH /api/v1/inventory/spools[/{ref}]`, `POST …/spools/{ref}/archive` | `create_spool`, `update_spool`, `archive_spool`; requires `MANAGE_SPOOLS`. |
+| `PUT /api/v1/inventory/spools/{ref}/remaining` | `set_remaining`; requires `WRITE_WEIGHT`. |
+| `POST /api/v1/inventory/resolve-label` | `parse_label`; requires `LABEL_SCAN`. |
+| `GET/PUT /api/v1/inventory/settings` | Core inventory settings; weight deduction and low-stock settings require relevant weight support. |
+
+`GET /api/v1/capabilities` reports provider selection and declared features; `PUT /api/v1/capabilities/{cap}/provider` selects an exclusive provider (settings scopes). The bundled `shared_router` optionally adds `GET/PUT /api/v1/capabilities/inventory.filament/low-stock`; it is not the inventory provider contract. See [plugin authoring](plugins.md#providing-filament-inventory-inventoryfilament) for a complete declaration example.
 
 ## `SlicingProvider` — sync
 

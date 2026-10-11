@@ -1,11 +1,12 @@
 # Data Model Reference
 
-SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Migrations run automatically at
-startup via `backend/app/migrations/runner.py` (Flyway-style versioned files, v001–v044, in
-`backend/app/migrations/v00N_name.py`). Dev DB at `<data_dir>/themis.db`. To add a column to an
-existing table, create a new migration file. JSON columns store Python lists/dicts.
+SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Core migrations run automatically at
+startup via `backend/app/migrations/runner.py` (ordered versioned files in
+`backend/app/migrations/v00N_name.py`; latest migration in this checkout is v048). Plugin-owned
+migrations have their own registry and failure boundary. Dev DB at `<data_dir>/themis.db`. To add a
+column to an existing table, create a new migration file. JSON columns store Python lists/dicts.
 
-## Tables (31)
+## Core tables
 
 ```
 printers            ← jobs.assigned_printer_id, job_printer_configs.printer_id, gcode_files.printer_id,

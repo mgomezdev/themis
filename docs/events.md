@@ -1,12 +1,12 @@
 # Events: contract and delivery (BIZ-249)
 
-Design note for the versioned event contract used by core and plugins. Code: `backend/app/eventing/` (`envelope`, `registry`,
+Current reference for the versioned event contract used by core and plugins. Code: `backend/app/eventing/` (`envelope`, `registry`,
 `hub`, `redaction`, `definitions`), routes `app/api/routes/events.py`, tables `event_outbox` / `event_deliveries` (migration v045).
-Epic: BIZ-266. Consumers migrate separately (BIZ-269 print completion, BIZ-252 notification channels, BIZ-172 project webhooks);
-BIZ-249 itself wired nothing in core; BIZ-269 (below) is the first consumer: print-completion effects.
+The event hub and durable outbox are active. Print completion publishes `job.complete`; subscribers handle inventory deduction,
+maintenance accrual, and completion notices. Other core events include printer alarms, blocked/failed jobs, and low inventory.
 
-The older `services/events.py` bus (typed Python events between printer clients and `PrinterManager`) is unchanged. It carries
-*internal callbacks*, not domain events: no envelope, no persistence, in-process only.
+The separate `services/events.py` bus carries typed in-process callbacks between printer clients and `PrinterManager`; it is not
+the versioned domain-event hub described below.
 
 ## Envelope
 

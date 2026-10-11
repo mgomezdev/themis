@@ -1,5 +1,7 @@
 # Orca Sidecar Integration — Implementation Stories
 
+> **Historical planning document.** Its opening context predates the current implementation and is not an accurate description of today's slicing path. Themis now delegates slicing to the Laminus provider; see [the current slicing flow](slicing-flow.md) and [provider interfaces](provider-interfaces.md).
+
 > **Context for the planning LLM**
 >
 > Themis is a Python/FastAPI print-farm manager that currently calls the OrcaSlicer CLI
