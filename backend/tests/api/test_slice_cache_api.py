@@ -216,7 +216,6 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(packed)
         resp = await client.post(f"/api/v1/projects/{project_id}/generate",
@@ -401,7 +400,6 @@ async def _generate(client, tmp_path, project_id, body):
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], **body})

@@ -48,7 +48,6 @@ Vite serves the app at `http://localhost:5173` and proxies API and WebSocket req
 | `THEMIS_LIBRARY_DIR` | `<data dir>/library` | Model library directory. |
 | `THEMIS_STATIC_DIR` | `frontend/dist` locally; `/frontend/dist` in the image | Built browser application. |
 | `LAMINUS_SIDECAR_URL` | unset | Default Laminus base URL, used only while no URL is saved in Settings -> Laminus (plugin settings; a saved URL wins, applies without restart and can be checked with the connection test: not configured / unavailable / healthy). Slicing and project generation need one of the two. |
-| `ORCA_EXECUTABLE` | discovered on Windows; `orcaslicer` elsewhere | OrcaSlicer executable used only for local thumbnail regeneration (removed with BIZ-284). `ORCA_CONFIG_DIR` is no longer read by Themis; the Laminus service owns its profile directories (`SYSTEM_PROFILES_DIR`/`USER_CONFIG_DIR` in its own environment). |
 | `FFMPEG_EXECUTABLE` | `ffmpeg` | Executable used for RTSP camera transcoding. |
 | `THEMIS_LOCAL_NETWORKS` | `192.168.0.0/16` | Comma-separated client IP CIDRs allowed keyless local admin access while that setting is enabled. |
 | `THEMIS_BOOTSTRAP_KEY` | unset | Optional full-scope recovery key. Keep it secret and remove it when no longer needed. |

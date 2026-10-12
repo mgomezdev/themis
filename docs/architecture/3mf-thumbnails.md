@@ -91,3 +91,5 @@ mentions (`get_orca_executable` stays until BIZ-260/261 settle config); union pl
 `.gcode.3mf` from Orca and a real Laminus `construct`/pack output (check for `plate_N.png`). Tests: update `test_3mf_thumbnail_behavior.py` limitation
 tests to the fixed behavior; delete `test_thumbnail_regen.py`; assert upload/pack never spawn a subprocess.
 Coordinate with BIZ-261 (dead pre-sidecar code) and BIZ-260 (config): the only shared surface is `get_orca_executable` in `config.py`.
+
+**Status (BIZ-284 done):** `thumbnail_regen.py`, its two `add_task` calls, the conftest hook, `get_orca_executable`/`ORCA_EXECUTABLE` deleted; `parse_three_mf` now unions plate sources (PNG names, `slice_info.config`, `model_settings.config`). Still open: no real Orca-exported 2-plate pre-sliced `.gcode.3mf` and no real Laminus pack output in the repo (no Orca/Laminus available to produce them here); fixtures are derived from `docs/reference 3mfs` (PNGs stripped / slice_info swapped). Pack-output thumbnail embedding stays unverified: if a real Laminus pack lacks `Metadata/plate_N.png`, raise a Laminus issue.

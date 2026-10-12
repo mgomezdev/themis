@@ -142,7 +142,6 @@ async def test_generate_stores_3mf_in_job_pack_folder(client, tmp_path):
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -180,7 +179,6 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -214,7 +212,6 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
 
@@ -251,7 +248,6 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -284,7 +280,6 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -337,7 +332,6 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
         patch("app.api.routes.jobs.queue_engine"),
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -541,7 +535,6 @@ async def test_generate_with_machine_profile_creates_model_targets_and_configs(
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
         resp = await client.post(
@@ -564,7 +557,6 @@ async def _generate_with(client, tmp_path, provider, project_id):
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
 
@@ -608,3 +600,21 @@ async def test_generate_packs_by_bed_size_when_the_project_has_no_presets(client
     assert resp.status_code == 200, resp.text
     (call,) = provider.pack_models.call_args_list
     assert call.kwargs == {"bed": (256.0, 256.0, 250.0)}   # no eligible printers → default bed, Laminus default z
+
+
+async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client, tmp_path):
+    """BIZ-284: pack output is read from its embedded PNGs only; nothing renders thumbnails via a local binary."""
+    project_id, _ = await _setup_project_with_stl(client, tmp_path)
+    lib = tmp_path / "library"
+    boom = AssertionError("subprocess spawned")
+    with (
+        patch("app.config.get_library_dir", return_value=lib),
+        patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
+        patch("app.api.routes.projects.get_library_dir", return_value=lib),
+        patch("app.api.routes.projects.get_slicing_provider") as mock_get,
+        patch("subprocess.run", side_effect=boom), patch("subprocess.Popen", side_effect=boom),
+    ):
+        mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
+        resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
+    assert resp.status_code == 200
+    assert len(resp.json()["jobs"]) == 2

@@ -164,17 +164,12 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
         # Load timing/weight data from slice_info.config (XML, as Orca/Bambu write it)
         meta = _sliced_plate_meta(zf, names)
 
-        # Discover plate numbers from thumbnail files
+        # Union of every plate source, so a plate whose PNG is missing (stripped by a tool) is not dropped
+        # while other plates still have theirs: thumbnails, slice_info.config plates, model_settings.config plates.
         thumb_re = re.compile(r"Metadata/plate_(\d+)\.png")
         plate_numbers = {int(m.group(1)) for name in names if (m := thumb_re.match(name))}
-
-        # Fall back to plate numbers found in slice_info if no thumbnails
-        if not plate_numbers:
-            plate_numbers = set(meta.keys())
-
-        # Pre-slice 3MFs (e.g. gridfinity-customizer) may only have model_settings.config
-        if not plate_numbers:
-            plate_numbers = _plates_from_model_settings(names, zf)
+        plate_numbers |= set(meta.keys())
+        plate_numbers |= _plates_from_model_settings(names, zf)
 
         # Last resort: any 3MF with a declared StartPart model is a single-plate file
         # (e.g. PrusaSlicer exports). Per spec §2.1.1, discover via _rels/.rels.

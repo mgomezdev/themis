@@ -49,22 +49,18 @@ def test_accepts_file(printer_type, name, ok):
     assert accepts_file(printer_type, name) is ok
 
 
-async def test_upload_reads_each_archive_plate_and_its_thumbnail_without_regenerating(client, library, upload_3mf):
-    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
-        file_id = await upload_3mf("part.gcode.3mf", make_sliced_archive())
+async def test_upload_reads_each_archive_plate_and_its_thumbnail(client, library, upload_3mf):
+    file_id = await upload_3mf("part.gcode.3mf", make_sliced_archive())
 
     plates = (await client.get(f"/api/v1/files/{file_id}/plates")).json()["plates"]
     assert [(p["plate_number"], p["estimated_time"], p["filament_g"]) for p in plates] == [(1, 600, 4.0), (2, 1200, 7.5)]
     listed = next(f for f in (await client.get("/api/v1/files")).json() if f["id"] == file_id)
     assert listed["kind"] == "gcode_3mf"
     assert [t["plate_number"] for t in listed["plate_thumbnails"]] == [1]
-    regen.assert_not_called()
 
 
-async def test_upload_of_a_plain_3mf_still_regenerates_thumbnails(client, library, upload_3mf):
-    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
-        file_id = await upload_3mf()
-    regen.assert_called_once()
+async def test_upload_of_a_plain_3mf_lists_it_as_a_model(client, library, upload_3mf):
+    file_id = await upload_3mf()
     listed = next(f for f in (await client.get("/api/v1/files")).json() if f["id"] == file_id)
     assert listed["kind"] == "3mf"
 

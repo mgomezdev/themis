@@ -18,7 +18,6 @@ from sqlalchemy import event
 from app.database import Base, get_session, _set_sqlite_pragmas
 from app.auth import SCOPES
 from app.models import ApiKey
-from app.services import thumbnail_regen
 from app.services.printer_manager import printer_manager
 from app.services.api_key_service import generate_key, hash_key
 
@@ -98,9 +97,6 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_session] = override_get_session
 
-    original_thumbnail_factory = thumbnail_regen._session_factory
-    thumbnail_regen.set_session_factory(factory)
-
     try:
         # Seed a full-scope API key so every call site has a credential
         # and every existing call site keeps working unmodified (auth is enforced
@@ -120,7 +116,6 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
             yield c
     finally:
         app.dependency_overrides.clear()
-        thumbnail_regen.set_session_factory(original_thumbnail_factory)
 
 
 @pytest_asyncio.fixture(autouse=True)
