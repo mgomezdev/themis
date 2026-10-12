@@ -51,8 +51,8 @@ PASS_THROUGH_INPUTS = frozenset({InputKind.GCODE, InputKind.GCODE_3MF})
 class ProviderIdentity:
     """`provider_id` is the stable registry/plugin id (never a URL); `version` the adapter/contract build.
     `engine_id`/`engine_version` identify the slicing engine actually used (e.g. family + pinned release); None when the
-    provider cannot say (cache key then omits them, see `cache_key`). `build` is the finer build hash: recorded on the
-    artifact and used for staleness, deliberately NOT in the cache key."""
+    provider cannot say (cache key then omits them, see `cache_key`). `build` is the finer engine build hash and is
+    part of the cache key (omitted when None)."""
     provider_id: str
     version: str
     engine_id: str | None = None
@@ -88,11 +88,13 @@ class ErrorCode(StrEnum):
     CANCELLED = "cancelled"
 
 
-@dataclass
 class ProviderError(Exception):
     """Neutral provider failure. Core branches on `code`, never on message text or a vendor exception type."""
-    code: ErrorCode
-    message: str = ""
+
+    def __init__(self, code: ErrorCode, message: str = "") -> None:
+        super().__init__(code, message)
+        self.code = code
+        self.message = message
 
     def __str__(self) -> str:
         return f"{self.code.value}: {self.message}" if self.message else self.code.value
@@ -281,6 +283,7 @@ class GcodeProducer(_Provider):
 class Action(StrEnum):
     PASS_THROUGH = "pass_through"   # dispatch as-is; no provider touched
     PRODUCE = "produce"             # produce with `provider_id`
+    PROCEED = "proceed"             # construct with `provider_id` (3mf.construct has no produce step)
     BLOCKED = "blocked"             # job stays queued/blocked for this printer; `reason` says why
 
 
@@ -292,7 +295,7 @@ class Reason(StrEnum):
     PREFERENCE_DORMANT = "preference_dormant"      # preferred provider disabled/removed
     PREFERENCE_INELIGIBLE = "preference_ineligible"
     PREFERENCE_UNAVAILABLE = "preference_unavailable"   # preferred provider not READY: wait, never fall back
-    DEFAULT_UNAVAILABLE = "default_unavailable"
+    DEFAULT_UNAVAILABLE = "default_unavailable"    # also used by resolve_construct for its one active provider
     DEFAULT_INELIGIBLE = "default_ineligible"
 
 
@@ -369,7 +372,7 @@ def resolve_construct(active: ProjectConstructor | None, status: ProviderStatus 
         return WorkOutcome(Action.BLOCKED, reason=Reason.NO_PROVIDER)
     if status is None or not status.ready:
         return WorkOutcome(Action.BLOCKED, active.identity.provider_id, Reason.DEFAULT_UNAVAILABLE)
-    return WorkOutcome(Action.PRODUCE, active.identity.provider_id)
+    return WorkOutcome(Action.PROCEED, active.identity.provider_id)
 
 
 # ── cache identity ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -380,9 +383,10 @@ def _sha(value: Any) -> str:
 
 def cache_key(identity: ProviderIdentity, req: ProduceRequest, source_content_hash: str) -> str:
     """Key of a produced artifact. Inputs: provider id; engine id + version (pinned version when requested, else the one
-    the provider reports; both omitted when unknown so legacy keys stay valid); content hash of the source; plate;
-    target model UUID and bed; settings fingerprint; artifact kind. Excluded on purpose: `identity.build` and
-    `identity.version` (staleness, not identity), filament colour, paths, timestamps."""
+    the provider reports) and engine build (`identity.build`); each omitted when unknown; content hash of the source;
+    plate; target model UUID, bed, toolheads; settings fingerprint; artifact kind. This is a NEW key format: rows saved
+    under `slice_cache` keys simply miss. Excluded on purpose: `identity.version` (adapter version), filament colour,
+    paths, timestamps."""
     engine_version = req.pin_engine_version or identity.engine_version
     d: dict[str, Any] = {
         "provider": identity.provider_id,
@@ -398,4 +402,6 @@ def cache_key(identity: ProviderIdentity, req: ProduceRequest, source_content_ha
         d["engine"] = identity.engine_id
     if engine_version:
         d["engine_version"] = engine_version
+    if identity.build:
+        d["build"] = identity.build
     return _sha(d)

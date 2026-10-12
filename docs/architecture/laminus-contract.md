@@ -78,7 +78,7 @@ As BIZ-259: reading held files is offline (`FormatProvider` for slicer vocabular
 
 `ProviderIdentity.provider_id` is the stable plugin/registry id (not a URL). `engine_id`/`engine_version` name the engine actually used (BIZ-243
 pinning: `ProduceRequest.pin_engine_version`; an unavailable pinned version fails `invalid_settings`). `build` is a finer hash recorded on the
-artifact for staleness only.
+artifact and is part of the cache key (§7).
 
 `status()` returns `ready | not_ready` (answered, still starting/building catalog) `| unreachable` (incl. not configured). Queue preflight uses `status(2)`.
 `ProviderError(code)`: `not_ready`, `unreachable`, `unsupported_input`, `unsupported_target`, `invalid_settings`, `failed`, `timeout`, `cancelled`.
@@ -95,19 +95,21 @@ work best-effort, removes partial output, raises `cancelled`. A cancel never mar
 |---|---|
 | `gcode`/`gcode_3mf`, target model in file's eligible set | `pass_through`; **no provider consulted or required, even if all are down** |
 | ...target model not in set / set empty or unknown | `blocked` `model_ineligible` / `eligibility_unknown` (unknown is never a match) |
-| model input, `preferred` set (per-printer/job) | preferred must be enabled, accept the kind, `supports_target`, and be `ready`; else `blocked` `preference_dormant` / `preference_ineligible` / `preference_unavailable`. **Never falls back** |
-| model input, no preference | capability default (selection row): unavailable/ineligible -> `blocked` `default_unavailable`/`default_ineligible`; none set -> `no_provider` |
-| no provider enabled / none eligible | `blocked` `no_provider` (job stays queued; surfaced to the user) |
+| model input, `preferred` set (per-printer/job) | preferred must be enabled, then eligible (accepts the kind, `supports_target`), then `ready` (checked in that order); else `blocked` `preference_dormant` / `preference_ineligible` / `preference_unavailable`. **Never falls back** |
+| model input, no preference | capability default (selection row), checked enabled+`ready` first, then eligible: -> `blocked` `default_unavailable` / `default_ineligible`; no default set -> `no_provider` |
+| no provider enabled, or enabled but no default and no preference | `blocked` `no_provider`; the default/preferred provider exists but does not fit this printer/input -> `default_ineligible` / `preference_ineligible` (never silently another provider). Job stays queued; surfaced to the user |
 | multiple target printers (`resolve_job`) | each printer resolved independently with its own model and preference; claimable by any printer whose outcome is not `blocked`; one blocked printer never blocks others |
-| `3mf.construct` (`resolve_construct`) | the single active provider if `ready`, else `blocked` `no_provider` / `default_unavailable` |
+| `3mf.construct` (`resolve_construct`) | the single active provider if `ready` -> `proceed`; else `blocked` `no_provider`, or `default_unavailable` (reason reused for the one active provider) |
 
 Matches `PluginHost.resolve` outcomes (BIZ-250); wiring `resolve_work` to the host and the queue is BIZ-260's job, not this issue's.
 
 ## 7. Cache key (`contract.cache_key`)
 
-sha256 of canonical JSON of: `provider` id; `engine` id and `engine_version` (the request's pin, else the provider-reported version; both **omitted when
-unknown** so legacy keys stay valid); source content hash; plate; target `model_uuid`, `bed_mm`, `toolheads`; `SliceSettings.fingerprint()` (process
-profile, per-slot material + profile name, overrides, tool index, filament map); artifact kind.
-Excluded on purpose: filament colour (preview only), paths, timestamps, `identity.version`, `identity.build` (drives staleness, as in `slice_cache`
-today). Relation to the current `slice_cache.CacheKeyInputs`: that key (preset names + provider) is a subset; adopting this one adds engine version and
-target model, so migrating callers must keep old rows readable (treat missing engine/model as "legacy": hit on the old key, re-save on the new).
+sha256 of canonical JSON of: `provider` id; `engine` id, `engine_version` (the request's pin, else the provider-reported version) and `build`
+(`ProviderIdentity.build`), each **omitted when unknown**; source content hash; plate; target `model_uuid`, `bed_mm`, `toolheads`;
+`SliceSettings.fingerprint()` (process profile, per-slot material + profile name, overrides, tool index, filament map); artifact kind.
+Excluded on purpose: filament colour (preview only), paths, timestamps, `identity.version` (adapter version, not engine).
+
+This is a **new key format**, not a superset of `slice_cache.CacheKeyInputs`: rows saved under the old keys will simply miss after migration and
+be re-sliced (or the migrating issue may map them explicitly). Note the old key deliberately left engine version/build out and tracked them as
+staleness; this contract makes them part of identity, so an engine upgrade is a miss, not a stale hit.

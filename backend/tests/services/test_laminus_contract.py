@@ -22,7 +22,7 @@ def ready(*ps):
 def test_construct_resolves_to_the_single_active_provider_and_produces_a_project(tmp_path):
     p = FakeProjectConstructor()
     out = c.resolve_construct(p, p.status())
-    assert (out.action, out.provider_id) == (c.Action.PRODUCE, "fake-constructor")
+    assert (out.action, out.provider_id) == (c.Action.PROCEED, "fake-constructor")
     art = p.construct(c.ConstructRequest((tmp_path / "a.stl",), c.TargetPrinter(BED)), tmp_path)
     assert art.kind is c.ArtifactKind.PROJECT_3MF and art.path.read_bytes() == b"3mf"
     assert p.calls[0].target.model_uuid is None and p.calls[0].target.bed_mm == BED   # bed-only target is valid
@@ -125,14 +125,12 @@ def _key(provider=None, req=None, h="src1"):
     return c.cache_key(provider.identity, req, h)
 
 
-def test_cache_key_is_stable_and_ignores_colour_path_and_build():
+def test_cache_key_is_stable_and_ignores_colour_and_path():
     base = _key()
     assert _key() == base
     req = c.ProduceRequest(Path("elsewhere/m.3mf"), c.InputKind.MODEL_3MF, 1, T_X1C,
                            c.SliceSettings("0.20mm", (c.FilamentChoice(1, "PLA", "Generic PLA", "#00ff00"),)))
     assert _key(req=req) == base                                  # colour and path are not output-affecting
-    p = FakeGcodeProducer("a")
-    assert c.cache_key(replace(p.identity, build="other"), req, "src1") == base
 
 
 def test_cache_key_changes_with_every_output_affecting_input():
@@ -146,6 +144,8 @@ def test_cache_key_changes_with_every_output_affecting_input():
         "source": _key(h="src2"),
         "plate": _key(req=replace(req, plate=2)),
         "target_model": _key(req=replace(req, target=T_U1)),
+        "toolheads": _key(req=replace(req, target=replace(T_X1C, toolheads=4))),
+        "build": c.cache_key(replace(FakeGcodeProducer("a").identity, build="b2"), req, "src1"),
         "bed": _key(req=replace(req, target=c.TargetPrinter((180.0, 180.0, 180.0), X1C))),
         "process": _key(req=replace(req, settings=replace(req.settings, process_profile="0.12mm"))),
         "filament_profile": _key(req=replace(req, settings=replace(req.settings, filaments=(c.FilamentChoice(1, "PLA", "Other"),)))),
@@ -157,10 +157,11 @@ def test_cache_key_changes_with_every_output_affecting_input():
     assert len(set(variants.values())) == len(variants)
 
 
-def test_unknown_engine_is_omitted_from_the_key_so_legacy_keys_stay_valid():
+def test_unknown_engine_and_build_are_omitted_from_the_key():
     ident = c.ProviderIdentity("a", "0.1")
     req = c.ProduceRequest(Path("m"), c.InputKind.STL, 1, T_X1C)
-    assert c.cache_key(ident, req, "h") == c.cache_key(replace(ident, build="x"), req, "h")
+    assert c.cache_key(ident, req, "h") != c.cache_key(replace(ident, build="x"), req, "h")
+    assert c.cache_key(ident, req, "h") == c.cache_key(replace(ident, version="9.9"), req, "h")   # adapter version is not engine identity
     assert c.cache_key(ident, req, "h") != c.cache_key(replace(ident, engine_id="e", engine_version="1"), req, "h")
 
 
@@ -168,3 +169,11 @@ def test_inspection_dto_has_findings_is_derived():
     assert not c.OverrideInspection().has_findings
     assert c.OverrideInspection(slot_warning=c.SlotWarning(4, 1)).has_findings
     assert c.OverrideInspection(setting_changes=(c.SettingChange("k", "1", "2"),)).has_findings
+
+
+def test_provider_error_is_picklable_and_hashable():
+    import pickle
+    e = c.ProviderError(c.ErrorCode.TIMEOUT, "slow")
+    r = pickle.loads(pickle.dumps(e))
+    assert (r.code, r.message, str(r)) == (c.ErrorCode.TIMEOUT, "slow", "timeout: slow")
+    hash(e)
