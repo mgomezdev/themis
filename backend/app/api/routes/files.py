@@ -1,6 +1,9 @@
 from __future__ import annotations
 import asyncio
 import contextlib
+import io
+import os
+import logging
 from datetime import datetime, timezone
 import mimetypes
 import uuid
@@ -32,6 +35,8 @@ from ...services.library_store import (
 from ...services.queue_engine import queue_engine
 from ...services.providers.slicing import get_slicing_provider
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
 
@@ -57,8 +62,11 @@ def _content_disposition(filename: str) -> str:
 
 async def _artifact_response(store: ArtifactStore, key: str, media_type: str, filename: str | None = None) -> StreamingResponse:
     """Stream a stored artifact without a local path (a remote store has none). `ArtifactNotFound` -> 404 by the caller."""
-    info = await asyncio.to_thread(store.stat, key)
     fh = await asyncio.to_thread(store.open, key)
+    try:
+        size = os.fstat(fh.fileno()).st_size   # the opened inode, so a concurrent overwrite cannot desync the length
+    except (AttributeError, OSError, io.UnsupportedOperation):   # non-file handle (remote backend)
+        size = (await asyncio.to_thread(store.stat, key)).size
 
     async def body() -> AsyncIterator[bytes]:
         try:
@@ -67,7 +75,7 @@ async def _artifact_response(store: ArtifactStore, key: str, media_type: str, fi
         finally:
             fh.close()
 
-    headers = {"content-length": str(info.size)}
+    headers = {"content-length": str(size)}
     if filename is not None:
         headers["content-disposition"] = _content_disposition(filename)
     return StreamingResponse(body(), media_type=media_type, headers=headers)
@@ -503,7 +511,10 @@ async def update_file(file_id: int, body: FilePatch,
             await _move_versions_with(session, store, f.id, dest_folder)
         except HTTPException:
             if on_disk and await asyncio.to_thread(store.exists, dest_key) and not await asyncio.to_thread(store.exists, src_key):
-                await asyncio.to_thread(store.move, dest_key, src_key)   # the model goes back too: nothing moved, nothing committed
+                try:
+                    await asyncio.to_thread(store.move, dest_key, src_key)   # the model goes back too: nothing moved, nothing committed
+                except ArtifactError:
+                    logger.exception("Couldn't put %s back at %s after a failed version move", dest_key, src_key)
             raise
     await session.commit()
     tag_map = await _tags_for(session, [f.id])
@@ -591,9 +602,17 @@ async def delete_file(
     # reference) leaves the file deleted but the row still pointing at it.
     store, cache = get_library_store(), get_filecache_store()
     for did, key, row_gone in keys:
-        await asyncio.to_thread(store.delete, key, missing_ok=True)
+        # The rows are already committed: one unremovable file (a stale row with an invalid/escaping key, an I/O error)
+        # must not turn the delete into a 500 or leave the remaining files behind.
+        try:
+            await asyncio.to_thread(store.delete, key, missing_ok=True)
+        except ArtifactError:
+            logger.exception("Couldn't remove library file %r of deleted record %s", key, did)
         if row_gone:   # a kept (missing) row keeps its thumbnails for the job history
-            await asyncio.to_thread(cache.delete_prefix, str(did))
+            try:
+                await asyncio.to_thread(cache.delete_prefix, str(did))
+            except ArtifactError:
+                logger.exception("Couldn't remove thumbnails of deleted record %s", did)
     return {"deleted": file_id, "deleted_versions": [d.id for d in doomed[1:]]}
 
 
@@ -783,9 +802,7 @@ async def get_thumbnail(file_id: int, filename: str,
     of the thumbnail path from the plates list."""
     if await session.get(UploadedFile, file_id) is None:
         raise HTTPException(404, f"File {file_id} not found")
-    if ".." in filename or "/" in filename or "\\" in filename:
-        raise HTTPException(400, "Invalid filename")
-    try:
+    try:   # validate_key refuses ".", ".." and empty segments exactly (not by substring), plus backslashes
         return await _artifact_response(get_filecache_store(), f"{file_id}/thumbnails/{filename}", "image/png")
     except InvalidArtifactKey:
         raise HTTPException(400, "Invalid filename")

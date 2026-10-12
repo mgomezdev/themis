@@ -87,9 +87,8 @@ commits nothing; it is not relabeled as a storage failure. Callers map `Artifact
 
 **Local-disk reference semantics (preserved).** Filenames and folder layout: identical (key = relative path). Relative-path migration: identical
 (`library_abs_path` is `local_path`; `relative_path` remains the only persisted pointer). Permissions: files get the umask-governed mode of a plain
-`open()` (`0666 & ~umask`), as `slice_saver` copies and scanned files have. **Difference to resolve at rewire (BIZ-285):** today's upload goes through
-`NamedTemporaryFile` and ends up `0600`; the store would make it `0644` under the default umask. Single-user container, so low risk, but BIZ-285 must pick
-one explicitly. Durability: stronger than today (file `fsync` before publish); no observable change otherwise.
+`open()` (`0666 & ~umask`), as `slice_saver` copies and scanned files have. **Resolved at the BIZ-285 rewire (section 5a):** uploads used to be `0600`
+(`NamedTemporaryFile`); they are now umask-governed (`0644` under the default umask). Durability: stronger than today (file `fsync` before publish); no observable change otherwise.
 
 **`local_path(key)`** exists on `LocalDiskArtifactStore` only, deliberately **not** on the ABC: it is the migration escape hatch for path-bound
 callers and lets a remote backend be written without ever having to produce a path. `library_abs_path`, `get_library_dir()`, `get_filecache_dir()` and
@@ -130,7 +129,8 @@ callers and lets a remote backend be written without ever having to produce a pa
 | Folders | Library store is built with `prune_empty=False`: emptied folders stay (they are objects the folder routes create; "Job Uploads" is protected). Filecache keeps pruning. | `test_moving_or_deleting_the_last_file_keeps_the_folder`. **Not migrated:** `create_folder` / `delete_folder` / `_safe_subpath` still use the filesystem (folders are not store objects). A remote backend needs a folder-marker decision first (gate 2). |
 | Download response | `StreamingResponse` (1 MiB chunks off the loop) instead of `FileResponse`: same `Content-Disposition` form, `Content-Length`, type guessed from the name. **Dropped:** `Last-Modified`/`ETag` and HTTP `Range` (nothing in the frontend uses them). | A path-less response is what a remote store needs. `test_download_streams_the_bytes_with_the_original_filename`. |
 | Rollback of a failed multi-file move | Unchanged semantics, now via `store.move` back and `ArtifactError` (was `Path.replace` / `OSError`). Failure while restoring is swallowed as before. | `test_a_failed_version_move_puts_everything_back`. |
-| Invalid names | A filename that is not a valid key (backslash, NUL) is a 400 "Invalid filename" (was accepted on POSIX). | Keys are `/`-separated by contract. |
+| Invalid names | A filename that is not a valid key (backslash, NUL) is a 400 "Invalid filename" (was accepted on POSIX). Likewise a stale row whose stored key is invalid or symlink-escapes the root: **download is 400** "Invalid file path" (was a served path), and **delete still succeeds** (rows commit first; the unremovable file is logged and the remaining files are still removed). | Keys are `/`-separated by contract. `test_delete_survives_a_stale_row_with_an_unremovable_key`. |
+| Download content type | Guessed from the name via `mimetypes`, default `application/octet-stream` (`FileResponse` did the same guess but fell back to `text/plain` for unknown extensions). | Only affects unknown extensions. |
 | `GcodeFile.path` migration plan | Still **intentionally local** (G1). Plan when it is moved: (1) add `GcodeFile.key` (relative to `<data>/gcode`), populated by a `vNNN` migration that strips the prefix when it matches the current data dir (otherwise leaves it NULL); (2) one release writes both, reads `key` first and falls back to `path`; (3) the six `os.remove` sites go through one helper; (4) a later migration drops `path`. **Rollback:** `down()` rebuilds `path = <data>/gcode/<key>` and drops `key`; because `path` is still written during the dual release, rolling back a release needs no data change. Not started: no consumer needs it until BIZ-287 stages gcode through the store. | Unchanged runtime behavior. |
 
 ## 6. Gates before any remote backend is approved (not decided here)

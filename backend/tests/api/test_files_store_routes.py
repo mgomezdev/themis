@@ -49,9 +49,10 @@ async def test_upload_leaves_no_scratch_file_in_any_outcome(client, dirs):
     assert _tree(lib) == [f"{UP}/m (2).3mf", f"{UP}/m.3mf"]
 
 
-async def test_upload_accepts_a_name_near_the_filesystem_limit(client, dirs):
+async def test_upload_of_a_near_limit_name_round_trips_end_to_end(client, dirs):
     lib, _ = dirs
-    name = "a" * 245 + ".stl"   # 249 bytes
+    name = "a" * 245 + ".stl"   # 249 bytes. End-to-end characterization only: the route's scratch+move never needed the
+    # temp-name cap; that is pinned at store level (test_a_key_near_the_255_byte_limit_can_be_written).
     resp = await _upload(client, name=name, data=b"solid x")
     assert resp.status_code == 201 and (lib / UP / name).read_bytes() == b"solid x"
 
@@ -151,3 +152,33 @@ async def test_delete_removes_bytes_and_thumbnails(client, dirs):
     assert (cache / str(fid)).exists()
     assert (await client.delete(f"/api/v1/files/{fid}")).status_code == 200
     assert _tree(lib) == [] and not (cache / str(fid)).exists()
+
+
+async def test_thumbnail_name_containing_dots_inside_a_segment_is_served(client, dirs):
+    _, cache = dirs
+    fid = (await _upload(client)).json()["id"]
+    (cache / str(fid) / "thumbnails").mkdir(parents=True, exist_ok=True)
+    (cache / str(fid) / "thumbnails" / "a..b.png").write_bytes(b"png")
+    resp = await client.get(f"/api/v1/files/{fid}/thumbnails/a..b.png")
+    assert resp.status_code == 200 and resp.content == b"png"
+
+
+async def test_delete_survives_a_stale_row_with_an_unremovable_key(client, dirs, session_factory):
+    from app.models import SlicedVersion, UploadedFile
+    lib, _ = dirs
+    model = (await _upload(client, name="model.3mf")).json()["id"]
+    version = (await _upload(client, name="v.gcode", data=b"G28\n")).json()["id"]
+    outside = lib.parent / "outside"
+    outside.mkdir()
+    (lib / "link").symlink_to(outside)           # a symlink leaving the library root
+    async with session_factory() as s:
+        (await s.get(UploadedFile, model)).relative_path = "link/x.3mf"   # stale row: its key escapes the store
+        s.add(SlicedVersion(file_id=version, source_file_id=model, plate_number=1, machine_preset="m",
+                            process_preset="p", cache_key="k", artifact_kind="gcode", created_at="2026-01-01"))
+        await s.commit()
+    assert (await client.get(f"/api/v1/files/{model}/download")).status_code == 400
+    # the model (first in line) cannot be removed; the version's file behind it still must be
+    resp = await client.delete(f"/api/v1/files/{model}?versions=delete")
+    assert resp.status_code == 200, resp.text
+    assert not (lib / UP / "v.gcode").exists()
+    assert not any(r["id"] in (model, version) for r in (await client.get("/api/v1/files")).json())
