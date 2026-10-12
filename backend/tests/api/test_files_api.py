@@ -1,5 +1,6 @@
 import io
 import json
+from tests.conftest import slice_info_xml
 import zipfile
 import pytest
 from pathlib import Path
@@ -10,10 +11,7 @@ from app.services.three_mf_parser import PlateInfo
 def _make_three_mf_bytes() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        slice_info = json.dumps({"plate": [
-            {"index": 1, "prediction": 3600, "weight": [42.1]},
-            {"index": 2, "prediction": 1800, "weight": [21.5]},
-        ]})
+        slice_info = slice_info_xml([(1, 3600, 42.1), (2, 1800, 21.5)])
         zf.writestr("Metadata/slice_info.config", slice_info)
         zf.writestr("Metadata/plate_1.png", b"\x89PNG\r\n\x1a\n")
         zf.writestr("Metadata/plate_2.png", b"\x89PNG\r\n\x1a\n")

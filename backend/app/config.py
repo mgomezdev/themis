@@ -1,6 +1,5 @@
 from __future__ import annotations
 import os
-import sys
 from pathlib import Path
 
 
@@ -39,28 +38,6 @@ def get_filecache_dir() -> Path:
     path = _resolve_data_dir() / "filecache"
     path.mkdir(parents=True, exist_ok=True)
     return path
-
-
-# Remaining Orca symbol: consumed only by services/thumbnail_regen.py (local OrcaSlicer CLI); BIZ-284 deletes both.
-def _default_orca_executable() -> str:
-    # Explicit override always wins (used in Docker / CI).
-    if "ORCA_EXECUTABLE" in os.environ:
-        return os.environ["ORCA_EXECUTABLE"]
-    # Windows local dev: OrcaSlicer installs as orca-slicer.exe under Program Files.
-    if sys.platform == "win32":
-        for candidate in (
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "OrcaSlicer" / "orca-slicer.exe",
-            Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "OrcaSlicer" / "orca-slicer.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "OrcaSlicer" / "orca-slicer.exe",
-        ):
-            if candidate.is_file():
-                return str(candidate)
-    # Linux/Mac local dev or Docker default (on PATH).
-    return "orcaslicer"
-
-
-def get_orca_executable() -> str:
-    return _default_orca_executable()
 
 
 def get_ffmpeg_executable() -> str:

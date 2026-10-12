@@ -1,16 +1,16 @@
-import json
 import zipfile
 import pytest
 from pathlib import Path
 from app.services.three_mf_parser import parse_three_mf, PlateInfo
+from tests.conftest import slice_info_xml
 
 
 def _make_three_mf(tmp_path: Path, plates: list[dict], with_thumbnails: bool = True) -> Path:
     """Build a minimal 3MF ZIP with slice_info.config and optional thumbnails."""
     path = tmp_path / "test.3mf"
-    slice_info = {"plate": plates}
+    slice_info = slice_info_xml([(p["index"], p["prediction"], sum(p["weight"])) for p in plates])
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps(slice_info))
+        zf.writestr("Metadata/slice_info.config", slice_info)
         if with_thumbnails:
             for p in plates:
                 zf.writestr(f"Metadata/plate_{p['index']}.png", b"\x89PNG\r\n\x1a\n")
@@ -167,7 +167,7 @@ def test_no_3d_model_returns_empty(tmp_path):
 def test_malformed_slice_info_uses_defaults(tmp_path):
     path = tmp_path / "bad.3mf"
     with zipfile.ZipFile(path, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", "NOT VALID JSON {{{")
+        zf.writestr("Metadata/slice_info.config", "NOT VALID XML <<<")
         zf.writestr("Metadata/plate_1.png", b"\x89PNG\r\n\x1a\n")
     plates = parse_three_mf(str(path))
     assert len(plates) == 1
@@ -183,3 +183,63 @@ def test_corrupt_zip_returns_empty_instead_of_raising(tmp_path):
     path.write_bytes(b"this is not a zip file")
     plates = parse_three_mf(str(path))
     assert plates == []
+
+
+def test_json_slice_info_is_no_longer_read(tmp_path):
+    # BIZ-282: Orca/Bambu write XML; the old synthetic JSON form must not supply estimates any more.
+    import json
+    path = tmp_path / "json.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 600, "weight": [1.5]}]}))
+        zf.writestr("Metadata/plate_1.png", b"\x89PNG")
+    (p,) = parse_three_mf(str(path))
+    assert (p.plate_number, p.estimated_time, p.filament_g) == (1, 0, 0.0)
+
+
+def test_real_orca_slice_info_xml_supplies_estimates_and_plates_without_thumbnails(tmp_path):
+    path = tmp_path / "sliced.3mf"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("Metadata/slice_info.config", slice_info_xml([(1, 2154, 12.3), (2, 60, 0.5)]))
+    out = parse_three_mf(str(path))
+    assert [(p.plate_number, p.estimated_time, p.filament_g) for p in out] == [(1, 2154, 12.3), (2, 60, 0.5)]
+
+
+# ---- shared zip helpers (BIZ-283): plate_numbers / plate_thumbnail_bytes -----------------------------------
+
+def _zf(tmp_path, files: dict) -> zipfile.ZipFile:
+    path = tmp_path / "h.3mf"
+    with zipfile.ZipFile(path, "w") as z:
+        for n, d in files.items():
+            z.writestr(n, d)
+    return zipfile.ZipFile(path)
+
+
+def test_plate_thumbnail_bytes_fallback_order_plate_then_thumbnail_then_preview(tmp_path):
+    from app.services.three_mf_parser import plate_thumbnail_bytes
+    allf = {"Metadata/plate_1.png": b"own", "Metadata/thumbnail.png": b"thumb", "Metadata/preview.png": b"prev"}
+    with _zf(tmp_path, allf) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"own"
+        assert plate_thumbnail_bytes(z, 2) == b"thumb"     # other plate: falls to the file-wide one
+    with _zf(tmp_path, {"Metadata/preview.png": b"prev", "Metadata/thumbnail.png": b"thumb"}) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"thumb"
+    with _zf(tmp_path, {"Metadata/preview.png": b"prev"}) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"prev"
+    with _zf(tmp_path, {"Metadata/plate_1_small.png": b"x"}) as z:
+        assert plate_thumbnail_bytes(z, 1) is None
+
+
+def test_plate_numbers_unions_png_slice_info_and_model_settings(tmp_path):
+    from app.services.three_mf_parser import plate_numbers
+    ms = '<config><plate><metadata key="plater_id" value="3"/></plate></config>'
+    with _zf(tmp_path, {"Metadata/plate_1.png": b"x", "Metadata/plate_1_small.png": b"x",
+                        "Metadata/slice_info.config": slice_info_xml([(2, 1, 1.0)]),
+                        "Metadata/model_settings.config": ms}) as z:
+        assert plate_numbers(z) == [1, 2, 3]
+    with _zf(tmp_path, {}) as z:
+        assert plate_numbers(z) == []
+
+
+def test_plate_numbers_single_plate_for_a_declared_start_part(tmp_path):
+    from app.services.three_mf_parser import plate_numbers
+    with _zf(tmp_path, {"_rels/.rels": _RELS_TEMPLATE.format(target="/3D/3dmodel.model"), "3D/3dmodel.model": "<model/>"}) as z:
+        assert plate_numbers(z) == [1]

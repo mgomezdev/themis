@@ -88,10 +88,10 @@ async def test_connection_test_uses_the_env_default_when_no_draft_url(client, mo
     assert (await client.post("/api/v1/plugins/laminus/test", json={})).json()["state"] == "healthy"
 
 
-def test_config_py_no_longer_names_laminus_or_the_unused_orca_paths():
-    """Only the thumbnail_regen executable remains (until BIZ-284); the sidecar URL and Orca config dir are gone."""
-    assert not hasattr(config, "get_laminus_sidecar_url") and not hasattr(config, "get_orca_config_dir")
-    assert hasattr(config, "get_orca_executable")
+def test_config_py_no_longer_names_laminus_or_any_orca_path():
+    """The sidecar URL, Orca config dir and Orca executable (BIZ-284) are all gone from core config."""
+    for name in ("get_laminus_sidecar_url", "get_orca_config_dir", "get_orca_executable"):
+        assert not hasattr(config, name)
 
 
 async def test_a_whitespace_only_saved_url_counts_as_unset(client, monkeypatch):

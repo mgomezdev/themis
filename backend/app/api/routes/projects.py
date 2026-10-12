@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -25,12 +25,12 @@ from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
+from ...services.three_mf_parser import plate_numbers
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
 )
 from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 from ...services.queue_engine import queue_engine
-from ...services.thumbnail_regen import regen_file_thumbnails
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/projects", tags=["projects"])
@@ -1144,12 +1144,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
     try:
         import zipfile
         with zipfile.ZipFile(path) as zf:
-            names = zf.namelist()
-        return sorted(set(
-            int(n.split("plate_")[1].split(".")[0])
-            for n in names
-            if "Metadata/plate_" in n and ".png" in n
-        ))
+            return plate_numbers(zf)
     except Exception:
         return []
 
@@ -1208,7 +1203,6 @@ def _filament_label(fil_type: str, fil_color: str, mat: tuple[str, str] | None) 
 async def generate_project(
     project_id: int,
     body: GenerateRequest,
-    background_tasks: BackgroundTasks,
     response: Response,
     session: AsyncSession = Depends(get_session),
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key", description="Repeat-safe generation: a retry returns the first result"),
@@ -1227,7 +1221,7 @@ async def generate_project(
             return replay.response
     jobs_before = await _job_count(factory, project_id) if idempotency_key else 0
     try:
-        result = await _generate_project(project_id, body, background_tasks, session)
+        result = await _generate_project(project_id, body, session)
     except BaseException:
         if idempotency_key:
             created = await _job_count(factory, project_id) - jobs_before
@@ -1242,7 +1236,7 @@ async def generate_project(
     return result
 
 
-async def _generate_project(project_id: int, body: GenerateRequest, background_tasks: BackgroundTasks, session: AsyncSession) -> dict:
+async def _generate_project(project_id: int, body: GenerateRequest, session: AsyncSession) -> dict:
     proj = await _get_project_or_404(project_id, session)
     if proj.stage == "draft":
         raise HTTPException(409, "Promote the project to planning before creating jobs")
@@ -1457,8 +1451,6 @@ async def _generate_project(project_id: int, body: GenerateRequest, background_t
             new_file.relative_path = final_path.relative_to(library_dir).as_posix()
             new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
             await session.commit()
-
-            background_tasks.add_task(regen_file_thumbnails, new_file.id)
 
         cached_plates = (await session.execute(
             select(func.count(func.distinct(SlicedVersion.plate_number)))

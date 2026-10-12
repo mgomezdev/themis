@@ -4,7 +4,7 @@ the session's customer_id (require_customer) — never by a client-supplied id."
 from __future__ import annotations
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -157,14 +157,14 @@ async def update_draft(project_id: int, body: DraftPatch, customer_id: int = Dep
 
 
 @router.post("/projects/{project_id}/files", status_code=201, summary="Upload file to draft project")
-async def upload_to_draft(project_id: int, file: UploadFile, background_tasks: BackgroundTasks,
+async def upload_to_draft(project_id: int, file: UploadFile,
                           customer_id: int = Depends(require_customer),
                           session: AsyncSession = Depends(get_session)) -> dict:
     p = await _own_project(project_id, customer_id, session)
     _require_draft(p)
     if is_presliced_name(file.filename):   # project items get packed and sliced: send the model, not gcode
         raise HTTPException(422, "Upload the model (.3mf or .stl), not sliced gcode")
-    uploaded = await upload_file(file, background_tasks, f"/Customer Uploads/{customer_id}", session)
+    uploaded = await upload_file(file, f"/Customer Uploads/{customer_id}", session)
     session.add(ProjectItem(project_id=p.id, file_id=uploaded["id"], quantity=1))
     p.updated_at = _now()
     await session.commit()

@@ -43,7 +43,7 @@ concurrency = ["greenlet", "thread"]
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 90
+fail_under = 91
 
 [build-system]
 requires = ["setuptools>=68"]

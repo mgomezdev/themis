@@ -18,7 +18,6 @@ from sqlalchemy import event
 from app.database import Base, get_session, _set_sqlite_pragmas
 from app.auth import SCOPES
 from app.models import ApiKey
-from app.services import thumbnail_regen
 from app.services.printer_manager import printer_manager
 from app.services.api_key_service import generate_key, hash_key
 
@@ -98,9 +97,6 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
 
     app.dependency_overrides[get_session] = override_get_session
 
-    original_thumbnail_factory = thumbnail_regen._session_factory
-    thumbnail_regen.set_session_factory(factory)
-
     try:
         # Seed a full-scope API key so every call site has a credential
         # and every existing call site keeps working unmodified (auth is enforced
@@ -120,7 +116,6 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
             yield c
     finally:
         app.dependency_overrides.clear()
-        thumbnail_regen.set_session_factory(original_thumbnail_factory)
 
 
 @pytest.fixture(autouse=True)
@@ -175,6 +170,23 @@ async def _isolate_printer_manager():
 # Shared factories for API tests (previously copy-pasted per test file)
 # ---------------------------------------------------------------------------
 
+def slice_info_xml(plates=((1, 60, 5.0),)) -> str:
+    """`Metadata/slice_info.config` in the real OrcaSlicer/Bambu layout (XML), for (index, seconds, grams) plates.
+    Mirrors a sliced project written by Orca: header, then per-plate metadata + objects + one <filament> per slot."""
+    body = "".join(
+        f'  <plate>\n    <metadata key="index" value="{n}"/>\n    <metadata key="printer_model_id" value="C12"/>\n'
+        f'    <metadata key="nozzle_diameters" value="0.4"/>\n    <metadata key="timelapse_type" value="0"/>\n'
+        f'    <metadata key="prediction" value="{secs}"/>\n    <metadata key="weight" value="{grams}"/>\n'
+        f'    <metadata key="outside" value="false"/>\n    <metadata key="support_used" value="false"/>\n'
+        f'    <metadata key="label_object_enabled" value="true"/>\n'
+        f'    <object identify_id="1" name="Cube" skipped="false"/>\n'
+        f'    <filament id="1" tray_info_idx="GFL99" type="PLA" color="#FFFFFF" used_m="1.0" used_g="{grams}"/>\n'
+        f'  </plate>\n' for n, secs, grams in plates)
+    return ('<?xml version="1.0" encoding="UTF-8"?>\n<config>\n  <header>\n'
+            '    <header_item key="X-BBL-Client-Type" value="slicer"/>\n'
+            '    <header_item key="X-BBL-Client-Version" value=""/>\n  </header>\n' + body + '</config>\n')
+
+
 def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = False) -> bytes:
     """A Bambu-style sliced archive (.gcode.3mf, BIZ-190): `Metadata/plate_N.gcode` per (plate, grams, minutes), a
     thumbnail for plate 1 and — with `slice_info` — a `Metadata/slice_info.config` carrying the same estimates. Deflated
@@ -188,10 +200,7 @@ def make_sliced_archive(plates=((1, 4.0, 10), (2, 7.5, 20)), slice_info: bool = 
                 f"; filament used [g] = {grams}\n; estimated printing time (normal mode) = {mins}m 0s\nG28\n")
         put("Metadata/plate_1.png", b"\x89PNG-archive")
         if slice_info:
-            body = "".join(
-                f'<plate><metadata key="index" value="{n}"/><metadata key="prediction" value="{m * 60}"/>'
-                f'<metadata key="weight" value="{g}"/></plate>' for n, g, m in plates)
-            put("Metadata/slice_info.config", f'<?xml version="1.0" encoding="UTF-8"?><config>{body}</config>')
+            put("Metadata/slice_info.config", slice_info_xml([(n, m * 60, g) for n, g, m in plates]))
     return buf.getvalue()
 
 
@@ -203,7 +212,7 @@ def make_3mf_bytes() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for name, data in (
-            ("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]})),
+            ("Metadata/slice_info.config", slice_info_xml([(1, 60, 5.0)])),
             ("Metadata/plate_1.png", b"\x89PNG"),
         ):
             zf.writestr(zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0)), data)

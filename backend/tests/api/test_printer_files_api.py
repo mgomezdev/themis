@@ -275,11 +275,11 @@ async def test_to_library_passes_the_cap_to_the_download_and_maps_an_abort_to_41
     assert not (library / "From Printers").exists()
 
 
-async def test_to_library_runs_the_thumbnail_background_task(client, pid, library):
+async def test_to_library_spawns_no_subprocess(client, pid, library):
     printer_manager._clients[pid] = _client(**FULL)
-    with patch("app.api.routes.files.regen_file_thumbnails") as regen:
+    with patch("subprocess.run", side_effect=AssertionError("subprocess")), \
+         patch("subprocess.Popen", side_effect=AssertionError("subprocess")):
         assert (await _to_library(client, pid)).status_code == 200
-    regen.assert_called_once()                                                  # actually executed, not just queued
 
 
 async def test_concurrent_direct_starts_on_one_printer_start_exactly_one_print(client, pid):
