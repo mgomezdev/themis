@@ -65,6 +65,7 @@ not a Themis reader feature.
 ## Follow-ups (concrete only)
 
 - **F1 (BIZ-280)** Move `source_has_project_settings` into the core reader; `jobs.py` imports it from there. Makes `mesh_3mf_builder` fully dead.
+- **Note:** `printers.py:540` calls `get_format_provider().compatible_presets`; that needs a catalog (network), so F2 must keep it on `SlicingProvider`, not the offline `FormatProvider`.
 - **F2 (BIZ-281, blocked by BIZ-248)** Introduce `FormatProvider` + the DTOs above; `curated_settings()` replaces `curated_override_keys` and `_SETTING_LABELS`; routes serialize DTOs to the unchanged JSON. Update `contracts/response-keys.json` only if keys change (they must not).
 - **F3 (BIZ-282)** `parse_three_mf`: replace the JSON `slice_info.config` branch with the XML reader (`_sliced_plate_meta`); update characterization test `test_json_slice_info_supplies_estimates_for_a_model_3mf`.
 - **F4 (BIZ-283)** Route `slicer_service._inject_thumbnail`, `projects._parse_plate_nums`, `thumbnail_regen` through shared core-reader helpers.
