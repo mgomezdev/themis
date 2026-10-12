@@ -43,7 +43,7 @@ pytest -v
 pytest tests/api/test_printers_api.py::test_create_printer -v
 ```
 
-> **Windows venv:** build it from the **python.org** interpreter (`py -0` lists them), not the Microsoft Store Python. The Store build's AppContainer sandbox hides `C:\Program Files` (OrcaSlicer not found) and `--reload` spawns its worker through it, so code changes don't take effect and slicing fails with `[WinError 2]`.
+> **Windows venv:** build it from the **python.org** interpreter (`py -0` lists them), not the Microsoft Store Python. The Store build's AppContainer sandbox redirects the bytecode cache and `--reload` spawns its worker through it, so code changes don't take effect and subprocess calls fail with `[WinError 2]`.
 
 ### Frontend
 ```bash
