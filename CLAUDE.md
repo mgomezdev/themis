@@ -68,6 +68,8 @@ Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker contain
 
 **Vendor/provider boundaries:** printers are one **plugin per vendor** (`backend/app/plugins/{bambu,elegoo_centauri,snapmaker,mock}/`) behind `AbstractPrinterClient`, resolved by `printer_client_factory` from the printer's `plugin_id`; a disabled/removed plugin makes its printers dormant. Filament inventory is a core capability (`inventory.filament`) reached only through the plugin host (`app/plugins/host.py`); Spoolman and Local inventory are the bundled providers. Slicing (Laminus) sits behind `SlicingProvider` in `backend/app/services/providers/`. Core names no vendor and never imports a vendor client or branches on a plugin id — `tests/test_vendor_extraction_boundary.py`, `tests/test_provider_boundary.py` and `tests/test_no_provider_in_core.py` enforce it. Adding a vendor or inventory provider = one plugin package; a slicing provider = one adapter + one registry entry. Nothing else changes. See `docs/printer-interface.md`, `docs/provider-interfaces.md`, `docs/plugins.md`.
 
+**Plugin configuration:** anything specific to a vendor or provider (URLs, paths, executables, credentials, tuning) belongs in that plugin — its settings (stored in the DB, edited on its Settings page) and, for shipped defaults, a plugin-owned config file inside the plugin package (e.g. next to `themis-plugin.toml`). Not in core `config.py`, not in `docker-compose*.yml`, not in `Dockerfile`. A plugin must not read `os.environ` itself and must not introduce plugin-specific env vars. Anything environment-derived that a plugin needs (e.g. `THEMIS_DATA_DIR`) is a core-defined value the plugin gets from Themis (a core accessor/context passed by the plugin host), so there is one place that resolves user overrides — defaults come from the plugin's config file, saved settings override them. Compose/Docker wiring is only for infrastructure that Themis itself needs (volumes, ports, sidecar services).
+
 **Queue engine:** single asyncio background task (`queue_loop`) woken by an `asyncio.Event`. A printer is eligible for a new job only when `is_idle == True` AND `awaiting_plate_clear == False`. Slicing runs in a `ThreadPoolExecutor` so it never blocks the event loop.
 
 **Ready-for-work gate:** `awaiting_plate_clear` is set `True` the moment a job *starts printing* (not just on completion), so a printer never auto-claims the next job onto an uncleared plate even if a completion event is missed. The user clears it via `POST /printers/{id}/plate-cleared` (the Fleet "Ready for new work" button — also the REST hook for a QR code / home-automation trigger).
@@ -76,14 +78,13 @@ Python (FastAPI) backend + React/Vite/TypeScript frontend, single Docker contain
 
 **Cancel ↔ stop:** cancelling a running job stops its printer; stopping a printer reconciles (cancels) the job it was running — the two are linked so neither side gets stuck.
 
-**OrcaSlicer profiles:** in Docker, `/root/.config/OrcaSlicer` is bind-mounted read-only from the host. For local dev `app.config` resolves the config dir and executable per-platform, so no env vars are needed; `ORCA_CONFIG_DIR` / `ORCA_EXECUTABLE` override. Presets resolve through the Laminus sidecar's catalog (`catalog_service`); compatibility is the preset's `compatible_printers` against the printer's `current_orca_printer_profile` (`SlicingProvider.compatible_presets`).
+**Laminus / OrcaSlicer:** Themis core holds no Orca or Laminus configuration. The Laminus sidecar owns the OrcaSlicer install and profile directories (the `orca` compose service mounts them); Themis only needs the sidecar URL, which is a setting of the bundled `laminus` plugin (`app/plugins/laminus/`, Settings → Laminus, with a connection test). Presets resolve through the sidecar's catalog (`catalog_service`); compatibility is the preset's `compatible_printers` against the printer's `current_orca_printer_profile` (`SlicingProvider.compatible_presets`).
 
 ### Database
 SQLite (WAL mode) via async SQLAlchemy 2.0 + aiosqlite; schema in `docs/agent/data-model.md`. A job links to at most one order via `jobs.order_id`. Flyway-style migrations live in `backend/app/migrations/`; `runner.py` applies them in order on startup. To add one: create `vNNN_<name>.py` with `version`, `name`, `up(conn)` (and optionally `down(conn)`), then import and register it in `runner.py`.
 
 ### Volumes (Docker)
 - `/data` — SQLite file + uploaded 3MF files + sliced gcode cache
-- `/root/.config/OrcaSlicer` — bind-mounted read-only from `%APPDATA%\OrcaSlicer` on Windows host (set `APPDATA` in `.env`)
 - Static frontend files served from `THEMIS_STATIC_DIR` (default `/frontend/dist` in container)
 
 ## Testing
