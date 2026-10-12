@@ -618,3 +618,20 @@ async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client,
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 200
     assert len(resp.json()["jobs"]) == 2
+
+
+def test_parse_plate_nums_uses_the_core_reader(tmp_path):
+    """BIZ-283: the pack route shares plate discovery with the library scanner (PNG names, model_settings, StartPart)."""
+    from app.api.routes.projects import _parse_plate_nums
+    two = tmp_path / "two.3mf"
+    two.write_bytes(_make_3mf_bytes(plate_count=2))
+    assert _parse_plate_nums(two) == [1, 2]
+    stripped = tmp_path / "s.3mf"
+    with zipfile.ZipFile(stripped, "w") as z:
+        z.writestr("Metadata/plate_1.png", b"x")
+        z.writestr("Metadata/model_settings.config",
+                   '<config><plate><metadata key="plater_id" value="1"/></plate><plate><metadata key="plater_id" value="2"/></plate></config>')
+    assert _parse_plate_nums(stripped) == [1, 2]
+    bad = tmp_path / "bad.3mf"
+    bad.write_bytes(b"nope")
+    assert _parse_plate_nums(bad) == []

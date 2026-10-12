@@ -25,6 +25,7 @@ from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
+from ...services.three_mf_parser import plate_numbers
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
 )
@@ -1143,12 +1144,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
     try:
         import zipfile
         with zipfile.ZipFile(path) as zf:
-            names = zf.namelist()
-        return sorted(set(
-            int(n.split("plate_")[1].split(".")[0])
-            for n in names
-            if "Metadata/plate_" in n and ".png" in n
-        ))
+            return plate_numbers(zf)
     except Exception:
         return []
 

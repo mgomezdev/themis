@@ -73,3 +73,4 @@ not a Themis reader feature.
 
 **Status:** F1 done (BIZ-280: `source_has_project_settings` now in `three_mf_parser.py`). BIZ-261 deleted `mesh_3mf_builder.py`, `project_config_builder.py`, `orca_reference/`, `PresetResolver`, `ProfileIndex` and their tests (incl. the builder characterization tests).
 F3 done (BIZ-282): `parse_three_mf` reads `slice_info.config` as XML via `_sliced_plate_meta`; the JSON branch is gone (JSON `slice_info.config` now yields no estimates). Test fixtures use real-format XML (`tests/conftest.py:slice_info_xml`).
+F4 done (BIZ-283): `three_mf_parser.plate_numbers(zf)` / `plate_thumbnail_member` / `plate_thumbnail_bytes(zf, n)` are the shared helpers; `slicer_service._inject_thumbnail`, `projects._parse_plate_nums`, `parse_three_mf` use them (`thumbnail_regen` was deleted in BIZ-284; `LibraryScanner` and `scripts/reextract_thumbnails.py` already went through `parse_three_mf`).

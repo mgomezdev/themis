@@ -202,3 +202,44 @@ def test_real_orca_slice_info_xml_supplies_estimates_and_plates_without_thumbnai
         zf.writestr("Metadata/slice_info.config", slice_info_xml([(1, 2154, 12.3), (2, 60, 0.5)]))
     out = parse_three_mf(str(path))
     assert [(p.plate_number, p.estimated_time, p.filament_g) for p in out] == [(1, 2154, 12.3), (2, 60, 0.5)]
+
+
+# ---- shared zip helpers (BIZ-283): plate_numbers / plate_thumbnail_bytes -----------------------------------
+
+def _zf(tmp_path, files: dict) -> zipfile.ZipFile:
+    path = tmp_path / "h.3mf"
+    with zipfile.ZipFile(path, "w") as z:
+        for n, d in files.items():
+            z.writestr(n, d)
+    return zipfile.ZipFile(path)
+
+
+def test_plate_thumbnail_bytes_fallback_order_plate_then_thumbnail_then_preview(tmp_path):
+    from app.services.three_mf_parser import plate_thumbnail_bytes
+    allf = {"Metadata/plate_1.png": b"own", "Metadata/thumbnail.png": b"thumb", "Metadata/preview.png": b"prev"}
+    with _zf(tmp_path, allf) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"own"
+        assert plate_thumbnail_bytes(z, 2) == b"thumb"     # other plate: falls to the file-wide one
+    with _zf(tmp_path, {"Metadata/preview.png": b"prev", "Metadata/thumbnail.png": b"thumb"}) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"thumb"
+    with _zf(tmp_path, {"Metadata/preview.png": b"prev"}) as z:
+        assert plate_thumbnail_bytes(z, 1) == b"prev"
+    with _zf(tmp_path, {"Metadata/plate_1_small.png": b"x"}) as z:
+        assert plate_thumbnail_bytes(z, 1) is None
+
+
+def test_plate_numbers_unions_png_slice_info_and_model_settings(tmp_path):
+    from app.services.three_mf_parser import plate_numbers
+    ms = '<config><plate><metadata key="plater_id" value="3"/></plate></config>'
+    with _zf(tmp_path, {"Metadata/plate_1.png": b"x", "Metadata/plate_1_small.png": b"x",
+                        "Metadata/slice_info.config": slice_info_xml([(2, 1, 1.0)]),
+                        "Metadata/model_settings.config": ms}) as z:
+        assert plate_numbers(z) == [1, 2, 3]
+    with _zf(tmp_path, {}) as z:
+        assert plate_numbers(z) == []
+
+
+def test_plate_numbers_single_plate_for_a_declared_start_part(tmp_path):
+    from app.services.three_mf_parser import plate_numbers
+    with _zf(tmp_path, {"_rels/.rels": _RELS_TEMPLATE.format(target="/3D/3dmodel.model"), "3D/3dmodel.model": "<model/>"}) as z:
+        assert plate_numbers(z) == [1]
