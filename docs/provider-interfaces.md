@@ -19,7 +19,7 @@ providers/slicing.py                     app/services/inventory/*  →  plugins/
 providers/laminus/                              │ registry (plugins/__init__.py)
   adapter.py  LaminusSlicingProvider            ▼
   sidecar_client.py  (httpx)             plugins/spoolman/   provider.py  client.py (httpx)  labels.py  settings.py
-  gcode.py overrides.py profile_index.py preset_resolver.py
+  gcode.py overrides.py
 ```
 
 **Scope.** Laminus keeps its `/api/v1/laminus/*` paths and response shapes. Legacy `/api/v1/spoolman/*` and
