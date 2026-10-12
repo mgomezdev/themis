@@ -55,7 +55,9 @@ class ArtifactInfo:
     key: str
     size: int
     mtime: float
-    sha256: str | None = None   # set by writes (computed while streaming); `stat`/`list` leave it None (hashing = a full read)
+    sha256: str | None = None   # set by writes (computed while streaming). `stat`/`list` leave it None locally (hashing = a full read);
+    #                             a backend whose listing already carries a content hash/checksum (S3, a NAS) may fill it, and
+    #                             change detection then trusts it instead of size+mtime (`library_scanner.content_changed`, BIZ-286)
 
 
 def validate_key(key: str) -> str:
@@ -314,6 +316,10 @@ class LocalDiskArtifactStore(ArtifactStore):
             for p in base.rglob("*"):
                 if p.is_file() and not p.name.endswith(PART_SUFFIX):
                     key = p.relative_to(self.root).as_posix()
+                    try:
+                        self._path(key)   # a name that is not a valid key (backslash) or a symlink out of the root is not listed
+                    except InvalidArtifactKey:
+                        continue
                     try:
                         found.append(self._info(key, p))
                     except FileNotFoundError:

@@ -26,6 +26,7 @@ from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterC
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
+from ...services.library_store import get_library_store
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
 )
@@ -1149,7 +1150,7 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
-async def _reusable_pack(session: AsyncSession, library_dir: Path, recipe_hash: str) -> UploadedFile | None:
+async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFile | None:
     """The newest earlier pack made from the same recipe whose file is still on disk, or None."""
     rows = (await session.execute(
         select(UploadedFile).where(UploadedFile.pack_recipe_hash == recipe_hash, UploadedFile.missing.is_(False))
@@ -1159,7 +1160,7 @@ async def _reusable_pack(session: AsyncSession, library_dir: Path, recipe_hash: 
         if not f.content_hash:
             continue
         fresh = await asyncio.to_thread(
-            fresh_content_hash, library_abs_path(library_dir, f.relative_path), f.content_hash, f.size_bytes, f.mtime)
+            fresh_content_hash, get_library_store(), f.relative_path, f.content_hash, f.size_bytes, f.mtime)
         if fresh is not None and fresh[0] == f.content_hash:   # present and not edited since it was packed
             return f
     return None
@@ -1304,7 +1305,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
             paths.extend([stl_path] * item.quantity)
             # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
-            await refresh_content_hash(f, library_dir)
+            await refresh_content_hash(f, get_library_store())
             group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
         group_paths[key] = paths
     pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
@@ -1347,7 +1348,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
         recipe_hash = slice_cache.sha256_of({"items": group_recipe[(fil_type, fil_color, mat)], "pack": pack_mode})
-        reused = await _reusable_pack(session, library_dir, recipe_hash) if body.allow_cached else None
+        reused = await _reusable_pack(session, recipe_hash) if body.allow_cached else None
         now = _now_iso()
 
         if reused is not None:

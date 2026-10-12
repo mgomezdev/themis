@@ -180,7 +180,7 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         await session.flush()
         scanner = LibraryScanner(session, library, config.get_filecache_dir())
         thumb_dir = Path(config.get_filecache_dir()) / str(record.id)
-        record.plates = await asyncio.to_thread(scanner._parse_plates, dest, record.id)
+        record.plates = await asyncio.to_thread(scanner.parse_plates, rel, record.id)
         version = SlicedVersion(
             file_id=record.id, source_file_id=source.id, source_content_hash=inputs.source_content_hash,
             plate_number=inputs.plate_number, machine_preset=inputs.machine_preset,

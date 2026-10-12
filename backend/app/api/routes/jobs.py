@@ -22,6 +22,7 @@ from ...services import completion_events, slice_cache, slice_saver
 from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
+from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
@@ -32,7 +33,7 @@ from ...plugins.capabilities.filament_inventory import InvSpool
 from ._materials import material_columns, stored
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
-from ...services.providers.contract import OverrideInspection
+from ...services.providers.contract import OverrideInspection, PlateEstimate
 from ...services.providers.slicing import get_format_provider
 
 logger = logging.getLogger(__name__)
@@ -144,8 +145,9 @@ class ModelTargetInput(BaseModel):
 
 def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
     """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
-    path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
-    est = get_format_provider().parse_estimates(str(path), job.plate_number)
+    est = with_local_path(get_library_store(), uploaded_file.relative_path,
+                          lambda path: get_format_provider().parse_estimates(path, job.plate_number),
+                          PlateEstimate(grams=None, seconds=None))
     grams, secs, per_extruder = est.grams, est.seconds, est.per_extruder_grams
     if grams is None and secs is None:
         job.estimate_status = None
@@ -535,9 +537,9 @@ async def check_overrides(
         raise HTTPException(404, f"Printer {body.printer_id} not found")
 
     empty = {"has_findings": False, "setting_changes": [], "slot_warning": None}
-    source_path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
     # Bare/geometry-only uploads carry no settings to lose.
-    if not source_has_project_settings(str(source_path)):
+    if not await asyncio.to_thread(with_local_path, get_library_store(), uploaded_file.relative_path,
+                                   source_has_project_settings, False):
         return {**empty, "has_embedded_settings": False}
     if not printer.current_orca_printer_profile:
         return {**empty, "has_embedded_settings": True}
@@ -581,7 +583,11 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1
-    inspection = get_format_provider().inspect_overrides(str(source_path), config, slots)
+    inspection = await asyncio.to_thread(
+        with_local_path, get_library_store(), uploaded_file.relative_path,
+        lambda path: get_format_provider().inspect_overrides(path, config, slots), None)
+    if inspection is None:   # removed since the check above
+        return {**empty, "has_embedded_settings": False}
     return _inspection_json(inspection)
 
 

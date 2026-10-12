@@ -254,7 +254,7 @@ async def test_a_save_that_fails_midway_leaves_no_half_registered_file(session_f
     qe, _ = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory)
 
-    with patch("app.services.slice_saver.LibraryScanner._parse_plates", side_effect=RuntimeError("bad zip")):
+    with patch("app.services.slice_saver.LibraryScanner.parse_plates", side_effect=RuntimeError("bad zip")):
         await _run_to_printing(qe, session_factory, job_id)
 
     async with session_factory() as s:

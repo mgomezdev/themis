@@ -25,6 +25,7 @@ from ..models import (
     SlicedVersion,
     UploadedFile,
 )
+from .library_store import get_library_store
 from .library_scanner import (
     fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
 )
@@ -849,7 +850,7 @@ class QueueEngine:
         try:
             if source_file is None or not printer.current_orca_printer_profile:
                 return None
-            if await refresh_content_hash(source_file, get_library_dir()):   # the key hashes the model's bytes
+            if await refresh_content_hash(source_file, get_library_store()):   # the key hashes the model's bytes
                 await session.commit()
             try:
                 req, fmap = self._slice_request(job.id, printer.id, job.plate_number,
@@ -893,12 +894,11 @@ class QueueEngine:
             if only_version_id is not None:
                 stmt = stmt.where(SlicedVersion.id == only_version_id)
             rows = (await session.execute(stmt)).all()
-        library = get_library_dir()
         for v, f in rows:
             if f.missing:
                 continue
             fresh = await asyncio.to_thread(
-                fresh_content_hash, library_abs_path(library, f.relative_path), f.content_hash, f.size_bytes, f.mtime)
+                fresh_content_hash, get_library_store(), f.relative_path, f.content_hash, f.size_bytes, f.mtime)
             if fresh is not None and fresh[0] == f.content_hash:
                 return (v, f), True
         return None, bool(rows)
@@ -958,7 +958,7 @@ class QueueEngine:
             allow_cached = bool(job.allow_cached_slice) if job else False
             if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
                 # The slicing cache keys on the model's bytes: never trust an index entry the file has outgrown.
-                if await refresh_content_hash(uploaded_file, get_library_dir()):
+                if await refresh_content_hash(uploaded_file, get_library_store()):
                     await session.commit()
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
             source_file_id = uploaded_file.id if uploaded_file else None

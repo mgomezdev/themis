@@ -119,8 +119,8 @@ def test_library_scan_reads_embedded_thumbnails_without_launching_orca_or_laminu
     _zip(bare, {"Metadata/model_settings.config": TWO_PLATES})
     scanner = LibraryScanner(session=None, library_dir=lib, filecache_dir=cache)
     with patch.object(subprocess, "run", side_effect=AssertionError("orca launched")):
-        with_thumbs = scanner._parse_plates(ref, 1)
-        without = scanner._parse_plates(bare, 2)
+        with_thumbs = scanner.parse_plates("e.3mf", 1)
+        without = scanner.parse_plates("bare.3mf", 2)
     assert [Path(p["thumbnail_path"]).name for p in with_thumbs] == ["plate_1.png", "plate_2.png"]
     assert [p["thumbnail_path"] for p in without] == [None, None]    # no thumbnail is rendered for them
 
