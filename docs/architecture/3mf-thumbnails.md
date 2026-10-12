@@ -84,7 +84,7 @@ Thumbnail reference = a file in Themis' filecache, never a Laminus URL. Slicer-s
 `FormatProvider`/Laminus per BIZ-259. If Laminus later supplies thumbnails it returns them inside the produced artifact (`gcode_3mf`/`project_3mf`),
 and Themis reads them with this same reader.
 
-## Follow-up (one issue, parent BIZ-265)
+## Follow-up (BIZ-284, one issue, parent BIZ-265)
 
 "Remove Orca-CLI thumbnail regen; fix partial-PNG plate discovery". Scope: delete `thumbnail_regen.py` + its two `add_task` calls + conftest hook + docs/agent
 mentions (`get_orca_executable` stays until BIZ-260/261 settle config); union plate discovery in `parse_three_mf`; add fixtures: real 2-plate pre-sliced
