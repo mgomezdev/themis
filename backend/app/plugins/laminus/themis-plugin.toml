@@ -1,0 +1,7 @@
+id = "laminus"
+name = "Laminus"
+version = "1.0.0"
+provides = []
+host_api = 1
+entry = "app.plugins.laminus:MANIFEST"
+publisher = "Themis"

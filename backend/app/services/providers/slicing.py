@@ -11,8 +11,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
-from ... import config
-
 
 class SlicingProviderError(Exception):
     """Neutral failure from a slicing provider (unreachable, bad response, failed/timed-out slice)."""
@@ -159,11 +157,23 @@ def slicing_provider_name() -> str:
     return ACTIVE_PROVIDER
 
 
+def configured_server_url() -> str | None:
+    """The slicing service URL: the active provider's plugin settings (plugin enabled), else its env default (BIZ-260
+    compatible defaulting). None when unconfigured or the plugin is disabled. Read at call time."""
+    from . import laminus  # noqa: F401  (registers the adapter)
+    from .laminus.connection import effective_url
+    from ...plugins.host import plugin_host
+
+    if not plugin_host.is_enabled(ACTIVE_PROVIDER):
+        return None
+    return effective_url(plugin_host.settings(ACTIVE_PROVIDER).get("url"))
+
+
 def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    url = config.get_laminus_sidecar_url()
+    url = configured_server_url()
     if not url:
         return None
     return _REGISTRY[ACTIVE_PROVIDER](url)
@@ -174,7 +184,7 @@ def get_format_provider() -> SlicingProvider:
     `get_slicing_provider()` it never returns None: format methods don't need a configured server."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    return _REGISTRY[ACTIVE_PROVIDER](config.get_laminus_sidecar_url() or "")
+    return _REGISTRY[ACTIVE_PROVIDER](configured_server_url() or "")
 
 
 # name -> adapter class. Adding a provider = one adapter class + one entry here.

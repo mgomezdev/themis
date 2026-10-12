@@ -31,7 +31,7 @@ providers/laminus/                              │ registry (plugins/__init__.p
 `backend/tests/test_provider_boundary.py` walks every module under `app/` and fails if code outside the relevant adapter
 boundaries imports an adapter-internal module (the sidecar client, the Spoolman
 client, the Orca override/gcode/preset logic, or their old `app/services/*` paths), names a vendor symbol
-(`LaminusSidecarClient`, `SidecarError`, `parse_gcode_estimates`, `get_laminus_sidecar_url`), or imports
+(`LaminusSidecarClient`, `SidecarError`, `parse_gcode_estimates`), or imports
 `httpx` without being on the `HTTPX_ALLOWED` list (printers, webhooks, notifications, camera, discovery).
 Slicing adapters are registered through `services/providers/slicing.py`; inventory is accessed through
 `services/inventory/provider.py` and the plugin host. Import neutral contracts from their contract modules, not a concrete adapter.
@@ -154,7 +154,7 @@ maps. `Catalog.raw` is the legacy `{"machine": […], "process": […], "filamen
 serves unchanged. Errors: `SlicingProviderError` (`SidecarError` maps to it); `SlicingProviderNotReady`.
 
 Accessors:
-- `get_slicing_provider()` → provider or `None` when no server is configured (`LAMINUS_SIDECAR_URL`). `None`
+- `get_slicing_provider()` → provider or `None` when no server is configured (the `laminus` plugin's saved URL, else the `LAMINUS_SIDECAR_URL` default; see `configured_server_url()`). `None`
   blocks queue jobs with the same reason strings as before ("not configured / not ready / unreachable").
 - `get_format_provider()` → **never `None`**. The format methods (`parse_estimates`, `inspect_overrides`,
   `curated_override_keys`) are local file work and must not call the server, so gcode in the library still
@@ -199,8 +199,8 @@ package in `ADAPTER_PACKAGES`, and a parameter in the provider contract suite
 - `backend/tests/fake_providers.py`: `FakeInventoryProvider`, `FakeSlicingProvider` (records `calls`,
   `fail_with` / `fail_on[method]`, canned `estimates` / `merged` / `health_script`). Patch the accessor **in the
   module under test** (inventory: `await use_provider(fake)` from `tests/inventory_helpers.py` makes it the active provider; the plugin host is configured per test by `session_factory`);
-  the accessor reads `config.get_laminus_sidecar_url()` at call time, so `patch("app.config.get_laminus_sidecar_url")`
-  also still works.
+  the accessor reads `slicing.configured_server_url()` at call time, so `patch("app.services.providers.slicing.configured_server_url")`
+  (or `LAMINUS_SIDECAR_URL` / the `laminus` plugin settings) selects the server.
 - Adapter tests run against the real wire formats: Spoolman via `spoolman_upstream` (the real
   `tests/spoolman_mock.py` app behind an httpx transport), Laminus via a mock `httpx.Client` transport
   (`sidecar` fixture in `test_slicing_provider_contract.py`).

@@ -92,7 +92,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   no-emit run on it type-checks zero files. Always use `npm run build` or `npx tsc -b`.
 - **Config is platform-aware.** `config.py` resolves `%APPDATA%\OrcaSlicer` + the Program Files
   `orca-slicer.exe` on Windows, Linux defaults otherwise. Override via `THEMIS_DATA_DIR`/
-  `ORCA_CONFIG_DIR`/`ORCA_EXECUTABLE`/`FFMPEG_EXECUTABLE`.
+  `ORCA_EXECUTABLE`/`FFMPEG_EXECUTABLE`. The Laminus URL is not config.py: it is the `laminus` plugin's setting (`LAMINUS_SIDECAR_URL` = default).
 - **Stale routes / 405s** usually mean the dev server didn't reload (often the Store-Python issue above)
   — restart uvicorn before debugging the route.
 - **OrcaSlicer config dir is bind-mounted read-only** in Docker (`%APPDATA%\OrcaSlicer`). Don't write to

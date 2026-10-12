@@ -29,12 +29,12 @@ LEGACY_MODULES = {
 # Vendor-specific symbols core must not name (importing, calling or aliasing them).
 VENDOR_NAMES = {
     "LaminusSidecarClient", "SidecarError", "SidecarNotReady", "parse_gcode_estimates", "_parse_gcode_estimates",
-    "get_laminus_sidecar_url",
 }
-# The accessor modules own the registry wiring: they may import the adapter packages (to register them), and the
-# slicing accessor may read the configured URL.
+# The accessor modules own the registry wiring: they may import the adapter packages (to register them). The Laminus plugin
+# package (BIZ-260) is the plugin-side face of the adapter: it hands the adapter's connection settings to the plugin host.
 ACCESSORS = {f"{PROVIDERS}.slicing"}
-URL_READERS = {f"{PROVIDERS}.slicing", "app.config"}
+# (module, adapter-internal target) pairs allowed: the Laminus plugin hands the adapter's connection settings to the host.
+ALLOWED_INTERNAL = {("app.plugins.laminus", f"{PROVIDERS}.laminus.connection"), (f"{PROVIDERS}.slicing", f"{PROVIDERS}.laminus.connection")}
 # Modules allowed to import httpx outside the adapters: each talks to something that is not Laminus or Spoolman
 # (printers, webhooks, notification channels, camera streams, network discovery). A new importer fails this test:
 # if it needs Laminus/Spoolman, go through the provider; otherwise add it here with the reason.
@@ -100,7 +100,7 @@ def violations(sources: dict[str, tuple[str, bool]]) -> list[str]:
             if target in LEGACY_MODULES or any(_in(target, m) for m in LEGACY_MODULES):
                 found.append(f"{where} imports {target} (vendor code now lives inside its adapter package)")
             for pkg in ADAPTER_PACKAGES:
-                if _in(target, pkg) and own != pkg:
+                if _in(target, pkg) and own != pkg and not any(module == m and _in(target, t) for m, t in ALLOWED_INTERNAL):
                     inside = target != pkg
                     if inside or module not in ACCESSORS:
                         found.append(f"{where} imports {target} — outside {pkg}; use the provider interface "
@@ -110,7 +110,7 @@ def violations(sources: dict[str, tuple[str, bool]]) -> list[str]:
                              "otherwise add the module to HTTPX_ALLOWED")
         if not own:
             for lineno, name in _names(tree):
-                if name in VENDOR_NAMES and not (name == "get_laminus_sidecar_url" and module in URL_READERS):
+                if name in VENDOR_NAMES:
                     found.append(f"{module}:{lineno} uses vendor symbol {name}")
     return found
 
@@ -153,7 +153,6 @@ def test_the_scan_covers_the_adapters_and_the_core():
     ("app.services.x", "from .profile_index import ProfileIndex", "vendor code"),
     ("app.services.x", "import httpx\nhttpx.get('http://laminus/api/health')", "imports httpx"),
     ("app.services.x", "from httpx import AsyncClient", "imports httpx"),
-    ("app.services.x", "from ..config import get_laminus_sidecar_url", "vendor symbol"),
     ("app.services.x", "r = _parse_gcode_estimates(path)", "vendor symbol"),
     ("app.services.x", "c = LaminusSidecarClient(url)", "vendor symbol"),
 ])
@@ -164,8 +163,7 @@ def test_the_checker_flags_each_kind_of_violation(module, text, expected):
 
 @pytest.mark.parametrize("module, text, is_package", [
     ("app.services.providers.slicing", "from . import laminus  # registers the adapter", False),
-    ("app.services.providers.slicing", "from ... import config\nconfig.get_laminus_sidecar_url()", False),
-    ("app.config", "def get_laminus_sidecar_url(): ...", False),
+    ("app.plugins.laminus", "from ...services.providers.laminus.connection import LaminusSettings", True),
     ("app.services.providers.laminus.adapter", "from .sidecar_client import LaminusSidecarClient", False),
     ("app.services.providers.laminus.adapter", "from . import gcode, overrides\nimport httpx", False),
     ("app.plugins.spoolman", "from .provider import SpoolmanProvider", True),
