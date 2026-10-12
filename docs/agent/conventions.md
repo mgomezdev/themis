@@ -90,9 +90,10 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   haunted.
 - **`npx tsc --noEmit` checks NOTHING here.** The root `frontend/tsconfig.json` is references-only; a
   no-emit run on it type-checks zero files. Always use `npm run build` or `npx tsc -b`.
-- **Config is platform-aware.** `config.py` resolves `%APPDATA%\OrcaSlicer` + the Program Files
-  `orca-slicer.exe` on Windows, Linux defaults otherwise. Override via `THEMIS_DATA_DIR`/
-  `ORCA_EXECUTABLE`/`FFMPEG_EXECUTABLE`. The Laminus URL is not config.py: it is the `laminus` plugin's setting (`LAMINUS_SIDECAR_URL` = default).
+- **Config is platform-aware.** `config.py` holds only core settings (e.g. `THEMIS_DATA_DIR`, `FFMPEG_EXECUTABLE`);
+  the one Orca leftover, `ORCA_EXECUTABLE` (used only by `thumbnail_regen`), goes away with BIZ-284. Vendor/provider
+  config (e.g. the Laminus URL) is the plugin's setting, not config.py or compose; plugins must not read env vars
+  themselves (BIZ-289 fixes the remaining violations: `LAMINUS_SIDECAR_URL` default, `THEMIS_MOCK_PRINTERS`).
 - **Stale routes / 405s** usually mean the dev server didn't reload (often the Store-Python issue above)
   — restart uvicorn before debugging the route.
 - **OrcaSlicer config dir is bind-mounted read-only** in Docker (`%APPDATA%\OrcaSlicer`). Don't write to
