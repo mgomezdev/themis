@@ -1,6 +1,6 @@
 """Characterization of today's 3MF behavior (BIZ-259, docs/architecture/3mf-ownership.md).
 
-Pins what the live callers get from three_mf_parser / mesh_3mf_builder / the format-provider methods, so the
+Pins what the live callers get from three_mf_parser / the format-provider methods, so the
 moves and deletions in the ownership doc's follow-ups can be done without changing user-visible output.
 Real files: docs/reference 3mfs (Orca-written, unsliced). Synthetic archives cover what no reference file has
 (instances, sliced plates, estimates).
@@ -11,10 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from app.services.mesh_3mf_builder import build_sliceable_3mf, source_has_project_settings
 from app.services.providers.slicing import get_format_provider, get_slicing_provider
 from app.services.three_mf_parser import (
-    parse_embedded_settings, parse_model_filaments, parse_sliced_archive, parse_three_mf,
+    parse_embedded_settings, parse_model_filaments, parse_sliced_archive, parse_three_mf, source_has_project_settings,
 )
 
 REF = Path(__file__).resolve().parents[3] / "docs" / "reference 3mfs"
@@ -199,22 +198,3 @@ def test_sliced_archive_corrupt_returns_empty(tmp_path):
     bad = tmp_path / "b.gcode.3mf"
     bad.write_bytes(b"nope")
     assert parse_sliced_archive(str(bad)) == []
-
-
-# ---- model preparation (test-only today): preserves plates / objects / instances ---------------------------
-
-def test_build_sliceable_3mf_keeps_geometry_plates_thumbnails_and_object_metadata(tmp_path):
-    out = build_sliceable_3mf(ELEGOO_2, {"layer_height": "0.3"}, tmp_path / "out.3mf")
-    with zipfile.ZipFile(ELEGOO_2) as src, zipfile.ZipFile(out) as dst:
-        assert set(dst.namelist()) == set(src.namelist())
-        for name in src.namelist():
-            if name != "Metadata/project_settings.config":
-                assert dst.read(name) == src.read(name), name
-        assert json.loads(dst.read("Metadata/project_settings.config")) == {"layer_height": "0.3"}
-    assert [p.plate_number for p in parse_three_mf(str(out))] == [1, 2]
-
-
-def test_build_sliceable_3mf_geometry_only_drops_only_model_settings(tmp_path):
-    out = build_sliceable_3mf(SNAP_2, {}, tmp_path / "out.3mf", geometry_only=True)
-    with zipfile.ZipFile(SNAP_2) as src, zipfile.ZipFile(out) as dst:
-        assert set(src.namelist()) - set(dst.namelist()) == {"Metadata/model_settings.config"}

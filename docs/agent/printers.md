@@ -107,8 +107,7 @@ production slicing.** `SlicerService.slice(SliceRequest)` resolves `machine_pres
 `filament_presets` names to UUIDs against the sidecar's cached profile catalog, then delegates the
 whole slice — 3MF assembly, profile resolution, gcode generation — to a separate Laminus process over
 HTTP (`SlicingProvider.slice` → Laminus adapter: `slice_start` → `poll_status` → `download`). The
-pre-sidecar local pipeline (`providers/laminus/preset_resolver.py`, `providers/laminus/profile_index.py`, `project_config_builder.py`, and
-most of `mesh_3mf_builder.py`) has no remaining callers — see `backend.md` § Services for what's dead.
+pre-sidecar local pipeline (preset resolver, profile index, config/3MF builders) was deleted in BIZ-261.
 
 **`SliceRequest.prepare_hook`** (opaque `Callable[[Path], None]`, built by `slicer_service.tool_mapping_hook(client, tool_index,
 filament_map, provider)` in `queue_engine._run_slice_and_print` and the jobs route) still runs — but now against a
@@ -120,8 +119,7 @@ sidecar itself retries geometry-only; `prepare_hook` isn't Themis's to re-invoke
 `filament_profile` (from the matched loaded slot) is passed as the filament preset; `filament_colours`
 from the job ask.
 
-**`mesh_3mf_builder`'s vendor-agnostic design carries over conceptually** even though its actual
-3MF-building functions are now dead: `tool_index`/`filament_map` were never builder params — all
+**Tool routing is vendor-agnostic:** `tool_index`/`filament_map` were never 3MF-builder params (the builder is gone) — all
 routing is delegated to the slicing provider's `apply_tool_mapping`, which still
 holds under the sidecar architecture (it's applied to the job-scoped copy described above, same as
 before).
