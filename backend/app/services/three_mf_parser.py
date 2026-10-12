@@ -9,6 +9,18 @@ from typing import Optional
 
 _RELS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _START_PART_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"
+_PROJECT_SETTINGS_PART = "metadata/project_settings.config"
+
+
+def source_has_project_settings(source_3mf: str | Path) -> bool:
+    """True if the 3MF carries embedded slicer settings (a real project, not a bare
+    geometry 3MF). Case-insensitive; False for a bad zip or missing file. Used to
+    decide whether the override check runs."""
+    try:
+        with zipfile.ZipFile(source_3mf) as z:
+            return any(n.lower() == _PROJECT_SETTINGS_PART for n in z.namelist())
+    except (zipfile.BadZipFile, OSError):
+        return False
 
 
 def _find_model_part(names: set[str], zf: zipfile.ZipFile) -> str | None:

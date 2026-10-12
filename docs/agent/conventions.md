@@ -96,7 +96,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Stale routes / 405s** usually mean the dev server didn't reload (often the Store-Python issue above)
   — restart uvicorn before debugging the route.
 - **OrcaSlicer config dir is bind-mounted read-only** in Docker (`%APPDATA%\OrcaSlicer`). Don't write to
-  it; `ProfileIndex` only reads + watches mtime.
+  it.
 
 ## Running things
 

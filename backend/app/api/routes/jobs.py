@@ -22,7 +22,7 @@ from ...services import completion_events, slice_cache, slice_saver
 from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
-from ...services.mesh_3mf_builder import source_has_project_settings
+from ...services.three_mf_parser import source_has_project_settings
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config

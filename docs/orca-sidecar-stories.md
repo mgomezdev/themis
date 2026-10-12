@@ -15,7 +15,7 @@
 > - `app/config.py` — OrcaSlicer executable + config dir resolution, data dir
 > - `app/services/slicer_service.py` — main slice orchestration, `_run()`, `_inject_thumbnail()`
 > - `app/services/thumbnail_regen.py` — background thumbnail regen loop
-> - `app/services/mesh_3mf_builder.py` — injects `project_settings.config` into 3MF
+> - `app/services/mesh_3mf_builder.py` — injected `project_settings.config` into 3MF (deleted in BIZ-261)
 > - `app/services/queue_engine.py` — async queue loop, calls `SlicerService.slice()`
 > - `app/main.py` — startup lifespan
 >
