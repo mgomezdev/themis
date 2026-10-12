@@ -161,22 +161,8 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
     with zf:
         names = set(zf.namelist())
 
-        # Load timing/weight data from slice_info.config if present
-        meta: dict[int, dict] = {}
-        if "Metadata/slice_info.config" in names:
-            try:
-                data = json.loads(zf.read("Metadata/slice_info.config"))
-                for p in data.get("plate", []):
-                    idx = int(p.get("index", 0))
-                    raw_weight = p.get("weight", [0])
-                    if not isinstance(raw_weight, list):
-                        raw_weight = [raw_weight]
-                    meta[idx] = {
-                        "estimated_time": int(p.get("prediction", 0)),
-                        "filament_g": sum(float(w) for w in raw_weight),
-                    }
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
-                pass
+        # Load timing/weight data from slice_info.config (XML, as Orca/Bambu write it)
+        meta = _sliced_plate_meta(zf, names)
 
         # Discover plate numbers from thumbnail files
         thumb_re = re.compile(r"Metadata/plate_(\d+)\.png")
@@ -223,12 +209,12 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
                 thumb_disk_path = str(dest)
             # If no thumbnail available, leave path as None
 
-            m_data = meta.get(num, {})
+            secs, grams = meta.get(num, (0, 0.0))
             plates.append(PlateInfo(
                 plate_number=num,
                 thumbnail_path=thumb_disk_path,
-                estimated_time=m_data.get("estimated_time", 0),
-                filament_g=m_data.get("filament_g", 0.0),
+                estimated_time=secs,
+                filament_g=grams,
             ))
 
     return plates

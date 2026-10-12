@@ -160,6 +160,7 @@ import pytest
 
 from app.services.providers.slicing import SlicingProviderError
 from app.services.providers.laminus import LaminusSlicingProvider
+from tests.conftest import slice_info_xml
 from tests.fake_providers import FakeSlicingProvider
 
 _KEYS = {"has_embedded_settings", "has_findings", "setting_changes", "slot_warning"}  # what the frontend reads
@@ -177,7 +178,7 @@ def _project_3mf(settings: dict, model_xml: str | None = None) -> bytes:
     """A 3MF that carries embedded slicer settings (what makes the override check run)."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
-        zf.writestr("Metadata/slice_info.config", json.dumps({"plate": [{"index": 1, "prediction": 60, "weight": [5.0]}]}))
+        zf.writestr("Metadata/slice_info.config", slice_info_xml([(1, 60, 5.0)]))
         zf.writestr("Metadata/plate_1.png", b"\x89PNG")
         zf.writestr("Metadata/project_settings.config", json.dumps(settings))
         if model_xml is not None:

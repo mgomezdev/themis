@@ -69,7 +69,7 @@ requires Laminus**; the sole open question is whether Laminus-*produced* artifac
 2. Layout is Orca/Bambu (`Metadata/plate_N.png`, `slice_info.config` XML, `model_settings.config`). Verified on Orca-derived Elegoo/Snapmaker files; Bambu Studio is the
    same layout by lineage but not fixture-tested. Other slicers fall back to a single global thumbnail or none.
 3. PNG bytes are not validated (see above).
-4. The JSON `slice_info.config` branch of `parse_three_mf` has no real producer (BIZ-282).
+4. The JSON `slice_info.config` branch of `parse_three_mf` had no real producer; removed (BIZ-282).
 5. G-code thumbnail scan reads only the first 2 MB; a header larger than that yields none.
 
 ## Proposed neutral inspection result (only what Themis needs)

@@ -72,3 +72,4 @@ not a Themis reader feature.
 - **Delete (coordinate on BIZ-261, not a new issue):** `mesh_3mf_builder.py` + `tests/services/test_mesh_3mf_builder.py` after F1; the 3 builder characterization tests here go with it.
 
 **Status:** F1 done (BIZ-280: `source_has_project_settings` now in `three_mf_parser.py`). BIZ-261 deleted `mesh_3mf_builder.py`, `project_config_builder.py`, `orca_reference/`, `PresetResolver`, `ProfileIndex` and their tests (incl. the builder characterization tests).
+F3 done (BIZ-282): `parse_three_mf` reads `slice_info.config` as XML via `_sliced_plate_meta`; the JSON branch is gone (JSON `slice_info.config` now yields no estimates). Test fixtures use real-format XML (`tests/conftest.py:slice_info_xml`).

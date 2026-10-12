@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.models import GcodeFile, Job, JobPrinterConfig, SlicedVersion, UploadedFile
 from app.services import slice_cache
 from app.services.library_scanner import library_abs_path
-from tests.conftest import make_sliced_archive
+from tests.conftest import make_sliced_archive, slice_info_xml
 
 
 async def test_job_details_carry_the_cache_flags_and_the_last_decision(client, create_job, session_factory):
@@ -328,7 +328,7 @@ def make_3mf_bytes_variant() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(zipfile.ZipInfo("Metadata/slice_info.config", date_time=(2026, 1, 1, 0, 0, 0)),
-                    json.dumps({"plate": [{"index": 1, "prediction": 99, "weight": [1.0]}]}))
+                    slice_info_xml([(1, 99, 1.0)]))
     return buf.getvalue()
 
 
