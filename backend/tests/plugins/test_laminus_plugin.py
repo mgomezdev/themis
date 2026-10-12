@@ -253,3 +253,24 @@ async def test_the_manifest_asks_for_the_persistent_connection_pill(client):
     plugins = {p["id"]: p for p in (await client.get("/api/v1/plugins")).json()["plugins"]}
     assert plugins["laminus"]["ui"]["connection_status"] is True
     assert plugins["spoolman"]["ui"]["connection_status"] is False
+
+
+async def test_null_timeouts_fall_back_to_the_defaults_in_the_client_and_the_health_call(client, monkeypatch):
+    nulls = {"health_timeout_s": None, "request_timeout_s": None, "poll_timeout_s": None}
+    monkeypatch.setattr(plugin_host, "effective_settings", lambda pid, saved=None: {"url": SAVED_URL, **nulls})
+    p = get_slicing_provider()
+    assert (p._request_timeout_s, p._poll_timeout_s) == (630.0, 620.0)
+    assert p._client()._client.timeout.read == 630.0
+    conn = plugin_host.build_candidate("laminus")
+    assert (conn.health_timeout_s, conn.request_timeout_s, conn.poll_timeout_s) == (5.0, 630.0, 620.0)
+    health = MagicMock(return_value={"status": "ok"})
+    monkeypatch.setattr("app.services.providers.laminus.adapter.LaminusSlicingProvider.health", health)
+    await conn.test_connection()
+    assert health.call_args.args == (5.0,)
+
+
+async def test_invalid_saved_settings_make_slicing_unconfigured_not_a_crash(client, monkeypatch, caplog):
+    monkeypatch.setattr(plugin_host, "effective_settings", lambda pid, saved=None: {"url": SAVED_URL, "poll_timeout_s": -5})
+    with caplog.at_level("WARNING"):
+        assert get_slicing_provider() is None
+    assert "Laminus settings are invalid" in caplog.text

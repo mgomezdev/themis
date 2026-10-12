@@ -113,7 +113,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     let body: unknown = raw;
     try { body = JSON.parse(raw); } catch { /* plain text */ }
     const detail = body && typeof body === 'object' ? (body as { detail?: unknown }).detail : null;
-    throw new Error(typeof detail === 'string' ? detail : typeof body === 'string' && body ? `${resp.status} ${body}` : `${resp.status}`);
+    throw Object.assign(
+      new Error(typeof detail === 'string' ? detail : typeof body === 'string' && body ? `${resp.status} ${body}` : `${resp.status}`),
+      { status: resp.status });
   }
   return resp.json();
 }

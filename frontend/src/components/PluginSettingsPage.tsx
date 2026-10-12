@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchPlugin, setCapabilityProvider, testPlugin, updatePlugin, usePlugins,
   type ConnectionState, type JsonSchemaProperty, type PluginDetail,
@@ -27,11 +27,12 @@ const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
 const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
 /** The persistent connection pill (`ui.connection_status` plugins): what the backend's test named, or "Checking" until it answers. */
-const CONNECTION_PILL: Record<ConnectionState | 'checking', { tone: string; label: string }> = {
+const CONNECTION_PILL: Record<ConnectionState | 'checking' | 'unknown', { tone: string; label: string }> = {
   healthy: { tone: 'ok', label: 'Healthy' },
   unavailable: { tone: 'err', label: 'Unavailable' },
   unconfigured: { tone: 'warn', label: 'Not configured' },
   checking: { tone: 'idle', label: 'Checking…' },
+  unknown: { tone: 'idle', label: 'Unknown' },          // the probe was refused (no permission): say nothing about the service
 };
 
 export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
@@ -43,7 +44,8 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [connState, setConnState] = useState<ConnectionState | 'checking' | null>(null);
+  const [connState, setConnState] = useState<ConnectionState | 'checking' | 'unknown' | null>(null);
+  const probeSeq = useRef(0);                      // only the newest probe / Test result may set the pill
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const adopt = useCallback((d: PluginDetail) => { setPlugin(d); setDraft(d.settings); setSecretDraft({}); setListText({}); }, []);
@@ -58,17 +60,19 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   // Persistent state pill: probe the saved settings once when the page opens (and again after a save / enable change).
   const watchConnection = !!plugin?.ui?.connection_status && !!plugin.enabled;
-  const probe = useCallback(async (id: string) => {
-    setConnState('checking');
-    try { const r = await testPlugin(id, {}); setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable')); }
-    catch { setConnState('unavailable'); }
-  }, []);
+  const settle = (seq: number, r: { ok: boolean; state?: ConnectionState }) => {
+    if (seq === probeSeq.current) setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable'));
+  };
   const probeKey = plugin ? `${plugin.id}:${JSON.stringify(plugin.settings)}` : '';
   useEffect(() => {
-    if (!watchConnection || !plugin) { setConnState(null); return; }
-    void probe(plugin.id);
+    const seq = ++probeSeq.current;                 // any change (or unmount) invalidates the probes still in flight
+    if (!watchConnection || !plugin) { setConnState(null); return () => { probeSeq.current++; }; }
+    setConnState('checking');
+    testPlugin(plugin.id, {}).then(r => settle(seq, r))
+      .catch(e => { if (seq === probeSeq.current) setConnState((e as { status?: number }).status === 403 ? 'unknown' : 'unavailable'); });
+    return () => { probeSeq.current++; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchConnection, probeKey, probe]);
+  }, [watchConnection, probeKey]);
 
   const fields = useMemo(() => {
     if (!plugin) return [];
@@ -122,9 +126,10 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
 
   async function test() {
     setBusy(true); setTestMsg(null);
+    const seq = watchConnection ? ++probeSeq.current : 0;
     try {
       const r = await testPlugin(pluginId_, patchBody());
-      if (watchConnection) setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable'));
+      if (watchConnection) settle(seq, r);
       setTestMsg({ ok: r.ok, text: r.ok ? `Connected${r.version ? ` (version ${r.version})` : ''}` : r.message || 'Could not connect' });
     } catch (e) {
       setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
@@ -138,7 +143,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
         sub={`${plugin.description || plugin.provides.map(p => p.capability).join(', ')} · v${plugin.version}`}
         actions={<span className="row gap-2">
           <span className={`pill ${health.tone}`} data-testid="plugin-health"><span className="dot" />{health.label}</span>
-          {connState && <span className={`pill ${CONNECTION_PILL[connState].tone}`} data-testid="plugin-connection"
+          {watchConnection && connState && <span className={`pill ${CONNECTION_PILL[connState].tone}`} data-testid="plugin-connection"
                               title="Connection state, checked against the saved settings">
             <span className="dot" />{CONNECTION_PILL[connState].label}</span>}
         </span>}

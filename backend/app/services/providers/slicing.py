@@ -6,12 +6,15 @@ routes), polling for up to ~620s. Callers must never invoke these on the event l
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
 from .format_provider import FormatProvider
+
+logger = logging.getLogger(__name__)
 
 
 class SlicingProviderError(Exception):
@@ -161,6 +164,7 @@ def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
+    from ...plugins import PluginError
     from ...plugins.host import plugin_host
 
     url = configured_server_url()
@@ -168,7 +172,11 @@ def get_slicing_provider() -> SlicingProvider | None:
         return None
     # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
     # adapter and its connection options (timeouts); core only asks the host for it (BIZ-288).
-    return plugin_host.build_candidate(ACTIVE_PROVIDER).slicing_provider(url)
+    try:
+        return plugin_host.build_candidate(ACTIVE_PROVIDER).slicing_provider(url)
+    except PluginError as e:                        # invalid saved settings: treat like unconfigured rather than crash the caller
+        logger.warning("Laminus settings are invalid, slicing is unavailable until they are fixed: %s", e)
+        return None
 
 
 def get_format_provider() -> FormatProvider:
