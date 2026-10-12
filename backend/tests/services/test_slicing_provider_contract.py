@@ -9,9 +9,10 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from app.services.providers.laminus import LaminusSlicingProvider
+from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate, SettingChange
+from app.services.providers.laminus import LaminusFormatProvider, LaminusSlicingProvider
 from app.services.providers.slicing import SliceSpec, SlicingProviderError, get_slicing_provider
-from tests.fake_providers import FakeSlicingProvider, make_catalog
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider, make_catalog
 
 URL = "http://laminus.test"
 
@@ -253,36 +254,63 @@ def test_laminus_rebuild_request_maps_transport_errors(sidecar):
         LaminusSlicingProvider(URL).request_catalog_rebuild()
 
 
-# ---- slicer-specific file-format methods ----
+# ---- slicer-specific file-format methods: the offline FormatProvider (BIZ-281) ----
 
-def test_format_methods_are_provided_without_any_server(monkeypatch):
-    """get_format_provider never returns None and its format methods do no I/O to a server."""
-    from app.services.providers.slicing import get_format_provider
+@pytest.fixture(params=["fake", "laminus"])
+def fmt(request):
+    if request.param == "fake":
+        return FakeFormatProvider()
+    return LaminusFormatProvider()
+
+
+def test_format_provider_is_a_separate_offline_object_and_never_none(sidecar, monkeypatch):
+    """get_format_provider never returns None and does no I/O to a server; the slicing provider no longer carries the
+    format methods."""
+    from app.services.providers.format_provider import FormatProvider
+    from app.services.providers.slicing import SlicingProvider, get_format_provider
     monkeypatch.delenv("LAMINUS_SIDECAR_URL", raising=False)
-    fmt = get_format_provider()
+    f = get_format_provider()
+    assert isinstance(f, FormatProvider) and not isinstance(f, SlicingProvider)
     assert get_slicing_provider() is None
-    assert "enable_support" in fmt.curated_override_keys()
+    assert "enable_support" in f.curated_keys()
+    assert not any(hasattr(SlicingProvider, n) for n in ("parse_estimates", "inspect_overrides", "curated_override_keys"))
+    assert sidecar.requests == []
 
 
-def test_parse_estimates_reads_the_orca_summary_lines(provider, tmp_path):
+def test_curated_settings_are_key_label_pairs(fmt):
+    settings = fmt.curated_settings()
+    assert settings and all(isinstance(s, CuratedSetting) and s.key and s.label for s in settings)
+    assert len({s.key for s in settings}) == len(settings)
+
+
+def test_laminus_curated_settings_carry_their_display_labels():
+    labels = {s.key: s.label for s in LaminusFormatProvider().curated_settings()}
+    assert labels["sparse_infill_density"] == "Infill density"
+    assert labels["layer_height"] == "Layer height"
+
+
+def test_parse_estimates_returns_a_plate_estimate_dto(sidecar, tmp_path):
     gcode = tmp_path / "m.gcode"
     gcode.write_text("; filament used [g] = 1.25, 2.75\n; estimated printing time (normal mode) = 1h 2m 3s\n")
-    grams, secs, per_extruder = provider.parse_estimates(str(gcode))
-    assert isinstance(grams, float) and isinstance(secs, int) and per_extruder
-    if isinstance(provider, LaminusSlicingProvider):
-        assert (grams, secs, per_extruder) == (4.0, 3723, [1.25, 2.75])
+    assert LaminusFormatProvider().parse_estimates(str(gcode)) == PlateEstimate(4.0, 3723, (1.25, 2.75))
+    assert sidecar.requests == []
 
 
-def test_inspect_overrides_returns_the_documented_shape(provider, tmp_path):
+def test_parse_estimates_of_unreadable_file_is_all_none(tmp_path):
+    est = LaminusFormatProvider().parse_estimates(str(tmp_path / "nope.gcode"))
+    assert est == PlateEstimate(None, None, None)
+
+
+def test_inspect_overrides_returns_an_override_inspection_dto(sidecar, tmp_path):
     import zipfile
     proj = tmp_path / "p.3mf"
     with zipfile.ZipFile(proj, "w") as zf:
         zf.writestr("Metadata/project_settings.config", json.dumps({"enable_support": "1"}))
-    result = provider.inspect_overrides(str(proj), {"enable_support": "0"}, 1)
-    assert set(result) >= {"has_findings", "setting_changes", "slot_warning"}
-    if isinstance(provider, LaminusSlicingProvider):
-        assert result["has_findings"] is True
-        assert [c["key"] for c in result["setting_changes"]] == ["enable_support"]
+    result = LaminusFormatProvider().inspect_overrides(str(proj), {"enable_support": "0"}, 1)
+    assert isinstance(result, OverrideInspection)
+    assert result.has_findings is True
+    assert result.setting_changes == (SettingChange("enable_support", "1", "0"),)
+    assert sidecar.requests == []
 
 
 def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printers_list(provider):

@@ -52,9 +52,9 @@ Production callers verified by grep over `backend/app` and `backend/scripts`. "R
 | `parse_three_mf` JSON `slice_info.config` branch | live code, **no real input**: Orca writes XML, so it only fires for synthetic files (reference files give 0 estimates) | same as above | estimates; follow-up F3 |
 | `mesh_3mf_builder.source_has_project_settings` | live, generic core, **misfiled** | `jobs.check_overrides` | bool |
 | `build_sliceable_3mf`, `stl_to_3mf`, `_parse_stl`, templates | **test-only dead** | none (`tests/services/test_mesh_3mf_builder.py` only) | n/a; replaced by provider `pack_models`/`arrange`/`slice(prepared=…)` |
-| `SlicingProvider.parse_estimates` / `laminus/gcode.py` | live, provider-owned, offline | `queue_engine` (x2), `slice_saver`, `jobs` (x2), `library_scanner`, `parse_sliced_archive` | grams/seconds/per-extruder |
-| `SlicingProvider.inspect_overrides` / `laminus/overrides.py` | live, provider-owned, offline-capable | `jobs.check_overrides` (after catalog + merged_config, so online in practice) | `OverrideInspection` |
-| `SlicingProvider.curated_override_keys` | live, provider-owned | `jobs.py` (allowed override keys), `parse_embedded_settings` | key tuple |
+| `FormatProvider.parse_estimates` / `laminus/gcode.py` (F2 done) | live, provider-owned, offline | `queue_engine` (x2), `slice_saver`, `jobs` (x2), `library_scanner`, `parse_sliced_archive` | grams/seconds/per-extruder |
+| `FormatProvider.inspect_overrides` / `laminus/overrides.py` (F2 done) | live, provider-owned, offline-capable | `jobs.check_overrides` (after catalog + merged_config, so online in practice) | `OverrideInspection` |
+| `FormatProvider.curated_settings` (was `curated_override_keys`; F2 done) | live, provider-owned | `jobs.py` (allowed override keys), `parse_embedded_settings` | key tuple |
 | `slicer_service._inject_thumbnail`, `projects._parse_plate_nums`, `thumbnail_regen` | live, **duplicate** plate/thumbnail zip logic | slice path; pack path; thumbnail regen | PNG bytes / plate numbers; follow-up F4 |
 | `project_config_builder`, `ProfileIndex`, `PresetResolver` | dead pre-sidecar (tests only) | none | BIZ-261 |
 
@@ -72,3 +72,4 @@ not a Themis reader feature.
 - **Delete (coordinate on BIZ-261, not a new issue):** `mesh_3mf_builder.py` + `tests/services/test_mesh_3mf_builder.py` after F1; the 3 builder characterization tests here go with it.
 
 **Status:** F1 done (BIZ-280: `source_has_project_settings` now in `three_mf_parser.py`). BIZ-261 deleted `mesh_3mf_builder.py`, `project_config_builder.py`, `orca_reference/`, `PresetResolver`, `ProfileIndex` and their tests (incl. the builder characterization tests).
+F2 done (BIZ-281): offline `FormatProvider` (`providers/format_provider.py`, `laminus/format.py`) returns the contract DTOs; `curated_settings()` replaced `curated_override_keys` and `_SETTING_LABELS`; `get_format_provider()` returns it (`compatible_presets` stayed on `SlicingProvider`).

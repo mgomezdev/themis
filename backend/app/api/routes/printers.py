@@ -20,7 +20,7 @@ from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
 from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
-from ...services.providers.slicing import Catalog, get_format_provider
+from ...services.providers.slicing import Catalog, default_compatible_presets, get_slicing_provider
 from ...services.printer_client_factory import (
     client_class, create_client, create_client_from_config, enabled_client_classes, printer_type_names, printer_type_plugins,
 )
@@ -537,9 +537,10 @@ async def get_profiles(
     if cat is None:
         return {"print_profiles": [], "filament_profiles": []}
 
-    slicer = get_format_provider()
-    processes = sorted(p.name for p in slicer.compatible_presets(cat, machine_name, "process"))
-    filaments = sorted(f.name for f in slicer.compatible_presets(cat, machine_name, "filament"))
+    slicer = get_slicing_provider()   # may be None: the catalog is a cached copy, matching needs no live server
+    compat = slicer.compatible_presets if slicer else default_compatible_presets
+    processes = sorted(p.name for p in compat(cat, machine_name, "process"))
+    filaments = sorted(f.name for f in compat(cat, machine_name, "filament"))
     return {"print_profiles": processes, "filament_profiles": filaments}
 
 

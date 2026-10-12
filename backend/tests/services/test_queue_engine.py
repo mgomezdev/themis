@@ -2,7 +2,8 @@
 import asyncio
 import os
 import pytest
-from tests.fake_providers import FakeSlicingProvider
+from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
+from app.services.providers.contract import PlateEstimate
 import pytest_asyncio
 from datetime import datetime, timezone
 from pathlib import Path
@@ -729,7 +730,7 @@ async def test_run_estimate_sets_done_with_fields(db):
 
 @pytest.mark.asyncio
 async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(db):
-    """The estimate on the job comes from SlicingProvider.parse_estimates, not from a gcode parser baked into the
+    """The estimate on the job comes from FormatProvider.parse_estimates, not from a gcode parser baked into the
     queue: the artifact's own text says 10 g / 30 min, the fake provider says otherwise, and the fake wins."""
     import tempfile, os
     from unittest.mock import patch, MagicMock
@@ -760,8 +761,8 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
         await coro
 
     engine._slice_queue.put = inline_put
-    fake = FakeSlicingProvider()
-    fake.estimates = (77.5, 4242, [77.5])
+    fake = FakeFormatProvider()
+    fake.estimate = PlateEstimate(77.5, 4242, (77.5,))
     with patch.object(slicer, "slice", return_value=artifact), \
          patch("app.services.queue_engine.get_format_provider", return_value=fake):
         await engine.run_estimate(job_id)
@@ -983,7 +984,7 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
     # Simulate an unexpected error in a step that has no existing try/except of
     # its own (Step 4 gcode parsing), rather than the already-handled slice
     # failure path.
-    broken = FakeSlicingProvider()
+    broken = FakeFormatProvider()
     broken.parse_estimates = MagicMock(side_effect=RuntimeError("boom"))
     with patch.object(slicer, "slice", return_value=fake_gcode), \
          patch("app.services.queue_engine.get_format_provider", return_value=broken):

@@ -432,7 +432,8 @@ class QueueEngine:
             return
 
         # Step 4 — Parse, discard gcode, write results
-        grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path)
+        est = get_format_provider().parse_estimates(gcode_path)
+        grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
         shutil.rmtree(output_dir, ignore_errors=True)
 
         breakdown = None
@@ -1051,7 +1052,8 @@ class QueueEngine:
                 except OSError:
                     pass
                 return
-            grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path, plate_number)
+            est = get_format_provider().parse_estimates(gcode_path, plate_number)
+            grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
             gcode_rec = GcodeFile(
                 job_id=job_id, printer_id=printer_id, path=gcode_path,
                 filament_grams=grams, estimated_seconds=secs,

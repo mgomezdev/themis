@@ -169,8 +169,8 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         digest = await asyncio.to_thread(sha256_file, dest)
         stat = dest.stat()
 
-        grams, secs, _ = await asyncio.to_thread(
-            get_format_provider().parse_estimates, str(dest), inputs.plate_number)
+        est = await asyncio.to_thread(get_format_provider().parse_estimates, str(dest), inputs.plate_number)
+        grams, secs = est.grams, est.seconds
         rel = dest.relative_to(library).as_posix()
         record = UploadedFile(
             original_filename=dest.name, relative_path=rel, folder=folder_of(rel), size_bytes=stat.st_size,
