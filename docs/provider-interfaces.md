@@ -142,10 +142,17 @@ These are core routes, not routes a provider implements. The active `inventory.f
 | `slice(SliceSpec, output_dir) -> artifact path` | Start → poll (≤ ~620 s) → download. `SliceSpec.prepared` = a ready-to-slice project (`PREPARED_PROJECT`). |
 | `catalog_health(timeout)` / `request_catalog_rebuild(timeout)` | Catalog readiness (200 → body, 503 → "building" marker) and "rebuild now"; used by `catalog_service` status/rescan. |
 | `arrange(path, …)` / `pack_models(paths, machine_ref=…, process_ref=…, filament_refs=…, bed=…)` | `ARRANGE` / `PACK_MODELS`; project generation checks the flag. |
-| `parse_estimates(artifact, plate)` → `(grams, seconds, per_extruder)` | Format knowledge — local only. |
-| `inspect_overrides(project, merged_config, slots)` / `curated_override_keys()` | Format knowledge — local only. |
-| `compatible_presets(catalog, machine_preset, kind)` | Default: presets naming the machine in `compatible_printers`. |
+| `compatible_presets(catalog, machine_preset, kind)` | Default: presets naming the machine in `compatible_printers` (needs a catalog, so it stays here; `default_compatible_presets` is the pure rule). |
 
+Offline **`FormatProvider`** (`providers/format_provider.py`; Laminus: `providers/laminus/format.py`) — local file work, no network, no URL:
+
+| Method | Notes |
+|---|---|
+| `curated_settings() -> tuple[CuratedSetting(key, label), ...]` | Keys job overrides / embedded-settings view may touch, with display labels (replaces `curated_override_keys` + core `_SETTING_LABELS`). `curated_keys()` is the key tuple. |
+| `parse_estimates(artifact, plate) -> PlateEstimate(grams, seconds, per_extruder_grams)` | Each field `None` independently when unreadable. |
+| `inspect_overrides(project, merged_config, slots) -> OverrideInspection` | `has_embedded_settings`, `setting_changes: (SettingChange(key, from_value, to_value),)`, `slot_warning: SlotWarning|None`, `has_findings`. |
+
+DTOs live in `providers/contract.py`; routes serialize them to the unchanged JSON (`from`/`to`, `slot_warning`).
 Capability flags: `ARRANGE`, `PACK_MODELS`, `PREPARED_PROJECT`.
 
 DTOs: `Catalog(machines, processes, filaments, raw)` of `Preset(ref, name, compatible_printers, raw)`;
@@ -156,9 +163,9 @@ serves unchanged. Errors: `SlicingProviderError` (`SidecarError` maps to it); `S
 Accessors:
 - `get_slicing_provider()` → provider or `None` when no server is configured (the `laminus` plugin's saved URL, else the `LAMINUS_SIDECAR_URL` default; see `configured_server_url()`). `None`
   blocks queue jobs with the same reason strings as before ("not configured / not ready / unreachable").
-- `get_format_provider()` → **never `None`**. The format methods (`parse_estimates`, `inspect_overrides`,
-  `curated_override_keys`) are local file work and must not call the server, so gcode in the library still
-  parses with no sidecar configured.
+- `get_format_provider()` → the offline `FormatProvider`, **never `None`**, a separate object from the slicing provider
+  (its methods `curated_settings`, `parse_estimates`, `inspect_overrides` are local file work and cannot call a server, so
+  gcode in the library still parses with no sidecar configured). Registered per name with `register_format_provider`.
 
 ### The sync/async rule
 

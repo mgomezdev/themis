@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
 
+from .format_provider import FormatProvider
+
 
 class SlicingProviderError(Exception):
     """Neutral failure from a slicing provider (unreachable, bad response, failed/timed-out slice)."""
@@ -68,6 +70,12 @@ class SliceSpec:
     prepared: bool = False   # source_file is a ready-to-slice project (needs PREPARED_PROJECT)
 
 
+def default_compatible_presets(catalog: Catalog, machine_preset: str, kind: str) -> list[Preset]:
+    """The default compatibility rule: presets of `kind` whose `compatible_printers` names the machine. Pure function of
+    a (cached) catalog, so it works with no live server; `SlicingProvider.compatible_presets` delegates to it."""
+    return [p for p in catalog.presets_of(kind) if machine_preset in p.compatible_printers]
+
+
 class SlicingProvider(ABC):
     ARRANGE: ClassVar[bool] = False
     PACK_MODELS: ClassVar[bool] = False
@@ -111,30 +119,10 @@ class SlicingProvider(ABC):
     def slice(self, spec: SliceSpec, output_dir: Path) -> str:
         """Slice and write the artifact into `output_dir`; returns its path."""
 
-    # ── slicer-specific file-format knowledge ─────────────────────────────────────────────────────────────────
-    # Pure local work on files Themis already holds — no calls to the slicing server, so they work (via
-    # `get_format_provider()`) even when no server is configured, e.g. when scanning a library of sliced gcode.
-
-    @abstractmethod
-    def parse_estimates(
-        self, artifact_path: str, plate_number: int | None = None,
-    ) -> tuple[float | None, int | None, list[float] | None]:
-        """(total_grams, seconds, per_extruder_grams) from a sliced artifact (gcode or sliced archive); each
-        None independently when it can't be read. `plate_number` picks the plate inside a multi-plate archive."""
-
-    @abstractmethod
-    def inspect_overrides(self, source_project: str, merged_config: dict, slots: int) -> dict:
-        """Compare a project file's embedded settings with `merged_config` (what the chosen presets would
-        produce); returns {has_findings, setting_changes, slot_warning}."""
-
-    @abstractmethod
-    def curated_override_keys(self) -> tuple[str, ...]:
-        """The high-impact setting keys job-level overrides / embedded-settings display may touch."""
-
     def compatible_presets(self, catalog: Catalog, machine_preset: str, kind: str) -> list[Preset]:
         """Presets of `kind` ("process" | "filament") usable with `machine_preset`. Default: the preset names the
         machine in its `compatible_printers`; a provider with richer rules overrides this."""
-        return [p for p in catalog.presets_of(kind) if machine_preset in p.compatible_printers]
+        return default_compatible_presets(catalog, machine_preset, kind)
 
     def arrange(self, project_path: Path, arrange: bool = True, orient: bool = True, timeout: float = 130.0) -> bytes:
         raise NotImplementedError("provider does not support ARRANGE")
@@ -179,12 +167,14 @@ def get_slicing_provider() -> SlicingProvider | None:
     return _REGISTRY[ACTIVE_PROVIDER](url)
 
 
-def get_format_provider() -> SlicingProvider:
-    """The slicing provider to use for local file-format work (estimates, override inspection). Unlike
-    `get_slicing_provider()` it never returns None: format methods don't need a configured server."""
+def get_format_provider() -> FormatProvider:
+    """The offline `FormatProvider` for local file-format work (curated settings, estimates, override inspection).
+    Unlike `get_slicing_provider()` it never returns None and never needs a configured server: it is a different
+    object from the slicing provider (no URL, no network). `compatible_presets` needs a catalog, so it stays on
+    `SlicingProvider` (use `get_slicing_provider()`)."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    return _REGISTRY[ACTIVE_PROVIDER](configured_server_url() or "")
+    return _FORMAT_REGISTRY[ACTIVE_PROVIDER]()
 
 
 # name -> adapter class. Adding a provider = one adapter class + one entry here.
@@ -193,3 +183,11 @@ _REGISTRY: dict[str, type[SlicingProvider]] = {}
 
 def register_slicing_provider(name: str, cls: type[SlicingProvider]) -> None:
     _REGISTRY[name] = cls
+
+
+# name -> format provider class (no-arg constructor). Registered next to the slicing adapter of the same name.
+_FORMAT_REGISTRY: dict[str, type[FormatProvider]] = {}
+
+
+def register_format_provider(name: str, cls: type[FormatProvider]) -> None:
+    _FORMAT_REGISTRY[name] = cls

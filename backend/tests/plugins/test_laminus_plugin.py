@@ -7,6 +7,7 @@ import pytest
 from app import config
 from app.plugins.host import plugin_host
 from app.services.providers.laminus.sidecar_client import SidecarError
+from app.services.providers.format_provider import FormatProvider
 from app.services.providers.slicing import configured_server_url, get_format_provider, get_slicing_provider
 
 ENV_URL = "http://env-laminus:5000"
@@ -28,7 +29,7 @@ async def test_the_plugin_is_bundled_and_listed(client):
 async def test_unconfigured_without_saved_url_or_env(client):
     assert configured_server_url() is None
     assert get_slicing_provider() is None
-    assert get_format_provider().identity == ""          # format work needs no server
+    assert isinstance(get_format_provider(), FormatProvider)          # format work needs no server, never None
 
 
 async def test_env_var_is_the_default_when_nothing_is_saved(client, monkeypatch):

@@ -154,7 +154,8 @@ class LibraryScanner:
         elif kind == "3mf":
             plates_raw = parse_three_mf(str(abs_path), thumbnail_dir=str(thumb_dir))
         elif kind == "gcode":
-            grams, secs, _ = get_format_provider().parse_estimates(str(abs_path))
+            est = get_format_provider().parse_estimates(str(abs_path))
+            grams, secs = est.grams, est.seconds
             thumb = extract_gcode_thumbnail(abs_path, thumb_dir / "plate_1.png")
             plates_raw = [PlateInfo(plate_number=1, thumbnail_path=str(thumb) if thumb else None,
                                     estimated_time=secs or 0, filament_g=grams or 0.0)]
