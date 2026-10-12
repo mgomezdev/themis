@@ -13,7 +13,15 @@ export interface PluginUi {
   tabs: PluginTab[];
   /** Old absolute app URLs → the tab of this plugin that replaced them. */
   redirects?: { from: string; tab: string }[];
+  /** The settings page shows a persistent connection-state pill (probed via the plugin's test endpoint on load). */
+  connection_status?: boolean;
 }
+
+/** A plugin may name why a connection test came out as it did. */
+export type ConnectionState = 'unconfigured' | 'unavailable' | 'healthy';
+/** The keys of a connection-test response the settings page's state pill reads (contracts/response-keys.json). */
+export interface PluginConnectionResult { ok: boolean; state?: ConnectionState }
+export interface PluginTestResult extends PluginConnectionResult { message?: string; version?: string }
 
 export interface PluginProvides {
   capability: string;
@@ -105,7 +113,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     let body: unknown = raw;
     try { body = JSON.parse(raw); } catch { /* plain text */ }
     const detail = body && typeof body === 'object' ? (body as { detail?: unknown }).detail : null;
-    throw new Error(typeof detail === 'string' ? detail : typeof body === 'string' && body ? `${resp.status} ${body}` : `${resp.status}`);
+    throw Object.assign(
+      new Error(typeof detail === 'string' ? detail : typeof body === 'string' && body ? `${resp.status} ${body}` : `${resp.status}`),
+      { status: resp.status });
   }
   return resp.json();
 }
@@ -123,7 +133,7 @@ export async function updatePlugin(id: string, patch: PluginUpdate): Promise<Plu
   return detail;
 }
 
-export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings' | 'secrets'>): Promise<{ ok: boolean; message?: string; version?: string }> {
+export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings' | 'secrets'>): Promise<PluginTestResult> {
   return request(`/api/v1/plugins/${encodeURIComponent(id)}/test`, json('POST', draft));
 }
 

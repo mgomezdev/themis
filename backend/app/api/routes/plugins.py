@@ -23,7 +23,8 @@ def _ui(m: PluginManifest) -> dict:
     return {"mode": u.mode, "nav_label": u.nav_label or m.name, "nav_placement": u.nav_placement, "nav_icon": u.nav_icon,
             "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer, "component": t.component, "requires": t.requires}
                      for t in u.tabs],
-            "redirects": [{"from": src, "tab": tab} for src, tab in u.redirects]}
+            "redirects": [{"from": src, "tab": tab} for src, tab in u.redirects],
+            "connection_status": u.connection_status}
 
 
 def install_info(row: InstalledPlugin | None) -> dict | None:

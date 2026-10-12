@@ -4,6 +4,10 @@
 # The "orca" service of docker-compose.yml, reachable at its compose hostname on the Laminus port. Running Themis outside
 # compose: set the URL in Settings -> Laminus (e.g. http://localhost:5000 with docker-compose.dev.yml).
 url = "http://orca:5000"
+# Connection-level tuning, seconds (BIZ-288). Edit per install in Settings -> Laminus.
+health_timeout_s = 5.0      # connection test / health probe
+request_timeout_s = 630.0   # per-request client timeout; keep above the service's own 600 s slice timeout
+poll_timeout_s = 620.0      # how long to wait for a slice job to finish
 
 [legacy_env]
 # Deprecated: pre-plugin deployments set LAMINUS_SIDECAR_URL. Core still honours it (with a warning) over the default above.

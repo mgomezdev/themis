@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginSettingsPage } from './PluginSettingsPage';
@@ -255,5 +255,112 @@ describe('PluginSettingsPage', () => {
     await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Active'));
     expect(screen.queryByRole('button', { name: 'Use Demo inventory' })).toBeNull();
     expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
+  });
+  describe('connection state pill (ui.connection_status)', () => {
+    const watched = (over: Partial<PluginDetail> = {}) => detail({
+      ui: { mode: 'page', nav_label: 'Demo inventory', nav_placement: 'settings', nav_icon: null, tabs: [], connection_status: true }, ...over,
+    });
+    const pill = () => screen.queryByTestId('plugin-connection');
+
+    it.each([
+      ['healthy', 'Healthy', 'ok'],
+      ['unavailable', 'Unavailable', 'err'],
+      ['unconfigured', 'Not configured', 'warn'],
+    ])('shows %s from the backend state on load, without pressing Test', async (state, label, tone) => {
+      const api = stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': { ok: state === 'healthy', state } }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+
+      await waitFor(() => expect(pill()?.textContent).toBe(label));
+      expect(pill()!.className).toContain(tone);
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')[0].body).toEqual({});          // probes the SAVED settings
+    });
+
+    it('is absent for a plugin that does not opt in (no probe is made)', async () => {
+      const api = stubFetch(routes());
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('is absent while the plugin is disabled', async () => {
+      const api = stubFetch(routes(watched({ enabled: false })));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('follows the Test button result for the form values', async () => {
+      let n = 0;
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? { ok: false, state: 'unavailable', message: 'refused' } : { ok: true, state: 'healthy', version: '1' }) }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+    });
+
+    it('re-probes after the settings are saved and shows the new state', async () => {
+      let n = 0;
+      const api = stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? { ok: false, state: 'unavailable' } : { ok: true, state: 'healthy' }),
+        'PUT /api/v1/plugins/demo_inv': () => watched({ settings: { url: 'http://new.test' } }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toHaveLength(2);
+    });
+
+    it('a slow probe never overwrites a newer Test result', async () => {
+      const slow: { resolve?: (v: unknown) => void } = {};
+      let n = 0;
+      stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? new Promise(r => { slow.resolve = r; }) : { ok: true, state: 'healthy' }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      await waitFor(() => expect(slow.resolve).toBeTruthy());
+      await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+
+      await act(async () => { slow.resolve!({ ok: false, state: 'unavailable' }); });
+
+      expect(pill()?.textContent).toBe('Healthy');
+    });
+
+    it('a probe answering after the plugin was disabled does not resurrect the pill', async () => {
+      const slow: { resolve?: (v: unknown) => void } = {};
+      stubFetch(routes(watched(), {
+        'POST /api/v1/plugins/demo_inv/test': () => new Promise(r => { slow.resolve = r; }),
+        'PUT /api/v1/plugins/demo_inv': () => watched({ enabled: false, active: false }),
+      }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(slow.resolve).toBeTruthy());
+      await userEvent.click(await screen.findByRole('switch', { name: '', checked: true }));
+      await waitFor(() => expect(screen.getByTestId('plugin-health').textContent).toBe('Disabled'));
+
+      await act(async () => { slow.resolve!({ ok: true, state: 'healthy' }); });
+
+      expect(pill()).toBeNull();
+    });
+
+    it('shows a neutral Unknown (not Unavailable) when the probe is refused for lack of permission', async () => {
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': new Reply(403, { detail: 'needs settings:write' }) }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unknown'));
+      expect(pill()!.className).toContain('idle');
+    });
+
+    it('falls back to unavailable when the probe itself fails', async () => {
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': new Reply(500, 'boom') }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+    });
   });
 });

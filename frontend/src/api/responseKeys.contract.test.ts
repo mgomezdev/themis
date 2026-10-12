@@ -17,7 +17,7 @@ import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from '
 import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
 import type { ApiJob, ApiJobDetails } from './queue';
 import type { CapabilityInfo } from './capabilities';
-import type { PluginProvides, PluginSummary } from './plugins';
+import type { PluginConnectionResult, PluginProvides, PluginSummary } from './plugins';
 
 const contract = JSON.parse(contractRaw) as Record<string, string[]>;
 const sorted = (keys: string[]) => [...new Set(keys)].sort();
@@ -126,6 +126,7 @@ const PLUGIN_SUMMARY = {
   defines: 1, ui: 1, enabled: 1, active: 1, error: 1,
 } satisfies Record<keyof PluginSummary, 1>;
 const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
+const PLUGIN_CONNECTION_RESULT = { ok: 1, state: 1 } satisfies Record<keyof PluginConnectionResult, 1>;
 const CAPABILITY_INFO = {
   id: 1, version: 1, label: 1, description: 1, definer: 1, features: 1, required_methods: 1, selected: 1, explicit: 1, status: 1,
   waiting_on: 1, error: 1, providers: 1, requires_by: 1, mode: 1, dormant_default: 1,
@@ -164,6 +165,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['customer payment', contract.customer_payment, keysOf(CUSTOMER_PAYMENT)],
     ['plugin summary', contract.plugin_summary, keysOf(PLUGIN_SUMMARY)],
     ['plugin provides entry', contract.plugin_provides, keysOf(PLUGIN_PROVIDES)],
+    ['plugin connection result', contract.plugin_connection_result, keysOf(PLUGIN_CONNECTION_RESULT)],
     ['capability info', contract.capability_info, keysOf(CAPABILITY_INFO)],
   ];
 
@@ -179,7 +181,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
-      'plugin_summary', 'plugin_provides', 'capability_info']);
+      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'capability_info']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });
