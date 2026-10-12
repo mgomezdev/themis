@@ -40,7 +40,7 @@ layer_inspect, timelapse, use_ams`. The queue engine fills `plate_id`/`gcode_pat
 A printer plugin's `MANIFEST.factory` **is the client class** (never instantiated by the host — a client is built per printer row) and
 its `manufacturers` declare the models it supports (`Manufacturer(id, name, models=(PrinterModel(id, name, bed_mm, toolheads),))`;
 ids unique per plugin). Bundled: `app/plugins/{bambu,elegoo_centauri,snapmaker,moonraker,mock}/`. `default_enabled=True` for all but `mock` (so
-existing printers are not dormant after upgrade; `moonraker` too); `mock` is enabled only when `THEMIS_MOCK_PRINTERS` is set (tests/dev).
+existing printers are not dormant after upgrade; `moonraker` too); `mock` is enabled only when core reads `THEMIS_MOCK_PRINTERS` (tests/dev; deprecated, see docs/plugins.md).
 
 `printers` rows carry `plugin_id` + `manufacturer_id` + `model_id` (+ `model_uuid`, the core registry's stable id — `services/printer_model_registry.py`, `GET/PATCH /printer-models`; see data-model.md) (v042 backfilled from the legacy `printer_type`:
 `bambu`→bambu/bambu/p1s, `elegoo_centauri`→elegoo_centauri/elegoo/centauri, `snapmaker_extended`→snapmaker/snapmaker/u1_extended,

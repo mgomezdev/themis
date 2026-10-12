@@ -251,7 +251,7 @@ async def test_generate_requires_the_sidecar(client, project, tmp_path, upload_3
 
     resp = await _generate(client, project, tmp_path, sidecar=None)
 
-    assert resp.status_code == 422 and "LAMINUS_SIDECAR_URL" in resp.json()["detail"]
+    assert resp.status_code == 422 and "Settings -> Laminus" in resp.json()["detail"]
     await _assert_no_jobs(client, project)
 
 

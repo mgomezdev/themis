@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from pathlib import Path
 
 from .capabilities.definition import CapabilityDef
 from .manifest import HOST_API, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
 
 __all__ = ["HOST_API", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
-           "register_plugin", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
+           "register_plugin", "plugin_root", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:
     """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `capabilities`, the contracts). They
@@ -25,13 +26,20 @@ def _discover_bundled() -> tuple[str, ...]:
 BUNDLED_MODULES: tuple[str, ...] = _discover_bundled()
 
 _REGISTRY: dict[str, PluginManifest] = {}
+_ROOTS: dict[str, Path] = {}                 # plugin id -> its package directory (where themis-plugin.toml / defaults.toml live)
 
 
-def register_plugin(manifest: PluginManifest) -> None:
+def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
     existing = _REGISTRY.get(manifest.id)
     if existing is not None and existing is not manifest:
         raise PluginError(f"plugin id {manifest.id!r} is already registered")
     _REGISTRY[manifest.id] = manifest
+    if root is not None:
+        _ROOTS[manifest.id] = root
+
+
+def plugin_root(plugin_id: str) -> Path | None:
+    return _ROOTS.get(plugin_id)
 
 
 def get_plugin(plugin_id: str) -> PluginManifest | None:
@@ -86,7 +94,7 @@ def load_bundled() -> list[str]:
         try:
             module = importlib.import_module(dotted)
             check_matches(read_toml(Path(module.__file__).parent), module.MANIFEST)
-            register_plugin(module.MANIFEST)
+            register_plugin(module.MANIFEST, Path(module.__file__).parent)
         except Exception:
             logging.getLogger("app").exception("Bundled plugin %s failed to load", dotted)
             failed.append(dotted)

@@ -123,6 +123,26 @@ async def client(session_factory) -> AsyncGenerator[AsyncClient, None]:
         thumbnail_regen.set_session_factory(original_thumbnail_factory)
 
 
+@pytest.fixture(autouse=True)
+def _laminus_unconfigured_by_default(request, monkeypatch):
+    """The shipped Laminus default URL (http://orca:5000) would make every test "configured". Blank it unless the test opts in
+    with `@pytest.mark.shipped_defaults`; tests that exercise precedence set their own values."""
+    if request.node.get_closest_marker("shipped_defaults"):
+        return
+    import dataclasses
+    from app.plugins import defaults, host as host_module
+    real = defaults.defaults_of
+
+    def fake(plugin_id):
+        d = real(plugin_id)
+        if plugin_id == "laminus":
+            d = dataclasses.replace(d, settings={k: v for k, v in d.settings.items() if k != "url"})
+        return d
+
+    monkeypatch.setattr(defaults, "defaults_of", fake)
+    monkeypatch.setattr(host_module, "defaults_of", fake)
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _reset_login_throttle():
     """Failed-login throttle is process-global; don't let one test's failures leak into another."""

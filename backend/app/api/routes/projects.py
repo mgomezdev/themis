@@ -1249,7 +1249,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, background_t
 
     slicing = get_slicing_provider()
     if slicing is None:
-        raise HTTPException(422, "Laminus is not configured — set its URL in Settings -> Laminus (or LAMINUS_SIDECAR_URL); it is required for generation")
+        raise HTTPException(422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
     if not slicing.PACK_MODELS:
         raise HTTPException(422, "The slicing provider cannot pack models — project generation is unavailable")
 
