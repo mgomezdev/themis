@@ -27,8 +27,6 @@ services:
     volumes:
       - themis-data:/data
     environment:
-      # Default Laminus URL; the saved Settings -> Laminus URL (plugin settings) wins once set.
-      - LAMINUS_SIDECAR_URL=http://orca:5000
       - THEMIS_LIBRARY_DIR=/data/library
     depends_on:
       orca:

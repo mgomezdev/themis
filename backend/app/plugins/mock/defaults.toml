@@ -1,0 +1,5 @@
+enabled = false
+
+# Dev/test flag: core reads THEMIS_MOCK_PRINTERS on this plugin's behalf (the plugin never touches the environment).
+[legacy_env]
+enabled = "THEMIS_MOCK_PRINTERS"

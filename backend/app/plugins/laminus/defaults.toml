@@ -1,0 +1,10 @@
+# Shipped defaults for the Laminus plugin (BIZ-289). Precedence: saved Settings -> Laminus > deprecated env var read by core > this file.
+
+[settings]
+# The "orca" service of docker-compose.yml, reachable at its compose hostname on the Laminus port. Running Themis outside
+# compose: set the URL in Settings -> Laminus (e.g. http://localhost:5000 with docker-compose.dev.yml).
+url = "http://orca:5000"
+
+[legacy_env]
+# Deprecated: pre-plugin deployments set LAMINUS_SIDECAR_URL. Core still honours it (with a warning) over the default above.
+url = "LAMINUS_SIDECAR_URL"

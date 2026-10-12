@@ -134,7 +134,7 @@ class SlicerService:
         """
         provider = get_slicing_provider()
         if provider is None:
-            raise SliceError("Laminus is not configured — set its URL in Settings -> Laminus (or LAMINUS_SIDECAR_URL); it is required for slicing")
+            raise SliceError("Laminus is not configured — set its URL in Settings -> Laminus; it is required for slicing")
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)

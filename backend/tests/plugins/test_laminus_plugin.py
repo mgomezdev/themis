@@ -1,5 +1,6 @@
-"""The Laminus plugin (BIZ-260): the service URL lives in plugin settings, `LAMINUS_SIDECAR_URL` is only the compatible
-default, and the connection test names unconfigured / unavailable / healthy."""
+"""The Laminus plugin (BIZ-260/BIZ-289): the service URL lives in plugin settings; precedence is saved setting > deprecated
+`LAMINUS_SIDECAR_URL` (read by core, never by the plugin) > the plugin's shipped defaults.toml; the connection test names
+unconfigured / unavailable / healthy. The suite blanks the shipped URL default unless a test is marked `shipped_defaults`."""
 from unittest.mock import MagicMock
 
 import pytest
@@ -63,7 +64,7 @@ async def test_a_url_that_is_not_http_is_rejected_and_not_saved(client):
 
 async def test_connection_test_reports_unconfigured(client):
     r = (await client.post("/api/v1/plugins/laminus/test", json={})).json()
-    assert r["ok"] is False and r["state"] == "unconfigured" and "LAMINUS_SIDECAR_URL" in r["message"]
+    assert r["ok"] is False and r["state"] == "unconfigured" and "service URL" in r["message"]
 
 
 async def test_connection_test_reports_unavailable_with_the_reason(client, monkeypatch):
@@ -107,3 +108,76 @@ async def test_a_settings_row_without_url_falls_back_to_env(client, monkeypatch)
     assert configured_server_url() is None
     monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
     assert configured_server_url() == ENV_URL
+
+
+# --- BIZ-289 precedence: saved setting > deprecated env (via core) > defaults.toml ------------------------------------
+
+DEFAULT_URL = "http://orca:5000"
+
+
+@pytest.mark.shipped_defaults
+async def test_default_only_uses_the_plugins_shipped_defaults_file(client):
+    assert configured_server_url() == DEFAULT_URL
+    assert get_slicing_provider().identity == DEFAULT_URL
+
+
+@pytest.mark.shipped_defaults
+async def test_env_only_overrides_the_default_and_warns_once(client, monkeypatch, caplog):
+    from app.plugins import defaults
+    defaults._warned.clear()
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    with caplog.at_level("WARNING", logger="app"):
+        assert configured_server_url() == ENV_URL and configured_server_url() == ENV_URL
+    assert [r.getMessage() for r in caplog.records].count(
+        next(m for m in (r.getMessage() for r in caplog.records) if "LAMINUS_SIDECAR_URL is deprecated" in m)) == 1
+
+
+@pytest.mark.shipped_defaults
+async def test_saved_wins_over_env_and_default_and_clearing_falls_back_through_the_chain(client, monkeypatch):
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    await client.put("/api/v1/plugins/laminus", json={"settings": {"url": SAVED_URL}})
+    assert configured_server_url() == SAVED_URL
+    await client.put("/api/v1/plugins/laminus", json={"settings": {"url": ""}})
+    assert configured_server_url() == ENV_URL
+    monkeypatch.delenv("LAMINUS_SIDECAR_URL")
+    assert configured_server_url() == DEFAULT_URL
+
+
+@pytest.mark.shipped_defaults
+async def test_disabled_is_unconfigured_even_with_default_and_env(client, monkeypatch):
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    await client.put("/api/v1/plugins/laminus", json={"enabled": False})
+    assert configured_server_url() is None and get_slicing_provider() is None
+
+
+@pytest.mark.shipped_defaults
+async def test_a_plugin_instance_is_built_from_the_resolved_url_not_from_the_environment(client, monkeypatch):
+    assert plugin_host.build_candidate("laminus").url == DEFAULT_URL
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    assert plugin_host.build_candidate("laminus").url == ENV_URL
+    assert plugin_host.build_candidate("laminus", {"url": SAVED_URL}).url == SAVED_URL      # an unsaved draft wins too
+    assert plugin_host.build_candidate("laminus", {"url": ""}).url == ENV_URL               # blank draft = unset
+
+
+def test_the_laminus_defaults_file_ships_and_is_packaged():
+    import tomllib
+    from pathlib import Path
+    from app.plugins.defaults import load_defaults
+    root = Path(__file__).resolve().parents[2]
+    d = load_defaults(root / "app" / "plugins" / "laminus")
+    assert d.settings == {"url": DEFAULT_URL} and d.legacy_env == {"url": "LAMINUS_SIDECAR_URL"}
+    assert "plugins/*/defaults.toml" in tomllib.loads((root / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["app"]
+
+
+def test_compose_works_out_of_the_box_without_the_env_var():
+    """The default URL's host/port is the compose `orca` service, and compose no longer sets the plugin's env var."""
+    from pathlib import Path
+    from urllib.parse import urlparse
+    import yaml
+    repo = Path(__file__).resolve().parents[3]
+    compose = yaml.safe_load((repo / "docker-compose.yml").read_text())
+    u = urlparse(DEFAULT_URL)
+    assert u.hostname in compose["services"]
+    assert f":{u.port}/" in " ".join(compose["services"][u.hostname]["healthcheck"]["test"])
+    for name in ("docker-compose.yml", "docker-compose.dev.yml", "Dockerfile"):
+        assert "LAMINUS_SIDECAR_URL" not in (repo / name).read_text(), name

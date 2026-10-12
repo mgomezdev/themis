@@ -73,7 +73,7 @@ def _load_one(plugins_dir: Path, plugin_id: str, version: str, reserved: frozens
             raise PluginError("`component` tabs are for bundled plugins; installed plugins get `default` and `schema` tabs")
         if manifest.alias_routers:
             raise PluginError("alias_routers (absolute paths) are for bundled plugins")
-        register_plugin(manifest)
+        register_plugin(manifest, root)
     except BaseException:
         for p in added:
             if p in sys.path:

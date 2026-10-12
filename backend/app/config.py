@@ -3,6 +3,17 @@ import os
 from pathlib import Path
 
 
+def read_env(name: str) -> str | None:
+    """The one place a plugin-related environment value is read (BIZ-289): plugins never touch `os.environ`; the plugin host
+    calls this for the deprecated variables a plugin's `defaults.toml` maps in `[legacy_env]`."""
+    return os.environ.get(name)
+
+
+def get_app_data_dir() -> Path:
+    """The Themis data directory (THEMIS_DATA_DIR, else <repo>/data), as handed to plugins through their context."""
+    return _resolve_data_dir()
+
+
 def get_data_dir() -> Path:
     return Path(os.environ.get("THEMIS_DATA_DIR", "/data"))
 

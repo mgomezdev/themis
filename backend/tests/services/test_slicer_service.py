@@ -43,7 +43,7 @@ def test_raises_when_no_sidecar_url(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
     with patch("app.services.providers.slicing.configured_server_url", return_value=None):
-        with pytest.raises(SliceError, match="LAMINUS_SIDECAR_URL"):
+        with pytest.raises(SliceError, match="Settings -> Laminus"):
             svc.slice(_req(tmp_path))
 
 

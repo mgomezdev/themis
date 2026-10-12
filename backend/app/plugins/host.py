@@ -24,7 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import CapabilitySelection, PluginConfig
 from ..eventing.definitions import EventSubscription
-from . import PluginError, capability_catalog, get_plugin, providers_of, registered_plugins
+from .. import config
+from . import PluginError, capability_catalog, get_plugin, plugin_root, providers_of, registered_plugins
+from .context import PluginContext, wants_context
+from .defaults import core_overrides_of, defaults_of
 from . import migrations as plugin_migrations
 from .capabilities.definition import BUILDS_ALL, CapabilityDef, RoutedCapability
 from .manifest import PluginManifest, Provide
@@ -145,7 +148,7 @@ class PluginHost:
                     explicit.pop(r.capability, None)
             have = {r.plugin_id for r in (await s.execute(select(PluginConfig))).scalars()}
             for m in registered_plugins():                  # a default-enabled provider needs a row so its instance is built
-                if m.default_enabled and m.provides and m.id not in have:
+                if self._default_enabled(m) and m.provides and m.id not in have:
                     s.add(PluginConfig(plugin_id=m.id, enabled=True, settings={}, secrets={}, state={}, updated_at=_now()))
             await s.flush()
             configs = {r.plugin_id: _Snapshot(bool(r.enabled), dict(r.settings or {}), dict(r.secrets or {}),
@@ -172,7 +175,7 @@ class PluginHost:
             errors_before = set(self._build_errors)
             for plugin_id in sorted(wanted):
                 cfg = configs[plugin_id]
-                fingerprint = (repr(sorted(cfg.settings.items())), repr(sorted(cfg.secrets.items())),
+                fingerprint = (repr(sorted(self.effective_settings(plugin_id).items())), repr(sorted(cfg.secrets.items())),
                                plugin_migrations.failed.get(plugin_id))
                 if self._fingerprints.get(plugin_id) == fingerprint and (plugin_id in self._instances or plugin_id in self._build_errors):
                     continue
@@ -192,8 +195,30 @@ class PluginHost:
         cfg = self._configs.get(plugin_id)
         if cfg is None:                                  # never configured: the manifest's default applies
             m = get_plugin(plugin_id)
-            return bool(m and m.default_enabled)
+            return bool(m and self._default_enabled(m))
         return bool(cfg.enabled and get_plugin(plugin_id) is not None)
+
+    @staticmethod
+    def _default_enabled(m: PluginManifest) -> bool:
+        """Enabled-when-no-row: a core override input (deprecated env) > the plugin's defaults.toml `enabled` > the manifest."""
+        override = core_overrides_of(m.id).enabled
+        if override is not None:
+            return override
+        shipped = defaults_of(m.id).enabled
+        return m.default_enabled if shipped is None else shipped
+
+    def effective_settings(self, plugin_id: str, saved: dict | None = None) -> dict:
+        """The non-secret settings the plugin runs with: saved (non-blank) > core override inputs > defaults.toml. Resolved here
+        so a plugin sees one merged dict and never the environment."""
+        saved = self._configs[plugin_id].settings if saved is None and plugin_id in self._configs else (saved or {})
+        kept = {k: v for k, v in saved.items() if v is not None and not (isinstance(v, str) and not v.strip())}
+        return {**defaults_of(plugin_id).settings, **core_overrides_of(plugin_id).settings, **kept}
+
+    def context_for(self, plugin_id: str) -> PluginContext:
+        return PluginContext(plugin_id, config.get_app_data_dir() / "plugin-data" / plugin_id, plugin_root(plugin_id))
+
+    def _construct(self, manifest: PluginManifest, settings: Any) -> Any:
+        return manifest.factory(settings, self.context_for(manifest.id)) if wants_context(manifest.factory) else manifest.factory(settings)
 
     def _serves_any(self, plugin_id: str) -> bool:
         m, catalog = get_plugin(plugin_id), capability_catalog()
@@ -268,8 +293,8 @@ class PluginHost:
         try:
             if migration_error:
                 raise PluginError(migration_error)
-            settings = manifest.settings_model(**{**cfg.settings, **cfg.secrets})
-            built = manifest.factory(settings)
+            settings = manifest.settings_model(**{**self.effective_settings(plugin_id), **cfg.secrets})
+            built = self._construct(manifest, settings)
             rejected = self._check_contract(manifest, built)
         except Exception as e:                          # contained: a bad config must not stop Themis
             message = self._redact(plugin_id, f"could not build provider: {self._describe(e)}")
@@ -421,10 +446,10 @@ class PluginHost:
         if leaked:
             raise PluginError(f"{leaked} are secret fields: send them as secrets, not settings")
         try:
-            model = manifest.settings_model(**{**cfg.settings, **(settings or {}), **merged_secrets})
+            model = manifest.settings_model(**{**self.effective_settings(plugin_id, {**cfg.settings, **(settings or {})}), **merged_secrets})
         except ValidationError as e:
             raise PluginError(self._describe(e)) from None
-        return manifest.factory(model)
+        return self._construct(manifest, model)
 
     async def record_state(self, plugin_id: str, **patch) -> None:
         """Merge keys into the plugin's persisted state (sync health, connection status...)."""
@@ -621,7 +646,7 @@ class PluginHost:
             async with self._session_factory() as s:
                 row = await s.get(PluginConfig, plugin_id)
                 if row is None:
-                    row = PluginConfig(plugin_id=plugin_id, enabled=manifest.default_enabled, settings={}, secrets={}, state={})
+                    row = PluginConfig(plugin_id=plugin_id, enabled=self._default_enabled(manifest), settings={}, secrets={}, state={})
                     s.add(row)
                 new_settings = {**(row.settings or {}), **(settings or {})}
                 new_secrets = {**(row.secrets or {})}
