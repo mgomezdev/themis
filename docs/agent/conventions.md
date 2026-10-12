@@ -40,7 +40,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
   `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
   or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade
-  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1` (the test conftest sets it;
+  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1`, read by core via `plugins/mock/defaults.toml` `[legacy_env]` (the test conftest sets it;
   set it locally to add mock printers).
 - **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
   `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
@@ -93,7 +93,8 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Config is platform-aware.** `config.py` holds only core settings (e.g. `THEMIS_DATA_DIR`, `FFMPEG_EXECUTABLE`);
   the one Orca leftover, `ORCA_EXECUTABLE` (used only by `thumbnail_regen`), goes away with BIZ-284. Vendor/provider
   config (e.g. the Laminus URL) is the plugin's setting, not config.py or compose; plugins must not read env vars
-  themselves (BIZ-289 fixes the remaining violations: `LAMINUS_SIDECAR_URL` default, `THEMIS_MOCK_PRINTERS`).
+  themselves: core resolves env-derived values and hands them over (`PluginContext`, `defaults.toml` `[legacy_env]`; see
+  docs/plugins.md "Configuration and defaults"). `tests/test_plugins_do_not_read_environment.py` enforces it (allowlist: `plugins/installer.py`).
 - **Stale routes / 405s** usually mean the dev server didn't reload (often the Store-Python issue above)
   — restart uvicorn before debugging the route.
 - **OrcaSlicer config dir is bind-mounted read-only** in Docker (`%APPDATA%\OrcaSlicer`). Don't write to

@@ -161,7 +161,7 @@ maps. `Catalog.raw` is the legacy `{"machine": […], "process": […], "filamen
 serves unchanged. Errors: `SlicingProviderError` (`SidecarError` maps to it); `SlicingProviderNotReady`.
 
 Accessors:
-- `get_slicing_provider()` → provider or `None` when no server is configured (the `laminus` plugin's saved URL, else the `LAMINUS_SIDECAR_URL` default; see `configured_server_url()`). `None`
+- `get_slicing_provider()` → provider or `None` when no server is configured (saved `laminus` plugin URL > deprecated `LAMINUS_SIDECAR_URL` read by core > the plugin's `defaults.toml`; see `configured_server_url()`). `None`
   blocks queue jobs with the same reason strings as before ("not configured / not ready / unreachable").
 - `get_format_provider()` → the offline `FormatProvider`, **never `None`**, a separate object from the slicing provider
   (its methods `curated_settings`, `parse_estimates`, `inspect_overrides` are local file work and cannot call a server, so
@@ -207,7 +207,7 @@ package in `ADAPTER_PACKAGES`, and a parameter in the provider contract suite
   `fail_with` / `fail_on[method]`, canned `estimates` / `merged` / `health_script`). Patch the accessor **in the
   module under test** (inventory: `await use_provider(fake)` from `tests/inventory_helpers.py` makes it the active provider; the plugin host is configured per test by `session_factory`);
   the accessor reads `slicing.configured_server_url()` at call time, so `patch("app.services.providers.slicing.configured_server_url")`
-  (or `LAMINUS_SIDECAR_URL` / the `laminus` plugin settings) selects the server.
+  (or the `laminus` plugin settings) selects the server.
 - Adapter tests run against the real wire formats: Spoolman via `spoolman_upstream` (the real
   `tests/spoolman_mock.py` app behind an httpx transport), Laminus via a mock `httpx.Client` transport
   (`sidecar` fixture in `test_slicing_provider_contract.py`).

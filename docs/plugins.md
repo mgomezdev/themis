@@ -133,6 +133,33 @@ and their errors are redacted. Contract, delivery guarantees and operator endpoi
 * A provider's methods are `async`; wrap blocking SDKs with `run_in_executor`. Core calls you through `host.call` (timeout,
   exceptions contained, state recorded) — never raise into core on purpose, but nothing breaks if you do.
 
+### Configuration and defaults (BIZ-289)
+
+A plugin **never reads the process environment** and adds no plugin-specific env vars (`tests/test_plugins_do_not_read_environment.py`
+fails on `os.environ`/`getenv` anywhere under `app/plugins/` except the core installer's pip-subprocess env, which is host code, and
+under `app/services/providers/laminus/`). Anything the environment decides reaches the plugin through core:
+
+* **`defaults.toml`** next to `themis-plugin.toml` (bundled: packaged via `package-data`; installed: shipped in the zip). Optional.
+  ```toml
+  enabled = false              # replaces the manifest's default_enabled
+  [settings]                   # shipped defaults for your settings model
+  url = "http://orca:5000"
+  [legacy_env]                 # DEPRECATED, BUNDLED PLUGINS ONLY (ignored for installed ones): setting (or "enabled") -> old env var
+  url = "LAMINUS_SIDECAR_URL"
+  ```
+* **Setting precedence** (host-resolved in `PluginHost.effective_settings`; blank saved values count as unset):
+  saved setting (Settings page) > core override input (a `[legacy_env]` variable, read by core through `config.read_env`, deprecation
+  warning logged once per process) > `defaults.toml [settings]` > the settings model's field default. Secrets are saved-only.
+  The plugin only sees the merged result in its settings model. `enabled` (when no saved row exists): `[legacy_env] enabled` >
+  `defaults.toml enabled` > manifest `default_enabled`; a saved enabled state always wins.
+* **`PluginContext`** (`app/plugins/context.py`) carries core-defined values: `plugin_id`, `data_dir` (`<THEMIS_DATA_DIR>/plugin-data/<id>`,
+  not created for you) and `plugin_dir`. A factory opts in with a second parameter: `factory(settings, context)`; `factory(settings)`
+  keeps working. Add new core-defined values to the context, not to the plugin.
+* Compose/Dockerfile carry only infrastructure Themis itself needs (volumes, ports, the `orca` service), never plugin config.
+
+Bundled examples: `laminus` (`url` default = the compose `orca` service; `LAMINUS_SIDECAR_URL` deprecated) and `mock` (off by default;
+`THEMIS_MOCK_PRINTERS` deprecated).
+
 ## Installing
 
 Settings → Plugins → **Install plugin**: upload a `.zip` / `.tar.gz` / `.tgz`, or give a **public GitHub repository** (URL, optional

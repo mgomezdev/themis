@@ -4,7 +4,8 @@
 # Start orca for dev:
 #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up orca
 #
-# Then run Themis locally via /themis-start (sets LAMINUS_SIDECAR_URL as the default; or set the URL in Settings -> Laminus).
+# Then run Themis locally via /themis-start and set Settings -> Laminus -> URL to http://localhost:5000
+# (the plugin's shipped default http://orca:5000 only resolves inside the compose network).
 services:
   orca:
     ports:

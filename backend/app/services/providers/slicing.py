@@ -146,15 +146,15 @@ def slicing_provider_name() -> str:
 
 
 def configured_server_url() -> str | None:
-    """The slicing service URL: the active provider's plugin settings (plugin enabled), else its env default (BIZ-260
-    compatible defaulting). None when unconfigured or the plugin is disabled. Read at call time."""
+    """The slicing service URL as the plugin host resolves it (BIZ-289): saved plugin setting > deprecated env override read by
+    core > the plugin's defaults.toml. None when unconfigured or the plugin is disabled. Read at call time."""
     from . import laminus  # noqa: F401  (registers the adapter)
-    from .laminus.connection import effective_url
+    from .laminus.connection import clean_url
     from ...plugins.host import plugin_host
 
     if not plugin_host.is_enabled(ACTIVE_PROVIDER):
         return None
-    return effective_url(plugin_host.settings(ACTIVE_PROVIDER).get("url"))
+    return clean_url(plugin_host.effective_settings(ACTIVE_PROVIDER).get("url"))
 
 
 def get_slicing_provider() -> SlicingProvider | None:

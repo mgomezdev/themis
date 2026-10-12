@@ -147,7 +147,7 @@ def test_slice_raises_without_sidecar():
             svc.slice(req)
             assert False, "expected SliceError"
         except SliceError as e:
-            assert "LAMINUS_SIDECAR_URL" in str(e)
+            assert "Settings -> Laminus" in str(e)
 
 
 # ---------------------------------------------------------------------------
