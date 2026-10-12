@@ -64,8 +64,8 @@ not a Themis reader feature.
 
 ## Follow-ups (concrete only)
 
-- **F1** Move `source_has_project_settings` into the core reader; `jobs.py` imports it from there. Makes `mesh_3mf_builder` fully dead.
-- **F2** Introduce `FormatProvider` + the DTOs above; `curated_settings()` replaces `curated_override_keys` and `_SETTING_LABELS`; routes serialize DTOs to the unchanged JSON. Update `contracts/response-keys.json` only if keys change (they must not).
-- **F3** `parse_three_mf`: replace the JSON `slice_info.config` branch with the XML reader (`_sliced_plate_meta`); update characterization test `test_json_slice_info_supplies_estimates_for_a_model_3mf`.
-- **F4** Route `slicer_service._inject_thumbnail`, `projects._parse_plate_nums`, `thumbnail_regen` through shared core-reader helpers.
+- **F1 (BIZ-280)** Move `source_has_project_settings` into the core reader; `jobs.py` imports it from there. Makes `mesh_3mf_builder` fully dead.
+- **F2 (BIZ-281, blocked by BIZ-248)** Introduce `FormatProvider` + the DTOs above; `curated_settings()` replaces `curated_override_keys` and `_SETTING_LABELS`; routes serialize DTOs to the unchanged JSON. Update `contracts/response-keys.json` only if keys change (they must not).
+- **F3 (BIZ-282)** `parse_three_mf`: replace the JSON `slice_info.config` branch with the XML reader (`_sliced_plate_meta`); update characterization test `test_json_slice_info_supplies_estimates_for_a_model_3mf`.
+- **F4 (BIZ-283)** Route `slicer_service._inject_thumbnail`, `projects._parse_plate_nums`, `thumbnail_regen` through shared core-reader helpers.
 - **Delete (coordinate on BIZ-261, not a new issue):** `mesh_3mf_builder.py` + `tests/services/test_mesh_3mf_builder.py` after F1; the 3 builder characterization tests here go with it.
