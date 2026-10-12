@@ -177,6 +177,38 @@ async def test_a_copy_with_the_same_bytes_is_a_new_file_not_a_move(tmp_path, ses
     assert (summary["moved"], summary["added"]) == (0, 1) and paths == ["a/p.stl", "z/p.stl"]
 
 
+async def test_a_row_with_no_hash_is_rehashed_even_when_size_and_mtime_match(tmp_path, session_factory):
+    lib, cache = InMemoryArtifactStore(), InMemoryArtifactStore()
+    info = lib.put("a.stl", io.BytesIO(b"abc"))
+    async with session_factory() as s:
+        s.add(UploadedFile(original_filename="a.stl", relative_path="a.stl", folder="/", size_bytes=info.size,
+                           content_hash="", mtime=info.mtime, plates=[], missing=False, uploaded_at="2026-01-01"))
+        await s.commit()
+        summary = await _scanner(s, lib, cache, tmp_path).scan()
+        row = (await s.execute(select(UploadedFile))).scalars().one()
+    assert summary["added"] == 0 and row.content_hash == info.sha256
+
+
+async def test_a_row_whose_file_is_readable_but_not_listable_is_kept_not_deleted_or_flagged(tmp_path, session_factory):
+    lib_dir, cache_dir, outside = tmp_path / "lib", tmp_path / "cache", tmp_path / "nas.stl"
+    (lib_dir / "Models").mkdir(parents=True)
+    outside.write_bytes(b"on the nas")
+    (lib_dir / "Models" / "foo.stl").symlink_to(outside)            # escapes the root: the store refuses and does not list it
+    (lib_dir / "back\\slash.stl").write_bytes(b"x")                 # not a valid key
+    (lib_dir / "gone.stl").write_bytes(b"y")
+    async with session_factory() as s:
+        for rel in ("Models/foo.stl", "back\\slash.stl", "gone.stl"):
+            s.add(UploadedFile(original_filename=Path(rel).name, relative_path=rel, folder="/", size_bytes=1,
+                               content_hash=f"h-{rel}", mtime=1.0, plates=[], missing=False, uploaded_at="2026-01-01"))
+        await s.commit()
+        (lib_dir / "gone.stl").unlink()
+        summary = await LibraryScanner(s, lib_dir, cache_dir).scan()
+        rows = {r.relative_path: r for r in (await s.execute(select(UploadedFile))).scalars()}
+    assert set(rows) == {"Models/foo.stl", "back\\slash.stl"}        # only the truly vanished row was removed
+    assert not rows["Models/foo.stl"].missing and not rows["back\\slash.stl"].missing
+    assert (summary["removed"], summary["missing"], summary["added"]) == (1, 0, 0)
+
+
 async def test_a_vanished_file_is_removed_from_the_index(tmp_path, session_factory):
     lib, cache = InMemoryArtifactStore(), InMemoryArtifactStore()
     lib.put("a.stl", io.BytesIO(b"x"))
@@ -185,6 +217,40 @@ async def test_a_vanished_file_is_removed_from_the_index(tmp_path, session_facto
         await sc.scan()
         lib.delete("a.stl")
         assert (await sc.scan())["removed"] == 1
+
+
+# ---- parse_plates scratch dir -----------------------------------------------------------------------------------
+
+def _record_scratch(seen):
+    real = LibraryScanner._parse_local
+
+    def spy(abs_path, thumb_dir):
+        seen.append(thumb_dir)
+        assert thumb_dir.is_dir()
+        return real(abs_path, thumb_dir)
+    return spy
+
+
+def test_parse_plates_removes_its_scratch_dir_on_success(tmp_path):
+    lib, cache, seen = InMemoryArtifactStore(), InMemoryArtifactStore(), []
+    lib.put("m.3mf", io.BytesIO(_3mf()))
+    sc = LibraryScanner(None, tmp_path / "l", tmp_path / "c", library_store=lib, filecache_store=cache)
+    with patch.object(LibraryScanner, "_parse_local", staticmethod(_record_scratch(seen))):
+        sc.parse_plates("m.3mf", 1)
+    assert len(seen) == 1 and not seen[0].exists()
+
+
+def test_parse_plates_removes_its_scratch_dir_when_parsing_raises(tmp_path):
+    lib, cache, seen = InMemoryArtifactStore(), InMemoryArtifactStore(), []
+    lib.put("m.3mf", io.BytesIO(_3mf()))
+    sc = LibraryScanner(None, tmp_path / "l", tmp_path / "c", library_store=lib, filecache_store=cache)
+
+    def boom(abs_path, thumb_dir):
+        seen.append(thumb_dir)
+        raise RuntimeError("bad zip")
+    with patch.object(LibraryScanner, "_parse_local", staticmethod(boom)), pytest.raises(RuntimeError):
+        sc.parse_plates("m.3mf", 1)
+    assert len(seen) == 1 and not seen[0].exists()
 
 
 # ---- local-disk store: only valid keys are listed -------------------------------------------------------------

@@ -339,7 +339,8 @@ async def upload_file(
         await asyncio.to_thread(store.delete, scratch, missing_ok=True)  # no-op once moved
 
     key = placed.key
-    scanner = LibraryScanner(session, library, config.get_filecache_dir())
+    scanner = LibraryScanner(session, library, config.get_filecache_dir(),
+                             library_store=store, filecache_store=get_filecache_store())
     record = UploadedFile(
         original_filename=key_name(key), relative_path=key,
         folder=folder_of(key), size_bytes=placed.size, content_hash=incoming_hash,
@@ -679,7 +680,8 @@ async def remove_file_tag(file_id: int, tag_id: int,
 async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     """Walk the library directory and sync the file index — adds missing records,
     marks orphaned records as missing, and re-parses plate metadata."""
-    scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir())
+    scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir(),
+                             library_store=get_library_store(), filecache_store=get_filecache_store())
     return await scanner.scan()
 
 

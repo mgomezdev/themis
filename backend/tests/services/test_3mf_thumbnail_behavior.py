@@ -121,7 +121,7 @@ def test_library_scan_reads_embedded_thumbnails_without_launching_orca_or_laminu
     with patch.object(subprocess, "run", side_effect=AssertionError("orca launched")):
         with_thumbs = scanner.parse_plates("e.3mf", 1)
         without = scanner.parse_plates("bare.3mf", 2)
-    assert [Path(p["thumbnail_path"]).name for p in with_thumbs] == ["plate_1.png", "plate_2.png"]
+    assert [p["thumbnail_path"] for p in with_thumbs] == ["1/thumbnails/plate_1.png", "1/thumbnails/plate_2.png"]   # filecache keys
     assert [p["thumbnail_path"] for p in without] == [None, None]    # no thumbnail is rendered for them
 
 

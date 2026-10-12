@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import UploadedFile, Job
 from .artifact_store import (
-    ArtifactError, ArtifactInfo, ArtifactStore, LocalDiskArtifactStore,
+    ArtifactError, ArtifactInfo, ArtifactStore, InvalidArtifactKey, LocalDiskArtifactStore,
 )
 from .providers.slicing import get_format_provider
 from .three_mf_parser import parse_sliced_archive, parse_three_mf, PlateInfo
@@ -215,6 +215,15 @@ class LibraryScanner:
                                   new_file_hash=new_hash, reason="file_edited")
             version.source_file_id = None
 
+    def _unlisted_but_present(self, rel: str) -> bool:
+        """True for a row whose file exists although the store did not list it. `list()` leaves out names the store refuses
+        (backslash keys, symlinks leaving the root), and those must not be deleted or flagged missing just because the
+        store cannot serve them. Only local disk has such files; a backend that cannot stat the key reports absent."""
+        try:
+            return self.library_store.exists(rel)
+        except InvalidArtifactKey:
+            return (self.library_dir / rel).is_file()
+
     # ---- the scan ----
     async def scan(self) -> dict:
         summary = {"added": 0, "moved": 0, "removed": 0, "missing": 0}
@@ -281,6 +290,8 @@ class LibraryScanner:
         for rel, row in list(by_path.items()):
             if rel in seen_paths:
                 continue
+            if await asyncio.to_thread(self._unlisted_but_present, rel):
+                continue   # readable on disk but not a listable key (e.g. a symlink out of the root): keep the row as it is
             any_job = (await self.session.execute(
                 select(Job.id).where(Job.uploaded_file_id == row.id).limit(1)
             )).first()

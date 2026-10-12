@@ -19,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import config
+from .library_store import get_filecache_store, get_library_store
 from ..models import Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
 from . import gcode_eligibility, slice_cache
 from .providers.slicing import get_format_provider, get_slicing_provider
@@ -178,7 +179,8 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         )
         session.add(record)
         await session.flush()
-        scanner = LibraryScanner(session, library, config.get_filecache_dir())
+        scanner = LibraryScanner(session, library, config.get_filecache_dir(),
+                                 library_store=get_library_store(), filecache_store=get_filecache_store())
         thumb_dir = Path(config.get_filecache_dir()) / str(record.id)
         record.plates = await asyncio.to_thread(scanner.parse_plates, rel, record.id)
         version = SlicedVersion(
