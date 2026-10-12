@@ -75,9 +75,9 @@ async def test_upload_streams_large_file_without_leftover_temp(client, tmp_path)
     runs multiple iterations, and confirm the content lands intact with the
     right hash-derived dedup key, and no .part scratch file is left behind."""
     import hashlib
-    from app.api.routes import files as files_mod
+    from app.services.artifact_store import CHUNK_SIZE
 
-    big = (b"solid model\n" + b"x" * (files_mod._UPLOAD_CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
+    big = (b"solid model\n" + b"x" * (CHUNK_SIZE * 2 + 12345) + b"\nendsolid")
     expected_hash = hashlib.sha256(big).hexdigest()
 
     lib, cache = _patch_dirs(tmp_path)

@@ -6,6 +6,7 @@ import re
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,6 +116,22 @@ def library_abs_path(library_dir: Path, relative_path: str) -> Path:
     return library_dir / relative_path
 
 
+def name_candidates(filename: str) -> Iterator[str]:
+    """`filename`, then `stem (2).ext`, `stem (3).ext`, ... (endless). The collision policy shared by path- and store-based callers."""
+    yield filename
+    # A sliced archive's suffix is the whole `.gcode.3mf`: splitting at the last dot would give "x (2).3mf" —
+    # a name that reads back as a sliceable model (BIZ-190).
+    if file_kind(filename) == "gcode_3mf":
+        suffix = filename[-len(SLICED_ARCHIVE_SUFFIX):]
+        stem = filename[: -len(SLICED_ARCHIVE_SUFFIX)]
+    else:
+        stem, suffix = Path(filename).stem, Path(filename).suffix
+    n = 2
+    while True:
+        yield f"{stem} ({n}){suffix}"
+        n += 1
+
+
 class LibraryScanner:
     def __init__(self, session: AsyncSession, library_dir: Path, filecache_dir: Path):
         self.session = session
@@ -124,22 +141,11 @@ class LibraryScanner:
     # ---- path helpers ----
     @staticmethod
     def unique_path(folder_abs: Path, filename: str) -> Path:
-        candidate = folder_abs / filename
-        if not candidate.exists():
-            return candidate
-        # A sliced archive's suffix is the whole `.gcode.3mf`: splitting at the last dot would give "x (2).3mf" —
-        # a name that reads back as a sliceable model (BIZ-190).
-        if file_kind(filename) == "gcode_3mf":
-            suffix = filename[-len(SLICED_ARCHIVE_SUFFIX):]
-            stem = filename[: -len(SLICED_ARCHIVE_SUFFIX)]
-        else:
-            stem, suffix = Path(filename).stem, Path(filename).suffix
-        n = 2
-        while True:
-            candidate = folder_abs / f"{stem} ({n}){suffix}"
+        for name in name_candidates(filename):
+            candidate = folder_abs / name
             if not candidate.exists():
                 return candidate
-            n += 1
+        raise AssertionError("unreachable")   # name_candidates never ends
 
     def _rel(self, abs_path: Path) -> str:
         return abs_path.relative_to(self.library_dir).as_posix()
