@@ -121,6 +121,14 @@ async def lifespan(app: FastAPI):
     await printer_manager.load_awaiting_plate_clear_from_db()
     await printer_manager.connect_all_enabled_printers(SessionLocal)
 
+    # Plugins first: the Laminus URL lives in plugin settings, so the queue must not run (and try to slice) before the host loads them.
+    from .plugins.host import plugin_host
+    plugin_host.configure(SessionLocal)
+    try:
+        await plugin_host.start()
+    except Exception:
+        logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
+
     # Initialise and wire queue engine
     QueueEngine.__init__(
         queue_engine,
@@ -132,12 +140,6 @@ async def lifespan(app: FastAPI):
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
     await queue_engine.start()
 
-    from .plugins.host import plugin_host
-    plugin_host.configure(SessionLocal)
-    try:
-        await plugin_host.start()
-    except Exception:
-        logging.getLogger("app").exception("Plugin host failed to start; continuing without plugins")
     try:
         from .services.printer_model_registry import sync_registry
         async with SessionLocal() as session:

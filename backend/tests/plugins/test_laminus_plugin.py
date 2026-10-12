@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app import config
+from app.plugins.host import plugin_host
 from app.services.providers.laminus.sidecar_client import SidecarError
 from app.services.providers.slicing import configured_server_url, get_format_provider, get_slicing_provider
 
@@ -89,3 +90,20 @@ def test_config_py_no_longer_names_laminus_or_the_unused_orca_paths():
     """Only the thumbnail_regen executable remains (until BIZ-284); the sidecar URL and Orca config dir are gone."""
     assert not hasattr(config, "get_laminus_sidecar_url") and not hasattr(config, "get_orca_config_dir")
     assert hasattr(config, "get_orca_executable")
+
+
+async def test_a_whitespace_only_saved_url_counts_as_unset(client, monkeypatch):
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    await client.put("/api/v1/plugins/laminus", json={"settings": {"url": "   "}})
+    assert configured_server_url() == ENV_URL
+    monkeypatch.delenv("LAMINUS_SIDECAR_URL")
+    assert configured_server_url() is None
+
+
+async def test_a_settings_row_without_url_falls_back_to_env(client, monkeypatch):
+    """A row created by enabling the plugin (no `url` key stored) must not break URL resolution."""
+    await client.put("/api/v1/plugins/laminus", json={"enabled": True})
+    assert "url" not in plugin_host.settings("laminus")
+    assert configured_server_url() is None
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", ENV_URL)
+    assert configured_server_url() == ENV_URL
