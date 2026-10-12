@@ -163,3 +163,36 @@ def test_move_succeeds_on_a_filesystem_without_hard_links(store, root, monkeypat
     with pytest.raises(ArtifactExists):
         store.move("c/dst.3mf", "b/taken.3mf")
     assert (root / "c" / "dst.3mf").read_bytes() == b"payload" and (root / "b" / "taken.3mf").read_bytes() == b"other"
+
+
+# ---- BIZ-285 decisions ---------------------------------------------------------------------------------------------
+
+def test_a_key_near_the_255_byte_limit_can_be_written(store, root):
+    """The in-flight temp name is derived from the key; it must be capped so the final name is the only limit."""
+    name = "n" * 250 + ".stl"   # 254 bytes
+    store.put(f"Folder/{name}", io.BytesIO(b"solid"))
+    assert (root / "Folder" / name).read_bytes() == b"solid"
+    assert [p.name for p in (root / "Folder").iterdir()] == [name]
+
+
+def test_a_multibyte_name_is_truncated_on_a_character_boundary(store, root):
+    name = "\u00e9" * 120 + ".stl"   # 244 bytes
+    store.put(name, io.BytesIO(b"x"))
+    assert (root / name).exists()
+
+
+def test_folders_can_be_kept_when_their_last_artifact_goes(root):
+    keep = LocalDiskArtifactStore(root, prune_empty=False)
+    keep.put("A/B/x.stl", io.BytesIO(b"1"))
+    keep.put("A/B/y.stl", io.BytesIO(b"1"))
+    keep.put("D/z.stl", io.BytesIO(b"1"))
+    keep.move("A/B/x.stl", "C/x.stl")
+    keep.delete("A/B/y.stl")
+    assert (root / "A" / "B").is_dir()
+    assert keep.delete_prefix("D/z.stl") == 1 and (root / "D").is_dir()
+
+
+def test_default_still_prunes_emptied_folders(store, root):
+    store.put("A/B/x.stl", io.BytesIO(b"1"))
+    store.delete("A/B/x.stl")
+    assert not (root / "A").exists()

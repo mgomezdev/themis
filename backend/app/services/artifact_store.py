@@ -1,8 +1,8 @@
 """Artifact storage boundary (BIZ-256). Design + consumer inventory: docs/architecture/artifact-storage.md.
 
-**Additive only: no existing code path uses this module yet.** Every live caller still resolves real filesystem paths
-(`config.get_library_dir()` + `library_abs_path`, `get_filecache_dir()`, `get_data_dir()`); they are classified in the
-design note. `LocalDiskArtifactStore` is the reference backend and is deliberately byte- and name-compatible with that
+The library CRUD routes (`api/routes/files.py`, via `services/library_store.py`) use it (BIZ-285). Every other live caller
+still resolves real filesystem paths (`config.get_library_dir()` + `library_abs_path`, `get_filecache_dir()`,
+`get_data_dir()`); they are classified in the design note. `LocalDiskArtifactStore` is the reference backend and is deliberately byte- and name-compatible with that
 layout: key == the `relative_path` already stored in `uploaded_files`, under the same root. No remote backend exists or is
 decided here (CLAUDE.md / BIZ-265 non-goal).
 
@@ -23,6 +23,7 @@ from typing import BinaryIO, Iterator
 
 CHUNK_SIZE = 1024 * 1024
 PART_SUFFIX = ".part"   # in-flight writes; never listed, never visible under a final key
+TEMP_NAME_BYTES = 100   # at most this much of the final name goes into the temp name (BIZ-285): keeps `.<name>.<rand>.part` < 255
 
 
 class ArtifactError(Exception):
@@ -182,8 +183,11 @@ class LocalDiskArtifactStore(ArtifactStore):
     """Artifacts as plain files under `root`; key `a/b/c.3mf` is `root/a/b/c.3mf`. Same names, same layout, same
     umask-governed permissions as the code it will eventually replace, so an existing library is a valid store as-is."""
 
-    def __init__(self, root: Path | str):
+    def __init__(self, root: Path | str, *, prune_empty: bool = True):
+        """`prune_empty=False` keeps a folder when its last artifact leaves (the library: folders are user-visible
+        objects created by `POST /files/folders`). Default True matches the flat-namespace contract (filecache)."""
         self.root = Path(root)
+        self._prune = prune_empty
         self.root.mkdir(parents=True, exist_ok=True)
         self._root_resolved = self.root.resolve()
 
@@ -213,7 +217,7 @@ class LocalDiskArtifactStore(ArtifactStore):
             raise ArtifactExists(f"{key!r} is a directory-like prefix")
         try:
             dest.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f".{dest.name}.", suffix=PART_SUFFIX)
+            fd, tmp_name = tempfile.mkstemp(dir=dest.parent, prefix=f".{self._temp_stem(dest.name)}.", suffix=PART_SUFFIX)
         except OSError as exc:
             raise ArtifactStoreError(f"cannot write {key!r}: {exc}") from exc
         tmp = Path(tmp_name)
@@ -243,6 +247,13 @@ class LocalDiskArtifactStore(ArtifactStore):
             raise ArtifactStoreError(f"cannot write {key!r}: {exc}") from exc
         finally:
             tmp.unlink(missing_ok=True)   # no-op once published
+
+    @staticmethod
+    def _temp_stem(name: str) -> str:
+        raw = name.encode("utf-8")
+        if len(raw) <= TEMP_NAME_BYTES:
+            return name
+        return raw[:TEMP_NAME_BYTES].decode("utf-8", errors="ignore")   # never split a multibyte character
 
     @staticmethod
     def _publish(tmp: Path, dest: Path, overwrite: bool, key: str) -> None:
@@ -350,6 +361,8 @@ class LocalDiskArtifactStore(ArtifactStore):
 
     def _prune_empty(self, directory: Path) -> None:
         # Directories are not objects, so an emptied folder disappears with its last artifact (never the root itself).
+        if not self._prune:
+            return
         while directory != self.root and self._root_resolved in directory.resolve().parents:
             try:
                 directory.rmdir()

@@ -1,14 +1,16 @@
 from __future__ import annotations
 import asyncio
+import contextlib
 from datetime import datetime, timezone
-import hashlib
-import shutil
-import tempfile
+import mimetypes
+import uuid
 from pathlib import Path
-from typing import Literal
+from typing import AsyncIterator, Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
+from starlette.concurrency import iterate_in_threadpool
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,12 +23,16 @@ from ...services.library_scanner import (
     LibraryScanner, file_kind, folder_of, is_presliced_name, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services import gcode_eligibility, model_targets, slice_cache
+from ...services.artifact_store import (
+    ArtifactError, ArtifactExists, ArtifactNotFound, ArtifactStore, InvalidArtifactKey, PART_SUFFIX, validate_key,
+)
+from ...services.library_store import (
+    folder_key, get_filecache_store, get_library_store, is_reserved_name, join_key, key_name, move_unique, unique_key,
+)
 from ...services.queue_engine import queue_engine
 from ...services.providers.slicing import get_slicing_provider
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
-
-_UPLOAD_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 
 
 # ---------- helpers ----------
@@ -38,6 +44,33 @@ def _safe_subpath(root: Path, relative: str) -> Path:
     if target != root_resolved and root_resolved not in target.parents:
         raise HTTPException(400, "Path escapes the library root")
     return target
+
+
+def _content_disposition(filename: str) -> str:
+    """Same header Starlette's FileResponse(filename=...) builds."""
+    try:
+        filename.encode("ascii")
+        return f'attachment; filename="{filename}"'
+    except UnicodeEncodeError:
+        return f"attachment; filename*=utf-8''{quote(filename)}"
+
+
+async def _artifact_response(store: ArtifactStore, key: str, media_type: str, filename: str | None = None) -> StreamingResponse:
+    """Stream a stored artifact without a local path (a remote store has none). `ArtifactNotFound` -> 404 by the caller."""
+    info = await asyncio.to_thread(store.stat, key)
+    fh = await asyncio.to_thread(store.open, key)
+
+    async def body() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in iterate_in_threadpool(iter(lambda: fh.read(1024 * 1024), b"")):
+                yield chunk
+        finally:
+            fh.close()
+
+    headers = {"content-length": str(info.size)}
+    if filename is not None:
+        headers["content-disposition"] = _content_disposition(filename)
+    return StreamingResponse(body(), media_type=media_type, headers=headers)
 
 
 async def _tags_for(session: AsyncSession, file_ids: list[int]) -> dict[int, list[dict]]:
@@ -258,21 +291,21 @@ async def upload_file(
     rel_dir = folder_abs.relative_to(library).as_posix()
     # folder_of() prepends "/" and uses the parent — mirror that for the root case too
     target_folder = "/" if rel_dir == "." else "/" + rel_dir
-
-    # Stream to disk in chunks, hashing as we go — the incoming file (multi-hundred-MB
-    # packed plates are routine) is never materialized whole in memory. Written to a
-    # temp file in the target folder first since the content hash (which decides the
-    # final path, or whether this is a dedup no-op) isn't known until the body is fully
-    # read.
-    hasher = hashlib.sha256()
-    tmp = tempfile.NamedTemporaryFile(dir=folder_abs, delete=False, suffix=".part")
-    tmp_path = Path(tmp.name)
+    folder_k = "" if rel_dir == "." else rel_dir
+    clean_name = Path(fname).name
     try:
-        with tmp:
-            while chunk := await file.read(_UPLOAD_CHUNK_SIZE):
-                hasher.update(chunk)
-                tmp.write(chunk)
-        incoming_hash = hasher.hexdigest()
+        validate_key(join_key(folder_k, clean_name))
+    except InvalidArtifactKey:
+        raise HTTPException(400, "Invalid filename")
+
+    # Stream into a scratch artifact in the target folder (hashed while streaming; multi-hundred-MB packed plates are
+    # routine, never whole in memory). The content hash decides dedup, and the collision-free final name is claimed
+    # with an exclusive move, so a short scratch name also sidesteps any name-length limit.
+    store = get_library_store()
+    scratch = join_key(folder_k, f".upload-{uuid.uuid4().hex}{PART_SUFFIX}")
+    try:
+        info = await asyncio.to_thread(store.put, scratch, file.file)
+        incoming_hash = info.sha256
 
         # Dedup: return existing record if same content is already in this folder.
         existing = (await session.execute(
@@ -282,40 +315,38 @@ async def upload_file(
             .limit(1)
         )).scalar_one_or_none()
         if existing:
-            existing_path = library_abs_path(library, existing.relative_path)
-            if not existing_path.exists():
+            if not await asyncio.to_thread(store.exists, existing.relative_path):
                 # Orphaned record: file was deleted from disk but the DB row was not
                 # cleaned up. Restore it from the just-uploaded bytes so the record
                 # stays valid.
-                existing_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(tmp_path), str(existing_path))
+                with contextlib.suppress(ArtifactExists):   # lost a race to another restore: theirs is the same bytes
+                    await asyncio.to_thread(store.move, scratch, existing.relative_path)
             if eligible_model_uuids and is_presliced_name(existing.original_filename):
                 await _apply_eligibility(session, existing, eligible_model_uuids)
                 await session.commit()
             return _to_dict(existing, [], await _cache_for(session, [existing.id]))
 
-        dest = LibraryScanner.unique_path(folder_abs, Path(fname).name)
-        shutil.move(str(tmp_path), str(dest))
+        placed = await asyncio.to_thread(move_unique, store, scratch, folder_k, clean_name)
     finally:
-        tmp_path.unlink(missing_ok=True)  # no-op once moved
+        await asyncio.to_thread(store.delete, scratch, missing_ok=True)  # no-op once moved
 
-    rel = dest.relative_to(library).as_posix()
-    stat = dest.stat()
+    key = placed.key
     scanner = LibraryScanner(session, library, config.get_filecache_dir())
     record = UploadedFile(
-        original_filename=dest.name, relative_path=rel,
-        folder=folder_of(rel), size_bytes=stat.st_size, content_hash=incoming_hash,
-        mtime=stat.st_mtime, plates=[], missing=False,
+        original_filename=key_name(key), relative_path=key,
+        folder=folder_of(key), size_bytes=placed.size, content_hash=incoming_hash,
+        mtime=placed.mtime, plates=[], missing=False,
         uploaded_at=datetime.now(timezone.utc).isoformat(),
     )
     session.add(record)
     await session.flush()
-    record.plates = scanner._parse_plates(dest, record.id)
+    with store.materialize(key) as local:   # the parsers take a path (BIZ-286 owns that)
+        record.plates = scanner._parse_plates(local, record.id)
     if eligible_model_uuids and is_presliced_name(record.original_filename):
         try:
             await _apply_eligibility(session, record, eligible_model_uuids)
         except HTTPException:
-            dest.unlink(missing_ok=True)       # a rejected eligibility must not leave an unregistered upload behind
+            await asyncio.to_thread(store.delete, key, missing_ok=True)   # a rejected eligibility must not leave an unregistered upload behind
             await session.rollback()
             raise
     await session.commit()
@@ -434,70 +465,69 @@ async def update_file(file_id: int, body: FilePatch,
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
     library = config.get_library_dir()
-    src = library_abs_path(library, f.relative_path)
+    store = get_library_store()
+    src_key = f.relative_path
     new_folder = body.folder if body.folder is not None else f.folder
     # Strip all path components from the supplied name so that traversal
     # sequences like "../../../evil.stl" cannot escape the library root.
     if body.name is not None:
         new_name = Path(body.name).name
-        if not new_name or new_name in (".", ".."):
+        if not new_name or new_name in (".", "..") or is_reserved_name(new_name):
             raise HTTPException(400, "Invalid filename")
     else:
         new_name = f.original_filename
     folder_abs = _safe_subpath(library, new_folder)
     folder_abs.mkdir(parents=True, exist_ok=True)
+    rel_dir = folder_abs.relative_to(library).as_posix()
+    dest_folder = "" if rel_dir == "." else rel_dir
+    try:
+        validate_key(join_key(dest_folder, new_name))
+    except InvalidArtifactKey:
+        raise HTTPException(400, "Invalid filename")
+    on_disk = await asyncio.to_thread(store.exists, src_key)
     # No-op when the target is the file's existing location: skip the move so we
     # don't collide with the file itself and rename it to "name (2).ext".
-    if src.exists() and folder_abs.resolve() == src.parent.resolve() and new_name == src.name:
+    if on_disk and dest_folder == folder_key(src_key) and new_name == key_name(src_key):
         tag_map = await _tags_for(session, [f.id])
         return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
-    dest = LibraryScanner.unique_path(folder_abs, new_name)
-    # Defense-in-depth: verify dest is inside the library before touching the FS.
-    library_resolved = library.resolve()
-    dest_resolved = dest.resolve()
-    if dest_resolved != library_resolved and library_resolved not in dest_resolved.parents:
-        raise HTTPException(400, "Path escapes the library root")
-    if src.exists():
-        src.replace(dest)
-    rel = dest.relative_to(library).as_posix()
-    moved_folder = folder_of(rel) != f.folder
-    f.original_filename = dest.name
-    f.relative_path = rel
-    f.folder = folder_of(rel)
+    if on_disk:
+        dest_key = (await asyncio.to_thread(move_unique, store, src_key, dest_folder, new_name)).key
+    else:   # the bytes are gone: only the row follows
+        dest_key = await asyncio.to_thread(unique_key, store, dest_folder, new_name)
+    moved_folder = folder_of(dest_key) != f.folder
+    f.original_filename = key_name(dest_key)
+    f.relative_path = dest_key
+    f.folder = folder_of(dest_key)
     if moved_folder:   # its cached versions live "next to the model": they follow a move (not a rename)
         try:
-            await _move_versions_with(session, library, f.id, folder_abs)
+            await _move_versions_with(session, store, f.id, dest_folder)
         except HTTPException:
-            if dest.exists() and not src.exists():
-                dest.replace(src)   # the model goes back too: nothing moved, nothing committed
+            if on_disk and await asyncio.to_thread(store.exists, dest_key) and not await asyncio.to_thread(store.exists, src_key):
+                await asyncio.to_thread(store.move, dest_key, src_key)   # the model goes back too: nothing moved, nothing committed
             raise
     await session.commit()
     tag_map = await _tags_for(session, [f.id])
     return _to_dict(f, tag_map.get(f.id, []), await _cache_for(session, [f.id]))
 
 
-async def _move_versions_with(session: AsyncSession, library: Path, model_id: int, folder_abs: Path) -> None:
+async def _move_versions_with(session: AsyncSession, store: ArtifactStore, model_id: int, dest_folder: str) -> None:
     rows = (await session.execute(
         select(UploadedFile).join(SlicedVersion, SlicedVersion.file_id == UploadedFile.id)
         .where(SlicedVersion.source_file_id == model_id)
     )).scalars().all()
-    done: list[tuple[Path, Path]] = []
+    done: list[tuple[str, str]] = []
     try:
         for vf in rows:
-            vsrc = library_abs_path(library, vf.relative_path)
-            if not vsrc.exists() or vsrc.parent.resolve() == folder_abs.resolve():
+            vsrc = vf.relative_path
+            if folder_key(vsrc) == dest_folder or not await asyncio.to_thread(store.exists, vsrc):
                 continue   # gone, or already next to the model (don't rename it against itself)
-            vdest = LibraryScanner.unique_path(folder_abs, vf.original_filename)
-            vsrc.replace(vdest)
+            vdest = (await asyncio.to_thread(move_unique, store, vsrc, dest_folder, vf.original_filename)).key
             done.append((vdest, vsrc))
-            vrel = vdest.relative_to(library).as_posix()
-            vf.original_filename, vf.relative_path, vf.folder = vdest.name, vrel, folder_of(vrel)
-    except OSError as exc:
+            vf.original_filename, vf.relative_path, vf.folder = key_name(vdest), vdest, folder_of(vdest)
+    except ArtifactError as exc:
         for moved_to, came_from in reversed(done):   # put the files back where the (uncommitted) rows say they are
-            try:
-                moved_to.replace(came_from)
-            except OSError:
-                pass
+            with contextlib.suppress(ArtifactError):
+                await asyncio.to_thread(store.move, moved_to, came_from)
         raise HTTPException(500, f"Couldn't move the model's sliced versions: {exc}") from exc
 
 
@@ -547,8 +577,7 @@ async def delete_file(
     # disk (see LibraryScanner.scan), its bytes go and the row stays, marked missing.
     printed = set((await session.execute(
         select(Job.uploaded_file_id).where(Job.uploaded_file_id.in_([d.id for d in doomed])))).scalars().all())
-    library = config.get_library_dir()
-    paths = [(d.id, library_abs_path(library, d.relative_path), d.id not in printed) for d in doomed]
+    keys = [(d.id, d.relative_path, d.id not in printed) for d in doomed]
     for d in doomed:
         if d.id in printed:
             d.missing = True
@@ -560,12 +589,11 @@ async def delete_file(
 
     # Only touch the filesystem after the DB is committed — otherwise a commit failure (e.g. an unanticipated FK
     # reference) leaves the file deleted but the row still pointing at it.
-    import shutil
-    for did, abs_path, row_gone in paths:
-        if abs_path.exists():
-            abs_path.unlink()
+    store, cache = get_library_store(), get_filecache_store()
+    for did, key, row_gone in keys:
+        await asyncio.to_thread(store.delete, key, missing_ok=True)
         if row_gone:   # a kept (missing) row keeps its thumbnails for the job history
-            shutil.rmtree(config.get_filecache_dir() / str(did), ignore_errors=True)
+            await asyncio.to_thread(cache.delete_prefix, str(did))
     return {"deleted": file_id, "deleted_versions": [d.id for d in doomed[1:]]}
 
 
@@ -750,30 +778,32 @@ async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(ge
     dependencies=[Depends(require_scope("files:read"))],
 )
 async def get_thumbnail(file_id: int, filename: str,
-                        session: AsyncSession = Depends(get_session)) -> FileResponse:
+                        session: AsyncSession = Depends(get_session)) -> StreamingResponse:
     """Return a PNG thumbnail for a specific plate. The filename is the basename
     of the thumbnail path from the plates list."""
     if await session.get(UploadedFile, file_id) is None:
         raise HTTPException(404, f"File {file_id} not found")
-    thumb_dir = (config.get_filecache_dir() / str(file_id) / "thumbnails").resolve()
-    try:
-        thumb_path = (thumb_dir / filename).resolve()
-        thumb_path.relative_to(thumb_dir)
-    except ValueError:
+    if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(400, "Invalid filename")
-    if not thumb_path.exists():
+    try:
+        return await _artifact_response(get_filecache_store(), f"{file_id}/thumbnails/{filename}", "image/png")
+    except InvalidArtifactKey:
+        raise HTTPException(400, "Invalid filename")
+    except ArtifactNotFound:
         raise HTTPException(404, "Thumbnail not found")
-    return FileResponse(str(thumb_path), media_type="image/png")
 
 
 @router.get("/{file_id}/download", summary="Download raw file",
            dependencies=[Depends(require_scope("files:read"))])
-async def download_file(file_id: int, session: AsyncSession = Depends(get_session)) -> FileResponse:
+async def download_file(file_id: int, session: AsyncSession = Depends(get_session)) -> StreamingResponse:
     """Serve the raw uploaded file (STL, 3MF, etc.) for client-side use."""
     f = await session.get(UploadedFile, file_id)
     if f is None:
         raise HTTPException(404, f"File {file_id} not found")
-    p = library_abs_path(config.get_library_dir(), f.relative_path)
-    if not p.exists():
+    media_type = mimetypes.guess_type(f.original_filename)[0] or "application/octet-stream"
+    try:
+        return await _artifact_response(get_library_store(), f.relative_path, media_type, f.original_filename)
+    except InvalidArtifactKey:
+        raise HTTPException(400, "Invalid file path")
+    except ArtifactNotFound:
         raise HTTPException(404, "File data not found")
-    return FileResponse(str(p), filename=f.original_filename)
