@@ -11,8 +11,10 @@ that needs its own decision after the gates in section 6. Local disk stays the o
 
 Roots: `library` (`get_library_dir()`, default `<data>/library`, override `THEMIS_LIBRARY_DIR`), `filecache` (`<data>/filecache`),
 `data` (`THEMIS_DATA_DIR`: `gcode/`, `gcode_estimates/`, `gcode_verify/`, `gcode_manual_complete/`, legacy `uploads/`).
-DB rows hold only `uploaded_files.relative_path` (library-relative, never absolute; `stored_path` is legacy, cleared by v016/migration)
-and `plates[].thumbnail_path` (an absolute filecache path string, see C2).
+DB rows hold three kinds of location: `uploaded_files.relative_path` (library-relative, never absolute; `stored_path` is legacy, cleared by v016/migration),
+`plates[].thumbnail_path` (an **absolute** filecache path string, see C2) and **`gcode_files.path` (`models.py` `GcodeFile.path`, an ABSOLUTE path to the
+job's sliced/staged gcode under `<data>/gcode/<job_id>/`, see G1)**. Both absolute columns are written once and read back verbatim, so they pin the
+data-dir location of the machine that wrote them.
 
 | # | Consumer (file) | Reads | Writes / deletes | Needs real path? | Class |
 |---|---|---|---|---|---|
@@ -37,13 +39,15 @@ and `plates[].thumbnail_path` (an absolute filecache path string, see C2).
 | P1 | Printer upload `queue_engine._do_upload_and_print` (~1385) | `open(gcode_path,'rb').read()` -> `client.upload_file(data: bytes, name)` | - | no, but loads the whole file into memory (pre-existing) | Reads from a local staged path today; if staging moves, use `materialize`/`open`. The bytes-based `AbstractPrinterClient.upload_file` signature is a plugin API, **not changed here** (documented limit). BIZ-287 |
 | P2 | Printer "copy file to library" `printers.py` ~1203-1230 | bytes from printer | via L1 (`upload_file` with `BytesIO`) | no | Follows L1 |
 | P3 | Start print from printer-stored file `printers.py` ~1037 | printer-side id | - | printer storage, not Themis | **Out of scope** (not Themis artifacts) |
+| G1 | **`GcodeFile.path` (absolute, persisted)**: written `queue_engine` ~1055 (`GcodeFile(path=gcode_path)` after slice/stage); read `queue_engine` 1358 (dispatch), `jobs.py` ~1429/1433 (save-slice `artifact_path`); **deleted by path** at `queue_engine` 711, 1305, 1528 (job end/cancel cleanup), `jobs.py` ~790 (`os.remove(gcode_row.path)`, delete of a sliced job) and `printers.py` ~662 (`os.remove(gcode.path)`, printer removal); `queue_engine` ~1050 removes an unreferenced artifact before any row exists | job gcode working copy | printer upload, save-slice copy | **yes** | **Intentionally local (job working copy, same class as C3).** Not library artifacts: they are the staged/sliced output the printer upload reads. The row and all six `os.remove` sites share one lifecycle and stay together. **Constraint:** the column is an absolute path, so a changed `THEMIS_DATA_DIR` leaves rows pointing at the old location (existing behavior: removal swallowed by `except OSError`, dispatch fails). If ever moved behind the store, migrate the column to a key relative to the `gcode` root (new `vNNN` migration: strip the `<data>/gcode/` prefix, accept both forms for one release, keep the old value until verified). **Rollback:** relative keys re-expand to the same absolute path, so `down()` re-prefixes and the migration is reversible. Not converted here. |
+| G2 | Verify / manual-complete / estimate scratch: `jobs.py` ~1128-1142 (`gcode_verify/<job>`, `rmtree` in `finally`) and ~1209-1222 (`gcode_manual_complete/<job>`, parse then `rmtree`); `queue_engine` 389/436 (`gcode_estimates/<job>`) and 516-517 (wipes `gcode_estimates`); `slicer_service` 172 (unlinks stale `*.gcode` in its own out dir); `slice_saver._cleanup` ~230 (`os.remove(dest)`, `rmtree(thumb_dir)` after a duplicate/failed save) | slicer output | slicer output | yes | **Intentionally local scratch** (C3), except `slice_saver._cleanup`, which removes a *library* file it just created and migrates with BIZ-287 (`delete`/`delete_prefix`). |
 | **Not artifacts** | | | | | |
 | N1 | SQLite DB (`database.py`), `plugins_dir` + installer, `hms_messages.json` (`plugins/bambu/alarms.py`), `.legacy_migrated` sentinel | | | yes | **Intentionally local**: DB/code/plugin state, not user artifacts |
 | N2 | Camera streaming | | | no files under `/data` today | n/a (no camera artifact storage exists; if recordings are added they are a new artifact class) |
 
-Totals: 14 consumer groups touch stored bytes. Migrated today: **0** (additive). Migratable by `ArtifactStore` ops: L1-L4, L6, L9 destination,
-L10, L11 source, L8 output, P1/P2 reads, C2 serving/delete. Intentionally local: L7, C3 scratch dirs, N1. Blocked by a documented constraint:
-L12 (provider takes a path), L5/L13/C2-writer (parsers take a path), L6 (needs etag/hash for remote), C2 stored absolute paths.
+Totals: 16 consumer groups touch stored bytes. Migrated today: **0** (additive). Migratable by `ArtifactStore` ops: L1-L4, L6, L9 destination,
+L10, L11 source, L8 output, P1/P2 reads, C2 serving/delete. Intentionally local: L7, C3/G2 scratch dirs, G1 job gcode (`GcodeFile.path`), N1. Blocked by a documented constraint:
+L12 (provider takes a path), G1 (absolute persisted path; see its migration/rollback note), L5/L13/C2-writer (parsers take a path), L6 (needs etag/hash for remote), C2 stored absolute paths.
 
 Path-only consumers that need `materialize`: slicer (`source_3mf`), `three_mf_parser` (`zipfile`), `FormatProvider.parse_estimates`,
 `source_has_project_settings`, `extract_gcode_thumbnail`, packer input, anything shelling to a binary (Orca). None of them can read a stream today.
@@ -67,7 +71,12 @@ without migration. Flat namespace: directories are not objects (`delete_prefix`,
 
 **Atomicity.** A key is absent or complete. Local: write to a hidden `.<name>.<rand>.part` in the destination folder, `fsync`, then `os.replace`
 (overwrite) or `os.link` (exclusive create: atomic, race-free, one winner); no-hardlink filesystems fall back to reserving the name with `O_EXCL`
-then renaming. Folder is `fsync`ed best-effort. Exclusive create is the default because every current writer avoids clobbering (`unique_path`,
+then renaming. Folder is `fsync`ed best-effort. Exception to "absent or complete": on the no-hardlink fallback the name is briefly an **empty reserved file** before the rename; a reader in that
+window sees size 0, and a crash in it leaves an empty file (the next exclusive create then reports `ArtifactExists`). Only affects filesystems without hard links.
+In-flight `.part` names are hidden from `list`, so a real artifact whose name ends in `.part` would be invisible (BIZ-285 rejects or escapes such names at the
+boundary). The temp name is `.<name>.<random>.part`, so a final name near 255 bytes cannot be written on filesystems with a 255-byte name limit (today's upload
+temp has no such limit); BIZ-285 decides a name-length cap vs. a shorter temp prefix.
+Exclusive create is the default because every current writer avoids clobbering (`unique_path`,
 `xb` in `_copy_exclusive`); callers keep their own naming policy (`"name (2)"`) by retrying on `ArtifactExists`. Naming is **not** a store feature.
 
 **Errors.** `ArtifactError` base; `InvalidArtifactKey` (bad key, or a symlink resolving outside the root, matching `files._safe_subpath`),

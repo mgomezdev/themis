@@ -149,3 +149,17 @@ def test_io_failure_is_mapped_to_store_error(store, root, monkeypatch):
     monkeypatch.setattr(mod.tempfile, "mkstemp", deny)
     with pytest.raises(ArtifactStoreError):
         store.put("p/x.3mf", io.BytesIO(b"1"))
+
+
+def test_move_succeeds_on_a_filesystem_without_hard_links(store, root, monkeypatch):
+    def no_link(*a, **k):
+        raise OSError(errno.EPERM, "links unsupported")
+    monkeypatch.setattr(mod.os, "link", no_link)
+    store.put("a/src.3mf", io.BytesIO(b"payload"))
+    store.put("b/taken.3mf", io.BytesIO(b"other"))
+    info = store.move("a/src.3mf", "c/dst.3mf")
+    assert info.key == "c/dst.3mf" and (root / "c" / "dst.3mf").read_bytes() == b"payload"
+    assert not store.exists("a/src.3mf") and not (root / "a").exists()
+    with pytest.raises(ArtifactExists):
+        store.move("c/dst.3mf", "b/taken.3mf")
+    assert (root / "c" / "dst.3mf").read_bytes() == b"payload" and (root / "b" / "taken.3mf").read_bytes() == b"other"

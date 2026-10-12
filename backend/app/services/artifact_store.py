@@ -157,7 +157,8 @@ class ArtifactStore(ABC):
         """Context manager yielding a real, **read-only** local path for path-only consumers (slicer, `zipfile`, external binaries).
         The path's final segment equals the key's (file kind is detected by suffix, e.g. `.gcode.3mf`). Local backends
         yield the stored file itself (no copy, no cleanup); remote backends download to a private temp dir that is removed
-        on exit, success or error. The path is invalid after the block; callers must not write to it."""
+        on exit, success or error. The path is invalid after the block; callers must not write to it. On local disk it is the LIVE
+        stored file: a write to it, or an overwrite/delete by another caller meanwhile, affects the artifact itself."""
 
     # --- mutate ----------------------------------------------------------------------------------------------
     @abstractmethod
@@ -380,5 +381,5 @@ class LocalDiskArtifactStore(ArtifactStore):
     def _publish_link_move(self, s: Path, d: Path, dst: str) -> None:
         # Exclusive rename: link + unlink so a racing writer to `dst` is never clobbered.
         self._publish(s, d, False, dst)
-        s.unlink()
+        s.unlink(missing_ok=True)   # the no-hardlink fallback has already renamed s away
 
