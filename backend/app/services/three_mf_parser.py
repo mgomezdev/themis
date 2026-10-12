@@ -196,15 +196,15 @@ def parse_three_mf(file_path: str, thumbnail_dir: Optional[str] = None) -> list[
         meta = _sliced_plate_meta(zf, names)
 
         # Union of every plate source (see plate_numbers), so a plate whose PNG is missing is not dropped.
-        plate_numbers_ = plate_numbers(zf)
+        nums = plate_numbers(zf)
 
-        if not plate_numbers_:
+        if not nums:
             return []
 
         if thumbnail_dir:
             Path(thumbnail_dir).mkdir(parents=True, exist_ok=True)
 
-        for num in plate_numbers_:
+        for num in nums:
             member = plate_thumbnail_member(names, num)
             thumb_disk_path: Optional[str] = None
             if member and thumbnail_dir:
