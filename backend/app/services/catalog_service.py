@@ -87,7 +87,7 @@ async def fetch_catalog() -> tuple[bytes, Catalog]:
     """Pull the catalog from the slicing provider. No cache side effects."""
     provider = get_slicing_provider()
     if provider is None:
-        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus (or the LAMINUS_SIDECAR_URL environment variable)", 503)
+        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus", 503)
     try:
         catalog = await asyncio.to_thread(provider.get_catalog)
     except SlicingProviderError as exc:
@@ -236,7 +236,7 @@ async def rescan(session: AsyncSession) -> dict:
     """Tell the provider to rebuild its catalog from disk, wait for it, then refresh like `refresh`."""
     provider = get_slicing_provider()
     if provider is None:
-        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus (or the LAMINUS_SIDECAR_URL environment variable)", 503)
+        raise CatalogUnavailable("Laminus is not configured: set its URL in Settings -> Laminus", 503)
 
     try:
         await asyncio.to_thread(provider.request_catalog_rebuild, 10.0)

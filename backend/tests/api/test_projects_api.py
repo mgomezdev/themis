@@ -590,7 +590,7 @@ async def test_generate_422_without_a_provider_or_without_the_pack_capability(cl
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     none = await _generate_with(client, tmp_path, None, project_id)
     assert (none.status_code, none.json()["detail"]) == (
-        422, "Laminus is not configured — set its URL in Settings -> Laminus (or LAMINUS_SIDECAR_URL); it is required for generation")
+        422, "Laminus is not configured — set its URL in Settings -> Laminus; it is required for generation")
 
     incapable = FakeSlicingProvider()
     incapable.PACK_MODELS = False

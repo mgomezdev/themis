@@ -353,7 +353,7 @@ flowchart TD
 
 | Condition | Error | Source |
 |---|---|---|
-| `LAMINUS_SIDECAR_URL` not set | `SliceError: LAMINUS_SIDECAR_URL is not configured` | `SlicerService.slice` |
+| Laminus URL unresolved (plugin disabled) | `SliceError: Laminus is not configured ...` | `SlicerService.slice` |
 | Catalog fetch fails (sidecar down) | `SliceError: Orca sidecar unreachable — cannot resolve profiles: …` | `SlicerService._resolve_uuids` |
 | Profile name not in catalog | `SliceError: Profile not found in Orca sidecar catalog` | `SlicerService._resolve_uuids` |
 | OrcaSlicer CLI returns non-zero (both attempts) | `SidecarError` → `SliceError` | Sidecar `run_orcaslicer_task` |

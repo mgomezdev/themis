@@ -26,7 +26,7 @@ cd backend
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-$env:LAMINUS_SIDECAR_URL = "http://localhost:5000"   # optional default; or set it in Settings -> Laminus
+# Then set Settings -> Laminus -> URL to http://localhost:5000 (the dev overlay publishes it); the shipped default is the compose host http://orca:5000
 uvicorn app.main:app --reload --port 8001
 ```
 
@@ -47,7 +47,8 @@ Vite serves the app at `http://localhost:5173` and proxies API and WebSocket req
 | `THEMIS_DATA_DIR` | repository `data/` locally; `/data` in the Compose service | Database and application data root. |
 | `THEMIS_LIBRARY_DIR` | `<data dir>/library` | Model library directory. |
 | `THEMIS_STATIC_DIR` | `frontend/dist` locally; `/frontend/dist` in the image | Built browser application. |
-| `LAMINUS_SIDECAR_URL` | unset | Default Laminus base URL, used only while no URL is saved in Settings -> Laminus (plugin settings; a saved URL wins, applies without restart and can be checked with the connection test: not configured / unavailable / healthy). Slicing and project generation need one of the two. |
+| `LAMINUS_SIDECAR_URL` | unset | **Deprecated.** Read by core (the Laminus plugin never sees the environment), logs a warning once, and is honoured only while no URL is saved in Settings -> Laminus. Precedence: saved Settings URL > this variable > the plugin's shipped default `http://orca:5000` (`backend/app/plugins/laminus/defaults.toml`, the compose `orca` service, so `docker compose up` needs no variable). A saved URL applies without restart; the connection test reports not configured / unavailable / healthy. |
+| `THEMIS_MOCK_PRINTERS` | unset | Dev/test only, **deprecated** the same way (read by core; mapped in `plugins/mock/defaults.toml`): `1` enables the Mock Printer plugin when no saved enabled state exists. The test suite sets it. |
 | `ORCA_EXECUTABLE` | discovered on Windows; `orcaslicer` elsewhere | OrcaSlicer executable used only for local thumbnail regeneration (removed with BIZ-284). `ORCA_CONFIG_DIR` is no longer read by Themis; the Laminus service owns its profile directories (`SYSTEM_PROFILES_DIR`/`USER_CONFIG_DIR` in its own environment). |
 | `FFMPEG_EXECUTABLE` | `ffmpeg` | Executable used for RTSP camera transcoding. |
 | `THEMIS_LOCAL_NETWORKS` | `192.168.0.0/16` | Comma-separated client IP CIDRs allowed keyless local admin access while that setting is enabled. |
