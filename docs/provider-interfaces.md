@@ -178,6 +178,11 @@ remap). `routes/laminus.py` is a thin HTTP layer over it; nothing else imports a
 `CatalogUnavailable(detail, status)` (503 unconfigured / 502 unreachable / 504 rescan timeout) that routes
 map to `HTTPException`.
 
+## Laminus contract (BIZ-248)
+
+The forward-looking `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolution, cache key, settings ownership decision) is specified in
+[architecture/laminus-contract.md](architecture/laminus-contract.md); code in `providers/contract.py` (not yet wired into any path).
+
 ## Adding a provider
 
 **Slicing:** add `providers/<name>/adapter.py` implementing `SlicingProvider` (set the capability flags) plus any vendor client next to

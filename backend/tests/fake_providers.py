@@ -317,3 +317,63 @@ class FakeLibraryProvider(FakeInventoryProvider):
         import re
         m = re.search(r"themis:s-(\d+)", text or "") or re.fullmatch(r"\s*(\d+)\s*", text or "")
         return m.group(1) if m else None
+
+
+# ── BIZ-248 contract fakes (app.services.providers.contract) ──────────────────────────────────────────────────────
+from app.services.providers import contract as _c  # noqa: E402
+
+
+class FakeGcodeProducer(_c.GcodeProducer):
+    def __init__(self, provider_id: str, *, models: frozenset[str] | None = None, engine_version: str = "1.0",
+                 accepted=None, state: _c.Readiness = _c.Readiness.READY) -> None:
+        self._id, self.models, self.engine_version, self.state = provider_id, models, engine_version, state
+        if accepted is not None:
+            self.accepted_inputs = frozenset(accepted)
+        self.calls: list[_c.ProduceRequest] = []
+
+    @property
+    def identity(self) -> _c.ProviderIdentity:
+        return _c.ProviderIdentity(self._id, "0.1", engine_id="fake-engine", engine_version=self.engine_version, build="b1")
+
+    def status(self, timeout=_c.DEFAULT_HEALTH_TIMEOUT_S) -> _c.ProviderStatus:
+        return _c.ProviderStatus(self.state, self.identity)
+
+    def supports_target(self, target: _c.TargetPrinter) -> bool:
+        return self.models is None or target.model_uuid in self.models
+
+    def profiles(self, kind, target):
+        return [_c.Profile("Standard", kind)]
+
+    def curated_settings(self):
+        return (_c.CuratedSetting("layer_height", "Layer height"),)
+
+    def produce(self, request, output_dir, *, timeout=_c.DEFAULT_PRODUCE_TIMEOUT_S, cancel=None):
+        if cancel is not None and cancel.cancelled:
+            raise _c.ProviderError(_c.ErrorCode.CANCELLED)
+        if request.input_kind not in self.accepted_inputs:
+            raise _c.ProviderError(_c.ErrorCode.UNSUPPORTED_INPUT)
+        self.calls.append(request)
+        out = output_dir / "out.gcode"
+        out.write_text("; fake\n")
+        return _c.Artifact(out, request.want, self.identity)
+
+
+class FakeProjectConstructor(_c.ProjectConstructor):
+    def __init__(self, state: _c.Readiness = _c.Readiness.READY) -> None:
+        self.state = state
+        self.calls: list[_c.ConstructRequest] = []
+
+    @property
+    def identity(self) -> _c.ProviderIdentity:
+        return _c.ProviderIdentity("fake-constructor", "0.1")
+
+    def status(self, timeout=_c.DEFAULT_HEALTH_TIMEOUT_S) -> _c.ProviderStatus:
+        return _c.ProviderStatus(self.state, self.identity)
+
+    def construct(self, request, output_dir, *, timeout=_c.DEFAULT_PRODUCE_TIMEOUT_S, cancel=None):
+        if not request.inputs:
+            raise _c.ProviderError(_c.ErrorCode.UNSUPPORTED_INPUT, "no inputs")
+        self.calls.append(request)
+        out = output_dir / "project.3mf"
+        out.write_bytes(b"3mf")
+        return _c.Artifact(out, _c.ArtifactKind.PROJECT_3MF, self.identity)

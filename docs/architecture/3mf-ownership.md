@@ -20,7 +20,7 @@ Behavior is pinned by `backend/tests/services/test_3mf_ownership_characterizatio
    filaments, embedded settings, sliced-gcode estimates (queue, library, jobs) all work. Online-only: override check against
    presets (route returns `error: "Override check requires Laminus sidecar"`, `has_findings: false`), slicing, arrange/pack.
    G-code pass-through needs only the offline reader (consistent with BIZ-248).
-4. **Neutral DTOs for provider inspection** (frozen dataclasses in `providers/slicing.py`; route JSON unchanged, see
+4. **Neutral DTOs for provider inspection** (frozen dataclasses in `providers/slicing.py`; **amended by BIZ-248: they live in `providers/contract.py`, and BIZ-281 imports them from there directly, no re-export**; route JSON unchanged, see
    `contracts/response-keys.json`):
 
    ```
