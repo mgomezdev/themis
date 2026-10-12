@@ -1,5 +1,5 @@
 """OrcaSlicer gcode summary parsing: the estimate lines OrcaSlicer writes into its gcode (and sliced
-`.gcode.3mf` archives). Owned by the Laminus adapter; core reads it through `SlicingProvider.parse_estimates`."""
+`.gcode.3mf` archives). Owned by the Laminus adapter; core reads it through `FormatProvider.parse_estimates`."""
 from __future__ import annotations
 
 import os
