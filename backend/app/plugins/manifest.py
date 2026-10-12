@@ -47,6 +47,9 @@ class UiContribution:
     tabs: tuple[UiTab, ...] = ()
     # (old absolute app URL, tab id): the frontend redirects the old URL to /plugins/{id}/{tab}
     redirects: tuple[tuple[str, str], ...] = ()
+    # True: the settings page probes `POST /plugins/{id}/test` on load and shows the named `state` (unconfigured / unavailable /
+    # healthy) as a persistent pill. Only for plugins whose test is cheap and read-only.
+    connection_status: bool = False
 
 
 _MODEL_ID_RE = re.compile(r"^[a-z][a-z0-9_]*$")

@@ -393,6 +393,10 @@
     "active",
     "error"
   ],
+  "plugin_connection_result": [
+    "ok",
+    "state"
+  ],
   "plugin_provides": [
     "capability",
     "version",

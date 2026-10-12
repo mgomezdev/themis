@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   fetchPlugin, setCapabilityProvider, testPlugin, updatePlugin, usePlugins,
-  type JsonSchemaProperty, type PluginDetail,
+  type ConnectionState, type JsonSchemaProperty, type PluginDetail,
 } from '../api/plugins';
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
 import { INVENTORY_CAPABILITY } from '../api/inventory';
@@ -26,6 +26,14 @@ function propType(p: JsonSchemaProperty): PropKind {
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
 
+/** The persistent connection pill (`ui.connection_status` plugins): what the backend's test named, or "Checking" until it answers. */
+const CONNECTION_PILL: Record<ConnectionState | 'checking', { tone: string; label: string }> = {
+  healthy: { tone: 'ok', label: 'Healthy' },
+  unavailable: { tone: 'err', label: 'Unavailable' },
+  unconfigured: { tone: 'warn', label: 'Not configured' },
+  checking: { tone: 'idle', label: 'Checking…' },
+};
+
 export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const { refresh } = usePlugins();
   const [plugin, setPlugin] = useState<PluginDetail | null>(null);
@@ -35,6 +43,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [connState, setConnState] = useState<ConnectionState | 'checking' | null>(null);
   const [testMsg, setTestMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const adopt = useCallback((d: PluginDetail) => { setPlugin(d); setDraft(d.settings); setSecretDraft({}); setListText({}); }, []);
@@ -46,6 +55,20 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       .catch(e => { if (alive) setLoadError(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
   }, [pluginId, adopt]);
+
+  // Persistent state pill: probe the saved settings once when the page opens (and again after a save / enable change).
+  const watchConnection = !!plugin?.ui?.connection_status && !!plugin.enabled;
+  const probe = useCallback(async (id: string) => {
+    setConnState('checking');
+    try { const r = await testPlugin(id, {}); setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable')); }
+    catch { setConnState('unavailable'); }
+  }, []);
+  const probeKey = plugin ? `${plugin.id}:${JSON.stringify(plugin.settings)}` : '';
+  useEffect(() => {
+    if (!watchConnection || !plugin) { setConnState(null); return; }
+    void probe(plugin.id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchConnection, probeKey, probe]);
 
   const fields = useMemo(() => {
     if (!plugin) return [];
@@ -101,6 +124,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
     setBusy(true); setTestMsg(null);
     try {
       const r = await testPlugin(pluginId_, patchBody());
+      if (watchConnection) setConnState(r.state ?? (r.ok ? 'healthy' : 'unavailable'));
       setTestMsg({ ok: r.ok, text: r.ok ? `Connected${r.version ? ` (version ${r.version})` : ''}` : r.message || 'Could not connect' });
     } catch (e) {
       setTestMsg({ ok: false, text: e instanceof Error ? e.message : String(e) });
@@ -112,7 +136,12 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       <PageHeader
         title={plugin.name}
         sub={`${plugin.description || plugin.provides.map(p => p.capability).join(', ')} · v${plugin.version}`}
-        actions={<span className={`pill ${health.tone}`} data-testid="plugin-health"><span className="dot" />{health.label}</span>}
+        actions={<span className="row gap-2">
+          <span className={`pill ${health.tone}`} data-testid="plugin-health"><span className="dot" />{health.label}</span>
+          {connState && <span className={`pill ${CONNECTION_PILL[connState].tone}`} data-testid="plugin-connection"
+                              title="Connection state, checked against the saved settings">
+            <span className="dot" />{CONNECTION_PILL[connState].label}</span>}
+        </span>}
       />
       {plugin.docs_url && <div className="small" style={{ marginBottom: 12 }}><a href={plugin.docs_url} target="_blank" rel="noreferrer">Documentation</a></div>}
       {plugin.error && <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{plugin.error}</div>}

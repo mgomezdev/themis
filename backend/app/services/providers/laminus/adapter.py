@@ -1,10 +1,12 @@
 """Laminus adapter for SlicingProvider. Owns the base URL, per-call timeouts and the slice poll loop
-(defaults unchanged: 630s client timeout, 620s poll ceiling)."""
+(defaults: 630s client timeout, 620s poll ceiling; both are Laminus plugin settings, BIZ-288)."""
 from __future__ import annotations
 
 from pathlib import Path
 
-from .sidecar_client import LaminusSidecarClient, SidecarError, SidecarNotReady
+from .sidecar_client import (
+    DEFAULT_POLL_TIMEOUT_S, DEFAULT_REQUEST_TIMEOUT_S, LaminusSidecarClient, SidecarError, SidecarNotReady,
+)
 from ..slicing import (
     Catalog,
     Preset,
@@ -39,8 +41,11 @@ class LaminusSlicingProvider(SlicingProvider):
     PREPARED_PROJECT = True
     TOOL_MAPPING = True
 
-    def __init__(self, url: str) -> None:
+    def __init__(self, url: str, *, request_timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S,
+                 poll_timeout_s: float = DEFAULT_POLL_TIMEOUT_S) -> None:
         self._url = url
+        self._request_timeout_s = request_timeout_s
+        self._poll_timeout_s = poll_timeout_s
 
     def apply_tool_mapping(self, source_3mf: Path, *, tool_index: int | None = None,
                            filament_map: list[dict] | None = None) -> None:
@@ -56,7 +61,7 @@ class LaminusSlicingProvider(SlicingProvider):
         return self._url
 
     def _client(self, timeout: float | None = None) -> LaminusSidecarClient:
-        return LaminusSidecarClient(self._url) if timeout is None else LaminusSidecarClient(self._url, timeout=timeout)
+        return LaminusSidecarClient(self._url, timeout=self._request_timeout_s if timeout is None else timeout)
 
     def health(self, timeout: float | None = None) -> dict:
         try:
@@ -103,7 +108,7 @@ class LaminusSlicingProvider(SlicingProvider):
                     spec.plate, export_3mf=spec.export_3mf,
                     extra_config=spec.extra_config or None,
                 )
-            status = client.poll_status(job_id)
+            status = client.poll_status(job_id, timeout=self._poll_timeout_s)
             return str(client.download(job_id, output_dir / status["sliced_file"]))
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e

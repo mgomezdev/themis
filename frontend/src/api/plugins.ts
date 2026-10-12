@@ -13,7 +13,15 @@ export interface PluginUi {
   tabs: PluginTab[];
   /** Old absolute app URLs → the tab of this plugin that replaced them. */
   redirects?: { from: string; tab: string }[];
+  /** The settings page shows a persistent connection-state pill (probed via the plugin's test endpoint on load). */
+  connection_status?: boolean;
 }
+
+/** A plugin may name why a connection test came out as it did. */
+export type ConnectionState = 'unconfigured' | 'unavailable' | 'healthy';
+/** The keys of a connection-test response the settings page's state pill reads (contracts/response-keys.json). */
+export interface PluginConnectionResult { ok: boolean; state?: ConnectionState }
+export interface PluginTestResult extends PluginConnectionResult { message?: string; version?: string }
 
 export interface PluginProvides {
   capability: string;
@@ -123,7 +131,7 @@ export async function updatePlugin(id: string, patch: PluginUpdate): Promise<Plu
   return detail;
 }
 
-export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings' | 'secrets'>): Promise<{ ok: boolean; message?: string; version?: string }> {
+export async function testPlugin(id: string, draft: Pick<PluginUpdate, 'settings' | 'secrets'>): Promise<PluginTestResult> {
   return request(`/api/v1/plugins/${encodeURIComponent(id)}/test`, json('POST', draft));
 }
 

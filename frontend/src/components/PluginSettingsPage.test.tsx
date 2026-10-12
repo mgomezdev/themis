@@ -256,4 +256,56 @@ describe('PluginSettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Use Demo inventory' })).toBeNull();
     expect(await screen.findByTestId('inventory-panel')).toBeTruthy();
   });
+  describe('connection state pill (ui.connection_status)', () => {
+    const watched = (over: Partial<PluginDetail> = {}) => detail({
+      ui: { mode: 'page', nav_label: 'Demo inventory', nav_placement: 'settings', nav_icon: null, tabs: [], connection_status: true }, ...over,
+    });
+    const pill = () => screen.queryByTestId('plugin-connection');
+
+    it.each([
+      ['healthy', 'Healthy', 'ok'],
+      ['unavailable', 'Unavailable', 'err'],
+      ['unconfigured', 'Not configured', 'warn'],
+    ])('shows %s from the backend state on load, without pressing Test', async (state, label, tone) => {
+      const api = stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': { ok: state === 'healthy', state } }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+
+      await waitFor(() => expect(pill()?.textContent).toBe(label));
+      expect(pill()!.className).toContain(tone);
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')[0].body).toEqual({});          // probes the SAVED settings
+    });
+
+    it('is absent for a plugin that does not opt in (no probe is made)', async () => {
+      const api = stubFetch(routes());
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('is absent while the plugin is disabled', async () => {
+      const api = stubFetch(routes(watched({ enabled: false })));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await screen.findByLabelText('Url');
+      expect(pill()).toBeNull();
+      expect(api.to('POST', '/api/v1/plugins/demo_inv/test')).toEqual([]);
+    });
+
+    it('follows the Test button result for the form values', async () => {
+      let n = 0;
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': () => (n++ === 0 ? { ok: false, state: 'unavailable', message: 'refused' } : { ok: true, state: 'healthy', version: '1' }) }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+
+      await userEvent.click(screen.getByRole('button', { name: 'Test connection' }));
+
+      await waitFor(() => expect(pill()?.textContent).toBe('Healthy'));
+    });
+
+    it('falls back to unavailable when the probe itself fails', async () => {
+      stubFetch(routes(watched(), { 'POST /api/v1/plugins/demo_inv/test': new Reply(500, 'boom') }));
+      render(<PluginSettingsPage pluginId="demo_inv" />);
+      await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
+    });
+  });
 });

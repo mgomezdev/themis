@@ -8,7 +8,8 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_TIMEOUT = 630  # seconds — slightly over sidecar's 600 s slice timeout
+DEFAULT_REQUEST_TIMEOUT_S = 630.0  # seconds — slightly over sidecar's 600 s slice timeout
+DEFAULT_POLL_TIMEOUT_S = 620.0
 
 
 class SidecarError(Exception):
@@ -26,7 +27,7 @@ class LaminusSidecarClient:
     must wrap with asyncio.to_thread if calling from an async context.
     """
 
-    def __init__(self, base_url: str, timeout: int = _DEFAULT_TIMEOUT) -> None:
+    def __init__(self, base_url: str, timeout: float = DEFAULT_REQUEST_TIMEOUT_S) -> None:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             timeout=timeout,
@@ -144,7 +145,7 @@ class LaminusSidecarClient:
         self,
         job_id: str,
         poll_interval: float = 2.0,
-        timeout: float = 620.0,
+        timeout: float = DEFAULT_POLL_TIMEOUT_S,
     ) -> dict:
         """Poll GET /api/slice/status/{job_id} until completed or failed.
 

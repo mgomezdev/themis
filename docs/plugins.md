@@ -157,7 +157,7 @@ under `app/services/providers/laminus/`). Anything the environment decides reach
   keeps working. Add new core-defined values to the context, not to the plugin.
 * Compose/Dockerfile carry only infrastructure Themis itself needs (volumes, ports, the `orca` service), never plugin config.
 
-Bundled examples: `laminus` (`url` default = the compose `orca` service; `LAMINUS_SIDECAR_URL` deprecated) and `mock` (off by default;
+Bundled examples: `laminus` (`url` default = the compose `orca` service, plus `health_timeout_s` / `request_timeout_s` / `poll_timeout_s` connection tuning in its `defaults.toml`; `UiContribution.connection_status` shows a persistent unconfigured/unavailable/healthy pill on its page; `LAMINUS_SIDECAR_URL` deprecated) and `mock` (off by default;
 `THEMIS_MOCK_PRINTERS` deprecated).
 
 ## Installing

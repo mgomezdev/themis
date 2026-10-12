@@ -161,10 +161,14 @@ def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
+    from ...plugins.host import plugin_host
+
     url = configured_server_url()
     if not url:
         return None
-    return _REGISTRY[ACTIVE_PROVIDER](url)
+    # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
+    # adapter and its connection options (timeouts); core only asks the host for it (BIZ-288).
+    return plugin_host.build_candidate(ACTIVE_PROVIDER).slicing_provider(url)
 
 
 def get_format_provider() -> FormatProvider:

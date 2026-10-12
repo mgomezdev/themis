@@ -13,7 +13,7 @@ MANIFEST = PluginManifest(
     settings_model=LaminusSettings,
     factory=LaminusConnection,
     default_enabled=True,
-    ui=UiContribution(mode="page", nav_label="Laminus", nav_placement="settings",
+    ui=UiContribution(mode="page", nav_label="Laminus", nav_placement="settings", connection_status=True,
                       tabs=(UiTab("connection", "Connection", "default"),)),
     description="The Laminus slicing service Themis slices and builds projects with: its URL and connection test.",
 )

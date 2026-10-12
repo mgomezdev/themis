@@ -166,7 +166,7 @@ def test_the_laminus_defaults_file_ships_and_is_packaged():
     from app.plugins.defaults import load_defaults
     root = Path(__file__).resolve().parents[2]
     d = load_defaults(root / "app" / "plugins" / "laminus")
-    assert d.settings == {"url": DEFAULT_URL} and d.legacy_env == {"url": "LAMINUS_SIDECAR_URL"}
+    assert d.settings["url"] == DEFAULT_URL and d.legacy_env == {"url": "LAMINUS_SIDECAR_URL"}
     assert "plugins/*/defaults.toml" in tomllib.loads((root / "pyproject.toml").read_text())["tool"]["setuptools"]["package-data"]["app"]
 
 
@@ -182,3 +182,74 @@ def test_compose_works_out_of_the_box_without_the_env_var():
     assert f":{u.port}/" in " ".join(compose["services"][u.hostname]["healthcheck"]["test"])
     for name in ("docker-compose.yml", "docker-compose.dev.yml", "Dockerfile"):
         assert "LAMINUS_SIDECAR_URL" not in (repo / name).read_text(), name
+
+
+# --- BIZ-288 connection-level options (timeouts) ----------------------------------------------------------------------
+
+async def _configure(client, **settings):
+    r = await client.put("/api/v1/plugins/laminus", json={"settings": {"url": SAVED_URL, **settings}})
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.shipped_defaults
+async def test_timeout_options_default_to_the_shipped_values_and_reach_the_adapter(client):
+    p = get_slicing_provider()
+    assert (p._request_timeout_s, p._poll_timeout_s) == (630.0, 620.0)
+    assert plugin_host.build_candidate("laminus").health_timeout_s == 5.0
+
+
+async def test_saved_timeouts_reach_the_adapter_and_the_http_client_without_restart(client):
+    await _configure(client, request_timeout_s=900, poll_timeout_s=800)
+    p = get_slicing_provider()
+    assert (p._request_timeout_s, p._poll_timeout_s) == (900, 800)
+    assert p._client()._client.timeout.read == 900                 # the httpx client really carries it
+    await _configure(client, request_timeout_s=None, poll_timeout_s=None)    # cleared: back to the defaults
+    p = get_slicing_provider()
+    assert (p._request_timeout_s, p._poll_timeout_s) == (630.0, 620.0)
+
+
+async def test_the_poll_ceiling_option_is_what_the_slice_waits_for(client, monkeypatch, tmp_path):
+    from app.services.providers.laminus.sidecar_client import LaminusSidecarClient
+    from app.services.providers.slicing import SliceSpec
+    seen = {}
+    monkeypatch.setattr(LaminusSidecarClient, "slice_start", lambda self, *a, **k: "j1")
+    monkeypatch.setattr(LaminusSidecarClient, "poll_status",
+                        lambda self, job_id, poll_interval=2.0, timeout=None: seen.update(timeout=timeout) or {"sliced_file": "o.gcode"})
+    monkeypatch.setattr(LaminusSidecarClient, "download", lambda self, job_id, dest: dest)
+    await _configure(client, poll_timeout_s=123)
+    src = tmp_path / "m.3mf"
+    src.write_bytes(b"x")
+    get_slicing_provider().slice(SliceSpec(source_file=src, plate=1, machine_ref="m", process_ref="p", filament_refs=["f"]), tmp_path)
+    assert seen["timeout"] == 123
+
+
+async def test_the_health_timeout_option_is_used_by_the_connection_test(client, monkeypatch):
+    health = MagicMock(return_value={"status": "ok"})
+    monkeypatch.setattr("app.services.providers.laminus.adapter.LaminusSlicingProvider.health", health)
+    await client.post("/api/v1/plugins/laminus/test", json={"settings": {"url": SAVED_URL, "health_timeout_s": 2.5}})
+    assert health.call_args.args == (2.5,)
+    await client.post("/api/v1/plugins/laminus/test", json={"settings": {"url": SAVED_URL}})
+    assert health.call_args.args == (5.0,)
+
+
+@pytest.mark.parametrize("field", ["health_timeout_s", "request_timeout_s", "poll_timeout_s"])
+async def test_non_positive_timeouts_are_rejected_and_not_saved(client, field):
+    bad = await client.put("/api/v1/plugins/laminus", json={"settings": {"url": SAVED_URL, field: 0}})
+    assert bad.status_code == 422
+    assert (await client.get("/api/v1/plugins/laminus")).json()["settings"][field] != 0
+
+
+def test_the_defaults_file_ships_the_timeouts_matching_the_adapter_defaults():
+    from pathlib import Path
+    from app.plugins.defaults import load_defaults
+    from app.services.providers.laminus.connection import LaminusSettings
+    from app.services.providers.laminus.sidecar_client import DEFAULT_POLL_TIMEOUT_S, DEFAULT_REQUEST_TIMEOUT_S
+    d = load_defaults(Path(__file__).resolve().parents[2] / "app" / "plugins" / "laminus").settings
+    assert d["request_timeout_s"] == DEFAULT_REQUEST_TIMEOUT_S and d["poll_timeout_s"] == DEFAULT_POLL_TIMEOUT_S
+    assert set(d) <= set(LaminusSettings.model_fields)
+
+
+async def test_the_manifest_asks_for_the_persistent_connection_pill(client):
+    plugins = {p["id"]: p for p in (await client.get("/api/v1/plugins")).json()["plugins"]}
+    assert plugins["laminus"]["ui"]["connection_status"] is True
+    assert plugins["spoolman"]["ui"]["connection_status"] is False
