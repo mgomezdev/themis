@@ -7,7 +7,7 @@ import time as _time
 
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
@@ -1207,7 +1207,7 @@ async def delete_stored_file(printer_id: int, file_id: str, session: AsyncSessio
     dependencies=[Depends(require_scope("files:write"))],
 )
 async def copy_stored_file_to_library(
-    printer_id: int, body: FileRef, background_tasks: BackgroundTasks, session: AsyncSession = Depends(get_session),
+    printer_id: int, body: FileRef, session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Download a stored .3mf / .stl from the printer and add it to the library (folder `/From Printers`,
     deduplicated by content like any upload). Sliced output (.gcode, .gcode.3mf) is refused: this adds models."""
@@ -1227,9 +1227,7 @@ async def copy_stored_file_to_library(
     from io import BytesIO
     from starlette.datastructures import UploadFile as StarletteUpload
     from .files import upload_file as library_upload
-    # The route's own BackgroundTasks, so the thumbnail job the library upload queues actually runs.
-    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), background_tasks,
-                                "/From Printers", session)
+    return await library_upload(StarletteUpload(file=BytesIO(data), filename=name), "/From Printers", session)
 
 
 async def _activate_camera(client) -> None:

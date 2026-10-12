@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.conftest import slice_info_xml
+
 from app.services.providers.contract import OverrideInspection, PlateEstimate, SettingChange, SlotWarning
 from app.services.providers.slicing import get_format_provider, get_slicing_provider
 from app.services.three_mf_parser import (
@@ -55,19 +57,39 @@ def test_reference_files_report_their_plates_and_extract_each_plate_thumbnail(re
 
 
 def test_unsliced_reference_files_have_no_estimates(tmp_path):
-    # Real Orca slice_info.config is XML with no <plate>; the JSON slice_info path only matters for synthetic files.
+    # Real Orca slice_info.config of an unsliced project is XML with a header and no <plate>.
     for p in parse_three_mf(str(ELEGOO_2)):
         assert (p.estimated_time, p.filament_g) == (0, 0.0)
         assert p.thumbnail_path is None   # no thumbnail_dir given -> nothing written
 
 
-def test_json_slice_info_supplies_estimates_for_a_model_3mf(tmp_path):
+def test_xml_slice_info_supplies_estimates_for_a_model_3mf(tmp_path):
+    # BIZ-282: slice_info.config is read as the XML Orca/Bambu write; the old synthetic JSON branch is gone.
+    f = _zip(tmp_path / "m.3mf", {
+        "Metadata/slice_info.config": slice_info_xml([(1, 600, 3.5)]),
+        "Metadata/plate_1.png": PNG,
+    })
+    (p,) = parse_three_mf(f)
+    assert (p.plate_number, p.estimated_time, p.filament_g) == (1, 600, 3.5)
+
+
+def test_reference_file_resliced_with_real_xml_slice_info_reports_estimates(tmp_path):
+    # Derived from a real Orca 2-plate file: only slice_info.config is swapped for the sliced (plate-bearing) XML form.
+    out = tmp_path / "sliced.3mf"
+    with zipfile.ZipFile(ELEGOO_2) as zin, zipfile.ZipFile(out, "w") as zout:
+        for n in zin.namelist():
+            zout.writestr(n, slice_info_xml([(1, 3600, 10.5), (2, 120, 2.0)]) if n == "Metadata/slice_info.config" else zin.read(n))
+    got = parse_three_mf(str(out))
+    assert [(p.plate_number, p.estimated_time, p.filament_g) for p in got] == [(1, 3600, 10.5), (2, 120, 2.0)]
+
+
+def test_json_slice_info_supplies_no_estimates(tmp_path):
     f = _zip(tmp_path / "m.3mf", {
         "Metadata/slice_info.config": json.dumps({"plate": [{"index": 1, "prediction": 600, "weight": [1.5, 2.0]}]}),
         "Metadata/plate_1.png": PNG,
     })
     (p,) = parse_three_mf(f)
-    assert (p.plate_number, p.estimated_time, p.filament_g) == (1, 600, 3.5)
+    assert (p.plate_number, p.estimated_time, p.filament_g) == (1, 0, 0.0)
 
 
 def test_plates_are_discovered_from_model_settings_when_no_thumbnails(tmp_path):

@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Form, HTTPException, UploadFile, Query
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -23,7 +23,6 @@ from ...services.library_scanner import (
 from ...services import gcode_eligibility, model_targets, slice_cache
 from ...services.queue_engine import queue_engine
 from ...services.providers.slicing import get_slicing_provider
-from ...services.thumbnail_regen import regen_file_thumbnails
 
 router = APIRouter(prefix="/api/v1/files", tags=["files"])
 
@@ -237,7 +236,6 @@ async def folder_dirs(session: AsyncSession = Depends(get_session)) -> dict:
 )
 async def upload_file(
     file: UploadFile,
-    background_tasks: BackgroundTasks,
     folder: str = Form("/Job Uploads"),
     session: AsyncSession = Depends(get_session),
     eligible_model_uuids: list[str] = Form([]),
@@ -322,8 +320,6 @@ async def upload_file(
             raise
     await session.commit()
     await session.refresh(record)
-    if file_kind(dest.name) == "3mf":   # a sliced .gcode.3mf already carries its own thumbnails (BIZ-190)
-        background_tasks.add_task(regen_file_thumbnails, record.id)
     return _to_dict(record, [], await _cache_for(session, [record.id]))
 
 

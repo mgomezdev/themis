@@ -7,6 +7,7 @@ from typing import Callable
 
 from ..config import get_data_dir
 from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider
+from .three_mf_parser import plate_thumbnail_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -199,16 +200,9 @@ class SlicerService:
         import base64
         try:
             with zipfile.ZipFile(source_3mf, "r") as z:
-                names = z.namelist()
-                thumb_path = f"Metadata/plate_{plate_number}.png"
-                if thumb_path not in names:
-                    if "Metadata/thumbnail.png" in names:
-                        thumb_path = "Metadata/thumbnail.png"
-                    elif "Metadata/preview.png" in names:
-                        thumb_path = "Metadata/preview.png"
-                    else:
-                        return
-                thumb_data = z.read(thumb_path)
+                thumb_data = plate_thumbnail_bytes(z, plate_number)
+            if thumb_data is None:
+                return
 
             if thumb_data[:8] != b"\x89PNG\r\n\x1a\n":
                 return

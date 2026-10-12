@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.models import GcodeFile, Job, JobPrinterConfig, SlicedVersion, UploadedFile
 from app.services import slice_cache
 from app.services.library_scanner import library_abs_path
-from tests.conftest import make_sliced_archive
+from tests.conftest import make_sliced_archive, slice_info_xml
 
 
 async def test_job_details_carry_the_cache_flags_and_the_last_decision(client, create_job, session_factory):
@@ -216,7 +216,6 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(packed)
         resp = await client.post(f"/api/v1/projects/{project_id}/generate",
@@ -328,7 +327,7 @@ def make_3mf_bytes_variant() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr(zipfile.ZipInfo("Metadata/slice_info.config", date_time=(2026, 1, 1, 0, 0, 0)),
-                    json.dumps({"plate": [{"index": 1, "prediction": 99, "weight": [1.0]}]}))
+                    slice_info_xml([(1, 99, 1.0)]))
     return buf.getvalue()
 
 
@@ -401,7 +400,6 @@ async def _generate(client, tmp_path, project_id, body):
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
         patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
-        patch("app.api.routes.projects.regen_file_thumbnails", new_callable=AsyncMock),
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": [], **body})
