@@ -1,6 +1,8 @@
 """In-memory provider fakes for tests that need to swap a provider without touching HTTP."""
 from __future__ import annotations
 
+from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate
+from app.services.providers.format_provider import FormatProvider
 from app.plugins.capabilities.filament_inventory import (
     ALL_CAPABILITIES,
     FilamentInventoryProvider,
@@ -117,9 +119,6 @@ class FakeSlicingProvider(SlicingProvider):
         self.artifact_bytes = b"; fake gcode\n"
         self.merged: dict = {}
         self.health_body: dict = {"status": "ok"}
-        self.estimates: tuple = (12.5, 3600, [12.5])     # canned parse_estimates() -> (grams, seconds, per-extruder)
-        self.override_findings: dict = {"has_findings": False, "setting_changes": [], "slot_warning": None}
-        self.override_keys: tuple = ("layer_height", "sparse_infill_density")
         self.health_script: list = []
         self.default_health: dict = {"catalog_loaded": True, "catalog_building": False, "catalog_profile_count": 3}
         self.rebuild_error: SlicingProviderError | None = None
@@ -142,17 +141,6 @@ class FakeSlicingProvider(SlicingProvider):
     def get_catalog(self) -> Catalog:
         self._enter("get_catalog")
         return self.catalog
-
-    def parse_estimates(self, artifact_path, plate_number=None):
-        self._enter("parse_estimates", artifact_path, plate_number)
-        return self.estimates
-
-    def inspect_overrides(self, source_project, merged_config, slots) -> dict:
-        self._enter("inspect_overrides", source_project, slots)
-        return self.override_findings
-
-    def curated_override_keys(self) -> tuple[str, ...]:
-        return self.override_keys
 
     def catalog_health(self, timeout: float = 5.0) -> dict:
         """Scripted: pops from `health_script` (a dict is returned, an Exception raised), else `default_health`."""
@@ -186,6 +174,28 @@ class FakeSlicingProvider(SlicingProvider):
     def pack_models(self, paths, *, machine_ref=None, process_ref=None, filament_refs=None, bed=None) -> bytes:
         self._enter("pack_models", list(paths), machine_ref, bed)
         return b"PACKED"
+
+
+class FakeFormatProvider(FormatProvider):
+    """Offline FormatProvider with canned results; records calls like FakeSlicingProvider."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.estimate = PlateEstimate(12.5, 3600, (12.5,))
+        self.inspection = OverrideInspection()
+        self.settings = (CuratedSetting("layer_height", "Layer height"),
+                         CuratedSetting("sparse_infill_density", "Infill density"))
+
+    def curated_settings(self):
+        return self.settings
+
+    def parse_estimates(self, artifact_path, plate_number=None) -> PlateEstimate:
+        self.calls.append(("parse_estimates", artifact_path, plate_number))
+        return self.estimate
+
+    def inspect_overrides(self, source_project, merged_config, slots) -> OverrideInspection:
+        self.calls.append(("inspect_overrides", source_project, slots))
+        return self.inspection
 
 
 def fake_packer(packed: bytes) -> FakeSlicingProvider:

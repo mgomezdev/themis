@@ -32,15 +32,27 @@ from ...plugins.capabilities.filament_inventory import InvSpool
 from ._materials import material_columns, stored
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
+from ...services.providers.contract import OverrideInspection
 from ...services.providers.slicing import get_format_provider
 
 logger = logging.getLogger(__name__)
+
+def _inspection_json(i: OverrideInspection) -> dict:
+    """The check-overrides response body for an `OverrideInspection` DTO (keys unchanged: `from`/`to`, ...)."""
+    return {
+        "has_embedded_settings": i.has_embedded_settings,
+        "setting_changes": [{"key": c.key, "from": c.from_value, "to": c.to_value} for c in i.setting_changes],
+        "slot_warning": ({"used_slots": i.slot_warning.used_slots, "printer_slots": i.slot_warning.printer_slots}
+                         if i.slot_warning else None),
+        "has_findings": i.has_findings,
+    }
+
 
 def _clean_overrides(o: dict | None) -> dict | None:
     """Strip any key not in the curated allowlist before storing."""
     if not o:
         return None
-    allowed = frozenset(get_format_provider().curated_override_keys())
+    allowed = frozenset(s.key for s in get_format_provider().curated_settings())
     cleaned = {k: str(v) for k, v in o.items() if k in allowed}
     return cleaned or None
 
@@ -133,7 +145,8 @@ class ModelTargetInput(BaseModel):
 def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
     """A .gcode job needs no background test-slice: its estimate is already in the file's header."""
     path = library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)
-    grams, secs, per_extruder = get_format_provider().parse_estimates(str(path), job.plate_number)
+    est = get_format_provider().parse_estimates(str(path), job.plate_number)
+    grams, secs, per_extruder = est.grams, est.seconds, est.per_extruder_grams
     if grams is None and secs is None:
         job.estimate_status = None
         return
@@ -568,7 +581,8 @@ async def check_overrides(
         return {**empty, "has_embedded_settings": True, "error": str(e)}
 
     slots = len(printer.loaded_filaments or []) or 1
-    return slicing.inspect_overrides(str(source_path), config, slots)
+    inspection = get_format_provider().inspect_overrides(str(source_path), config, slots)
+    return _inspection_json(inspection)
 
 
 @router.get("", summary="List active jobs", dependencies=[Depends(require_scope("jobs:read"))])
@@ -1211,7 +1225,8 @@ async def complete_job_manually(
         gcode_path = await queue_engine.run_verify_slice(req, output_dir)
         # Parse before the `finally` cleanup below removes output_dir - the gcode
         # file must be read while it still exists.
-        grams, secs, extruder_grams = get_format_provider().parse_estimates(gcode_path)
+        est = get_format_provider().parse_estimates(gcode_path)
+        grams, secs, extruder_grams = est.grams, est.seconds, est.per_extruder_grams
     except SliceError as exc:
         raise HTTPException(422, f"Slicing failed: {exc}")
     except Exception as exc:

@@ -13,6 +13,7 @@ import pytest
 
 from tests.conftest import slice_info_xml
 
+from app.services.providers.contract import OverrideInspection, PlateEstimate, SettingChange, SlotWarning
 from app.services.providers.slicing import get_format_provider, get_slicing_provider
 from app.services.three_mf_parser import (
     parse_embedded_settings, parse_model_filaments, parse_sliced_archive, parse_three_mf, source_has_project_settings,
@@ -118,7 +119,7 @@ def test_embedded_settings_of_reference_file_are_the_curated_subset_in_curated_o
     assert by_key["layer_height"] == {"key": "layer_height", "label": "Layer height", "value": "0.16"}
     assert by_key["sparse_infill_density"]["value"] == "15%"
     assert by_key["wall_loops"]["value"] == "2"
-    curated = list(get_format_provider().curated_override_keys())
+    curated = [s.key for s in get_format_provider().curated_settings()]
     assert [r["key"] for r in out] == [k for k in curated if k in by_key]
 
 
@@ -149,9 +150,9 @@ def test_reference_files_count_as_projects_and_bare_geometry_does_not(tmp_path):
 def test_inspect_overrides_on_reference_file_reports_curated_diffs_offline():
     res = get_format_provider().inspect_overrides(
         str(ELEGOO_1), {"layer_height": "0.2", "wall_loops": "2", "not_curated": "x"}, 1)
-    assert res["has_embedded_settings"] is True
-    assert res["setting_changes"] == [{"key": "layer_height", "from": "0.16", "to": "0.2"}]
-    assert res["slot_warning"] is None and res["has_findings"] is True
+    assert res.has_embedded_settings is True
+    assert res.setting_changes == (SettingChange("layer_height", "0.16", "0.2"),)
+    assert res.slot_warning is None and res.has_findings is True
 
 
 def test_inspect_overrides_reads_per_object_and_per_part_extruders(tmp_path):
@@ -165,14 +166,14 @@ def test_inspect_overrides_reads_per_object_and_per_part_extruders(tmp_path):
     f = _zip(tmp_path / "o.3mf", {"Metadata/project_settings.config": "{}",
                                   "Metadata/model_settings.config": model_settings})
     fmt = get_format_provider()
-    assert fmt.inspect_overrides(f, {}, 2)["slot_warning"] == {"used_slots": 3, "printer_slots": 2}
-    assert fmt.inspect_overrides(f, {}, 3)["slot_warning"] is None
+    assert fmt.inspect_overrides(f, {}, 2).slot_warning == SlotWarning(used_slots=3, printer_slots=2)
+    assert fmt.inspect_overrides(f, {}, 3).slot_warning is None
 
 
 def test_inspect_overrides_on_bare_geometry_has_no_embedded_settings(tmp_path):
     f = _zip(tmp_path / "bare.3mf", {"3D/3dmodel.model": "<model/>"})
-    assert get_format_provider().inspect_overrides(f, {"layer_height": "0.2"}, 1) == {
-        "has_embedded_settings": False, "setting_changes": [], "slot_warning": None, "has_findings": False}
+    assert get_format_provider().inspect_overrides(f, {"layer_height": "0.2"}, 1) == OverrideInspection(
+        has_embedded_settings=False, setting_changes=(), slot_warning=None)
 
 
 # ---- sliced archives (.gcode.3mf): estimates + thumbnails -------------------------------------------------
@@ -208,12 +209,12 @@ def test_sliced_archive_without_slice_info_falls_back_to_each_plates_gcode(tmp_p
 def test_provider_parse_estimates_selects_plate_inside_archive_and_plain_gcode(tmp_path):
     fmt = get_format_provider()
     archive = _sliced(tmp_path, None)
-    assert fmt.parse_estimates(archive, 2) == (9.0, 600, [9.0])
-    assert fmt.parse_estimates(archive, 1) == (4.0, 3723, [1.5, 2.5])
+    assert fmt.parse_estimates(archive, 2) == PlateEstimate(9.0, 600, (9.0,))
+    assert fmt.parse_estimates(archive, 1) == PlateEstimate(4.0, 3723, (1.5, 2.5))
     g = tmp_path / "x.gcode"
     g.write_text(GCODE_SUMMARY)
-    assert fmt.parse_estimates(str(g)) == (4.0, 3723, [1.5, 2.5])
-    assert fmt.parse_estimates(str(tmp_path / "nope.gcode")) == (None, None, None)
+    assert fmt.parse_estimates(str(g)) == PlateEstimate(4.0, 3723, (1.5, 2.5))
+    assert fmt.parse_estimates(str(tmp_path / "nope.gcode")) == PlateEstimate(None, None, None)
 
 
 def test_sliced_archive_corrupt_returns_empty(tmp_path):

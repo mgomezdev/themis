@@ -163,7 +163,8 @@ core import of an adapter-internal module, a vendor symbol, or a new `httpx` imp
   `asyncio.to_thread`, or `run_in_executor` — never on the event loop. Inventory methods are awaited.
 - **Legacy shapes.** Routes that return vendor JSON use the DTO's `raw` (`[f.raw for f in …]`) so
   `openapi.json` / `contracts/response-keys.json` don't move. Persisted ids stay opaque strings/ints as stored.
-- **Format knowledge** (gcode estimates, override inspection, curated keys) goes through
-  `get_format_provider()` — it works with no server configured; `get_slicing_provider()` returns `None` then.
+- **Format knowledge** (gcode estimates, override inspection, curated settings + labels) goes through
+  `get_format_provider()` (offline `FormatProvider`, returns frozen DTOs; the route serializes them) — it works with no
+  server configured; `get_slicing_provider()` returns `None` then. `compatible_presets` needs a catalog: it stays on `SlicingProvider`.
 - Tests patch the accessor in the module under test with a `tests/fake_providers.py` fake; assert resulting
   state (re-read the bindings / the job's estimate), not just that a mock was called.

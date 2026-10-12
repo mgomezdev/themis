@@ -133,24 +133,6 @@ def parse_model_filaments(file_path: str) -> list[dict]:
     return out
 
 
-_SETTING_LABELS: dict[str, str] = {
-    "enable_support": "Enable supports",
-    "support_type": "Support type",
-    "support_threshold_angle": "Support threshold angle",
-    "support_on_build_plate_only": "Support on build plate only",
-    "raft_layers": "Raft layers",
-    "brim_type": "Brim type",
-    "brim_width": "Brim width",
-    "sparse_infill_density": "Infill density",
-    "sparse_infill_pattern": "Infill pattern",
-    "wall_loops": "Wall loops",
-    "top_shell_layers": "Top layers",
-    "bottom_shell_layers": "Bottom layers",
-    "layer_height": "Layer height",
-    "ironing_type": "Ironing type",
-}
-
-
 def parse_embedded_settings(file_path: str) -> list[dict]:
     """Return curated print settings baked into the 3MF's project_settings.config."""
     try:
@@ -167,7 +149,8 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
         return []
 
     out = []
-    for key in get_format_provider().curated_override_keys():
+    for setting in get_format_provider().curated_settings():
+        key = setting.key
         if key not in ps:
             continue
         val = ps[key]
@@ -175,7 +158,7 @@ def parse_embedded_settings(file_path: str) -> list[dict]:
             val = ", ".join(str(v) for v in val)
         else:
             val = str(val)
-        out.append({"key": key, "label": _SETTING_LABELS.get(key, key), "value": val})
+        out.append({"key": key, "label": setting.label, "value": val})
     return out
 
 
@@ -269,7 +252,8 @@ def parse_sliced_archive(file_path: str, thumbnail_dir: Optional[str] = None) ->
     for num in plate_numbers:
         secs, grams = meta.get(num, (0, 0.0))
         if not secs or not grams:
-            g_grams, g_secs, _ = get_format_provider().parse_estimates(file_path, num)
+            est = get_format_provider().parse_estimates(file_path, num)
+            g_grams, g_secs = est.grams, est.seconds
             secs, grams = secs or g_secs or 0, grams or g_grams or 0.0
         plates.append(PlateInfo(plate_number=num, thumbnail_path=thumbs.get(num),
                                 estimated_time=secs, filament_g=grams))
