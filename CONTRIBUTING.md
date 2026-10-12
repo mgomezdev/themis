@@ -12,7 +12,7 @@ cd backend
 py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
-$env:LAMINUS_SIDECAR_URL = "http://localhost:5000"
+$env:LAMINUS_SIDECAR_URL = "http://localhost:5000"   # optional default; or set it in Settings -> Laminus
 uvicorn app.main:app --reload --port 8001
 ```
 

@@ -190,3 +190,13 @@ async def test_a_plugin_host_that_fails_to_start_does_not_stop_themis_booting(bo
     async with main.lifespan(main.app):
         boot.engine_start.assert_awaited_once()
         boot.inventory_start.assert_awaited_once()
+
+
+async def test_the_plugin_host_starts_before_the_queue_engine(boot, session_factory):
+    """BIZ-260: the Laminus URL is a plugin setting, so the queue must not start slicing before the host has loaded it."""
+    order = []
+    boot.plugin_start.side_effect = lambda *a, **k: order.append("plugins")
+    boot.engine_start.side_effect = lambda *a, **k: order.append("queue")
+    async with main.lifespan(main.app):
+        pass
+    assert order.index("plugins") < order.index("queue")

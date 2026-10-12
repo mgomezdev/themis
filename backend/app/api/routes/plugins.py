@@ -163,5 +163,12 @@ async def test_plugin(plugin_id: str, body: PluginTest):
     except PluginError as e:
         raise HTTPException(status_code=422, detail=plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values())))
     except Exception as e:
-        return {"ok": False, "message": plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values()))}
-    return {"ok": True, **({"version": info.get("version")} if isinstance(info, dict) else {})}
+        state = getattr(e, "state", None)             # a plugin may name the failure (e.g. unconfigured / unavailable)
+        return {"ok": False, "message": plugin_host.redact(plugin_id, str(e), tuple((body.secrets or {}).values())),
+                **({"state": state} if state else {})}
+    out = {"ok": True}
+    if isinstance(info, dict):
+        out["version"] = info.get("version")
+        if info.get("state"):
+            out["state"] = info["state"]
+    return out

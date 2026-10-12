@@ -53,6 +53,6 @@ def test_no_hook_with_sidecar_succeeds(tmp_path):
     svc._data_dir = tmp_path
     prime_catalog(_catalog())
 
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"), \
          patch.object(SlicerService, "_execute_slice_by_ids", return_value="out.gcode"):
         assert svc.slice(_req()) == "out.gcode"

@@ -89,7 +89,7 @@ locally. The old local pipeline (`PresetResolver`, `ProfileIndex`, `project_conf
 
 **Provider boundary (BIZ-224, BIZ-202).** Core never imports the Laminus or Spoolman clients: Laminus goes through
 `SlicingProvider` (`services/providers/`), inventory through the plugin host (`app/plugins/`, `services/inventory/`) — see
-`docs/provider-interfaces.md`. Accessors: `get_slicing_provider()` (None ⇒ not configured), `get_format_provider()` (never None; local
+`docs/provider-interfaces.md`. Accessors: `get_slicing_provider()` (None ⇒ not configured; the URL is `configured_server_url()` = the bundled `laminus` plugin's saved `url` setting, else the `LAMINUS_SIDECAR_URL` env default; plugin disabled ⇒ unconfigured; connection test at `POST /plugins/laminus/test` → `state` unconfigured/unavailable/healthy), `get_format_provider()` (never None; local
 file-format work), `services.inventory.provider.active_provider()/has(cap)/call(...)` (no provider ⇒ inactive). Adapter packages
 `providers/laminus/` and `plugins/spoolman/` own the httpx clients, the Orca gcode/override/preset logic and
 the `extra.orca_profiles` encoding; `tests/test_provider_boundary.py` fails the build if anything else imports them. `thumbnail_regen.py` is the one place that still shells out to OrcaSlicer directly — a
@@ -197,9 +197,9 @@ in the `main.py` lifespan; `configure(SessionLocal)` first):
   `create_all` + `migrations/runner.py` (Flyway-style versioned files, `v00N_*.py`, tracked in
   `schema_migrations`). New tables ride on `create_all`; a column added to an *existing* table needs
   its own migration file — see `data-model.md` § Migrations for the exact steps.
-- `config.py`: `get_data_dir`, `get_orca_config_dir`, `get_orca_executable`, `get_ffmpeg_executable`.
+- `config.py`: `get_data_dir`, `get_orca_executable` (thumbnail_regen only, until BIZ-284), `get_ffmpeg_executable`.
   Defaults are **platform-aware** (Windows local dev resolves `%APPDATA%\OrcaSlicer` and the Program
-  Files `orca-slicer.exe`); env vars `THEMIS_DATA_DIR`/`ORCA_CONFIG_DIR`/`ORCA_EXECUTABLE`/
+  Files `orca-slicer.exe`); env vars `THEMIS_DATA_DIR`/`ORCA_EXECUTABLE`/
   `FFMPEG_EXECUTABLE` override.
 
 ## Tests

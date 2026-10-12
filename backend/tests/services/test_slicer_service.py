@@ -42,7 +42,7 @@ def _make_service(tmp_path):
 def test_raises_when_no_sidecar_url(tmp_path):
     svc = _make_service(tmp_path)
     prime_catalog(_DEFAULT_CATALOG)
-    with patch("app.config.get_laminus_sidecar_url", return_value=None):
+    with patch("app.services.providers.slicing.configured_server_url", return_value=None):
         with pytest.raises(SliceError, match="LAMINUS_SIDECAR_URL"):
             svc.slice(_req(tmp_path))
 
@@ -55,7 +55,7 @@ def test_raises_when_machine_not_in_catalog(tmp_path):
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
     prime_catalog(catalog)
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
 
@@ -68,7 +68,7 @@ def test_raises_when_filament_not_in_catalog(tmp_path):
         "filament": [],
     }
     prime_catalog(catalog)
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="not found in Laminus sidecar catalog"):
             svc.slice(_req(tmp_path))
 
@@ -85,7 +85,7 @@ def test_error_names_the_specific_unresolved_preset_and_kind(tmp_path):
         "filament": [{"name": "Generic PLA", "uuid": "f1"}],
     }
     prime_catalog(catalog)
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError) as exc_info:
             svc.slice(_req(tmp_path))
     msg = str(exc_info.value)
@@ -100,7 +100,7 @@ def test_error_names_multiple_unresolved_presets(tmp_path):
     svc = _make_service(tmp_path)
     catalog = {"machine": [], "process": [], "filament": []}
     prime_catalog(catalog)
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError) as exc_info:
             svc.slice(_req(tmp_path))
     msg = str(exc_info.value)
@@ -113,7 +113,7 @@ def test_error_advises_refreshing_the_profile_sync(tmp_path):
     svc = _make_service(tmp_path)
     catalog = {"machine": [], "process": [], "filament": []}
     prime_catalog(catalog)
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="[Rr]efresh the profile sync"):
             svc.slice(_req(tmp_path))
 
@@ -130,7 +130,7 @@ def test_error_reports_missing_filament_when_none_supplied(tmp_path):
     prime_catalog(catalog)
     req = _req(tmp_path)
     req.filament_presets = []
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"):
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"):
         with pytest.raises(SliceError, match="no filament preset was supplied"):
             svc.slice(req)
 
@@ -371,7 +371,7 @@ async def test_slice_uses_custom_output_dir(tmp_path):
         captured_out_dir = out_dir
         return str(out_dir / "result.gcode")
 
-    with patch("app.config.get_laminus_sidecar_url", return_value="http://laminus:5000"), \
+    with patch("app.services.providers.slicing.configured_server_url", return_value="http://laminus:5000"), \
          patch.object(SlicerService, "_resolve_uuids", return_value=("m", "p", ["f"])), \
          patch.object(SlicerService, "_execute_slice_by_ids", fake_execute):
         svc.slice(req, output_dir=custom_dir)
