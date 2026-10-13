@@ -6,6 +6,8 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from app.services.artifact_store import ArtifactStoreError
 from sqlalchemy import select
 
 from app.models import GcodeFile, Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
@@ -185,7 +187,7 @@ async def test_a_failed_save_never_stops_the_print(session_factory, tmp_path, en
     qe, mgr = _engine(session_factory, tmp_path)
     job_id = await _seed(session_factory)
 
-    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
+    with patch("app.services.artifact_store.LocalDiskArtifactStore.put_file", side_effect=ArtifactStoreError("disk full")):
         await _run_to_printing(qe, session_factory, job_id)
 
     mgr.get_client.return_value.start_print.assert_called_once()
@@ -410,20 +412,6 @@ def test_safe_display_name_limits_bytes_not_characters():
     from app.services.slice_saver import safe_display_name
     out = safe_display_name("é" * 200)
     assert len(out.encode()) <= 180 and set(out) == {"é"}
-
-
-def test_the_copy_never_clobbers_a_file_that_appears_between_choosing_and_writing(tmp_path):
-    """Two saves can pick the same free name at once; the exclusive create makes the loser take the next one."""
-    from app.services import slice_saver
-    src = tmp_path / "src.gcode"
-    src.write_bytes(GCODE)
-    raced = tmp_path / "x.gcode"
-    raced.write_bytes(b"the other save")
-    picks = iter([raced, tmp_path / "x (2).gcode"])
-    with patch("app.services.slice_saver.LibraryScanner.unique_path", side_effect=lambda *_: next(picks)):
-        dest = slice_saver._copy_exclusive(str(src), tmp_path, "x.gcode")
-    assert dest.name == "x (2).gcode" and dest.read_bytes() == GCODE
-    assert raced.read_bytes() == b"the other save"
 
 
 @pytest.mark.asyncio

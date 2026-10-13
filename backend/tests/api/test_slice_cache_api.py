@@ -5,6 +5,8 @@ import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from app.services.artifact_store import ArtifactStoreError
 from sqlalchemy import select
 
 from app.models import GcodeFile, Job, JobPrinterConfig, SlicedVersion, UploadedFile
@@ -214,7 +216,6 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(packed)
@@ -232,7 +233,7 @@ async def test_generate_can_flag_every_job_and_gives_the_pack_a_real_hash(client
 
 async def test_resending_the_flag_retries_a_failed_save(client, library, create_job, session_factory, tmp_path):
     job_id, _ = await _sliced_job(client, create_job, session_factory, tmp_path)
-    with patch("app.services.slice_saver.shutil.copyfileobj", side_effect=OSError("disk full")):
+    with patch("app.services.artifact_store.LocalDiskArtifactStore.put_file", side_effect=ArtifactStoreError("disk full")):
         first = await client.patch(f"/api/v1/jobs/{job_id}/save-slice", json={"save_slice": True})
     assert first.json()["slice_cache_info"]["save"]["outcome"] == "failed"
 
@@ -398,7 +399,6 @@ async def _generate(client, tmp_path, project_id, body):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=2))
@@ -479,6 +479,31 @@ async def test_the_legacy_cleanup_never_deletes_a_reusable_pack(client, tmp_path
     async with session_factory() as s:
         pack = await s.get(UploadedFile, pack_id)
     assert pack is not None and (tmp_path / "library" / pack.relative_path).exists()
+
+
+async def test_the_legacy_cleanup_removes_an_unneeded_old_result_pack_through_the_store(client, tmp_path, session_factory):
+    from app.models import Project
+    from tests.api.test_projects_api import _setup_project_with_stl
+    project_id, stl_id = await _setup_project_with_stl(client, tmp_path)
+    first, _ = await _generate(client, tmp_path, project_id, {})
+    pack_id = first["files"][0]["id"]
+    async with session_factory() as s:   # an old install's result file: no recipe, no cached slices, no job still on it
+        pack = await s.get(UploadedFile, pack_id)
+        pack.pack_recipe_hash = None
+        old_key = pack.relative_path
+        (await s.get(Project, project_id)).result_file_id = pack_id
+        for j in first["jobs"]:
+            (await s.get(Job, j["id"])).uploaded_file_id = stl_id   # (and done: the FK would otherwise keep the row)
+            (await s.get(Job, j["id"])).status = "complete"
+        await s.commit()
+    assert (tmp_path / "library" / old_key).exists()
+
+    await _generate(client, tmp_path, project_id, {})
+
+    async with session_factory() as s:
+        assert (await s.get(Project, project_id)).result_file_id is None
+        assert old_key not in [f.relative_path for f in (await s.execute(select(UploadedFile))).scalars().all()]
+    assert not (tmp_path / "library" / old_key).exists()
 
 
 async def test_a_job_printing_a_cached_version_cannot_be_flagged_to_save(client, library, create_job, session_factory):
