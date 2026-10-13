@@ -23,14 +23,14 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import UploadedFile, Tag, FileTag, Job, Printer, ProjectItem, SlicedVersion
 from ...services.library_scanner import (
-    LibraryScanner, file_kind, folder_of, is_presliced_name, library_abs_path, ACTIVE_JOB_STATUSES, MODEL_EXTS,
+    LibraryScanner, file_kind, folder_of, is_presliced_name, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
 from ...services import gcode_eligibility, model_targets, slice_cache
 from ...services.artifact_store import (
     ArtifactError, ArtifactExists, ArtifactNotFound, ArtifactStore, InvalidArtifactKey, PART_SUFFIX, validate_key,
 )
 from ...services.library_store import (
-    folder_key, get_filecache_store, get_library_store, is_reserved_name, join_key, key_name, move_unique, unique_key,
+    folder_key, get_filecache_store, get_library_store, is_reserved_name, join_key, key_name, move_unique, unique_key, with_local_path,
 )
 from ...services.queue_engine import queue_engine
 from ...services.providers.slicing import get_slicing_provider
@@ -339,7 +339,8 @@ async def upload_file(
         await asyncio.to_thread(store.delete, scratch, missing_ok=True)  # no-op once moved
 
     key = placed.key
-    scanner = LibraryScanner(session, library, config.get_filecache_dir())
+    scanner = LibraryScanner(session, library, config.get_filecache_dir(),
+                             library_store=store, filecache_store=get_filecache_store())
     record = UploadedFile(
         original_filename=key_name(key), relative_path=key,
         folder=folder_of(key), size_bytes=placed.size, content_hash=incoming_hash,
@@ -348,8 +349,7 @@ async def upload_file(
     )
     session.add(record)
     await session.flush()
-    with store.materialize(key) as local:   # the parsers take a path (BIZ-286 owns that)
-        record.plates = scanner._parse_plates(local, record.id)
+    record.plates = await asyncio.to_thread(scanner.parse_plates, key, record.id)
     if eligible_model_uuids and is_presliced_name(record.original_filename):
         try:
             await _apply_eligibility(session, record, eligible_model_uuids)
@@ -680,7 +680,8 @@ async def remove_file_tag(file_id: int, tag_id: int,
 async def rescan(session: AsyncSession = Depends(get_session)) -> dict:
     """Walk the library directory and sync the file index — adds missing records,
     marks orphaned records as missing, and re-parses plate metadata."""
-    scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir())
+    scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir(),
+                             library_store=get_library_store(), filecache_store=get_filecache_store())
     return await scanner.scan()
 
 
@@ -767,7 +768,7 @@ async def get_model_filaments(file_id: int, session: AsyncSession = Depends(get_
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
-    return parse_model_filaments(str(library_abs_path(config.get_library_dir(), record.relative_path)))
+    return await asyncio.to_thread(with_local_path, get_library_store(), record.relative_path, parse_model_filaments, [])
 
 
 @router.get(
@@ -784,7 +785,7 @@ async def get_embedded_settings(file_id: int, session: AsyncSession = Depends(ge
     record = await session.get(UploadedFile, file_id)
     if record is None:
         raise HTTPException(404, f"File {file_id} not found")
-    return parse_embedded_settings(str(library_abs_path(config.get_library_dir(), record.relative_path)))
+    return await asyncio.to_thread(with_local_path, get_library_store(), record.relative_path, parse_embedded_settings, [])
 
 
 @router.get(

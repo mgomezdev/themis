@@ -6,8 +6,12 @@ call from a worker thread. Design: docs/architecture/artifact-storage.md.
 """
 from __future__ import annotations
 
+from typing import Callable, TypeVar
+
 from .. import config
-from .artifact_store import ArtifactExists, ArtifactInfo, ArtifactStore, LocalDiskArtifactStore, PART_SUFFIX
+from .artifact_store import (
+    ArtifactExists, ArtifactInfo, ArtifactNotFound, ArtifactStore, InvalidArtifactKey, LocalDiskArtifactStore, PART_SUFFIX,
+)
 from .library_scanner import name_candidates
 
 
@@ -58,3 +62,16 @@ def move_unique(store: ArtifactStore, src_key: str, folder: str, filename: str) 
         except ArtifactExists:
             continue
     raise AssertionError("unreachable")
+
+
+T = TypeVar("T")
+
+
+def with_local_path(store: ArtifactStore, key: str, fn: Callable[[str], T], default: T) -> T:
+    """Run a path-bound reader (`zipfile`, the format provider) on `key` via `materialize`; `default` when the artifact is
+    absent or its key is unusable (what those readers already return for a missing file). Blocking: call from a worker thread."""
+    try:
+        with store.materialize(key) as path:
+            return fn(str(path))
+    except (ArtifactNotFound, InvalidArtifactKey):
+        return default

@@ -102,7 +102,9 @@ async def lifespan(app: FastAPI):
     async with SessionLocal() as _s:
         await migrate_legacy_uploads(
             _s, _config._resolve_data_dir(), _config.get_library_dir(), _config.get_filecache_dir())
-        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir()).scan()
+        from .services.library_store import get_filecache_store, get_library_store
+        await LibraryScanner(_s, _config.get_library_dir(), _config.get_filecache_dir(),
+                             library_store=get_library_store(), filecache_store=get_filecache_store()).scan()
 
     try:                                   # bound the alarm history (resolved alarms older than 90 days)
         from .services import alarms as _alarms

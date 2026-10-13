@@ -97,7 +97,7 @@ trigger math, never reset except by construction (per-item resets live on `print
 `id, original_filename, stored_path, plates: JSON, uploaded_at`.
 Library index fields (filesystem is source of truth; these cache it):
 `relative_path, folder, size_bytes, content_hash, mtime: float, missing: bool`.
-- `plates`: `[{plate_number, estimated_time(min), filament_g, thumbnail_path}]` (parsed at upload).
+- `plates`: `[{plate_number, estimated_time(min), filament_g, thumbnail_path}]` (parsed at upload; `thumbnail_path` is a filecache key `<file_id>/thumbnails/<name>` or null, BIZ-286).
 - `folder` defaults to `"/"`. `missing` is set by `library_scanner` when the file can't be found.
 - File kind is derived from the name (`library_scanner.file_kind`: `3mf` | `stl` | `gcode` | `gcode_3mf`), exposed as `kind`
   in the file dict. A `.gcode.3mf` (Bambu sliced archive) is pre-sliced, not a model: its plates come from
