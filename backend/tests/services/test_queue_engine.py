@@ -717,6 +717,9 @@ async def test_run_estimate_sets_done_with_fields(db):
 
     with patch.object(slicer, "slice", return_value=fake_gcode):
         await engine.run_estimate(job_id)
+        req = slicer.slice.call_args.args[0]   # the estimate slice reads the model through its library key, not a path
+    assert (req.source_key, req.source_3mf) == ("test.3mf", "")
+
 
     async with db() as session:
         job = await session.get(Job, job_id)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import contextlib
 import dataclasses
 import logging
 import zipfile
@@ -146,13 +147,14 @@ class SlicerService:
 
         if req.source_key is not None:
             # The provider reads a local path: hold a materialized copy of the library artifact for the whole slice.
-            try:
-                with get_library_store().materialize(req.source_key) as local:
-                    return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local)), output_dir)
-            except ArtifactNotFound as exc:
-                raise SliceError(f"the source model {req.source_key!r} is missing from the library") from exc
-            except ArtifactError as exc:
-                raise SliceError(f"could not read the source model {req.source_key!r}: {exc}") from exc
+            with contextlib.ExitStack() as held:
+                try:   # only opening the artifact maps to a SliceError; the slice's own errors pass through untouched
+                    local = held.enter_context(get_library_store().materialize(req.source_key))
+                except ArtifactNotFound as exc:
+                    raise SliceError(f"the source model {req.source_key!r} is missing from the library") from exc
+                except ArtifactError as exc:
+                    raise SliceError(f"could not read the source model {req.source_key!r}: {exc}") from exc
+                return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local)), output_dir)
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)

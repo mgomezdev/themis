@@ -138,8 +138,18 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         # (sidecar fingerprint, hashing, parsing) can take seconds.
         # The artifact is the slicer's local output (scratch, intentionally local); it is published into the source model's
         # folder through the store, under the first free name (exclusive create: concurrent saves can't clobber each other).
-        published = await asyncio.to_thread(
-            put_file_unique, library, artifact_path, folder_key(source.relative_path), f"{display}{suffix}")
+        publish = asyncio.ensure_future(asyncio.to_thread(
+            put_file_unique, library, artifact_path, folder_key(source.relative_path), f"{display}{suffix}"))
+        try:
+            published = await asyncio.shield(publish)
+        except asyncio.CancelledError:
+            # Cancelled (shutdown) mid-copy: the worker thread still finishes and publishes. Wait for it so the key is known
+            # and the `finally` below removes it, instead of leaving an unregistered file in the library.
+            try:
+                dest_key = (await publish).key
+            except Exception:
+                logger.debug("slice copy failed while the save was being cancelled", exc_info=True)
+            raise
         dest_key = published.key
 
         fingerprint = await asyncio.to_thread(   # uncached: this is what the version will record as "sliced with"

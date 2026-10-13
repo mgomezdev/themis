@@ -333,3 +333,47 @@ async def test_the_dispatch_slice_request_names_the_library_key_not_a_path(sessi
     assert params["source_key"] == "Prints/Benchy.3mf" and "stored_path" not in params
     req, _ = qe._slice_request(1, 1, 1, params)
     assert req.source_key == "Prints/Benchy.3mf"
+
+
+def test_verify_and_manual_complete_slices_name_the_library_key_not_a_path():
+    """jobs._build_slice_request (verify-slice, complete-manually) hands the slicer the library key."""
+    from app.api.routes.jobs import _build_slice_request
+    printer = Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
+                      current_orca_printer_profile="M", loaded_filaments=[])
+    f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints", plates=[],
+                     uploaded_at=_now())
+    job = Job(id=5, uploaded_file_id=1, plate_number=2, status="queued", created_at=_now(), updated_at=_now())
+    cfg = JobPrinterConfig(job_id=5, printer_id=1, print_profile="P", filament_type="any", filament_color="any")
+
+    req = _build_slice_request(job, cfg, printer, f)
+
+    assert (req.source_key, req.source_3mf) == ("Prints/Benchy.3mf", "")
+    assert req.plate_number == 2
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_save_mid_copy_still_removes_the_published_file(session_factory, tmp_path, stores):
+    """The copy runs in a worker thread and publishes even if the awaiting task is cancelled; the save must
+    wait for it and remove the key, not leave an unregistered file in the library."""
+    import asyncio
+    import threading
+    library, _ = stores
+    job_id = await _seed(session_factory)
+    started, release = threading.Event(), threading.Event()
+    real = library.put_file
+
+    def slow_put_file(key, path, **kw):
+        started.set()
+        release.wait(5)
+        return real(key, path, **kw)
+
+    library.put_file = slow_put_file
+    task = asyncio.ensure_future(_save(session_factory, tmp_path, job_id))
+    while not started.is_set():
+        await asyncio.sleep(0.01)
+    task.cancel()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert [k.key for k in library.list()] == ["Prints/Benchy.3mf"]

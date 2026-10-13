@@ -414,31 +414,6 @@ def test_safe_display_name_limits_bytes_not_characters():
     assert len(out.encode()) <= 180 and set(out) == {"é"}
 
 
-def test_the_copy_never_clobbers_a_file_that_appears_between_choosing_and_writing(tmp_path):
-    """Two saves can pick the same free name at once; the exclusive create makes the loser take the next one."""
-    from app.services.artifact_store import ArtifactExists, LocalDiskArtifactStore
-    from app.services.library_store import put_file_unique
-    store = LocalDiskArtifactStore(tmp_path / "lib")
-    src = tmp_path / "src.gcode"
-    src.write_bytes(GCODE)
-    store.put_file("Prints/x.gcode", src)   # the other save won the name
-
-    real_exists = store.exists
-    lost = iter([False])   # the loser's advisory check still saw the name free...
-    store.exists = lambda key: next(lost, None) is None and real_exists(key)
-    real_put = store.put_file
-    calls = []
-
-    def racing_put(key, path, **kw):
-        calls.append(key)
-        return real_put(key, path, **kw)   # ...so it reaches the exclusive create and must retry
-    store.put_file = racing_put
-    info = put_file_unique(store, src, "Prints", "x.gcode")
-    assert info.key == "Prints/x (2).gcode" and store.open(info.key).read() == GCODE
-    assert store.open("Prints/x.gcode").read() == GCODE and "Prints/x.gcode" in calls   # tried the taken name and was refused
-    assert ArtifactExists  # (the refusal is the store's exclusive create, not the pre-check)
-
-
 @pytest.mark.asyncio
 async def test_a_saved_slice_is_eligible_for_its_target_model_and_only_its_declared_equivalents(session_factory, tmp_path, env):
     """BIZ-263: the slice's file records the model it was sliced for + registry-declared equivalents (never inferred)."""

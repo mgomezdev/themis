@@ -122,3 +122,37 @@ async def test_a_stl_missing_from_the_store_is_a_422_naming_the_file(client, tmp
     ):
         resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
     assert resp.status_code == 422 and "part.stl" in resp.json()["detail"] and "missing" in resp.json()["detail"]
+
+
+async def test_packing_with_an_unreadable_stl_key_is_a_422_not_a_500(client, tmp_path, session_factory):
+    from tests.api.test_projects_api import _setup_project_with_stl
+    from tests.fake_providers import fake_packer
+    project_id, file_id = await _setup_project_with_stl(client, tmp_path)
+    store = InMemoryArtifactStore()
+    async with session_factory() as s:
+        key = (await s.get(UploadedFile, file_id)).relative_path
+    store.put(key, io.BytesIO(b"stl"))
+    real_materialize = store.materialize
+
+    def vanishing(k):   # present at the check, gone when the packer reads it
+        store.blobs.pop(k, None)
+        return real_materialize(k)
+
+    store.materialize = vanishing
+    with patch("app.api.routes.projects.get_library_store", lambda **kw: store), \
+         patch("app.api.routes.projects.refresh_content_hash", return_value=False), \
+         patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(b"x")):
+        resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
+    assert resp.status_code == 422 and "model file" in resp.json()["detail"]
+
+
+async def test_a_stl_row_with_an_empty_key_is_reported_missing_not_a_500(client, tmp_path, session_factory):
+    from tests.api.test_projects_api import _setup_project_with_stl
+    from tests.fake_providers import fake_packer
+    project_id, file_id = await _setup_project_with_stl(client, tmp_path)
+    async with session_factory() as s:
+        (await s.get(UploadedFile, file_id)).relative_path = ""   # a legacy, never-indexed row
+        await s.commit()
+    with patch("app.api.routes.projects.get_slicing_provider", return_value=fake_packer(b"x")):
+        resp = await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
+    assert resp.status_code == 422 and "missing" in resp.json()["detail"]

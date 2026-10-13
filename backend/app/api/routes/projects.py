@@ -27,7 +27,7 @@ from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterC
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
-from ...services.artifact_store import ArtifactStore
+from ...services.artifact_store import ArtifactError, ArtifactStore
 from ...services.library_store import get_library_store
 from ...services.library_scanner import (
     ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
@@ -1155,6 +1155,14 @@ def _parse_plate_nums(path: Path) -> list[int]:
 PACK_FOLDER = "Job Pack 3MFs"
 
 
+async def _stored(store: ArtifactStore, key: str) -> bool:
+    """Whether the library holds `key`; a key the store refuses (e.g. a legacy row with an empty `relative_path`) is absent."""
+    try:
+        return await asyncio.to_thread(store.exists, key)
+    except ArtifactError:
+        return False
+
+
 def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
     """Plate numbers of a stored pack: the zip reader needs a path, so the artifact is materialized."""
     with store.materialize(key) as local:
@@ -1319,7 +1327,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 raise HTTPException(422, f"File {item.file_id} not found in library")
             if not f.original_filename.lower().endswith(".stl"):
                 raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-            if not await asyncio.to_thread(library.exists, f.relative_path):
+            if not await _stored(library, f.relative_path):
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
             keys.extend([f.relative_path] * item.quantity)
             # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
@@ -1386,6 +1394,8 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                     packed_bytes = await asyncio.to_thread(
                         _pack_stored_models, library, slicing, stl_keys, bed=(pack_bed_x, pack_bed_y, 250.0),
                     )
+            except ArtifactError as exc:   # an STL vanished or became unreadable between the check and the pack
+                raise HTTPException(422, f"Could not read a model file for generation: {exc}") from exc
             except SlicingProviderError as exc:
                 if "timed out" in str(exc).lower():
                     raise HTTPException(504, "Generation timed out — try fewer parts or reduce quantities")
