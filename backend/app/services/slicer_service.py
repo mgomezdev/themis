@@ -1,4 +1,5 @@
 from __future__ import annotations
+import dataclasses
 import logging
 import zipfile
 from dataclasses import dataclass, field
@@ -6,6 +7,8 @@ from pathlib import Path
 from typing import Callable
 
 from ..config import get_data_dir
+from .artifact_store import ArtifactError, ArtifactNotFound
+from .library_store import get_library_store
 from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider
 from .three_mf_parser import plate_thumbnail_bytes
 
@@ -36,6 +39,10 @@ class SliceRequest:
     args: ``[]`` yields raw gcode, ``["--export-3mf", "<name>.gcode.3mf"]`` yields
     the archive. ``extra_config`` carries runtime overrides (bed type, job-level
     setting overrides) merged by the sidecar after profile resolution.
+
+    The source model is either a local path (``source_3mf``) or, preferably, a library
+    artifact key (``source_key``): ``SlicerService.slice`` then materializes that artifact
+    for the duration of the slice and ``source_3mf`` is ignored (BIZ-287).
     """
     job_id: int
     source_3mf: str
@@ -47,6 +54,7 @@ class SliceRequest:
     export_args: list[str] = field(default_factory=list)
     prepare_hook: "Callable[[Path], None] | None" = None
     extra_config: dict = field(default_factory=dict)
+    source_key: "str | None" = None
 
 
 def tool_mapping_hook(client, tool_index, filament_map, provider) -> "Callable[[Path], None] | None":
@@ -135,6 +143,16 @@ class SlicerService:
         provider = get_slicing_provider()
         if provider is None:
             raise SliceError("Laminus is not configured — set its URL in Settings -> Laminus; it is required for slicing")
+
+        if req.source_key is not None:
+            # The provider reads a local path: hold a materialized copy of the library artifact for the whole slice.
+            try:
+                with get_library_store().materialize(req.source_key) as local:
+                    return self.slice(dataclasses.replace(req, source_key=None, source_3mf=str(local)), output_dir)
+            except ArtifactNotFound as exc:
+                raise SliceError(f"the source model {req.source_key!r} is missing from the library") from exc
+            except ArtifactError as exc:
+                raise SliceError(f"could not read the source model {req.source_key!r}: {exc}") from exc
 
         out_dir = output_dir if output_dir is not None else (self._data_dir / "gcode" / str(req.job_id))
         out_dir.mkdir(parents=True, exist_ok=True)

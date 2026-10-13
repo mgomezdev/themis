@@ -14,7 +14,6 @@ from typing import Callable
 from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from ..config import get_library_dir
 from ..models import (
     GcodeFile,
     Job,
@@ -25,9 +24,10 @@ from ..models import (
     SlicedVersion,
     UploadedFile,
 )
+from .artifact_store import ArtifactError
 from .library_store import get_library_store
 from .library_scanner import (
-    fresh_content_hash, is_presliced_file, library_abs_path, presliced_suffix, refresh_content_hash,
+    fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
 from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
@@ -192,8 +192,7 @@ def _slice_params(job, config, printer, uploaded_file) -> dict:
     loaded = (printer.loaded_filaments if printer else None) or []
     slot = _slot_for_config(config, loaded) if config else None
     return {
-        "stored_path": (str(library_abs_path(get_library_dir(), uploaded_file.relative_path))
-                        if uploaded_file else None),
+        "source_key": uploaded_file.relative_path if uploaded_file else None,
         "original_filename": uploaded_file.original_filename if uploaded_file else None,
         "machine_preset": printer.current_orca_printer_profile if printer else None,
         "build_plate_type": printer.build_plate_type if printer else None,
@@ -318,7 +317,7 @@ class QueueEngine:
         # Step 1 — Load job and resolve config
         token: int | None = None
         machine_preset: str | None = None
-        stored_path: str | None = None
+        source_key: str | None = None
         filament_profiles: list[str] = []
         print_profile: str | None = None
         printer_name: str | None = None
@@ -351,10 +350,7 @@ class QueueEngine:
             # Capture all scalars before session closes
             machine_preset = (printer.current_orca_printer_profile or "") if printer else ""
             print_profile = (config.print_profile or "") if config else ""
-            stored_path = (
-                str(library_abs_path(get_library_dir(), uploaded_file.relative_path))
-                if uploaded_file else None
-            )
+            source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
             loaded = (printer.loaded_filaments or []) if printer else []
 
@@ -382,7 +378,7 @@ class QueueEngine:
             }
 
         # Step 2 — Pre-flight validation
-        if not machine_preset or not stored_path or not filament_profiles:
+        if not machine_preset or not source_key or not filament_profiles:
             await self._fail_estimate(job_id, token, "missing machine preset, file, or filament profile")
             return
 
@@ -390,7 +386,8 @@ class QueueEngine:
         output_dir = self._slicer._data_dir / "gcode_estimates" / str(job_id)
         req = SliceRequest(
             job_id=job_id,
-            source_3mf=stored_path,
+            source_3mf="",
+            source_key=source_key,
             plate_number=1,
             machine_preset=machine_preset,
             process_preset=print_profile,
@@ -947,10 +944,7 @@ class QueueEngine:
             cfg_tool_index = config.tool_index if config else None
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
-            stored_path = (
-                str(library_abs_path(get_library_dir(), uploaded_file.relative_path))
-                if uploaded_file else None
-            )
+            source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
             params = _slice_params(job, config, printer, uploaded_file)
@@ -974,7 +968,7 @@ class QueueEngine:
             # which must never be the library's own copy) and carry on to upload + print.
             try:
                 gcode_path = await asyncio.to_thread(
-                    self._stage_gcode, job_id, stored_path, original_filename or "model.gcode"
+                    self._stage_gcode, job_id, source_key, original_filename or "model.gcode"
                 )
             except OSError as exc:
                 await self._handle_slice_failure(job_id, printer_id, f"could not read the uploaded gcode: {exc}")
@@ -1119,7 +1113,8 @@ class QueueEngine:
         filament_profile, filament_color = p["filament_profile"], p["filament_color"]
         req = SliceRequest(
             job_id=job_id,
-            source_3mf=p["stored_path"],
+            source_3mf="",
+            source_key=p["source_key"],
             plate_number=plate_number,
             machine_preset=p["machine_preset"],
             process_preset=p["print_profile"],
@@ -1171,7 +1166,6 @@ class QueueEngine:
             cfg = await session.get(QueueConfig, 1)
             use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
         found, had_rows = await self._usable_version(source_file_id, key, only_version_id)
-        library = get_library_dir()
         if found is None:
             reason = "file_missing" if had_rows else "no_version"
             await self._record_cache_decision(job_id, slice_cache.decision_info(
@@ -1201,8 +1195,7 @@ class QueueEngine:
             return None
         try:
             staged = await asyncio.to_thread(
-                self._stage_gcode, job_id, str(library_abs_path(library, cached_file.relative_path)),
-                cached_file.original_filename)
+                self._stage_gcode, job_id, cached_file.relative_path, cached_file.original_filename)
         except OSError as exc:
             await self._record_cache_decision(job_id, slice_cache.decision_info(
                 "miss", reason="file_missing", **info_kw))
@@ -1244,9 +1237,11 @@ class QueueEngine:
                 job.slice_cache_info = info
                 await session.commit()
 
-    def _stage_gcode(self, job_id: int, source_path: str, original_filename: str) -> str:
-        """Copy a pre-sliced upload (.gcode or .gcode.3mf) into the job's gcode dir (where slicer output would have
-        gone), keeping its full extension — the printer tells the two apart by it."""
+    def _stage_gcode(self, job_id: int, source_key: str, original_filename: str) -> str:
+        """Copy a pre-sliced upload (.gcode or .gcode.3mf), read from the library store by `source_key`, into the job's
+        gcode dir (where slicer output would have gone), keeping its full extension — the printer tells the two apart by it.
+        The staging dir is the job's local working copy (intentionally local, docs/architecture/artifact-storage.md G1/C3).
+        A missing/unreadable source raises OSError, which the callers already treat as "could not read the gcode"."""
         out_dir = self._slicer._data_dir / "gcode" / str(job_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         suffix = presliced_suffix(original_filename)
@@ -1254,7 +1249,12 @@ class QueueEngine:
         stem = base[: -len(suffix)] if base.lower().endswith(suffix) else os.path.splitext(base)[0]
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
         dest = out_dir / f"{safe}_j{job_id}{suffix}"
-        shutil.copyfile(source_path, dest)
+        try:
+            with get_library_store().open(source_key) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out)
+        except ArtifactError as exc:
+            dest.unlink(missing_ok=True)
+            raise OSError(f"could not read {source_key!r} from the library: {exc}") from exc
         return str(dest)
 
     async def _handle_slice_failure(self, job_id: int, printer_id: int, error: str) -> None:

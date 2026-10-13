@@ -14,14 +14,13 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ... import config as app_config
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
 from ...services import completion_events, slice_cache, slice_saver
 from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
-from ...services.library_scanner import file_kind, is_presliced_file, library_abs_path
+from ...services.library_scanner import file_kind, is_presliced_file
 from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
 from ...services import model_targets, scheduling
@@ -1087,7 +1086,8 @@ def _build_slice_request(
     plate_config.update(job.overrides or {})
     return SliceRequest(
         job_id=job.id,
-        source_3mf=str(library_abs_path(app_config.get_library_dir(), uploaded_file.relative_path)),
+        source_3mf="",
+        source_key=uploaded_file.relative_path,
         plate_number=job.plate_number,
         machine_preset=printer.current_orca_printer_profile,
         process_preset=config.print_profile,

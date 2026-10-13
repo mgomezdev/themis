@@ -10,20 +10,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import re
-import shutil
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .. import config
-from .library_store import get_filecache_store, get_library_store
+from .artifact_store import ArtifactStore
+from .library_store import folder_key, key_name, get_filecache_store, get_library_store, put_file_unique
 from ..models import Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
 from . import gcode_eligibility, slice_cache
 from .providers.slicing import get_format_provider, get_slicing_provider
-from .library_scanner import LibraryScanner, folder_of, library_abs_path, sha256_file
+from .library_scanner import LibraryScanner, folder_of
 
 logger = logging.getLogger(__name__)
 
@@ -89,20 +88,6 @@ async def _record(session: AsyncSession, job_id: int, outcome: str, **kw) -> Non
         logger.exception("could not record the slice save outcome on job %s", job_id)
 
 
-def _copy_exclusive(src: str, folder: Path, filename: str) -> Path:
-    """Copy `src` into `folder` under `filename` (or "name (2)…" on collision), never overwriting: the destination is
-    created exclusively, so two concurrent saves can't pick — and clobber — the same file."""
-    for _ in range(1000):
-        dest = LibraryScanner.unique_path(folder, filename)
-        try:
-            with open(dest, "xb") as out, open(src, "rb") as inp:
-                shutil.copyfileobj(inp, out)
-            return dest
-        except FileExistsError:
-            continue
-    raise FileExistsError(f"no free name for {filename!r} in {folder}")
-
-
 # One save at a time: the duplicate check, the copy and the insert must not interleave between the engine's background
 # save and a save-slice request, or two same-key versions (or a version over another's bytes) could result.
 _save_lock = asyncio.Lock()
@@ -128,8 +113,10 @@ async def save_slice_version(
 
 
 async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, fields, require_flag):
-    dest: Path | None = None
-    thumb_dir: Path | None = None
+    library = get_library_store()
+    filecache = get_filecache_store()
+    dest_key: str | None = None   # the library artifact this save created (removed again on failure)
+    file_id: int | None = None    # its row id once flushed: names its filecache thumbnails
     done = False
     try:
         job = await session.get(Job, job_id)
@@ -149,39 +136,39 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
 
         # Copy FIRST: the job's artifact is short-lived (a failed upload or a cancel deletes it), and everything below
         # (sidecar fingerprint, hashing, parsing) can take seconds.
-        library = config.get_library_dir()
-        folder_abs = library_abs_path(library, source.relative_path).parent
-        folder_abs.mkdir(parents=True, exist_ok=True)
-        dest = await asyncio.to_thread(_copy_exclusive, artifact_path, folder_abs, f"{display}{suffix}")
+        # The artifact is the slicer's local output (scratch, intentionally local); it is published into the source model's
+        # folder through the store, under the first free name (exclusive create: concurrent saves can't clobber each other).
+        published = await asyncio.to_thread(
+            put_file_unique, library, artifact_path, folder_key(source.relative_path), f"{display}{suffix}")
+        dest_key = published.key
 
         fingerprint = await asyncio.to_thread(   # uncached: this is what the version will record as "sliced with"
             slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
             list(inputs.filament_presets), get_slicing_provider())
         existing = await _find_duplicate(session, source.id, key, fingerprint)
         if existing is not None:   # an up-to-date same-key version is already there: drop the copy
-            _cleanup(dest, None)
-            dest = None
+            _cleanup(library, filecache, dest_key, None)
+            dest_key = None
             done = True
             slice_cache.log_event("save_duplicate_skipped", **fields, sliced_version_id=existing.id,
                                   cached_file_id=existing.file_id)
             await _record(session, job_id, "duplicate", cache_key=key, sliced_version_id=existing.id,
                           file_id=existing.file_id)
             return existing
-        digest = await asyncio.to_thread(sha256_file, dest)
-        stat = dest.stat()
-
-        est = await asyncio.to_thread(get_format_provider().parse_estimates, str(dest), inputs.plate_number)
+        digest = published.sha256   # computed while the bytes streamed in: no second read
+        est = await asyncio.to_thread(
+            _parse_estimates, library, dest_key, inputs.plate_number)
         grams, secs = est.grams, est.seconds
-        rel = dest.relative_to(library).as_posix()
+        rel = dest_key
         record = UploadedFile(
-            original_filename=dest.name, relative_path=rel, folder=folder_of(rel), size_bytes=stat.st_size,
-            content_hash=digest, mtime=stat.st_mtime, plates=[], missing=False, uploaded_at=slice_cache.now_iso(),
+            original_filename=key_name(rel), relative_path=rel, folder=folder_of(rel), size_bytes=published.size,
+            content_hash=digest, mtime=published.mtime, plates=[], missing=False, uploaded_at=slice_cache.now_iso(),
         )
         session.add(record)
         await session.flush()
-        scanner = LibraryScanner(session, library, config.get_filecache_dir(),
-                                 library_store=get_library_store(), filecache_store=get_filecache_store())
-        thumb_dir = Path(config.get_filecache_dir()) / str(record.id)
+        file_id = record.id
+        scanner = LibraryScanner(session, config.get_library_dir(), config.get_filecache_dir(),
+                                 library_store=library, filecache_store=filecache)
         record.plates = await asyncio.to_thread(scanner.parse_plates, rel, record.id)
         version = SlicedVersion(
             file_id=record.id, source_file_id=source.id, source_content_hash=inputs.source_content_hash,
@@ -212,8 +199,8 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
     except Exception as exc:
         slice_cache.log_event("save_failed", **fields, error=f"{type(exc).__name__}: {exc}")
         logger.debug("slice save failed for job %s", job_id, exc_info=True)
-        _cleanup(dest, thumb_dir)
-        dest = None
+        _cleanup(library, filecache, dest_key, file_id)
+        dest_key = None
         done = True
         try:
             await session.rollback()
@@ -223,14 +210,25 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
         return None
     finally:
         if not done:   # cancelled (shutdown) mid-save: leave no unregistered file behind
-            _cleanup(dest, thumb_dir)
+            _cleanup(library, filecache, dest_key, file_id)
 
 
-def _cleanup(dest: Path | None, thumb_dir: Path | None) -> None:
-    if dest is not None:
+def _parse_estimates(library: ArtifactStore, key: str, plate_number: int):
+    """Grams / seconds of a library artifact: the format provider reads a path, so the artifact is materialized."""
+    with library.materialize(key) as local:
+        return get_format_provider().parse_estimates(str(local), plate_number)
+
+
+def _cleanup(library: ArtifactStore, filecache: ArtifactStore, dest_key: str | None, file_id: int | None) -> None:
+    """Undo a save that did not complete: drop the library artifact it created and the thumbnails published for its row.
+    Best effort (a failure here must not mask the save's own outcome)."""
+    if dest_key is not None:
         try:
-            os.remove(dest)
-        except OSError:
-            pass
-    if thumb_dir is not None:
-        shutil.rmtree(thumb_dir, ignore_errors=True)
+            library.delete(dest_key, missing_ok=True)
+        except Exception:
+            logger.warning("could not remove the unregistered slice copy %s", dest_key, exc_info=True)
+    if file_id is not None:
+        try:
+            filecache.delete_prefix(str(file_id))
+        except Exception:
+            logger.warning("could not remove the thumbnails of the abandoned slice save (file %s)", file_id, exc_info=True)

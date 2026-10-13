@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import io
 import json
 import logging
 import re
@@ -20,15 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ._materials import material_columns, stored
 from ...services.inventory import refs as inventory_refs
 from ...auth import require_scope
-from ...config import get_library_dir
 from ...database import get_session
 from ...models import PROJECT_STAGES, Customer, Job, JobModelTarget, JobPrinterConfig, Printer, Project, ProjectItem, ProjectLink, ProjectPart, QueueConfig, SlicedVersion, UploadedFile
 from ...services import idempotency, job_costs, model_targets, project_events, slice_cache
 from ...services.payments import adopt_manual_amount, has_payments, sync_project_totals
 from ...services.three_mf_parser import plate_numbers
+from ...services.artifact_store import ArtifactStore
 from ...services.library_store import get_library_store
 from ...services.library_scanner import (
-    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, library_abs_path, refresh_content_hash,
+    ACTIVE_JOB_STATUSES, LibraryScanner, fresh_content_hash, is_presliced_name, refresh_content_hash,
 )
 from ...services.providers.slicing import SlicingProviderError, get_slicing_provider
 from ...services.queue_engine import queue_engine
@@ -1150,6 +1152,23 @@ def _parse_plate_nums(path: Path) -> list[int]:
         return []
 
 
+PACK_FOLDER = "Job Pack 3MFs"
+
+
+def _stored_plate_nums(store: ArtifactStore, key: str) -> list[int]:
+    """Plate numbers of a stored pack: the zip reader needs a path, so the artifact is materialized."""
+    with store.materialize(key) as local:
+        return _parse_plate_nums(local)
+
+
+def _pack_stored_models(store: ArtifactStore, slicing, keys: list[str], **options) -> bytes:
+    """Pack the STLs stored under `keys` (repeats = quantities). The packer takes paths, so each distinct artifact is
+    materialized once for the duration of the call. Blocking: call from a worker thread."""
+    with contextlib.ExitStack() as stack:
+        local = {k: stack.enter_context(store.materialize(k)) for k in dict.fromkeys(keys)}
+        return slicing.pack_models([local[k] for k in keys], **options)
+
+
 async def _reusable_pack(session: AsyncSession, recipe_hash: str) -> UploadedFile | None:
     """The newest earlier pack made from the same recipe whose file is still on disk, or None."""
     rows = (await session.execute(
@@ -1286,13 +1305,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         key = (item.filament_type, item.filament_color, _item_material(item))
         groups.setdefault(key, []).append(item)
 
-    library_dir = get_library_dir()
+    library = get_library_store()
 
-    # Resolve STL paths per group (+ what each group packs from, for pack reuse)
-    group_paths: dict[tuple[str, str, tuple[str, str] | None], list[Path]] = {}
+    # Resolve STL keys per group (+ what each group packs from, for pack reuse)
+    group_keys: dict[tuple[str, str, tuple[str, str] | None], list[str]] = {}
     group_recipe: dict[tuple[str, str, tuple[str, str] | None], list[tuple[str, int]]] = {}
     for key, group_items in groups.items():
-        paths: list[Path] = []
+        keys: list[str] = []
         group_recipe[key] = []
         for item in group_items:
             f = await session.get(UploadedFile, item.file_id)
@@ -1300,14 +1319,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 raise HTTPException(422, f"File {item.file_id} not found in library")
             if not f.original_filename.lower().endswith(".stl"):
                 raise HTTPException(400, f"File {f.original_filename!r} is not an STL — only STL files are supported")
-            stl_path = library_abs_path(library_dir, f.relative_path)
-            if not stl_path.exists():
+            if not await asyncio.to_thread(library.exists, f.relative_path):
                 raise HTTPException(422, f"STL file {f.original_filename!r} is missing from disk")
-            paths.extend([stl_path] * item.quantity)
+            keys.extend([f.relative_path] * item.quantity)
             # The recipe keys on each STL's bytes: re-hash one that changed on disk since the last rescan.
-            await refresh_content_hash(f, get_library_store())
+            await refresh_content_hash(f, library)
             group_recipe[key].append((f.content_hash or f"file:{f.id}:{f.size_bytes}:{f.mtime}", item.quantity))
-        group_paths[key] = paths
+        group_keys[key] = keys
     pack_mode = ({"mode": "uuid", "machine": proj.machine_uuid, "process": proj.process_uuid}
                  if proj.machine_uuid and proj.process_uuid else {"mode": "geometry", "bed": [pack_bed_x, pack_bed_y]})
 
@@ -1330,20 +1348,19 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                     select(SlicedVersion.id).where(SlicedVersion.source_file_id == old_file.id).limit(1))).first()):
                 old_file = None
             if old_file:
-                old_abs = library_abs_path(library_dir, old_file.relative_path)
-                if old_abs.exists():
-                    old_abs.unlink(missing_ok=True)
+                await asyncio.to_thread(library.delete, old_file.relative_path, missing_ok=True)
                 await session.delete(old_file)
         proj.result_file_id = None
         await session.commit()
 
-    job_pack_dir = library_dir / "Job Pack 3MFs"
-    job_pack_dir.mkdir(parents=True, exist_ok=True)
+    # Pack output is staged under a throwaway folder and moved to its job-ID folder once the IDs are known; this store
+    # prunes the emptied staging folder (the library store keeps folders, which are user-visible objects).
+    pack_store = get_library_store(prune_empty=True)
 
     jobs_out: list[dict] = []
     files_out: list[dict] = []
 
-    for (fil_type, fil_color, mat), stl_paths in group_paths.items():
+    for (fil_type, fil_color, mat), stl_keys in group_keys.items():
         group_items = groups[(fil_type, fil_color, mat)]
         # Same STLs x quantities, same bed / pack mode => the same pack: reuse it rather than re-pack, so the cached
         # slices keyed on that file still apply (BIZ-193).
@@ -1361,14 +1378,13 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                 if proj.machine_uuid and proj.process_uuid:
                     # Legacy path: project has OrcaSlicer profiles embedded
                     packed_bytes = await asyncio.to_thread(
-                        lambda: slicing.pack_models(
-                            stl_paths, machine_ref=proj.machine_uuid, process_ref=proj.process_uuid,
-                            filament_refs=[]),
+                        _pack_stored_models, library, slicing, stl_keys,
+                        machine_ref=proj.machine_uuid, process_ref=proj.process_uuid, filament_refs=[],
                     )
                 else:
                     # Geometry-only pack; slicing profiles applied at dispatch time
                     packed_bytes = await asyncio.to_thread(
-                        lambda: slicing.pack_models(stl_paths, bed=(pack_bed_x, pack_bed_y, 250.0)),
+                        _pack_stored_models, library, slicing, stl_keys, bed=(pack_bed_x, pack_bed_y, 250.0),
                     )
             except SlicingProviderError as exc:
                 if "timed out" in str(exc).lower():
@@ -1378,26 +1394,23 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
             label = _filament_label(fil_type, fil_color, mat)
             out_filename = f"project-{_slugify(proj.name)}-{label}.3mf"
             # Write to a temp subdirectory; renamed to the job-ID subfolder once IDs are known.
-            tmp_subdir = job_pack_dir / f"_tmp_{_uuid.uuid4().hex[:10]}"
-            tmp_subdir.mkdir(parents=True, exist_ok=True)
-            out_path = tmp_subdir / out_filename
-            out_path.write_bytes(packed_bytes)
+            tmp_key = f"{PACK_FOLDER}/_tmp_{_uuid.uuid4().hex[:10]}/{out_filename}"
+            published = await asyncio.to_thread(pack_store.put, tmp_key, io.BytesIO(packed_bytes))
             # A real content hash: the slicing cache keys versions on it (an empty one is uncacheable), and the
             # library's dedup/move detection relies on it too.
             pack_hash = hashlib.sha256(packed_bytes).hexdigest()
 
-            plate_nums = _parse_plate_nums(out_path)
+            plate_nums = await asyncio.to_thread(_stored_plate_nums, pack_store, tmp_key)
 
-            rel = out_path.relative_to(library_dir).as_posix()
             new_file = UploadedFile(
-                original_filename=out_path.name,
+                original_filename=out_filename,
                 plates=[{"plate_number": p, "thumbnail_path": None} for p in plate_nums],
                 uploaded_at=now,
-                relative_path=rel,
-                folder="/Job Pack 3MFs",
-                size_bytes=out_path.stat().st_size,
+                relative_path=tmp_key,
+                folder=f"/{PACK_FOLDER}",
+                size_bytes=published.size,
                 content_hash=pack_hash,
-                mtime=out_path.stat().st_mtime,
+                mtime=published.mtime,
                 missing=False,
                 pack_recipe_hash=recipe_hash,
             )
@@ -1446,11 +1459,11 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         if reused is None:
             # Rename temp dir to the job-ID subfolder now that IDs are known.
             job_id_label = str(new_jobs[0].id) if len(new_jobs) == 1 else f"{new_jobs[0].id}-{new_jobs[-1].id}"
-            final_subdir = job_pack_dir / job_id_label
-            tmp_subdir.rename(final_subdir)
-            final_path = final_subdir / out_filename
-            new_file.relative_path = final_path.relative_to(library_dir).as_posix()
-            new_file.folder = f"/Job Pack 3MFs/{job_id_label}"
+            final_key = f"{PACK_FOLDER}/{job_id_label}/{out_filename}"
+            moved = await asyncio.to_thread(pack_store.move, tmp_key, final_key)
+            new_file.relative_path = moved.key
+            new_file.mtime = moved.mtime
+            new_file.folder = f"/{PACK_FOLDER}/{job_id_label}"
             await session.commit()
 
         cached_plates = (await session.execute(

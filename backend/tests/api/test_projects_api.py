@@ -140,7 +140,6 @@ async def test_generate_stores_3mf_in_job_pack_folder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -177,7 +176,6 @@ async def test_generate_3mf_folder_field_in_db(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -210,7 +208,6 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(fake_3mf)
@@ -246,7 +243,6 @@ async def test_generate_printer_configs_use_process_preset_not_machine_preset(cl
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
@@ -278,7 +274,6 @@ async def test_generate_without_process_preset_does_not_invent_one(client, tmp_p
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
@@ -330,7 +325,6 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("app.api.routes.jobs.queue_engine"),
     ):
@@ -533,7 +527,6 @@ async def test_generate_with_machine_profile_creates_model_targets_and_configs(
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
@@ -555,7 +548,6 @@ async def _generate_with(client, tmp_path, provider, project_id):
     lib = tmp_path / "library"
     with (
         patch("app.config.get_library_dir", return_value=lib),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider", return_value=provider),
     ):
         return await client.post(f"/api/v1/projects/{project_id}/generate", json={"eligible_printer_ids": []})
@@ -610,7 +602,6 @@ async def test_generate_spawns_no_subprocess_and_keeps_the_packed_plates(client,
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
         patch("subprocess.run", side_effect=boom), patch("subprocess.Popen", side_effect=boom),
     ):

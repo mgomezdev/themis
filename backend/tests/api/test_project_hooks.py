@@ -140,7 +140,6 @@ async def _generate(client, tmp_path, project_id, headers=None, body=None):
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider") as mock_get,
     ):
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
@@ -288,7 +287,6 @@ async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_u
     with (
         patch("app.config.get_library_dir", return_value=lib),
         patch("app.config.get_filecache_dir", return_value=tmp_path / "filecache"),
-        patch("app.api.routes.projects.get_library_dir", return_value=lib),
         patch("app.api.routes.projects.get_slicing_provider", return_value=packer),
     ):
         failed = await post()

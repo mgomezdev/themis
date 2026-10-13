@@ -1,8 +1,8 @@
 """Artifact storage boundary (BIZ-256). Design + consumer inventory: docs/architecture/artifact-storage.md.
 
-The library CRUD routes (`api/routes/files.py`, via `services/library_store.py`) use it (BIZ-285). Every other live caller
-still resolves real filesystem paths (`config.get_library_dir()` + `library_abs_path`, `get_filecache_dir()`,
-`get_data_dir()`); they are classified in the design note. `LocalDiskArtifactStore` is the reference backend and is deliberately byte- and name-compatible with that
+Every library consumer uses it (CRUD routes, scanner, parsers, slice / pack / stage pipeline; BIZ-285..287), via
+`services/library_store.py`. What stays on the filesystem on purpose (job gcode working copies, scratch dirs, folders, DB)
+is classified in the design note (section 5c). `LocalDiskArtifactStore` is the reference backend and is deliberately byte- and name-compatible with that
 layout: key == the `relative_path` already stored in `uploaded_files`, under the same root. No remote backend exists or is
 decided here (CLAUDE.md / BIZ-265 non-goal).
 

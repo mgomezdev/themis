@@ -6,6 +6,7 @@ call from a worker thread. Design: docs/architecture/artifact-storage.md.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, TypeVar
 
 from .. import config
@@ -15,8 +16,10 @@ from .artifact_store import (
 from .library_scanner import name_candidates
 
 
-def get_library_store() -> LocalDiskArtifactStore:
-    return LocalDiskArtifactStore(config.get_library_dir(), prune_empty=False)
+def get_library_store(*, prune_empty: bool = False) -> LocalDiskArtifactStore:
+    """`prune_empty=True` only for flows that stage under a throwaway folder and move out of it (the pack output): the
+    scratch folder then vanishes with its last artifact instead of lingering as a user-visible folder."""
+    return LocalDiskArtifactStore(config.get_library_dir(), prune_empty=prune_empty)
 
 
 def get_filecache_store() -> LocalDiskArtifactStore:
@@ -59,6 +62,21 @@ def move_unique(store: ArtifactStore, src_key: str, folder: str, filename: str) 
             continue
         try:
             return store.move(src_key, key)
+        except ArtifactExists:
+            continue
+    raise AssertionError("unreachable")
+
+
+def put_file_unique(store: ArtifactStore, src: Path | str, folder: str, filename: str) -> ArtifactInfo:
+    """Publish the local file `src` as a new artifact in `folder` under the first free name (`name`, `name (2)`, ...). The
+    store's create is exclusive, so two concurrent publishers can never pick (and clobber) the same name: the loser sees
+    `ArtifactExists` and takes the next candidate. Blocking: call from a worker thread."""
+    for name in name_candidates(filename):
+        key = join_key(folder, name)
+        if store.exists(key):   # skip the copy for a taken name; the exclusive create below still decides races
+            continue
+        try:
+            return store.put_file(key, src)
         except ArtifactExists:
             continue
     raise AssertionError("unreachable")

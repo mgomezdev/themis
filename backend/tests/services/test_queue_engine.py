@@ -63,6 +63,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
         f = UploadedFile(
             original_filename="test.3mf",
             stored_path="/data/uploads/x/model.3mf",
+            relative_path="test.3mf",
             plates=[],
             uploaded_at=datetime.now(timezone.utc).isoformat(),
         )
