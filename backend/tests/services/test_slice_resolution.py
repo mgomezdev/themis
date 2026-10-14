@@ -9,7 +9,6 @@ from app.services import slice_resolution as sr
 from app.services.providers import contract as c
 from app.services.providers.contract import Action, Reason, Readiness
 from tests.fake_providers import FakeGcodeProducer
-from tests.services.test_slicing_provider_contract import sidecar  # noqa: F401  (fixture)
 
 pytestmark = pytest.mark.asyncio
 
@@ -134,15 +133,3 @@ async def test_target_comes_from_the_printer_row(world):
     assert (await sr.resolve_slicing(printer(model_uuid="uuid-x1c"), "m.3mf")).blocked
     t = sr.target_of(printer())
     assert t.bed_mm[:2] == (256.0, 256.0) and t.model_uuid == "uuid-x1c"
-
-
-async def test_end_to_end_with_the_real_plugin_host_and_a_fake_sidecar(sidecar, monkeypatch):
-    """No fakes for resolution: the bundled Laminus plugin, the host's default, a mocked HTTP sidecar."""
-    monkeypatch.setenv("LAMINUS_SIDECAR_URL", "http://laminus.test")
-    d = await sr.resolve_slicing(SimpleNamespace(name="P1", preferred_slicer_plugin_id=None, bed_x_mm=256.0, bed_y_mm=256.0,
-                                                 model_uuid=None), "m.3mf")
-    assert d.outcome.action is Action.PRODUCE and d.provider_id == "laminus"
-    sidecar.handler = lambda request: __import__("httpx").Response(503)
-    d = await sr.resolve_slicing(SimpleNamespace(name="P1", preferred_slicer_plugin_id=None, bed_x_mm=256.0, bed_y_mm=256.0,
-                                                 model_uuid=None), "m.3mf")
-    assert d.blocked and d.recoverable and d.message == "Laminus is not ready — slicing paused"

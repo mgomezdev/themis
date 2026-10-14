@@ -240,22 +240,20 @@ def test_a_different_slicing_provider_never_shares_a_cache_key():
     assert sc.cache_key(_inputs(provider="other_slicer")) == sc.cache_key(_inputs(provider="other_slicer"))
 
 
-def test_the_default_provider_leaves_every_pre_existing_cache_key_unchanged():
-    legacy = {"source_content_hash": "h", "plate_number": 1, "machine_preset": "M", "process_preset": "P", "filament_presets": ["F"],
-              "extra_config": {}, "tool_index": None, "filament_map": None, "artifact_kind": "gcode"}     # the dict before the field existed
+def test_the_provider_is_always_part_of_the_key_even_the_default():
+    """BIZ-291: no omission for the default provider (the key must not depend on which provider is the default)."""
+    base = {"source_content_hash": "h", "plate_number": 1, "machine_preset": "M", "process_preset": "P", "filament_presets": ["F"],
+            "extra_config": {}, "tool_index": None, "filament_map": None, "artifact_kind": "gcode"}
+    assert sc.cache_key(_inputs()) == sc.sha256_of({**base, "provider": "laminus"})
+    assert sc.cache_key(_inputs(provider="laminus")) == sc.cache_key(_inputs())
+    assert sc.cache_key(_inputs()) != sc.sha256_of(base)                       # the pre-BIZ-291 shape no longer matches
+    assert _inputs(provider="b").as_dict()["provider"] == "b"
 
-    assert sc.cache_key(_inputs()) == sc.sha256_of(legacy)
-    assert sc.cache_key(_inputs(provider="laminus")) == sc.sha256_of(legacy)
 
-
-def test_key_inputs_carry_the_active_providers_name_and_a_saved_dict_round_trips_it():
-    from app.services.slice_saver import inputs_from_dict
-    from app.services.slicer_service import SliceRequest
+def test_key_inputs_takes_the_provider_from_the_request_then_the_argument_then_the_default(monkeypatch):
     req = _req()
-
-    default = sc.key_inputs(req, "h", None, None)
-    other = sc.key_inputs(req, "h", None, None, provider="other_slicer")
-
-    assert default.provider == "laminus" and other.provider == "other_slicer"
-    assert inputs_from_dict(other.as_dict()) == other and inputs_from_dict(default.as_dict()) == default
-    assert sc.key_fields(other)["provider"] == "other_slicer"
+    monkeypatch.setattr(sc, "slicing_provider_name", lambda: "the_default")
+    assert sc.key_inputs(req, "h", None, None).provider == "the_default"
+    req.provider_id = "from_request"
+    assert sc.key_inputs(req, "h", None, None).provider == "from_request"
+    assert sc.key_inputs(req, "h", None, None, provider="explicit").provider == "explicit"

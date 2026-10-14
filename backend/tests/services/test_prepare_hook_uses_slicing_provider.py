@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.slicing_env import slicing_provider
 
 from app.models import JobPrinterConfig
 from app.services.printer_manager import PrinterManager
@@ -51,7 +52,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None):
     engine = QueueEngine(db, mgr, slicer)
     _install_fake_put(engine)
     with patch.object(slicer, "slice", side_effect=fake_slice), \
-         patch("app.services.queue_engine.get_slicing_provider", return_value=provider), \
+         slicing_provider(provider), \
          patch.object(engine, "_do_upload_and_print", new_callable=AsyncMock):
         await engine._run_slice_and_print(job_id, 1, 1)
     assert "hook" in seen, "slice was never reached"

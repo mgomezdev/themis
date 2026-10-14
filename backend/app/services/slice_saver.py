@@ -21,7 +21,7 @@ from .artifact_store import ArtifactStore
 from .library_store import folder_key, key_name, get_filecache_store, get_library_store, put_file_unique
 from ..models import Job, JobPrinterConfig, Printer, SlicedVersion, UploadedFile
 from . import gcode_eligibility, slice_cache
-from .providers.slicing import get_format_provider, get_slicing_provider
+from .providers.slicing import get_format_provider, slicing_provider_for
 from .library_scanner import LibraryScanner, folder_of
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,7 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
 
         fingerprint = await asyncio.to_thread(   # uncached: this is what the version will record as "sliced with"
             slice_cache.current_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), get_slicing_provider())
+            list(inputs.filament_presets), slicing_provider_for(inputs.provider))   # the provider that made this slice
         existing = await _find_duplicate(session, source.id, key, fingerprint)
         if existing is not None:   # an up-to-date same-key version is already there: drop the copy
             _cleanup(library, filecache, dest_key, None)

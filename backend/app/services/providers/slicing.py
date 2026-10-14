@@ -161,6 +161,11 @@ def default_provider_id() -> str | None:
     return enabled[0] if len(enabled) == 1 else None
 
 
+def effective_provider_id(preferred: str | None) -> str | None:
+    """The plugin a printer slices with: its own preference, else the capability default."""
+    return preferred or default_provider_id()
+
+
 def enabled_provider_ids() -> list[str]:
     """Ids of the enabled `gcode.produce` plugins (what a printer may name as its preferred slicer)."""
     from ...plugins import providers_of
@@ -190,13 +195,13 @@ def configured_server_url() -> str | None:
     return provider_url(default_provider_id())
 
 
-def _plugin_part(plugin_id: str, what: str):
-    """The throw-away plugin instance's accessor `what` (`slicing_provider` | `gcode_producer`) called with the resolved URL, or
-    None when the plugin is unconfigured, has invalid settings, or lacks the accessor."""
+def _plugin_part(plugin_id: str, what: str, url: str | None = None):
+    """The throw-away plugin instance's accessor `what` (`slicing_provider` | `gcode_producer`) called with the resolved URL (given,
+    else `provider_url`), or None when the plugin is unconfigured, has invalid settings, or lacks the accessor."""
     from ...plugins import PluginError
     from ...plugins.host import plugin_host
 
-    url = provider_url(plugin_id)
+    url = url or provider_url(plugin_id)
     if not url:
         return None
     # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
@@ -226,7 +231,8 @@ def gcode_producer_for(plugin_id: str | None):
 
 def get_slicing_provider() -> SlicingProvider | None:
     """The default slicing provider, or None when none is configured."""
-    return slicing_provider_for(default_provider_id())
+    pid = default_provider_id()
+    return _plugin_part(pid, "slicing_provider", configured_server_url()) if pid else None
 
 
 def get_format_provider() -> FormatProvider:
@@ -236,7 +242,10 @@ def get_format_provider() -> FormatProvider:
     `SlicingProvider` (use `get_slicing_provider()`)."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    return _FORMAT_REGISTRY[_FORMAT_PLUGIN]()
+    # The format reader follows the default slicing plugin (it speaks that engine's vocabulary); a plugin with no reader of its own
+    # falls back to the bundled one, so this never returns None.
+    cls = _FORMAT_REGISTRY.get(default_provider_id() or "") or _FORMAT_REGISTRY[_FORMAT_PLUGIN]
+    return cls()
 
 
 # name -> format provider class (no-arg constructor). Registered next to the slicing adapter of the same name.

@@ -21,6 +21,21 @@ _BED_Z_MM = 250.0   # the printer row stores x/y only; z is not used to pick a p
 
 
 @dataclass(frozen=True)
+class PrinterView:
+    """The printer fields resolution reads, copied while the ORM row is still attached to its session (the slice task outlives it)."""
+    name: str
+    preferred_slicer_plugin_id: str | None
+    bed_x_mm: float
+    bed_y_mm: float
+    model_uuid: str | None
+
+    @classmethod
+    def of(cls, printer: Printer) -> "PrinterView":
+        return cls(printer.name, printer.preferred_slicer_plugin_id, float(printer.bed_x_mm), float(printer.bed_y_mm),
+                   printer.model_uuid)
+
+
+@dataclass(frozen=True)
 class SliceDecision:
     outcome: WorkOutcome
     message: str | None = None      # the job's block reason when the outcome is BLOCKED
@@ -46,11 +61,11 @@ def _input_kind(filename: str) -> InputKind:
     return InputKind.STL if (filename or "").lower().endswith(".stl") else InputKind.MODEL_3MF
 
 
-def target_of(printer: Printer) -> TargetPrinter:
+def target_of(printer: "Printer | PrinterView") -> TargetPrinter:
     return TargetPrinter(bed_mm=(float(printer.bed_x_mm), float(printer.bed_y_mm), _BED_Z_MM), model_uuid=printer.model_uuid)
 
 
-def _unavailable(printer: Printer, outcome: WorkOutcome, state: Readiness | None) -> SliceDecision:
+def _unavailable(printer: "Printer | PrinterView", outcome: WorkOutcome, state: Readiness | None) -> SliceDecision:
     label = _label(outcome.provider_id)
     if state is Readiness.NOT_READY:
         msg = f"{label} is not ready — slicing paused"
@@ -61,7 +76,7 @@ def _unavailable(printer: Printer, outcome: WorkOutcome, state: Readiness | None
     return SliceDecision(outcome, msg, recoverable=True)
 
 
-async def resolve_slicing(printer: Printer, filename: str, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_S) -> SliceDecision:
+async def resolve_slicing(printer: "Printer | PrinterView", filename: str, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_S) -> SliceDecision:
     """Resolve the slicing provider for `filename` (an unsliced model) on `printer`. Never raises for an unusable provider."""
     preferred = printer.preferred_slicer_plugin_id or None
     default = default_provider_id()

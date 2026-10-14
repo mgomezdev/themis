@@ -20,8 +20,11 @@ Epic BIZ-265. Follows BIZ-290 stage 1 (#152). Contract: `docs/architecture/lamin
 ## Invariants in play
 blocked-not-failed (a provider outage blocks, never fails); head-of-line (a blocked printer's outcome must not skip ahead); pre-sliced files need no provider; cancel/stop link untouched; auth scope on the PATCH field's existing route; migrations are versioned files registered in `runner.py`.
 
-## Open decision (default chosen)
-**Cache key.** Default: keep `CacheKeyInputs` (provider already keyed, old slices stay valid) and do NOT adopt `contract.cache_key` now; add engine id/version to the key only when a second provider exists. Adopting it now would force a re-slice of every cached version. Say the word to adopt it anyway (small change in `slice_cache.key_inputs`, plus a one-time re-slice).
+## Decisions (made while implementing)
+- **Cache key: not `contract.cache_key`.** The engine version cannot be part of the key: BIZ-201 (print a cached slice while the provider is down) needs a key computable with the engine unknown, and "use latest settings" off needs an engine change to stay a policy decision (`slicer_version` / `preset_content_hash` staleness). The provider id is always in the key now (the default is no longer omitted). `contract.cache_key` was never used and is removed; `docs/architecture/laminus-contract.md` §7 records why.
+- **`GcodeProducer.produce()` is not wired for Laminus.** The neutral target has no machine profile; the slice still runs through `SlicingProvider.slice`. `LaminusGcodeProducer.produce()` honours the contract's input/cancel errors and otherwise raises `UNSUPPORTED_TARGET`.
+- **Down vs hard block.** Only a provider that is down (unconfigured / not ready / unreachable) allows the cache-only claim; a disabled/removed/ineligible/ambiguous one blocks without it.
+- Done: steps 1-6 (producer, `slice_resolution`, `printers.preferred_slicer_plugin_id` v050 + PATCH + printer editor select, queue claim/dispatch, manual slices + slice saver follow the printer's provider, `FormatProvider` follows the default plugin).
 
 ## Tests
 Per `Reason` outcome through `_try_claim_for_printer` with fake producers (`tests/fake_providers.py`); preference persisted + PATCH + frontend; pass-through with all providers down; cache-only claim unchanged; mutation-check each branch.

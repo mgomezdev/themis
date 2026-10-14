@@ -359,3 +359,16 @@ def test_provider_without_an_adapter_is_unavailable_not_a_crash(monkeypatch, cap
     with caplog.at_level("WARNING"):
         assert get_slicing_provider() is None
     assert "exposes no slicing_provider" in caplog.text
+
+
+def test_format_provider_follows_the_default_plugin_and_falls_back_to_the_bundled_reader(monkeypatch):
+    from app.services.providers import slicing
+    from tests.fake_providers import FakeFormatProvider
+
+    monkeypatch.setitem(slicing._FORMAT_REGISTRY, "other", FakeFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: "other")
+    assert isinstance(slicing.get_format_provider(), FakeFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: "no_reader")        # a slicer plugin without a reader
+    assert isinstance(slicing.get_format_provider(), LaminusFormatProvider)
+    monkeypatch.setattr(slicing, "default_provider_id", lambda: None)               # none/ambiguous: still never None
+    assert isinstance(slicing.get_format_provider(), LaminusFormatProvider)

@@ -136,7 +136,7 @@ These are core routes, not routes a provider implements. The active `inventory.f
 | Method | Notes |
 |---|---|
 | `identity` (property) | Stable id (Laminus: the URL); keys the slice-cache fingerprint memo. |
-| `health(timeout=None)` | Raises `SlicingProviderNotReady` (answered, can't slice yet) or `SlicingProviderError`. Queue preflight uses `health(2)`. |
+| `health(timeout=None)` | Raises `SlicingProviderNotReady` (answered, can't slice yet) or `SlicingProviderError`. The queue's preflight reaches it through `GcodeProducer.status(2)` (`LaminusGcodeProducer` maps it to READY / NOT_READY / UNREACHABLE). |
 | `get_catalog() -> Catalog` | |
 | `merged_config(machine_ref, process_ref, filament_refs, timeout=None)` | Slice-cache fingerprint uses `timeout=10`. |
 | `slice(SliceSpec, output_dir) -> artifact path` | Start → poll (≤ ~620 s) → download. `SliceSpec.prepared` = a ready-to-slice project (`PREPARED_PROJECT`). |
@@ -160,9 +160,15 @@ DTOs: `Catalog(machines, processes, filaments, raw)` of `Preset(ref, name, compa
 maps. `Catalog.raw` is the legacy `{"machine": […], "process": […], "filament": […]}` JSON the catalog route
 serves unchanged. Errors: `SlicingProviderError` (`SidecarError` maps to it); `SlicingProviderNotReady`.
 
-Accessors:
-- `get_slicing_provider()` → provider or `None` when no server is configured (saved `laminus` plugin URL > deprecated `LAMINUS_SIDECAR_URL` read by core > the plugin's `defaults.toml`; see `configured_server_url()`). `None`
-  blocks queue jobs with the same reason strings as before ("not configured / not ready / unreachable").
+Accessors (`providers/slicing.py`; the provider is a `gcode.produce` **plugin**, never a registry entry — BIZ-290/BIZ-291):
+- `default_provider_id()` → the plugin id serving `gcode.produce` by default: the host's selection row when enabled, else the one enabled provider, else `None`.
+  `enabled_provider_ids()` lists the enabled ones; `effective_provider_id(preferred)` is a printer's preference else the default.
+- `slicing_provider_for(plugin_id)` / `gcode_producer_for(plugin_id)` → that plugin's `SlicingProvider` / neutral `GcodeProducer`, or `None` when the plugin is
+  unknown, disabled, unconfigured (no URL: saved plugin setting > deprecated `LAMINUS_SIDECAR_URL` read by core > the plugin's `defaults.toml`; see `provider_url()`),
+  has invalid settings, or lacks the accessor. `get_slicing_provider()` is `slicing_provider_for(default_provider_id())` (catalog, presets and other callers with no printer).
+- The queue does not use the default: `slice_resolution.resolve_slicing(printer, filename)` picks the printer's `preferred_slicer_plugin_id` (else the default) through
+  `resolve_work`, probes only that provider, and blocks the job with a specific reason when it is down or missing (the old "not configured / not ready / unreachable"
+  texts are unchanged). An explicit preference never falls back to another provider.
 - `get_format_provider()` → the offline `FormatProvider`, **never `None`**, a separate object from the slicing provider
   (its methods `curated_settings`, `parse_estimates`, `inspect_overrides` are local file work and cannot call a server, so
   gcode in the library still parses with no sidecar configured). Registered per name with `register_format_provider`.
@@ -187,14 +193,17 @@ map to `HTTPException`.
 
 ## Laminus contract (BIZ-248)
 
-The forward-looking `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolution, cache key, settings ownership decision) is specified in
-[architecture/laminus-contract.md](architecture/laminus-contract.md); code in `providers/contract.py` (not yet wired into any path).
+The `3mf.construct` / `gcode.produce` contract (neutral DTOs, queue-pull resolution, settings ownership decision) is specified in
+[architecture/laminus-contract.md](architecture/laminus-contract.md); code in `providers/contract.py`. `gcode.produce` is wired into the queue claim path
+(`resolve_work` via `slice_resolution`, BIZ-291); `3mf.construct` and `GcodeProducer.produce()` are not wired yet (see §8 there).
 
 ## Adding a provider
 
-**Slicing:** add `providers/<name>/adapter.py` implementing `SlicingProvider` (set the capability flags) plus any vendor client next to
-it, a `providers/<name>/__init__.py` calling `register_slicing_provider`, one entry in the accessor in `providers/slicing.py`, and the
-package in `ADAPTER_PACKAGES` of `test_provider_boundary.py`.
+**Slicing:** a plugin that provides `gcode.produce` (`provides={"gcode.produce": Provide(version=1)}`) whose instance exposes `slicing_provider(url)`
+(an adapter implementing `SlicingProvider`, capability flags set, plus any vendor client next to it under `providers/<name>/`) and `gcode_producer(url)`
+(a `GcodeProducer`: identity, `status`, `supports_target`, `profiles`, `curated_settings`), and the adapter package in `ADAPTER_PACKAGES` of
+`test_provider_boundary.py`. Core code does not change: the plugin shows up in the capability's providers, in each printer's slicer choice and in the
+queue's resolution. (The offline `FormatProvider` is still registered by name with `register_format_provider`.)
 
 **Filament inventory:** a plugin — `app/plugins/<id>/` exporting `MANIFEST` (`PluginManifest`: id, `provides={"inventory.filament": Provide(...)}`, `settings_model`,
 `secret_fields`, `factory`, `capabilities`, `ui`), a provider class implementing the ABC, nothing else (bundled plugins are discovered: any sub-package of `app/plugins/` that exports `MANIFEST`), the

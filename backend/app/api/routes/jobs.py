@@ -26,7 +26,7 @@ from ...services.three_mf_parser import source_has_project_settings
 from ...services import model_targets, scheduling
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
-from ...services.providers.slicing import get_slicing_provider
+from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
 from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._materials import material_columns, stored
@@ -1074,7 +1074,8 @@ def _build_slice_request(
 
     cfg_tool_index = config.tool_index
     cfg_filament_map = config.filament_map
-    prepare_hook = tool_mapping_hook(client, cfg_tool_index, cfg_filament_map, get_slicing_provider())
+    provider_id = effective_provider_id(printer.preferred_slicer_plugin_id)     # the slicer this printer's jobs use (BIZ-291)
+    prepare_hook = tool_mapping_hook(client, cfg_tool_index, cfg_filament_map, slicing_provider_for(provider_id))
 
     if cfg_filament_map:
         ordered = sorted(loaded, key=lambda s: s.get("slot", 0))
@@ -1096,6 +1097,7 @@ def _build_slice_request(
         export_args=export_args,
         prepare_hook=prepare_hook,
         extra_config=plate_config,
+        provider_id=provider_id,
     )
 
 

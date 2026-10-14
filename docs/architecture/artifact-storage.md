@@ -100,7 +100,7 @@ callers and lets a remote backend be written without ever having to produce a pa
   Scratch is deleted by its creator as today; publish-then-delete order keeps today's "copy first, the job artifact is short-lived" rule (`slice_saver`).
 - **Cache invalidation:** v1 has no persistent materialization cache; every `materialize` is a fresh copy on remote backends, so there is nothing to
   invalidate. If a remote backend later adds one, its key must be `(key, size, mtime-or-etag, sha256)` and it must be dropped on `put(overwrite)`/`delete`/`move`
-  through the store. The slicing cache is a different layer: it keys on **content hash** (`slice_cache.cache_key`, BIZ-248 section 7), not on location, so
+  through the store. The slicing cache is a different layer: it keys on **content hash** (`slice_cache.cache_key`, laminus-contract.md section 7), not on location, so
   moving bytes between backends never invalidates cached slices and a stale hash is caught by `fresh_content_hash`.
 
 ## 4. Relationship to the Laminus contract

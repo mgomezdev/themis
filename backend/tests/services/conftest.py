@@ -1,16 +1,16 @@
 """Shared fixtures for services tests.
 
-Patches the slicing-provider health preflight in the queue engine so tests can
-reach the slicing/printing steps without a live sidecar.
+Installs a healthy fake slicing provider as the default `gcode.produce` provider so the queue's claim-time resolution (BIZ-291)
+reaches the slicing/printing steps without a live sidecar.
 """
 import pytest
-from unittest.mock import patch
 
 from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 
 
 @pytest.fixture(autouse=True)
 def mock_laminus_health(request):
-    """Bypass the slicing provider health check in QueueEngine._try_claim_for_printer."""
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=FakeSlicingProvider()):
+    """A healthy slicing provider for QueueEngine._try_claim_for_printer (override per test with `slicing_provider(...)`)."""
+    with slicing_provider(FakeSlicingProvider()):
         yield
