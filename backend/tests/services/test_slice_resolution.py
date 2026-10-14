@@ -1,7 +1,9 @@
 """BIZ-291: which slicing provider takes a job on a printer, and is it usable (resolve_slicing over fake producers)."""
 from __future__ import annotations
 
+import contextlib
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -19,14 +21,17 @@ def printer(preferred=None, **kw):
 
 
 @pytest.fixture
-def world(monkeypatch):
-    """`world(enabled=..., default=..., producers=...)` installs fake providers; producers absent from `producers` read as unconfigured."""
-    def install(enabled, default, producers):
-        monkeypatch.setattr(sr, "enabled_provider_ids", lambda: list(enabled))
-        monkeypatch.setattr(sr, "default_provider_id", lambda: default)
-        monkeypatch.setattr(sr, "gcode_producer_for", lambda pid: producers.get(pid))
-        monkeypatch.setattr(sr, "get_plugin", lambda pid: SimpleNamespace(name=pid.title()))
-    return install
+def world():
+    """`world(enabled=..., default=..., producers=...)` installs fake providers; producers absent from `producers` read as unconfigured.
+    Uses `patch` (not `monkeypatch`): the autouse slicing fixture of this package patches the same names, and monkeypatch can be torn
+    down after it, which would restore ITS stale values and leak them into later tests."""
+    with contextlib.ExitStack() as stack:
+        def install(enabled, default, producers):
+            for name, value in (("enabled_provider_ids", lambda: list(enabled)), ("default_provider_id", lambda: default),
+                                ("gcode_producer_for", lambda pid: producers.get(pid)),
+                                ("get_plugin", lambda pid: SimpleNamespace(name=pid.title()))):
+                stack.enter_context(patch.object(sr, name, value))
+        yield install
 
 
 async def test_default_provider_ready_produces(world):
