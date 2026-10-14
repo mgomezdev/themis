@@ -14,7 +14,7 @@ Epic BIZ-265. Contract: `docs/architecture/laminus-contract.md` (§1, §6). Foll
 **Stage 1 (this change): host-resolved slicing, registry removed. Behavior-preserving.**
 1. Define core capability `gcode.produce` (mode `choose_one`) in `plugins/capabilities/`.
 2. Laminus plugin `provides` it; its instance (`LaminusConnection`) is the serving part and exposes `slicing_provider()`.
-3. `get_slicing_provider()` / `slicing_provider_name()` / `configured_server_url()` resolve through the host
+3. `get_slicing_provider()` / `slicing_provider_name()` / `configured_server_url()` resolve the plugin via the host selection row, else the sole enabled provider (`slicing._resolved_plugin_id`; works before the host loads);
    (`plugin_host.resolve("gcode.produce")` -> that plugin's instance); `ACTIVE_PROVIDER` and the `_REGISTRY` slicing registry go.
    Call sites keep the same accessor (no behavior change), so the ~12 sites need no edit.
 4. Tests: resolution via host (disabled plugin -> None, unconfigured -> None, name follows the resolved plugin id), boundary tests green.
@@ -26,3 +26,6 @@ it changes no behavior today, and it adds a schema + UI surface.
 
 ## Verification
 `pytest -v -ra --cov` in `backend/` (boundary tests included); mutate the host-resolution line and confirm a test goes red.
+
+## Follow-ups (from review)
+- `FormatProvider` and the cache-name fallback still name the bundled `laminus` plugin; resolve them like the slicer when a second slicing plugin exists.

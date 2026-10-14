@@ -113,3 +113,7 @@ Excluded on purpose: filament colour (preview only), paths, timestamps, `identit
 This is a **new key format**, not a superset of `slice_cache.CacheKeyInputs`: rows saved under the old keys will simply miss after migration and
 be re-sliced (or the migrating issue may map them explicitly). Note the old key deliberately left engine version/build out and tracked them as
 staleness; this contract makes them part of identity, so an engine upgrade is a miss, not a stale hit.
+
+## 8. Wiring status (BIZ-290)
+
+`gcode.produce` is a core `choose_one` capability and the bundled `laminus` plugin provides it. Core resolves the slicing adapter through the host (`slicing.get_slicing_provider()`), no module registry. `resolve_work` / per-printer preference / `contract.cache_key` are **not yet wired into the queue** (stage 2, needs per-printer provider storage).

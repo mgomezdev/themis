@@ -1,5 +1,6 @@
-"""`gcode.produce` — a choose-one capability (BIZ-250/BIZ-290): every enabled slicing plugin is built, and core picks one provider per
-operation (capability default = the selection row; a single enabled provider is auto-selected). Core names no slicer: it asks the host
+"""`gcode.produce` — a choose-one capability (BIZ-250/BIZ-290): core picks one provider per operation (capability default = the
+selection row; the host auto-selects the unambiguous case at load, and `slicing._resolved_plugin_id` falls back to the sole enabled
+provider before the host has loaded). Core names no slicer: it asks the host
 which plugin serves this capability and takes that plugin's slicing adapter. The neutral `GcodeProducer` contract and `resolve_work`
 (per-printer preference, readiness) are `services/providers/contract.py`; wiring them into the queue is a follow-up."""
 from __future__ import annotations

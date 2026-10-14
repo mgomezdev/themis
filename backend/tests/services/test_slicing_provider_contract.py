@@ -331,3 +331,31 @@ def test_slicing_provider_resolves_through_the_gcode_produce_capability(monkeypa
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)       # the only provider is disabled
     assert get_slicing_provider() is None
     assert configured_server_url() is None
+
+
+def test_resolver_prefers_an_enabled_selection_and_refuses_ambiguity(monkeypatch):
+    from types import SimpleNamespace
+    from app.plugins.host import plugin_host
+    from app.services.providers import slicing
+
+    two = lambda cap: [SimpleNamespace(id="a"), SimpleNamespace(id="b")]  # noqa: E731
+    monkeypatch.setattr("app.plugins.providers_of", two)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: True)
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: None)
+    assert slicing._resolved_plugin_id() is None                      # two enabled, no selection: ambiguous
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: "b")
+    assert slicing._resolved_plugin_id() == "b"                       # the selection wins
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: pid == "a")
+    assert slicing._resolved_plugin_id() == "a"                       # selected one disabled: sole enabled provider
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)
+    assert slicing._resolved_plugin_id() is None
+
+
+def test_provider_without_an_adapter_is_unavailable_not_a_crash(monkeypatch, caplog):
+    from app.plugins.host import plugin_host
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    monkeypatch.setattr(plugin_host, "build_candidate", lambda pid: object())
+    with caplog.at_level("WARNING"):
+        assert get_slicing_provider() is None
+    assert "exposes no slicing_provider" in caplog.text
