@@ -183,8 +183,7 @@ def get_slicing_provider() -> SlicingProvider | None:
     from ...plugins import PluginError
     from ...plugins.host import plugin_host
 
-    pid = _resolved_plugin_id()          # resolved once: the id and its URL must come from the same plugin
-    url = _url_of(pid)
+    pid, url = _resolved_plugin_id(), configured_server_url()   # the seam tests and callers patch for the URL
     if not pid or not url:
         return None
     # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
