@@ -3,7 +3,7 @@ Slice settings stay Themis-owned (docs/architecture/laminus-contract.md); this p
 from __future__ import annotations
 
 from ...services.providers.laminus.connection import LaminusConnection, LaminusSettings
-from ..manifest import HOST_API, PluginManifest, UiContribution, UiTab
+from ..manifest import HOST_API, PluginManifest, Provide, UiContribution, UiTab
 
 MANIFEST = PluginManifest(
     id="laminus",
@@ -12,6 +12,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=LaminusSettings,
     factory=LaminusConnection,
+    provides={"gcode.produce": Provide(version=1)},
     default_enabled=True,
     ui=UiContribution(mode="page", nav_label="Laminus", nav_placement="settings", connection_status=True,
                       tabs=(UiTab("connection", "Connection", "default"),)),

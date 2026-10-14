@@ -11,7 +11,7 @@ import pytest
 
 from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate, SettingChange
 from app.services.providers.laminus import LaminusFormatProvider, LaminusSlicingProvider
-from app.services.providers.slicing import SliceSpec, SlicingProviderError, get_slicing_provider
+from app.services.providers.slicing import SliceSpec, SlicingProviderError, configured_server_url, get_slicing_provider
 from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider, make_catalog
 
 URL = "http://laminus.test"
@@ -318,3 +318,44 @@ def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printer
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "filament")] == ["PLA @A"]
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "process")] == ["0.20mm Standard"]
     assert provider.compatible_presets(cat, "Some Other Printer", "filament") == []
+
+
+def test_slicing_provider_resolves_through_the_gcode_produce_capability(monkeypatch):
+    """Core names no slicer: the provider is whichever enabled plugin serves `gcode.produce`, and its id is the cache identity."""
+    from app.plugins.host import plugin_host
+    from app.services.providers.slicing import slicing_provider_name
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    assert slicing_provider_name() == "laminus"
+    assert isinstance(get_slicing_provider(), LaminusSlicingProvider)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)       # the only provider is disabled
+    assert get_slicing_provider() is None
+    assert configured_server_url() is None
+
+
+def test_resolver_prefers_an_enabled_selection_and_refuses_ambiguity(monkeypatch):
+    from types import SimpleNamespace
+    from app.plugins.host import plugin_host
+    from app.services.providers import slicing
+
+    two = lambda cap: [SimpleNamespace(id="a"), SimpleNamespace(id="b")]  # noqa: E731
+    monkeypatch.setattr("app.plugins.providers_of", two)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: True)
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: None)
+    assert slicing._resolved_plugin_id() is None                      # two enabled, no selection: ambiguous
+    monkeypatch.setattr(plugin_host, "selected", lambda cap: "b")
+    assert slicing._resolved_plugin_id() == "b"                       # the selection wins
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: pid == "a")
+    assert slicing._resolved_plugin_id() == "a"                       # selected one disabled: sole enabled provider
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)
+    assert slicing._resolved_plugin_id() is None
+
+
+def test_provider_without_an_adapter_is_unavailable_not_a_crash(monkeypatch, caplog):
+    from app.plugins.host import plugin_host
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    monkeypatch.setattr(plugin_host, "build_candidate", lambda pid: object())
+    with caplog.at_level("WARNING"):
+        assert get_slicing_provider() is None
+    assert "exposes no slicing_provider" in caplog.text
