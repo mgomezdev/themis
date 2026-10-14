@@ -378,3 +378,20 @@ async def test_slice_uses_custom_output_dir(tmp_path):
 
     assert captured_out_dir == custom_dir
     assert custom_dir.exists()
+
+
+def test_unconfigured_message_names_the_provider_the_request_was_routed_to():
+    from types import SimpleNamespace
+    svc = SlicerService.__new__(SlicerService)
+    svc._data_dir = Path("/tmp")
+    req = SliceRequest(job_id=1, source_3mf="/tmp/m.3mf", plate_number=1, machine_preset="M", process_preset="P",
+                       filament_presets=["F"], provider_id="other")
+    with patch("app.services.slicer_service.slicing_provider_for", return_value=None) as for_id, \
+         patch("app.plugins.get_plugin", return_value=SimpleNamespace(name="Other Slicer")):
+        with pytest.raises(SliceError, match=r"Other Slicer is not configured — set its URL in Settings -> Other Slicer"):
+            svc.slice(req)
+    for_id.assert_called_once_with("other")                              # the routed provider, not the default
+    req.provider_id = None
+    with patch("app.services.slicer_service.get_slicing_provider", return_value=None):
+        with pytest.raises(SliceError, match="Laminus is not configured"):
+            svc.slice(req)

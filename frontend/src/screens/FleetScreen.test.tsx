@@ -671,3 +671,73 @@ describe('FleetScreen — inventory capability gating', () => {
     expect(screen.queryByPlaceholderText('Search spools…')).toBeNull();
   });
 });
+
+describe('FleetScreen — edit printer slicer preference (BIZ-291)', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const plugin = (id: string, name: string, enabled = true, cap = 'gcode.produce') =>
+    ({ id, name, enabled, provides: [{ capability: cap }] });
+
+  async function openEdit(apiPrinter: object, plugins: object[]) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (url === '/api/v1/plugins') return Promise.resolve({ ok: true, json: () => Promise.resolve({ plugins, selections: {} }) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPrinter) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+  const patchBody = (calls: Array<[string, RequestInit | undefined]>) =>
+    JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+  const save = async () => {
+    const btn = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+  };
+
+  it('hides the choice while only one slicer is enabled and never sends the field', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER }, [plugin('laminus', 'Laminus')]);
+    await screen.findByLabelText('Quiet hours start');
+    expect(screen.queryByLabelText(/slice jobs for this printer with/i)).toBeNull();
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('preferred_slicer_plugin_id' in patchBody(calls)).toBe(false);
+  });
+
+  it('offers only enabled gcode.produce plugins and saves the chosen one', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: null },
+      [plugin('laminus', 'Laminus'), plugin('other', 'Other Slicer'), plugin('off', 'Off Slicer', false), plugin('bambu', 'Bambu', true, 'printer.client')]);
+    const select = await screen.findByLabelText(/slice jobs for this printer with/i) as HTMLSelectElement;
+    expect([...select.options].map(o => o.value)).toEqual(['', 'laminus', 'other']);
+    fireEvent.change(select, { target: { value: 'other' } });
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).preferred_slicer_plugin_id).toBe('other');
+  });
+
+  it('shows a stored preference whose plugin is gone, and choosing the default clears it with null', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: 'gone' }, [plugin('laminus', 'Laminus')]);
+    const select = await screen.findByLabelText(/slice jobs for this printer with/i) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('gone'));
+    expect(screen.getByRole('option', { name: /gone \(disabled or removed\)/ })).toBeTruthy();
+    fireEvent.change(select, { target: { value: '' } });
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).preferred_slicer_plugin_id).toBeNull();
+  });
+
+  it('leaves a stored preference alone when the user does not touch it', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, preferred_slicer_plugin_id: 'laminus' },
+      [plugin('laminus', 'Laminus'), plugin('other', 'Other')]);
+    await screen.findByLabelText(/slice jobs for this printer with/i);
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('preferred_slicer_plugin_id' in patchBody(calls)).toBe(false);
+  });
+});

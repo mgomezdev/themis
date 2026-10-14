@@ -53,7 +53,7 @@ def sha256_of(value: Any) -> str:
     return hashlib.sha256(canonical_json(value).encode()).hexdigest()
 
 
-DEFAULT_PROVIDER = "laminus"      # the slicing provider every cached slice saved before BIZ-250 came from
+DEFAULT_PROVIDER = "laminus"      # the bundled slicing provider; only the dataclass default (a key always carries its provider)
 
 
 @dataclass(frozen=True)
@@ -70,15 +70,14 @@ class CacheKeyInputs:
     filament_map: list | None
     artifact_kind: str   # gcode | gcode_3mf
     # The slicing provider that produced the output (BIZ-250: a cache-bearing capability keys on provider identity, so a different
-    # provider never serves another's slice). The default is left OUT of the hashed dict, which keeps every key that was saved before
-    # this field existed valid; any other provider id changes the key.
+    # provider never serves another's slice). Always part of the hash (BIZ-291): the default is no longer omitted, so a key never
+    # depends on which provider happens to be the default. The engine version is deliberately NOT in the key (it is `slicer_version`
+    # staleness): a key must be computable with the engine down (BIZ-201) and a stale version must stay reusable by policy.
     provider: str = DEFAULT_PROVIDER
 
     def as_dict(self) -> dict:
         d = asdict(self)
         d["filament_presets"] = list(self.filament_presets)
-        if d["provider"] == DEFAULT_PROVIDER:
-            del d["provider"]
         return d
 
 
@@ -104,7 +103,7 @@ def key_inputs(
         tool_index=tool_index,
         filament_map=list(filament_map) if filament_map else None,
         artifact_kind="gcode_3mf" if _export_3mf_name(req.export_args) is not None else "gcode",
-        provider=provider or slicing_provider_name(),
+        provider=provider or req.provider_id or slicing_provider_name(),
     )
 
 

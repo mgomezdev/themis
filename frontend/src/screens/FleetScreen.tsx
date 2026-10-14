@@ -8,6 +8,7 @@ import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
 import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
 import { CAP, useInventory, useSpools } from '../api/inventory';
+import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { MachinePicker } from '../components/MachinePicker';
@@ -107,6 +108,9 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
   const [quietEnd, setQuietEnd] = useState('');
   const [machineRate, setMachineRate] = useState('');   // '' = use the shop rate
+  const [slicer, setSlicer] = useState('');   // '' = the default slicing provider
+  const [slicerTouched, setSlicerTouched] = useState(false);   // only a changed choice is sent, so an unloaded list can never wipe it
+  const [slicers, setSlicers] = useState<PluginSummary[]>([]);   // enabled plugins that provide gcode.produce
   const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
@@ -131,11 +135,15 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         setQuietStart(api.quiet_start ?? '');
         setQuietEnd(api.quiet_end ?? '');
         setMachineRate(api.machine_rate_per_hour != null ? String(api.machine_rate_per_hour) : '');
+        setSlicer(api.preferred_slicer_plugin_id ?? '');
         setLoaded(true);
       })
       .catch(console.error)
       .finally(() => setLoading(false));
     fetchMachineCatalog().then(setCatalog).catch(console.error);
+    fetchPlugins()
+      .then(list => setSlicers((list?.plugins ?? []).filter(pl => pl.enabled && pl.provides.some(x => x.capability === 'gcode.produce'))))
+      .catch(console.error);
   }, [p.id]);
 
   const runTestConnection = async () => {
@@ -162,6 +170,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
         current_orca_printer_profile: machinePreset || null,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
         machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
+        ...(slicerTouched ? { preferred_slicer_plugin_id: slicer || null } : {}),
         // Both or neither: a half-filled window is treated as none.
         quiet_start: quietStart && quietEnd ? quietStart : null,
         quiet_end: quietStart && quietEnd ? quietEnd : null,
@@ -294,6 +303,22 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
               Leave blank to use the shop rate (Settings → Costs). Prices the completed jobs this printer ran in each project&apos;s expenses.
             </div>
           </div>
+
+          {(slicers.length > 1 || slicer) && (
+            <div className="col gap-2">
+              <div className="tag-key">Slicer</div>
+              <label className="label" htmlFor="preferred-slicer">Slice jobs for this printer with</label>
+              <select id="preferred-slicer" className="input" style={{ maxWidth: 260 }} value={slicer}
+                      onChange={e => { setSlicer(e.target.value); setSlicerTouched(true); }}>
+                <option value="">Default slicer</option>
+                {slicer && !slicers.some(s => s.id === slicer) && <option value={slicer}>{slicer} (disabled or removed)</option>}
+                {slicers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+              <div className="tiny muted">
+                A chosen slicer is never swapped for another: if it is off or down, this printer&apos;s jobs wait (Settings → Plugins).
+              </div>
+            </div>
+          )}
 
           <div className="col gap-2">
             <div className="tag-key">Quiet hours</div>

@@ -4,7 +4,7 @@ This guide covers the workflows available in the current Themis web app. Navigat
 
 ## Queue and jobs
 
-The Queue shows active, queued, blocked, and recent jobs. Upload or select a model from the Files library to create a job. Configure its plate, eligible printers or printer-model targets, process profile, filament requirements, and optional order/project association. A job is sliced for the printer that claims it when Laminus is configured. Eligible queued work is claimed automatically when a printer is available.
+The Queue shows active, queued, blocked, and recent jobs. Upload or select a model from the Files library to create a job. Configure its plate, eligible printers or printer-model targets, process profile, filament requirements, and optional order/project association. A job is sliced for the printer that claims it, by the printer's slicer: the default slicing plugin (Laminus today) unless you pick another for that printer in its editor (the choice appears once more than one slicer is enabled). If the chosen slicer is disabled, removed or down, that printer's jobs wait with a reason on the job; they are never sent to a different slicer. Eligible queued work is claimed automatically when a printer is available.
 
 `blocked` means Themis cannot currently proceed (for example, no eligible ready printer, incompatible file, or slice failure); review the displayed reason and resolve it before retrying. `failed` records a terminal upload/start failure. A printer that has started a job waits for the operator to clear its plate and mark it ready before it can take another queued job. Use job details to inspect printer configurations, slice status, estimates, and available recovery actions.
 

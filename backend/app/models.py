@@ -34,6 +34,8 @@ class Printer(Base):
     lifetime_print_seconds: Mapped[int] = mapped_column(Integer, default=0)
     # Per-printer override of the shop-wide machine rate ($ per hour of print time); null = use the shop rate.
     machine_rate_per_hour: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # The `gcode.produce` plugin this printer slices with (BIZ-291); NULL = the capability default. Not a FK: a plugin may go dormant.
+    preferred_slicer_plugin_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class PrinterModelRecord(Base):

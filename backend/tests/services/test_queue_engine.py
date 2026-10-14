@@ -3,6 +3,7 @@ import asyncio
 import os
 import pytest
 from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 from app.services.providers.contract import PlateEstimate
 import pytest_asyncio
 from datetime import datetime, timezone
@@ -1499,7 +1500,7 @@ async def test_claim_conditional_update_guards_against_cancel_during_health_prob
 
     probe = FakeSlicingProvider()
     probe.health = lambda timeout=None: cancel_during_probe()
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
+    with slicing_provider(probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1537,7 +1538,7 @@ async def test_block_job_conditional_update_guards_against_cancel_during_health_
 
     probe = FakeSlicingProvider()
     probe.health = lambda timeout=None: cancel_then_fail_probe()
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=probe):
+    with slicing_provider(probe):
         await qe._process_queue()
         await settle_background_tasks()
 
@@ -1569,7 +1570,7 @@ async def test_an_unusable_slicing_provider_blocks_the_job_with_a_specific_reaso
         provider = FakeSlicingProvider()
         provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if scenario == "not_ready"
                                       else SlicingProviderError("health check request failed: refused"))
-    with patch("app.services.queue_engine.get_slicing_provider", return_value=provider):
+    with slicing_provider(provider):
         await qe._process_queue()
         await settle_background_tasks()
 

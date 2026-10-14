@@ -2,7 +2,7 @@
 
 Epic BIZ-265. Builds on `3mf-ownership.md` (BIZ-259). Code: `backend/app/services/providers/contract.py` (neutral DTOs, ABCs, pure
 resolver, cache key); proof: `backend/tests/services/test_laminus_contract.py` (fakes in `tests/fake_providers.py`).
-**Additive only: no existing path uses the contract yet.** Implementations: BIZ-281 (FormatProvider), BIZ-260 (settings), BIZ-256 (storage).
+**Status (BIZ-291):** `gcode.produce` *selection and readiness* are wired into the queue claim (§6, §8); `3mf.construct`, `GcodeProducer.produce()` and the neutral `SliceSettings` are not used by the queue yet. Implementations: BIZ-281 (FormatProvider), BIZ-260 (settings), BIZ-256 (storage), BIZ-290/BIZ-291 (capability + queue).
 
 ## 1. Capabilities
 
@@ -101,19 +101,34 @@ work best-effort, removes partial output, raises `cancelled`. A cancel never mar
 | multiple target printers (`resolve_job`) | each printer resolved independently with its own model and preference; claimable by any printer whose outcome is not `blocked`; one blocked printer never blocks others |
 | `3mf.construct` (`resolve_construct`) | the single active provider if `ready` -> `proceed`; else `blocked` `no_provider`, or `default_unavailable` (reason reused for the one active provider) |
 
-Matches `PluginHost.resolve` outcomes (BIZ-250); wiring `resolve_work` to the host and the queue is BIZ-260's job, not this issue's.
+Matches `PluginHost.resolve` outcomes (BIZ-250). Wired by BIZ-291: `services/slice_resolution.resolve_slicing(printer, filename)` builds the producers of the enabled `gcode.produce` plugins, probes only the one this printer would use (`status(2)`), and calls `resolve_work` with the printer's `preferred_slicer_plugin_id` and the capability default. Pre-sliced files are not routed through it (the claim keeps its own G-code eligibility check, which needs no provider). Each `Reason` becomes the job's block text; *down* reasons (`*_unavailable`, unconfigured) are recoverable (a cached slice may still print, BIZ-201), the rest are hard blocks.
 
-## 7. Cache key (`contract.cache_key`)
+## 7. Cache key (decision: BIZ-291)
 
-sha256 of canonical JSON of: `provider` id; `engine` id, `engine_version` (the request's pin, else the provider-reported version) and `build`
-(`ProviderIdentity.build`), each **omitted when unknown**; source content hash; plate; target `model_uuid`, `bed_mm`, `toolheads`;
-`SliceSettings.fingerprint()` (process profile, per-slot material + profile name, overrides, tool index, filament map); artifact kind.
-Excluded on purpose: filament colour (preview only), paths, timestamps, `identity.version` (adapter version, not engine).
+The queue's slice cache key is `slice_cache.CacheKeyInputs`, not a provider-supplied identity: sha256 of canonical JSON of the source content hash, plate,
+machine/process/filament preset **names**, `extra_config`, tool index / filament map, artifact kind and **the slicing provider's plugin id**. The provider id is always
+part of the hash (BIZ-291 removed the old "default provider is omitted" rule), so one provider never serves another's slice.
 
-This is a **new key format**, not a superset of `slice_cache.CacheKeyInputs`: rows saved under the old keys will simply miss after migration and
-be re-sliced (or the migrating issue may map them explicitly). Note the old key deliberately left engine version/build out and tracked them as
-staleness; this contract makes them part of identity, so an engine upgrade is a miss, not a stale hit.
+The engine identity (engine id/version/build) is deliberately **not** in the key. Two product behaviors need a key that is computable without asking the engine:
+* printing a cached version while the provider is down (BIZ-201) — the engine version is unknown then, so a key that included it would never match what was saved;
+* "use latest settings" off / pinned versions — an engine upgrade must stay a *policy* decision (`slicer_version` + `preset_content_hash` staleness, recorded on the
+  version row and shown to the user), not a silent miss.
 
-## 8. Wiring status (BIZ-290)
+So "engine/build identity" is carried by the staleness fingerprint (`slice_cache.current_fingerprint`, taken from the provider that made the slice, `GcodeProducer.status().identity.engine_version`
+for the neutral path) rather than by the key. An earlier draft of this contract specified a `contract.cache_key` with engine fields in the hash; it was never used and was removed
+with BIZ-291 because it conflicts with the two behaviors above. A future provider whose engine cannot be fingerprinted may add engine fields to its key only if it can also supply them while down.
 
-`gcode.produce` is a core `choose_one` capability and the bundled `laminus` plugin provides it. Core resolves the slicing adapter through the host (`slicing.get_slicing_provider()`), no module registry. `resolve_work` / per-printer preference / `contract.cache_key` are **not yet wired into the queue** (stage 2, needs per-printer provider storage).
+## 8. Wiring status (BIZ-290, BIZ-291)
+
+* `gcode.produce` is a core `choose_one` capability; the bundled `laminus` plugin provides it. The plugin instance exposes `slicing_provider(url)` (the sync
+  `SlicingProvider` adapter that actually slices) and `gcode_producer(url)` (`LaminusGcodeProducer`: `identity`, `status`, `supports_target`, `profiles`, `curated_settings`).
+* Core resolves a specific provider with `slicing_provider_for(plugin_id)` / `gcode_producer_for(plugin_id)`, the default with `default_provider_id()`; there is no module registry.
+  `get_slicing_provider()` (default provider) remains for callers with no printer (catalog, presets, project generation).
+* The queue resolves per printer (§6), then slices with that provider: `SliceRequest.provider_id` → `SlicerService.slice`, the cache key's `provider`, the tool-mapping hook,
+  the staleness fingerprint (`inputs.provider`) and the manual slices (verify-slice, complete-manually) all follow the printer's choice.
+* `printers.preferred_slicer_plugin_id` (v050) stores the choice; the printer editor shows it only when more than one slicer is enabled.
+* `LaminusGcodeProducer.supports_target` only rejects a nonsensical bed (whether the printer's Orca preset exists is a slice-time check that blocks the job on that printer), so `preference_ineligible` / `default_ineligible` do not fire for Laminus today; they will for a provider that declares model support.
+* Upgrade: migration v051 recomputed every saved `sliced_versions.cache_key` with the provider hashed (the row stores all other inputs), so saved slices keep matching.
+* **Not wired:** `GcodeProducer.produce()`. The neutral `TargetPrinter` has a bed and a model UUID but no Orca machine profile, which Laminus needs to slice, so
+  `LaminusGcodeProducer.produce()` rejects non-model inputs and cancellation per the contract and otherwise raises `UNSUPPORTED_TARGET`; the slice itself still goes through
+  `SlicingProvider.slice` with the printer's presets. Wiring it needs the target to carry (or core to derive) a machine profile reference. `3mf.construct` is likewise unwired.

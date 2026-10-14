@@ -1,9 +1,6 @@
 """BIZ-248 contract: construction + G-code production resolution against fakes (docs/architecture/laminus-contract.md)."""
 from __future__ import annotations
 
-from dataclasses import replace
-from pathlib import Path
-
 import pytest
 
 from app.services.providers import contract as c
@@ -114,55 +111,6 @@ def test_provider_refuses_gcode_input(tmp_path):
     with pytest.raises(c.ProviderError) as e:
         a.produce(c.ProduceRequest(tmp_path / "x.gcode", c.InputKind.GCODE, 1, T_X1C), tmp_path)
     assert e.value.code is c.ErrorCode.UNSUPPORTED_INPUT
-
-
-# ── cache key composition ─────────────────────────────────────────────────────────────────────────────────────────
-
-def _key(provider=None, req=None, h="src1"):
-    provider = provider or FakeGcodeProducer("a")
-    req = req or c.ProduceRequest(Path("m.3mf"), c.InputKind.MODEL_3MF, 1, T_X1C,
-                                  c.SliceSettings("0.20mm", (c.FilamentChoice(1, "PLA", "Generic PLA", "#ff0000"),)))
-    return c.cache_key(provider.identity, req, h)
-
-
-def test_cache_key_is_stable_and_ignores_colour_and_path():
-    base = _key()
-    assert _key() == base
-    req = c.ProduceRequest(Path("elsewhere/m.3mf"), c.InputKind.MODEL_3MF, 1, T_X1C,
-                           c.SliceSettings("0.20mm", (c.FilamentChoice(1, "PLA", "Generic PLA", "#00ff00"),)))
-    assert _key(req=req) == base                                  # colour and path are not output-affecting
-
-
-def test_cache_key_changes_with_every_output_affecting_input():
-    base = _key()
-    req = c.ProduceRequest(Path("m.3mf"), c.InputKind.MODEL_3MF, 1, T_X1C,
-                           c.SliceSettings("0.20mm", (c.FilamentChoice(1, "PLA", "Generic PLA"),)))
-    variants = {
-        "provider": _key(FakeGcodeProducer("b")),
-        "engine_version": _key(FakeGcodeProducer("a", engine_version="2.0")),
-        "pin": _key(req=replace(req, pin_engine_version="9.9")),
-        "source": _key(h="src2"),
-        "plate": _key(req=replace(req, plate=2)),
-        "target_model": _key(req=replace(req, target=T_U1)),
-        "toolheads": _key(req=replace(req, target=replace(T_X1C, toolheads=4))),
-        "build": c.cache_key(replace(FakeGcodeProducer("a").identity, build="b2"), req, "src1"),
-        "bed": _key(req=replace(req, target=c.TargetPrinter((180.0, 180.0, 180.0), X1C))),
-        "process": _key(req=replace(req, settings=replace(req.settings, process_profile="0.12mm"))),
-        "filament_profile": _key(req=replace(req, settings=replace(req.settings, filaments=(c.FilamentChoice(1, "PLA", "Other"),)))),
-        "override": _key(req=replace(req, settings=replace(req.settings, overrides={"layer_height": "0.1"}))),
-        "tool_index": _key(req=replace(req, settings=replace(req.settings, tool_index=2))),
-        "artifact": _key(req=replace(req, want=c.ArtifactKind.GCODE_3MF)),
-    }
-    assert all(v != base for v in variants.values()), [k for k, v in variants.items() if v == base]
-    assert len(set(variants.values())) == len(variants)
-
-
-def test_unknown_engine_and_build_are_omitted_from_the_key():
-    ident = c.ProviderIdentity("a", "0.1")
-    req = c.ProduceRequest(Path("m"), c.InputKind.STL, 1, T_X1C)
-    assert c.cache_key(ident, req, "h") != c.cache_key(replace(ident, build="x"), req, "h")
-    assert c.cache_key(ident, req, "h") == c.cache_key(replace(ident, version="9.9"), req, "h")   # adapter version is not engine identity
-    assert c.cache_key(ident, req, "h") != c.cache_key(replace(ident, engine_id="e", engine_version="1"), req, "h")
 
 
 def test_inspection_dto_has_findings_is_derived():

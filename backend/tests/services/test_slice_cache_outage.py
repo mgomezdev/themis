@@ -14,6 +14,7 @@ from app.models import Job, JobPrinterConfig, Printer
 from app.services.providers.slicing import SlicingProviderError, SlicingProviderNotReady
 from app.services import slice_cache
 from tests.fake_providers import FakeSlicingProvider
+from tests.slicing_env import slicing_provider
 from tests.services.test_slice_reuse import (  # noqa: F401 — `env` is a fixture
     INPUTS, _add_version, _cache_lines, _job, _seed_allowing, env,
 )
@@ -30,7 +31,7 @@ def _down(mode="unreachable"):
         provider = FakeSlicingProvider()
         provider.fail_on["health"] = (SlicingProviderNotReady("health check returned 503") if mode == "not_ready"
                                       else SlicingProviderError("health check request failed: refused"))
-    return patch("app.services.queue_engine.get_slicing_provider", return_value=provider)
+    return slicing_provider(provider)
 
 
 async def _config(factory, job_id, printer_id=1) -> JobPrinterConfig:

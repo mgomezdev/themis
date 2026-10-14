@@ -31,7 +31,8 @@ from .library_scanner import (
 )
 from .printer_manager import PrinterManager
 from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
-from .providers.slicing import SlicingProviderNotReady, get_format_provider, get_slicing_provider
+from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
+from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver
 from . import completion_events
@@ -204,6 +205,7 @@ def _slice_params(job, config, printer, uploaded_file) -> dict:
         "tool_index": config.tool_index if config else None,
         "filament_map": config.filament_map if config else None,
         "overrides": (job.overrides or {}) if job else {},
+        "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
     }
 
 def _notification_content(
@@ -791,19 +793,23 @@ class QueueEngine:
                                                     "cached version was sliced for that")
                 return
 
-        # Pre-flight: ensure Laminus is reachable before claiming this job.
-        # Block (not fail) so the job auto-retries when Laminus comes back.
-        # Pre-sliced gcode jobs never touch the slicer, so they don't need it.
-        # With Laminus down, a job that allows cached slices may still go to THIS printer when a usable cached version
-        # matches this printer's slice of it (BIZ-201) — dispatch then prints that version and never slices.
+        # Pre-flight: resolve the slicing provider for THIS printer (its preferred `gcode.produce` plugin, else the capability
+        # default) and make sure it is usable before claiming this job (BIZ-291). Block (not fail) so the job auto-retries when
+        # the provider comes back. Pre-sliced gcode jobs never touch the slicer, so they don't need one.
+        # With the provider down, a job that allows cached slices may still go to THIS printer when a usable cached version
+        # matches this printer's slice of it (BIZ-201) — dispatch then prints that version and never slices. Only a provider that
+        # is down qualifies; a missing, disabled or ineligible one is for the user to fix (never a silent fallback, BIZ-250).
         cache_only_version: int | None = None
+        provider_id: str | None = None
         if not is_presliced_file(source_file):
-            down = await self._laminus_down_reason()
-            if down:
-                if job.allow_cached_slice:
-                    cache_only_version = await self._cached_version_for_claim(session, job, config, printer, source_file)
+            decision = await resolve_slicing(printer, source_file.original_filename if source_file else "")
+            provider_id = decision.provider_id
+            if decision.blocked:
+                if decision.recoverable and job.allow_cached_slice:
+                    cache_only_version = await self._cached_version_for_claim(
+                        session, job, config, printer, source_file, provider_id)
                 if cache_only_version is None:
-                    await self._block_job(session, job, down)
+                    await self._block_job(session, job, decision.message)
                     return
 
         # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
@@ -820,26 +826,14 @@ class QueueEngine:
 
         asyncio.create_task(
             self._run_slice_and_print(job_id, printer_id, plate_number, slice_only=slice_only,
-                                      cache_only_version=cache_only_version),
+                                      cache_only_version=cache_only_version, provider_id=provider_id),
             name=f"slice-{job_id}-{printer_id}",
         )
         await self._broadcast_job(job_id)
 
-    async def _laminus_down_reason(self) -> str | None:
-        """Why slicing can't run right now (the job's block reason), or None when Laminus is up."""
-        slicing = get_slicing_provider()
-        if slicing is None:
-            return "Laminus sidecar not configured — slicing paused"
-        try:
-            await asyncio.to_thread(slicing.health, 2)
-        except SlicingProviderNotReady:
-            return "Laminus is not ready — slicing paused"
-        except Exception:
-            return "Laminus is unreachable — slicing paused"
-        return None
-
     async def _cached_version_for_claim(
         self, session: AsyncSession, job: Job, config: JobPrinterConfig, printer: Printer, source_file: UploadedFile,
+        provider_id: str | None = None,
     ) -> int | None:
         """The usable cached version matching `printer`'s slice of `job` — the key dispatch would look up — or None.
         Only asked while Laminus is down, so staleness can't be checked (unknown counts as usable, as at dispatch).
@@ -851,7 +845,7 @@ class QueueEngine:
                 await session.commit()
             try:
                 req, fmap = self._slice_request(job.id, printer.id, job.plate_number,
-                                                _slice_params(job, config, printer, source_file))
+                                                _slice_params(job, config, printer, source_file), provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
                 return None
             inputs = slice_cache.key_inputs(req, source_file.content_hash, config.tool_index, fmap)
@@ -868,7 +862,7 @@ class QueueEngine:
             use_latest = True if cfg is None else bool(cfg.slice_cache_use_latest_settings)
             current = await asyncio.to_thread(
                 slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-                list(inputs.filament_presets), get_slicing_provider())
+                list(inputs.filament_presets), slicing_provider_for(inputs.provider))
             stale, _ = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
             if stale and use_latest:
                 return None
@@ -919,7 +913,7 @@ class QueueEngine:
             await self._broadcast_job(job_id)
 
     async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int, slice_only: bool = False,
-                                   cache_only_version: int | None = None) -> None:
+                                   cache_only_version: int | None = None, provider_id: str | None = None) -> None:
         # cache_only_version: the claim passed with Laminus down because this cached version matched (BIZ-201) — print
         # exactly it, and never fall through to a slice that can't run.
         # Load job details for slicing
@@ -947,6 +941,7 @@ class QueueEngine:
             source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
             machine_preset = printer.current_orca_printer_profile if printer else None
+            printer_view = PrinterView.of(printer) if printer else None
             params = _slice_params(job, config, printer, uploaded_file)
             is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
@@ -957,7 +952,7 @@ class QueueEngine:
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
             source_file_id = uploaded_file.id if uploaded_file else None
 
-        if config is None or uploaded_file is None:
+        if config is None or uploaded_file is None or printer_view is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
         slice_presets: list = []
@@ -981,7 +976,7 @@ class QueueEngine:
                 return
 
             try:
-                req, cfg_filament_map = self._slice_request(job_id, printer_id, plate_number, params)
+                req, cfg_filament_map = self._slice_request(job_id, printer_id, plate_number, params, provider_id)
             except ValueError as exc:   # a catalog filament in the map isn't loaded
                 await self._handle_slice_failure(job_id, printer_id, f"printer {printer_id}: {exc}")
                 return
@@ -993,7 +988,9 @@ class QueueEngine:
                                                   only_version_id=cache_only_version)
             down = None
             if cached is None and cache_only_version is not None:
-                down = await self._laminus_down_reason()   # back up since the claim? then just slice as usual
+                # Back up since the claim? Then just slice as usual (resolved again: the provider may still be down, or gone).
+                again = await resolve_slicing(printer_view, original_filename or "")
+                down = again.message if again.blocked else None
             if cached is not None:
                 gcode_path = cached
                 cache_hit = True
@@ -1087,7 +1084,7 @@ class QueueEngine:
         await self._do_upload_and_print(job_id, printer_id, gcode_path, plate_number, ams_tray_id)
 
     def _slice_request(self, job_id: int, printer_id: int, plate_number: int,
-                       p: dict) -> tuple[SliceRequest, list | None]:
+                       p: dict, provider_id: str | None = None) -> tuple[SliceRequest, list | None]:
         """The production SliceRequest for `p` (see `_slice_params`) plus the RESOLVED filament map (slot indices —
         part of the cache key). Raises ValueError when a catalog filament in the map isn't loaded."""
         # Meaningful, unique artifact name; the printer decides its output format.
@@ -1102,7 +1099,8 @@ class QueueEngine:
         tool_index = p["tool_index"]
         filament_map = _resolve_filament_map(p["filament_map"], loaded) if p["filament_map"] else p["filament_map"]
 
-        prepare_hook = tool_mapping_hook(client, tool_index, filament_map, get_slicing_provider())
+        provider_id = provider_id or effective_provider_id(p.get('preferred_slicer'))
+        prepare_hook = tool_mapping_hook(client, tool_index, filament_map, slicing_provider_for(provider_id))
 
         multi_presets: list = []
         if filament_map:
@@ -1123,6 +1121,7 @@ class QueueEngine:
             export_args=export_args,
             prepare_hook=prepare_hook,
             extra_config=plate_config,
+            provider_id=provider_id,
         )
         return req, filament_map
 
@@ -1176,7 +1175,7 @@ class QueueEngine:
         version, cached_file = found
         current = await asyncio.to_thread(
             slice_cache.cached_fingerprint, inputs.machine_preset, inputs.process_preset,
-            list(inputs.filament_presets), get_slicing_provider())
+            list(inputs.filament_presets), slicing_provider_for(inputs.provider))
         stale, reasons = slice_cache.staleness(version.preset_content_hash, version.slicer_version, current)
         policy = slice_cache.policy_name(use_latest)
         detail = {"sliced_version_id": version.id, "cached_file_id": cached_file.id,

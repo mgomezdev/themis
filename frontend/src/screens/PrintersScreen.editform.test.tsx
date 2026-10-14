@@ -17,6 +17,7 @@ const PRINTER: ApiPrinter = {
   bed_x_mm: 256,
   bed_y_mm: 256,
   machine_rate_per_hour: null,
+  preferred_slicer_plugin_id: null,
   quiet_start: null,
   quiet_end: null,
 };

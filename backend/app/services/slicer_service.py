@@ -10,7 +10,7 @@ from typing import Callable
 from ..config import get_data_dir
 from .artifact_store import ArtifactError, ArtifactNotFound
 from .library_store import get_library_store
-from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider
+from .providers.slicing import SliceSpec, SlicingProvider, SlicingProviderError, get_slicing_provider, slicing_provider_for
 from .three_mf_parser import plate_thumbnail_bytes
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,8 @@ class SliceRequest:
     prepare_hook: "Callable[[Path], None] | None" = None
     extra_config: dict = field(default_factory=dict)
     source_key: "str | None" = None
+    # The `gcode.produce` plugin to slice with (BIZ-291: the one the queue resolved for this printer). None = the capability default.
+    provider_id: "str | None" = None
 
 
 def tool_mapping_hook(client, tool_index, filament_map, provider) -> "Callable[[Path], None] | None":
@@ -141,9 +143,12 @@ class SlicerService:
         (``<data_dir>/gcode/<job_id>``). Callers can use this to isolate estimate
         gcode from production gcode. The directory is created if it does not exist.
         """
-        provider = get_slicing_provider()
+        provider = slicing_provider_for(req.provider_id) if req.provider_id else get_slicing_provider()
         if provider is None:
-            raise SliceError("Laminus is not configured — set its URL in Settings -> Laminus; it is required for slicing")
+            from ..plugins import get_plugin
+            plugin = get_plugin(req.provider_id) if req.provider_id else None
+            label = plugin.name if plugin else "Laminus"
+            raise SliceError(f"{label} is not configured — set its URL in Settings -> {label}; it is required for slicing")
 
         if req.source_key is not None:
             # The provider reads a local path: hold a materialized copy of the library artifact for the whole slice.

@@ -190,6 +190,7 @@
       "no_snapshots_while_idle": 0,
       "orca_printer_profiles": "[]",
       "plugin_id": null,
+      "preferred_slicer_plugin_id": null,
       "printer_type": "bambu",
       "queue_on": 1,
       "quiet_end": null,

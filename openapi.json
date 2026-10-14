@@ -13375,6 +13375,17 @@
               }
             ],
             "title": "Quiet End"
+          },
+          "preferred_slicer_plugin_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preferred Slicer Plugin Id"
           }
         },
         "type": "object",

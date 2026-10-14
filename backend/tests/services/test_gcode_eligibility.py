@@ -275,8 +275,8 @@ async def test_dispatching_gcode_never_touches_the_slicing_provider_even_with_la
     def boom(*a, **k):
         raise AssertionError("the slicing provider must not be consulted for pre-sliced G-code")
 
-    with patch("app.services.queue_engine.get_slicing_provider", side_effect=boom), \
-            patch.object(QueueEngine, "_laminus_down_reason", side_effect=boom):
+    with patch("app.services.queue_engine.slicing_provider_for", side_effect=boom), \
+            patch("app.services.queue_engine.resolve_slicing", side_effect=boom):
         await qe._process_queue()
         await wait_until(lambda: _is_printing(session_factory, jid), what="gcode job to print with Laminus unavailable")
     slicer.slice.assert_not_called()

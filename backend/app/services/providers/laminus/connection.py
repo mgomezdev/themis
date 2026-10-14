@@ -15,6 +15,7 @@ from ..slicing import SlicingProviderError
 from .sidecar_client import DEFAULT_POLL_TIMEOUT_S, DEFAULT_REQUEST_TIMEOUT_S
 
 DEFAULT_HEALTH_TIMEOUT_S = 5.0
+PLUGIN_VERSION = "1.0.0"      # keep equal to the manifest version (tests pin it)
 
 UNCONFIGURED, UNAVAILABLE, HEALTHY = "unconfigured", "unavailable", "healthy"
 
@@ -80,6 +81,14 @@ class LaminusConnection:
             return None
         from .adapter import LaminusSlicingProvider
         return LaminusSlicingProvider(url, request_timeout_s=self.request_timeout_s, poll_timeout_s=self.poll_timeout_s)
+
+    def gcode_producer(self, url: str | None = None):
+        """The neutral `GcodeProducer` (BIZ-291) over this plugin's adapter; None while unconfigured."""
+        slicing = self.slicing_provider(url)
+        if slicing is None:
+            return None
+        from .producer import LaminusGcodeProducer
+        return LaminusGcodeProducer(slicing, version=PLUGIN_VERSION)
 
     async def test_connection(self) -> dict:
         if not self.url:

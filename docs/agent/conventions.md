@@ -19,7 +19,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   *existing* table needs its own migration file (see `data-model.md` § Migrations) — there is no
   `_migrate()` guard function; that pattern was retired.
 - **Pre-sliced jobs (BIZ-188, BIZ-190)**: a job whose `UploadedFile` is a `.gcode` or a `.gcode.3mf` sliced archive
-  (`library_scanner.is_presliced_file`; `file_kind()` checks `.gcode.3mf` *before* `.3mf` — same suffix) is never sliced. The claim skips the Laminus health check; `_run_slice_and_print` stages a *copy* into
+  (`library_scanner.is_presliced_file`; `file_kind()` checks `.gcode.3mf` *before* `.3mf` — same suffix) is never sliced. The claim skips slicing-provider resolution (`resolve_slicing`) entirely; `_run_slice_and_print` stages a *copy* into
   `<data>/gcode/<job_id>/` (`_stage_gcode`) and goes straight to upload+print — finished jobs delete their
   `GcodeFile` path, so it must never be the library's own file. `print_profile` is `""`, overrides are dropped on
   create/PATCH, the estimate is parsed from the header at create (no background test-slice) and `verify-slice` 422s.

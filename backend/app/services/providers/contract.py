@@ -1,4 +1,5 @@
-"""Neutral Themis<->slicer contract (BIZ-248): additive definitions only; no existing path uses them yet.
+"""Neutral Themis<->slicer contract (BIZ-248). `gcode.produce` selection is wired into the queue claim (`resolve_work` via
+`services/slice_resolution.py`, BIZ-291); `3mf.construct` and `GcodeProducer.produce()` are not wired yet.
 
 Spec: docs/architecture/laminus-contract.md. Two capabilities, both sync (same rule as `SlicingProvider`: call from a
 worker thread, never the event loop):
@@ -51,8 +52,8 @@ PASS_THROUGH_INPUTS = frozenset({InputKind.GCODE, InputKind.GCODE_3MF})
 class ProviderIdentity:
     """`provider_id` is the stable registry/plugin id (never a URL); `version` the adapter/contract build.
     `engine_id`/`engine_version` identify the slicing engine actually used (e.g. family + pinned release); None when the
-    provider cannot say (cache key then omits them, see `cache_key`). `build` is the finer engine build hash and is
-    part of the cache key (omitted when None)."""
+    provider cannot say. `build` is the finer engine build hash. None of these are in the slice-cache key (it must be
+    computable while the engine is down); they feed the staleness fingerprint instead (docs/architecture/laminus-contract.md §7)."""
     provider_id: str
     version: str
     engine_id: str | None = None
@@ -373,35 +374,3 @@ def resolve_construct(active: ProjectConstructor | None, status: ProviderStatus 
     if status is None or not status.ready:
         return WorkOutcome(Action.BLOCKED, active.identity.provider_id, Reason.DEFAULT_UNAVAILABLE)
     return WorkOutcome(Action.PROCEED, active.identity.provider_id)
-
-
-# ── cache identity ────────────────────────────────────────────────────────────────────────────────────────────────
-
-def _sha(value: Any) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest()
-
-
-def cache_key(identity: ProviderIdentity, req: ProduceRequest, source_content_hash: str) -> str:
-    """Key of a produced artifact. Inputs: provider id; engine id + version (pinned version when requested, else the one
-    the provider reports) and engine build (`identity.build`); each omitted when unknown; content hash of the source;
-    plate; target model UUID, bed, toolheads; settings fingerprint; artifact kind. This is a NEW key format: rows saved
-    under `slice_cache` keys simply miss. Excluded on purpose: `identity.version` (adapter version), filament colour,
-    paths, timestamps."""
-    engine_version = req.pin_engine_version or identity.engine_version
-    d: dict[str, Any] = {
-        "provider": identity.provider_id,
-        "source": source_content_hash,
-        "plate": req.plate,
-        "target_model": req.target.model_uuid,
-        "bed_mm": list(req.target.bed_mm),
-        "toolheads": req.target.toolheads,
-        "settings": req.settings.fingerprint(),
-        "artifact": req.want.value,
-    }
-    if identity.engine_id:
-        d["engine"] = identity.engine_id
-    if engine_version:
-        d["engine_version"] = engine_version
-    if identity.build:
-        d["build"] = identity.build
-    return _sha(d)

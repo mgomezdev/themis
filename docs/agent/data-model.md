@@ -2,7 +2,7 @@
 
 SQLite (WAL) via async SQLAlchemy 2.0 in `backend/app/models.py`. Core migrations run automatically at
 startup via `backend/app/migrations/runner.py` (ordered versioned files in
-`backend/app/migrations/v00N_name.py`; latest migration in this checkout is v048). Plugin-owned
+`backend/app/migrations/v00N_name.py`; latest migration in this checkout is v050). Plugin-owned
 migrations have their own registry and failure boundary. Dev DB at `<data_dir>/themis.db`. To add a
 column to an existing table, create a new migration file. JSON columns store Python lists/dicts.
 
@@ -69,6 +69,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
+`preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
 `awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
 `curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`
@@ -193,10 +194,12 @@ tool/slot; `None` = default/legacy — queue uses type+color ask instead),
 A cached slice: library file `file_id` (a `.gcode` / `.gcode.3mf`, UNIQUE, CASCADE) is what model `source_file_id`
 (SET NULL — the version then stands alone) sliced to. Key fields: `source_content_hash, plate_number, machine_preset,
 process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed type + job overrides, exactly the
-`SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` → `cache_key` = sha256 of
-their canonical JSON (`services/slice_cache.cache_key`; filament colour is deliberately **not** in it). Non-key:
-`preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (Laminus
-`/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
+`SliceRequest.extra_config`), tool_index?, filament_map?, artifact_kind (gcode|gcode_3mf)` + the slicing provider's plugin id
+(always hashed since v051/BIZ-291, which rewrote every saved key; the row does not store it — every version came from `laminus` before)
+→ `cache_key` = sha256 of their canonical JSON (`services/slice_cache.cache_key` over `CacheKeyInputs`; filament colour is deliberately **not** in it,
+nor is the engine version). Non-key:
+`preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (the producing provider's engine
+version, Laminus `/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
 unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
 `created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
 The link lives only in the DB (the filesystem stays the source of truth for the files themselves): a cached file moved

@@ -2,13 +2,13 @@
 Slice settings stay Themis-owned (docs/architecture/laminus-contract.md); this plugin is connection/engine config only."""
 from __future__ import annotations
 
-from ...services.providers.laminus.connection import LaminusConnection, LaminusSettings
+from ...services.providers.laminus.connection import PLUGIN_VERSION, LaminusConnection, LaminusSettings
 from ..manifest import HOST_API, PluginManifest, Provide, UiContribution, UiTab
 
 MANIFEST = PluginManifest(
     id="laminus",
     name="Laminus",
-    version="1.0.0",
+    version=PLUGIN_VERSION,
     host_api=HOST_API,
     settings_model=LaminusSettings,
     factory=LaminusConnection,

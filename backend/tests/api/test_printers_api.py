@@ -340,3 +340,35 @@ async def test_patch_loaded_filaments_replaces_and_persists(client):
     assert resp.status_code == 200
     assert resp.json()["loaded_filaments"] == slots
     assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == slots
+
+
+async def _printer_for_slicer(client):
+    r = await client.post("/api/v1/printers", json={
+        "name": "S", "printer_type": "bambu", "connection_config": {}, "orca_printer_profiles": [],
+        "current_orca_printer_profile": None})
+    return r.json()["id"]
+
+
+async def test_preferred_slicer_defaults_to_null_and_is_set_cleared_and_kept(client):
+    pid = await _printer_for_slicer(client)
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] is None
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": "laminus"})
+    assert r.status_code == 200 and r.json()["preferred_slicer_plugin_id"] == "laminus"
+    # Persisted: re-read the row, not just the PATCH response.
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] == "laminus"
+    # A PATCH that omits the key leaves it alone; an explicit null (or empty string) clears it.
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"name": "S2"})
+    assert r.json()["preferred_slicer_plugin_id"] == "laminus"
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": None})
+    assert r.json()["preferred_slicer_plugin_id"] is None
+    await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": "laminus"})
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": ""})
+    assert r.json()["preferred_slicer_plugin_id"] is None
+
+
+async def test_preferred_slicer_must_be_a_gcode_produce_plugin(client):
+    pid = await _printer_for_slicer(client)
+    for bad in ("nope", "bambu"):                      # unknown id; a plugin that does not provide gcode.produce
+        r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": bad})
+        assert r.status_code == 422 and "gcode.produce" in r.text
+    assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] is None
