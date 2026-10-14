@@ -11,7 +11,7 @@ import pytest
 
 from app.services.providers.contract import CuratedSetting, OverrideInspection, PlateEstimate, SettingChange
 from app.services.providers.laminus import LaminusFormatProvider, LaminusSlicingProvider
-from app.services.providers.slicing import SliceSpec, SlicingProviderError, get_slicing_provider
+from app.services.providers.slicing import SliceSpec, SlicingProviderError, configured_server_url, get_slicing_provider
 from tests.fake_providers import FakeFormatProvider, FakeSlicingProvider, make_catalog
 
 URL = "http://laminus.test"
@@ -318,3 +318,16 @@ def test_compatible_presets_filters_a_catalog_by_the_machines_compatible_printer
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "filament")] == ["PLA @A"]
     assert [p.name for p in provider.compatible_presets(cat, "Printer A", "process")] == ["0.20mm Standard"]
     assert provider.compatible_presets(cat, "Some Other Printer", "filament") == []
+
+
+def test_slicing_provider_resolves_through_the_gcode_produce_capability(monkeypatch):
+    """Core names no slicer: the provider is whichever enabled plugin serves `gcode.produce`, and its id is the cache identity."""
+    from app.plugins.host import plugin_host
+    from app.services.providers.slicing import slicing_provider_name
+
+    monkeypatch.setenv("LAMINUS_SIDECAR_URL", URL)
+    assert slicing_provider_name() == "laminus"
+    assert isinstance(get_slicing_provider(), LaminusSlicingProvider)
+    monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)       # the only provider is disabled
+    assert get_slicing_provider() is None
+    assert configured_server_url() is None

@@ -23,7 +23,8 @@ def _no_env(monkeypatch):
 
 async def test_the_plugin_is_bundled_and_listed(client):
     (p,) = [p for p in (await client.get("/api/v1/plugins")).json()["plugins"] if p["id"] == "laminus"]
-    assert (p["source"], p["enabled"], p["provides"]) == ("bundled", True, [])
+    assert (p["source"], p["enabled"]) == ("bundled", True)
+    assert [(c["capability"], c["mode"]) for c in p["provides"]] == [("gcode.produce", "choose_one")]
     assert "url" in (await client.get("/api/v1/plugins/laminus")).json()["settings_schema"]["properties"]
 
 

@@ -145,18 +145,22 @@ _CAP = "gcode.produce"
 _FORMAT_PLUGIN = "laminus"     # the offline format reader still ships beside the Laminus adapter (FormatProvider is not a capability yet)
 
 
-def slicing_provider_name() -> str:
-    """The plugin id of the resolved slicing provider (the cache-key identity); falls back to the bundled one when none resolves."""
-    from ...plugins.host import plugin_host
-
-    r = plugin_host.resolve(_CAP)
-    return r.plugin_id or _FORMAT_PLUGIN
-
-
 def _resolved_plugin_id() -> str | None:
+    """The plugin serving `gcode.produce`: the host's selection (capability default) when it is enabled, else the one enabled
+    provider. Reads manifests + stored config only, so it also answers before the host has loaded (startup, tests)."""
+    from ...plugins import providers_of
     from ...plugins.host import plugin_host
 
-    return plugin_host.resolve(_CAP).plugin_id
+    chosen = plugin_host.selected(_CAP)
+    if chosen and plugin_host.is_enabled(chosen):
+        return chosen
+    enabled = [m.id for m in providers_of(_CAP) if plugin_host.is_enabled(m.id)]
+    return enabled[0] if len(enabled) == 1 else None
+
+
+def slicing_provider_name() -> str:
+    """The plugin id of the resolved slicing provider (the cache-key identity); the bundled one when none resolves."""
+    return _resolved_plugin_id() or _FORMAT_PLUGIN
 
 
 def configured_server_url() -> str | None:
@@ -182,7 +186,7 @@ def get_slicing_provider() -> SlicingProvider | None:
     try:
         return plugin_host.build_candidate(pid).slicing_provider(url)
     except PluginError as e:                        # invalid saved settings: treat like unconfigured rather than crash the caller
-        logger.warning("Slicing settings of plugin %s are invalid, slicing is unavailable until they are fixed: %s", pid, e)
+        logger.warning("Laminus settings are invalid, slicing is unavailable until they are fixed: %s", e)
         return None
 
 
