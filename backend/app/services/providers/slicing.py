@@ -139,43 +139,50 @@ class SlicingProvider(ABC):
         raise NotImplementedError("provider does not support PACK_MODELS")
 
 
-# The registry name of the slicing provider in use. ONE source: `get_slicing_provider`, `get_format_provider` and the identity cache keys
-# carry (`slicing_provider_name`) all read it, so a second adapter is selected here and the cache keys follow.
-ACTIVE_PROVIDER = "laminus"
+# The slicing provider is whichever plugin the host resolves for the `gcode.produce` capability (BIZ-290): core names none. The plugin
+# id is the provider name in cache keys, so a second slicing plugin is selected on the capability and the keys follow.
+_CAP = "gcode.produce"
+_FORMAT_PLUGIN = "laminus"     # the offline format reader still ships beside the Laminus adapter (FormatProvider is not a capability yet)
 
 
 def slicing_provider_name() -> str:
-    return ACTIVE_PROVIDER
+    """The plugin id of the resolved slicing provider (the cache-key identity); falls back to the bundled one when none resolves."""
+    from ...plugins.host import plugin_host
+
+    r = plugin_host.resolve(_CAP)
+    return r.plugin_id or _FORMAT_PLUGIN
+
+
+def _resolved_plugin_id() -> str | None:
+    from ...plugins.host import plugin_host
+
+    return plugin_host.resolve(_CAP).plugin_id
 
 
 def configured_server_url() -> str | None:
     """The slicing service URL as the plugin host resolves it (BIZ-289): saved plugin setting > deprecated env override read by
-    core > the plugin's defaults.toml. None when unconfigured or the plugin is disabled. Read at call time."""
-    from . import laminus  # noqa: F401  (registers the adapter)
+    core > the plugin's defaults.toml. None when unconfigured or no slicing plugin is enabled. Read at call time."""
     from .laminus.connection import clean_url
     from ...plugins.host import plugin_host
 
-    if not plugin_host.is_enabled(ACTIVE_PROVIDER):
-        return None
-    return clean_url(plugin_host.effective_settings(ACTIVE_PROVIDER).get("url"))
+    pid = _resolved_plugin_id()
+    return clean_url(plugin_host.effective_settings(pid).get("url")) if pid else None
 
 
 def get_slicing_provider() -> SlicingProvider | None:
     """The configured slicing provider, or None when none is configured."""
-    from . import laminus  # noqa: F401  (registers the adapter)
-
     from ...plugins import PluginError
     from ...plugins.host import plugin_host
 
-    url = configured_server_url()
-    if not url:
+    pid, url = _resolved_plugin_id(), configured_server_url()
+    if not pid or not url:
         return None
     # The plugin instance (built from the host-resolved settings: saved > deprecated env via core > defaults.toml) owns the
     # adapter and its connection options (timeouts); core only asks the host for it (BIZ-288).
     try:
-        return plugin_host.build_candidate(ACTIVE_PROVIDER).slicing_provider(url)
+        return plugin_host.build_candidate(pid).slicing_provider(url)
     except PluginError as e:                        # invalid saved settings: treat like unconfigured rather than crash the caller
-        logger.warning("Laminus settings are invalid, slicing is unavailable until they are fixed: %s", e)
+        logger.warning("Slicing settings of plugin %s are invalid, slicing is unavailable until they are fixed: %s", pid, e)
         return None
 
 
@@ -186,15 +193,7 @@ def get_format_provider() -> FormatProvider:
     `SlicingProvider` (use `get_slicing_provider()`)."""
     from . import laminus  # noqa: F401  (registers the adapter)
 
-    return _FORMAT_REGISTRY[ACTIVE_PROVIDER]()
-
-
-# name -> adapter class. Adding a provider = one adapter class + one entry here.
-_REGISTRY: dict[str, type[SlicingProvider]] = {}
-
-
-def register_slicing_provider(name: str, cls: type[SlicingProvider]) -> None:
-    _REGISTRY[name] = cls
+    return _FORMAT_REGISTRY[_FORMAT_PLUGIN]()
 
 
 # name -> format provider class (no-arg constructor). Registered next to the slicing adapter of the same name.
