@@ -98,6 +98,7 @@ export interface ApiPrinter {
   bed_x_mm: number;
   bed_y_mm: number;
   machine_rate_per_hour: number | null;   // per-printer override of the shop machine rate; null = shop rate
+  preferred_slicer_plugin_id: string | null;   // the gcode.produce plugin this printer slices with; null = the capability default
   quiet_start: string | null;   // server-local HH:MM; no new jobs start in [start, end)
   quiet_end: string | null;
 }
@@ -130,6 +131,7 @@ export interface UpdatePrinterBody {
   bed_x_mm?: number;
   bed_y_mm?: number;
   machine_rate_per_hour?: number | null;
+  preferred_slicer_plugin_id?: string | null;   // null clears (use the default); omit to leave unchanged
   quiet_start?: string | null;
   quiet_end?: string | null;
 }

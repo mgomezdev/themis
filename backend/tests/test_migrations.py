@@ -661,3 +661,20 @@ async def test_v033_upgrades_an_existing_queue_config_row_to_use_latest_settings
             "SELECT check_interval_minutes, slice_cache_use_latest_settings FROM queue_config WHERE id=1"))).one()
     assert tuple(row) == (7, 1)
     await engine.dispose()
+
+
+async def test_v050_adds_preferred_slicer_column_idempotently_and_down_drops_it():
+    from app.migrations import v050_printer_preferred_slicer as v50
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)"))
+        await conn.execute(text("INSERT INTO printers (id, name) VALUES (1, 'a')"))
+        await v50.up(conn)
+        await v50.up(conn)                                   # idempotent
+        cols = {r[1]: r for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+        assert "preferred_slicer_plugin_id" in cols and cols["preferred_slicer_plugin_id"][3] == 0   # nullable
+        assert (await conn.execute(text("SELECT preferred_slicer_plugin_id FROM printers"))).scalar() is None
+        await v50.down(conn)
+        await v50.down(conn)
+        assert "preferred_slicer_plugin_id" not in {r[1] for r in (await conn.execute(text("PRAGMA table_info(printers)"))).fetchall()}
+    await engine.dispose()

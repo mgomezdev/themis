@@ -342,13 +342,13 @@ def test_resolver_prefers_an_enabled_selection_and_refuses_ambiguity(monkeypatch
     monkeypatch.setattr("app.plugins.providers_of", two)
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: True)
     monkeypatch.setattr(plugin_host, "selected", lambda cap: None)
-    assert slicing._resolved_plugin_id() is None                      # two enabled, no selection: ambiguous
+    assert slicing.default_provider_id() is None                      # two enabled, no selection: ambiguous
     monkeypatch.setattr(plugin_host, "selected", lambda cap: "b")
-    assert slicing._resolved_plugin_id() == "b"                       # the selection wins
+    assert slicing.default_provider_id() == "b"                       # the selection wins
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: pid == "a")
-    assert slicing._resolved_plugin_id() == "a"                       # selected one disabled: sole enabled provider
+    assert slicing.default_provider_id() == "a"                       # selected one disabled: sole enabled provider
     monkeypatch.setattr(plugin_host, "is_enabled", lambda pid: False)
-    assert slicing._resolved_plugin_id() is None
+    assert slicing.default_provider_id() is None
 
 
 def test_provider_without_an_adapter_is_unavailable_not_a_crash(monkeypatch, caplog):

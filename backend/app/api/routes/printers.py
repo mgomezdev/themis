@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobModelTarget, JobPrinterConfig, Printer
+from ...plugins import providers_of
 from ...services.library_scanner import is_presliced_name
 from ...services import camera_hub, catalog_service
 from ...services.inventory import refs as inventory_refs
@@ -78,6 +79,8 @@ class PrinterUpdate(BaseModel):
     machine_rate_per_hour: float | None = Field(default=None, ge=0, le=100_000)  # null clears (use the shop rate)
     quiet_start: str | None = None
     quiet_end: str | None = None
+    # The `gcode.produce` plugin this printer slices with (BIZ-291); null clears it (use the capability default).
+    preferred_slicer_plugin_id: str | None = None
 
     @model_validator(mode="after")
     def _quiet_hours_pair(self):
@@ -154,6 +157,7 @@ def _to_dict(p: Printer) -> dict:
         "quiet_start": p.quiet_start,
         "quiet_end": p.quiet_end,
         "machine_rate_per_hour": p.machine_rate_per_hour,
+        "preferred_slicer_plugin_id": p.preferred_slicer_plugin_id,
         "connected": live_client.connected if live_client else False,
     }
 
@@ -615,6 +619,11 @@ async def update_printer(
         printer.quiet_start, printer.quiet_end = body.quiet_start, body.quiet_end
     if "machine_rate_per_hour" in body.model_fields_set:
         printer.machine_rate_per_hour = body.machine_rate_per_hour
+    if "preferred_slicer_plugin_id" in body.model_fields_set:
+        wanted = body.preferred_slicer_plugin_id or None
+        if wanted is not None and wanted not in {m.id for m in providers_of("gcode.produce")}:
+            raise HTTPException(422, f"{wanted!r} is not a plugin that provides gcode.produce")
+        printer.preferred_slicer_plugin_id = wanted
     await session.commit()
     await session.refresh(printer)
     return _to_dict(printer)

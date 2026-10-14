@@ -50,6 +50,7 @@
     "bed_x_mm",
     "bed_y_mm",
     "machine_rate_per_hour",
+    "preferred_slicer_plugin_id",
     "quiet_start",
     "quiet_end"
   ],
