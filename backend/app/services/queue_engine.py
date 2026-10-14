@@ -952,7 +952,7 @@ class QueueEngine:
             source_content_hash = uploaded_file.content_hash if uploaded_file else ""
             source_file_id = uploaded_file.id if uploaded_file else None
 
-        if config is None or uploaded_file is None:
+        if config is None or uploaded_file is None or printer_view is None:
             await self._fail_job_post_slice(job_id, printer_id)
             return
         slice_presets: list = []

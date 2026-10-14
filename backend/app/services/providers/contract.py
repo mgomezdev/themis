@@ -52,8 +52,8 @@ PASS_THROUGH_INPUTS = frozenset({InputKind.GCODE, InputKind.GCODE_3MF})
 class ProviderIdentity:
     """`provider_id` is the stable registry/plugin id (never a URL); `version` the adapter/contract build.
     `engine_id`/`engine_version` identify the slicing engine actually used (e.g. family + pinned release); None when the
-    provider cannot say (cache key then omits them, see `cache_key`). `build` is the finer engine build hash and is
-    part of the cache key (omitted when None)."""
+    provider cannot say. `build` is the finer engine build hash. None of these are in the slice-cache key (it must be
+    computable while the engine is down); they feed the staleness fingerprint instead (docs/architecture/laminus-contract.md §7)."""
     provider_id: str
     version: str
     engine_id: str | None = None

@@ -145,7 +145,10 @@ class SlicerService:
         """
         provider = slicing_provider_for(req.provider_id) if req.provider_id else get_slicing_provider()
         if provider is None:
-            raise SliceError("Laminus is not configured — set its URL in Settings -> Laminus; it is required for slicing")
+            from ..plugins import get_plugin
+            plugin = get_plugin(req.provider_id) if req.provider_id else None
+            label = plugin.name if plugin else "Laminus"
+            raise SliceError(f"{label} is not configured — set its URL in Settings -> {label}; it is required for slicing")
 
         if req.source_key is not None:
             # The provider reads a local path: hold a materialized copy of the library artifact for the whole slice.

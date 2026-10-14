@@ -168,3 +168,38 @@ async def test_clearing_a_broken_preference_lets_the_default_take_the_blocked_jo
         assert (await _job(session_factory, job_id)).status == "blocked"
         await _prefer(session_factory, None)                    # clear the preference: the default takes it next cycle
         await _run_to_printing(qe, session_factory, job_id)
+
+
+@pytest.mark.asyncio
+async def test_the_staleness_check_asks_the_provider_that_made_the_slice(session_factory, tmp_path, env):
+    """Dispatch lookup: the fingerprint of a cached version comes from the provider in its key, not from the default."""
+    inputs_b = slice_cache.CacheKeyInputs(**{**INPUTS.__dict__, "provider": "b"})
+    await _add_version(session_factory, env, inputs=inputs_b)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+    await _prefer(session_factory, "b")
+    providers = {"a": FakeSlicingProvider(), "b": FakeSlicingProvider()}
+
+    with slicing_providers(providers, default="a"), \
+            patch("app.services.slice_cache.cached_fingerprint", return_value=FINGERPRINT) as fp:
+        await _run_to_printing(qe, session_factory, job_id)
+
+    qe._slicer.slice.assert_not_called()                                  # b's cached version was printed
+    assert fp.call_args_list and all(c.args[3] is providers["b"] for c in fp.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_the_claim_time_staleness_check_asks_the_provider_that_made_the_slice(session_factory, tmp_path, env):
+    """Cache-only claim (provider down): same rule on the claim path."""
+    inputs_b = slice_cache.CacheKeyInputs(**{**INPUTS.__dict__, "provider": "b"})
+    await _add_version(session_factory, env, inputs=inputs_b)
+    qe, _ = _engine(session_factory, tmp_path)
+    job_id = await _seed_allowing(session_factory)
+    await _prefer(session_factory, "b")
+    providers = {"a": FakeSlicingProvider(), "b": down()}
+
+    with slicing_providers(providers, default="a"), \
+            patch("app.services.slice_cache.cached_fingerprint", return_value=FINGERPRINT) as fp:
+        await _run_to_printing(qe, session_factory, job_id)
+
+    assert fp.call_args_list and all(c.args[3] is providers["b"] for c in fp.call_args_list)

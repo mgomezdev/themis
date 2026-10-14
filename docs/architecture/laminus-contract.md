@@ -127,6 +127,8 @@ with BIZ-291 because it conflicts with the two behaviors above. A future provide
 * The queue resolves per printer (§6), then slices with that provider: `SliceRequest.provider_id` → `SlicerService.slice`, the cache key's `provider`, the tool-mapping hook,
   the staleness fingerprint (`inputs.provider`) and the manual slices (verify-slice, complete-manually) all follow the printer's choice.
 * `printers.preferred_slicer_plugin_id` (v050) stores the choice; the printer editor shows it only when more than one slicer is enabled.
+* `LaminusGcodeProducer.supports_target` only rejects a nonsensical bed (whether the printer's Orca preset exists is a slice-time check that blocks the job on that printer), so `preference_ineligible` / `default_ineligible` do not fire for Laminus today; they will for a provider that declares model support.
+* Upgrade: migration v051 recomputed every saved `sliced_versions.cache_key` with the provider hashed (the row stores all other inputs), so saved slices keep matching.
 * **Not wired:** `GcodeProducer.produce()`. The neutral `TargetPrinter` has a bed and a model UUID but no Orca machine profile, which Laminus needs to slice, so
   `LaminusGcodeProducer.produce()` rejects non-model inputs and cancellation per the contract and otherwise raises `UNSUPPORTED_TARGET`; the slice itself still goes through
   `SlicingProvider.slice` with the printer's presets. Wiring it needs the target to carry (or core to derive) a machine profile reference. `3mf.construct` is likewise unwired.
