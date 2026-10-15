@@ -257,3 +257,12 @@ def test_key_inputs_takes_the_provider_from_the_request_then_the_argument_then_t
     req.provider_id = "from_request"
     assert sc.key_inputs(req, "h", None, None).provider == "from_request"
     assert sc.key_inputs(req, "h", None, None, provider="explicit").provider == "explicit"
+
+
+def test_a_06_variant_and_a_04_variant_of_one_model_never_share_a_cache_key():
+    """BIZ-294: the machine profile resolved for the printer's nozzle variant is hashed, so 0.4 and 0.6 printers slice separately."""
+    four = sc.key_inputs(_req(machine_preset="P1S 0.4 nozzle"), "src", None, None)
+    six = sc.key_inputs(_req(machine_preset="P1S 0.6 nozzle"), "src", None, None)
+    assert four.machine_preset != six.machine_preset
+    assert sc.cache_key(four) != sc.cache_key(six)
+    assert sc.cache_key(four) == sc.cache_key(sc.key_inputs(_req(machine_preset="P1S 0.4 nozzle"), "src", None, None))

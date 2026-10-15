@@ -316,6 +316,7 @@ async def fleet_import(
     await model_registry.sync_registry(session)
     for m in data.get("slicer_profiles") or []:
         try:
+            provider = m["provider_plugin_id"]
             uuid_ = await model_registry.model_uuid_for(session, m["plugin_id"], m["manufacturer_id"], m["model_id"])
             variant = slicer_profiles.NozzleVariant(float(m["nozzle_diameter_mm"]), m.get("flow") or "standard")
             if uuid_ is None or variant.flow not in slicer_profiles.FLOWS or not m.get("machine_profile") or variant.diameter_mm <= 0:
@@ -324,13 +325,15 @@ async def fleet_import(
             warnings.append(f"slicer profile mapping skipped — {m!r}")
             continue
         rows = await slicer_profiles.mapping_rows(session, uuid_)
-        mine = [r for r in rows if r.provider_plugin_id == m["provider_plugin_id"]]
+        mine = [r for r in rows if r.provider_plugin_id == provider]
         if any(slicer_profiles.variant_of(r) == variant for r in mine):
             continue                                  # an existing mapping on this install wins
+        # the file's default wins only when this install has none; a model/provider is never left without a default, so the first
+        # imported row is promoted when the file marks none
         session.add(PrinterModelSlicerProfile(
-            model_uuid=uuid_, provider_plugin_id=m["provider_plugin_id"], nozzle_diameter_mm=variant.diameter_mm,
+            model_uuid=uuid_, provider_plugin_id=provider, nozzle_diameter_mm=variant.diameter_mm,
             flow=variant.flow, machine_profile=m["machine_profile"],
-            is_default=bool(m.get("is_default")) and not any(r.is_default for r in mine)))
+            is_default=not mine or (bool(m.get("is_default")) and not any(r.is_default for r in mine))))
         await session.flush()
 
     for pr in data.get("printers", []):

@@ -150,6 +150,11 @@ async def delete_mapping(model_uuid: str, mapping_id: int, session: AsyncSession
     users = [p.name for p in printers if slicer_profiles.NozzleVariant.parse(p.nozzle_variant) == variant]
     if users:
         raise HTTPException(409, f"{', '.join(users)} use the {variant.label} nozzle: change them first")
+    if row.is_default and not siblings:
+        followers = [p.name for p in printers if not p.nozzle_variant and not p.machine_profile_override]
+        if followers:
+            raise HTTPException(409, f"{', '.join(followers)} follow this model's default profile: set a profile override or remove "
+                                     "those printers before removing the last profile")
     await session.delete(row)
     await session.commit()
 

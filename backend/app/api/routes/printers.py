@@ -609,7 +609,19 @@ async def update_printer(
             raise HTTPException(422, str(e))
         await registry.sync_registry(session)      # commits: done before any field below is touched
         printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
-        printer.model_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
+        new_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
+        if new_uuid != printer.model_uuid:
+            # A different model: the old model's nozzle variant and raw override do not carry over. The variant is kept only when the new
+            # model maps the same one (else cleared to NULL = the new model's default, never a silent 422 on an identity edit); the override
+            # is cleared unless this same request sets it.
+            current = slicer_profiles.NozzleVariant.parse(printer.nozzle_variant)
+            if "nozzle_variant" not in body.model_fields_set and current is not None:
+                rows = await slicer_profiles.mapping_rows(session, new_uuid) if new_uuid else []
+                if not any(slicer_profiles.variant_of(r) == current for r in rows):
+                    printer.nozzle_variant = None
+            if "machine_profile_override" not in body.model_fields_set:
+                printer.machine_profile_override = None
+        printer.model_uuid = new_uuid
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:

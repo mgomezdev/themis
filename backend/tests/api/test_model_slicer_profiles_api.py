@@ -133,13 +133,15 @@ async def test_editing_a_mapping_changes_its_profile(client, p1s):
 
 
 async def test_the_default_cannot_be_deleted_while_other_variants_exist(client, p1s):
-    _, model = p1s
+    pid, model = p1s
     first = (await add(client, model)).json()
     second = (await add(client, model, P1S_06, d=0.6)).json()
 
     assert (await client.delete(url(model, first["id"]))).status_code == 409
     assert (await client.delete(url(model, second["id"]))).status_code == 204
-    assert (await client.delete(url(model, first["id"]))).status_code == 204       # the last one may go
+    assert (await client.delete(url(model, first["id"]))).status_code == 409       # the last one: the p1s printer still follows it
+    await client.delete(f"/api/v1/printers/{pid}")
+    assert (await client.delete(url(model, first["id"]))).status_code == 204       # nobody follows it any more
     assert (await client.get(url(model))).json() == []
 
 
@@ -193,7 +195,7 @@ async def test_a_raw_override_wins_over_the_mapping(client, p1s):
     assert r.json()["machine_profile"] == "My custom preset"
 
 
-async def test_an_unmapped_variant_is_refused_and_a_printer_on_none_reports_why(client, p1s):
+async def test_an_unmapped_variant_is_refused_and_a_printer_on_none_reports_why(client, p1s, session_factory):
     pid, model = p1s
     await add(client, model)
 
@@ -205,7 +207,10 @@ async def test_an_unmapped_variant_is_refused_and_a_printer_on_none_reports_why(
 
     with laminus_default():
         none_yet = (await client.get(f"/api/v1/printers/{pid}")).json()
-        await client.delete(url(model, (await client.get(url(model))).json()[0]["id"]))
+        async with session_factory() as s:                       # (the API refuses to remove the last profile a printer follows)
+            for r in (await s.execute(select(PrinterModelSlicerProfile))).scalars():
+                await s.delete(r)
+            await s.commit()
         gone = (await client.get(f"/api/v1/printers/{pid}")).json()
     assert none_yet["machine_profile"] == P1S_04
     assert gone["machine_profile"] is None and gone["machine_profile_reason"].startswith("no machine profile for ")
@@ -309,3 +314,70 @@ async def test_the_model_registry_listing_says_how_many_profiles_each_model_has_
     await add(client, model)
     await add(client, model, P1S_06, d=0.6)
     assert count((await client.get("/api/v1/printer-models")).json()) == 2
+
+
+# --- review fixes ----------------------------------------------------------------------------------------------------------------------
+
+async def test_changing_a_printers_model_clears_a_variant_the_new_model_does_not_map_and_a_stale_override(client, p1s):
+    pid, model = p1s
+    await add(client, model)
+    await add(client, model, P1S_06, d=0.6)
+    other = next(m for m in (await client.get("/api/v1/printer-models")).json() if m["model_id"] == "x1c")["id"]
+    await add(client, other, "X1C 0.4")                                  # the new model maps 0.4 only
+    await client.patch(f"/api/v1/printers/{pid}", json={"nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"},
+                                                        "machine_profile_override": "Old custom"})
+
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"model_id": "x1c"})
+
+    assert r.status_code == 200 and r.json()["model_uuid"] == other
+    assert r.json()["nozzle_variant"] is None and r.json()["machine_profile_override"] is None
+
+
+async def test_changing_a_printers_model_keeps_a_variant_the_new_model_also_maps_and_an_override_in_the_same_body(client, p1s):
+    pid, model = p1s
+    await add(client, model)
+    await add(client, model, P1S_06, d=0.6)
+    other = next(m for m in (await client.get("/api/v1/printer-models")).json() if m["model_id"] == "x1c")["id"]
+    await add(client, other, "X1C 0.4")
+    await add(client, other, "X1C 0.6", d=0.6)
+    await client.patch(f"/api/v1/printers/{pid}", json={"nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}})
+
+    r = await client.patch(f"/api/v1/printers/{pid}", json={"model_id": "x1c", "machine_profile_override": "Fresh custom"})
+
+    assert r.json()["nozzle_variant"] == {"diameter_mm": 0.6, "flow": "standard"}
+    assert r.json()["machine_profile_override"] == "Fresh custom"
+
+
+async def test_the_last_default_cannot_be_deleted_while_a_printer_of_the_model_follows_the_default(client, p1s):
+    pid, model = p1s
+    only = (await add(client, model)).json()
+
+    r = await client.delete(url(model, only["id"]))
+
+    assert r.status_code == 409 and "follow" in r.json()["detail"]
+    assert (await client.get(url(model))).json()[0]["id"] == only["id"]
+    await client.delete(f"/api/v1/printers/{pid}")
+    assert (await client.delete(url(model, only["id"]))).status_code == 204
+
+
+async def test_the_last_default_can_go_when_every_printer_has_its_own_override_or_other_model(client, p1s, create_printer):
+    pid, model = p1s
+    only = (await add(client, model)).json()
+    await client.patch(f"/api/v1/printers/{pid}", json={"machine_profile_override": "Mine"})
+    assert (await client.delete(url(model, only["id"]))).status_code == 204
+
+
+async def test_a_backup_row_missing_its_provider_is_skipped_with_a_warning_and_a_model_never_ends_up_without_a_default(client, p1s):
+    import io, json
+    pid, model = p1s
+    row = lambda d, name, default: {"plugin_id": "bambu", "manufacturer_id": "bambu", "model_id": "p1s", "provider_plugin_id": "laminus",
+                                    "nozzle_diameter_mm": d, "flow": "standard", "machine_profile": name, "is_default": default}
+    bad = {k: v for k, v in row(0.8, "x", False).items() if k != "provider_plugin_id"}
+    backup = {"themis_backup_version": 1, "printers": [], "slicer_profiles": [row(0.4, "A", False), row(0.6, "B", False), bad]}
+
+    resp = await client.post("/api/v1/settings/fleet-import", files={"file": ("b.json", io.BytesIO(json.dumps(backup).encode()), "application/json")})
+
+    assert resp.status_code == 200, resp.text
+    assert any("skipped" in w for w in resp.json()["warnings"])
+    rows = (await client.get(url(model))).json()
+    assert sorted((r["nozzle_diameter_mm"], r["is_default"]) for r in rows) == [(0.4, True), (0.6, False)]

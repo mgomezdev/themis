@@ -93,9 +93,11 @@ async def compute_drift(
                 g["affected_printer_ids"].append(printer.id)
                 g["affected_printer_names"].append(printer.name)
                 g["affected_slots"].append(None)
-        if not g["affected_printer_names"]:
+        if not any(p.model_uuid == row.model_uuid for p in printers):      # a model with no printers is only reachable by name
             rec = await session.get(PrinterModelRecord, row.model_uuid)
-            g.setdefault("affected_model_names", []).append(rec.display_name if rec else row.model_uuid)
+            name = rec.display_name if rec else row.model_uuid
+            if name not in g.setdefault("affected_model_names", []):
+                g["affected_model_names"].append(name)
     for printer in printers:
         if printer.machine_profile_override in removed_machines:
             key = ("machine_profile_override", printer.machine_profile_override)

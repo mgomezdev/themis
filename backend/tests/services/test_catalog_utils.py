@@ -375,3 +375,18 @@ async def test_compute_drift_skips_inventories_without_profile_bindings(drift_se
 
     assert inventory.calls == []
     assert result["pending"]["inventory_filaments"] == [] and result["inventory_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_compute_drift_lists_every_model_of_a_stale_profile_that_has_no_printers(drift_session):
+    """Two models share the stale profile; one has a printer, the other none: both must be reachable by the user."""
+    await _add_mapping(drift_session, model="m-a", profile="Bambu X1C")
+    await _add_mapping(drift_session, model="m-b", profile="Bambu X1C")
+    await _add_printer(drift_session, name="On A", model_uuid="m-a")
+    new_cat = {"machine": [{"name": "Bambu X1C New"}], "process": [], "filament": []}
+
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
+
+    (entry,) = result["pending"]["printers"]
+    assert entry["affected_printer_names"] == ["On A"]
+    assert entry["affected_model_names"] == ["X1C"]          # the printer-less model (named after its record)
