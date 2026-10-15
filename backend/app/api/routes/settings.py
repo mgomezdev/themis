@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import CostConfig, Printer, QueueConfig
-from ...services import webhook_service
+from ...models import CostConfig, Printer, PrinterModelRecord, PrinterModelSlicerProfile, QueueConfig
+from ...services import slicer_profiles, webhook_service
+from ...services import printer_model_registry as model_registry
 from ...services import catalog_service
 from ...services.inventory import refs as inventory_refs
 from ...services.printer_client_factory import client_class, create_client
@@ -209,6 +210,15 @@ async def fleet_backup(
     so browsers will prompt to save it. Import with `POST /settings/fleet-import`."""
     result = await session.execute(select(Printer))
     printers = result.scalars().all()
+    # The model -> slicer machine profile mappings (BIZ-294) are what a restored fleet slices with: keyed by the model's
+    # plugin/manufacturer/model identity, since the registry UUID is local to this install.
+    models = {m.id: m for m in (await session.execute(select(PrinterModelRecord))).scalars()}
+    mappings = [
+        {"plugin_id": models[r.model_uuid].plugin_id, "manufacturer_id": models[r.model_uuid].manufacturer_id,
+         "model_id": models[r.model_uuid].model_id, "provider_plugin_id": r.provider_plugin_id,
+         "nozzle_diameter_mm": r.nozzle_diameter_mm, "flow": r.flow, "machine_profile": r.machine_profile,
+         "is_default": r.is_default}
+        for r in await slicer_profiles.mapping_rows(session) if r.model_uuid in models]
 
     data = {
         "themis_backup_version": _BACKUP_VERSION,
@@ -226,7 +236,8 @@ async def fleet_backup(
                     else _redact_connection_config(p.printer_type, p.connection_config or {})
                 ),
                 "orca_printer_profiles": p.orca_printer_profiles or [],
-                "current_orca_printer_profile": p.current_orca_printer_profile,
+                "machine_profile_override": p.machine_profile_override,
+                "nozzle_variant": p.nozzle_variant,
                 "loaded_filaments": p.loaded_filaments or [],
                 "build_plate_type": p.build_plate_type,
                 "enabled": p.enabled,
@@ -234,6 +245,7 @@ async def fleet_backup(
             }
             for p in printers
         ],
+        "slicer_profiles": mappings,
     }
 
     payload = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
@@ -301,6 +313,26 @@ async def fleet_import(
     imported = 0
     skipped = 0
 
+    await model_registry.sync_registry(session)
+    for m in data.get("slicer_profiles") or []:
+        try:
+            uuid_ = await model_registry.model_uuid_for(session, m["plugin_id"], m["manufacturer_id"], m["model_id"])
+            variant = slicer_profiles.NozzleVariant(float(m["nozzle_diameter_mm"]), m.get("flow") or "standard")
+            if uuid_ is None or variant.flow not in slicer_profiles.FLOWS or not m.get("machine_profile") or variant.diameter_mm <= 0:
+                raise ValueError("unknown model or malformed row")
+        except (KeyError, TypeError, ValueError):
+            warnings.append(f"slicer profile mapping skipped — {m!r}")
+            continue
+        rows = await slicer_profiles.mapping_rows(session, uuid_)
+        mine = [r for r in rows if r.provider_plugin_id == m["provider_plugin_id"]]
+        if any(slicer_profiles.variant_of(r) == variant for r in mine):
+            continue                                  # an existing mapping on this install wins
+        session.add(PrinterModelSlicerProfile(
+            model_uuid=uuid_, provider_plugin_id=m["provider_plugin_id"], nozzle_diameter_mm=variant.diameter_mm,
+            flow=variant.flow, machine_profile=m["machine_profile"],
+            is_default=bool(m.get("is_default")) and not any(r.is_default for r in mine)))
+        await session.flush()
+
     for pr in data.get("printers", []):
         pname = pr.get("name") or "Unnamed Printer"
         ptype = pr.get("printer_type", "")
@@ -314,7 +346,8 @@ async def fleet_import(
             continue
 
         orca_profiles: list[str] = pr.get("orca_printer_profiles") or []
-        current_profile: str | None = pr.get("current_orca_printer_profile")
+        # `current_orca_printer_profile` is the pre-BIZ-294 name of the override
+        current_profile: str | None = pr.get("machine_profile_override") or pr.get("current_orca_printer_profile")
         loaded: list[dict] = pr.get("loaded_filaments") or []
         conn_cfg: dict = pr.get("connection_config") or {}
 
@@ -348,15 +381,19 @@ async def fleet_import(
                 identity = resolve_legacy(ptype)
             except IdentityError:               # a type with no legacy mapping (only a hand-edited file): no identity to invent
                 identity = (None, None, None)
+        model_uuid = await model_registry.model_uuid_for(session, *identity) if identity[0] else None
         printer = Printer(
             name=pname,
             printer_type=ptype,
+            model_uuid=model_uuid,
             plugin_id=identity[0],
             manufacturer_id=identity[1],
             model_id=identity[2],
             connection_config=conn_cfg,
             orca_printer_profiles=orca_profiles,
-            current_orca_printer_profile=current_profile,
+            machine_profile_override=current_profile,
+            nozzle_variant=slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")).as_dict()
+            if slicer_profiles.NozzleVariant.parse(pr.get("nozzle_variant")) else None,
             loaded_filaments=inventory_refs.normalize_slots(loaded),
             build_plate_type=pr.get("build_plate_type"),
             enabled=pr.get("enabled", True),

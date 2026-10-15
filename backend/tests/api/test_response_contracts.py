@@ -204,3 +204,39 @@ async def test_plugin_and_capability_responses_carry_their_keys(client, monkeypa
         assert_carries("plugin_connection_result", (await client.post("/api/v1/plugins/laminus/test", json=body)).json())
     caps = (await client.get("/api/v1/capabilities")).json()["capabilities"]
     assert_carries("capability_info", next(c for c in caps if c["id"] == "inventory.filament"))
+
+
+async def test_model_slicer_profile_responses_carry_their_keys(client, create_printer, model_uuid_of):
+    from unittest.mock import patch
+    from app.services.providers.slicing import MachineCandidate, NozzleVariantOption
+    from tests.fake_providers import FakeSlicingProvider
+
+    model = await model_uuid_of(await create_printer())
+    created = (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": "P1S 0.4"})).json()
+    assert_carries("printer_model_slicer_profile", created)
+    assert_carries("printer_model_slicer_profile", (await client.get(f"/api/v1/printer-models/{model}/slicer-profiles")).json()[0])
+
+    class Suggesting(FakeSlicingProvider):
+        SUGGEST_PROFILES = True
+
+        def suggest_machines(self, manufacturer, model, model_key=None):
+            return [MachineCandidate("P1S 0.4", 0.4, "standard", "machine:p1s", 0.9, "exact_model")]
+
+        def nozzle_variants(self, manufacturer, model, model_key=None):
+            return [NozzleVariantOption("P1S 0.4", 0.4, "standard", "machine:p1s", True)]
+
+    with patch("app.api.routes.printer_model_slicer_profiles.slicing_provider_for", lambda pid: Suggesting()):
+        body = (await client.get(f"/api/v1/printer-models/{model}/slicer-profiles/suggestions", params={"provider_plugin_id": "laminus"})).json()
+    assert_carries("slicer_profile_suggestions", body)
+    assert_carries("slicer_profile_candidate", body["candidates"][0])
+    assert_carries("slicer_profile_variant", body["variants"][0])
+
+
+async def test_job_model_targets_carry_the_model_target_keys(client, upload_3mf, create_printer, model_uuid_of):
+    from unittest.mock import patch
+    model = await model_uuid_of(await create_printer())
+    with patch("app.api.routes.jobs.queue_engine"):
+        job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": await upload_3mf(), "model_targets": [
+            {"model_uuid": model, "print_profile": "0.2"}]})).json()
+    assert_carries("model_target", (await client.get(f"/api/v1/jobs/{job['id']}/details")).json()["model_targets"][0])

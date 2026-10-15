@@ -25,7 +25,7 @@ async def test_get_profiles_no_active_preset(client):
     create = await client.post("/api/v1/printers", json={
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {},
-        "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "orca_printer_profiles": [], "machine_profile_override": None,
     })
     pid = create.json()["id"]
     response = await client.get(f"/api/v1/printers/{pid}/profiles")
@@ -38,7 +38,7 @@ async def test_get_profiles_with_active_preset(client):
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4 nozzle"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle",
+        "machine_profile_override": "Bambu Lab P1S 0.4 nozzle",
     })
     pid = create.json()["id"]
     with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=_FAKE_CAT):
@@ -55,7 +55,7 @@ async def test_get_profiles_sidecar_unavailable(client):
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4 nozzle"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle",
+        "machine_profile_override": "Bambu Lab P1S 0.4 nozzle",
     })
     pid = create.json()["id"]
     with patch("app.api.routes.printers._fetch_sidecar_catalog", return_value=None):

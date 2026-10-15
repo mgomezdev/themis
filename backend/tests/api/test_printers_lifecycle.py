@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from app.services.printer_manager import printer_manager
 
 _PRINTER_KEYS = {"id", "name", "printer_type", "plugin_id", "manufacturer_id", "model_id", "model_uuid", "connection_config", "awaiting_plate_clear", "orca_printer_profiles",
-                 "current_orca_printer_profile", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
+                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
                  "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "machine_rate_per_hour", "preferred_slicer_plugin_id", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
 
 
@@ -17,7 +17,7 @@ _PRINTER_KEYS = {"id", "name", "printer_type", "plugin_id", "manufacturer_id", "
 async def printer(client) -> dict:
     resp = await client.post("/api/v1/printers", json={
         "name": "Forge", "printer_type": "elegoo_centauri", "connection_config": {"ip_address": "10.0.0.5"},
-        "orca_printer_profiles": ["Machine A"], "current_orca_printer_profile": "Machine A",
+        "orca_printer_profiles": ["Machine A"], "machine_profile_override": "Machine A",
         "loaded_filaments": [{"slot": 0, "type": "PLA"}], "build_plate_type": "Smooth PEI",
         "bed_x_mm": 220.0, "bed_y_mm": 220.0,
     })
@@ -36,7 +36,7 @@ async def _get(client, printer_id: int) -> dict:
 @pytest.mark.parametrize("field, value", [
     ("name", "Anvil"),
     ("orca_printer_profiles", ["Machine B", "Machine C"]),
-    ("current_orca_printer_profile", "Machine B"),
+    ("machine_profile_override", "Machine B"),
     ("enabled", False),
     ("queue_on", False),
     ("loaded_filaments", [{"slot": 1, "type": "PETG", "color": "#00FF00"}]),
@@ -54,18 +54,21 @@ async def test_patch_changes_only_the_field_it_was_given(client, printer, field,
     assert resp.status_code == 200
     body = resp.json()
     assert set(body) == _PRINTER_KEYS
-    assert body == {**before, field: value}  # nothing else moved
+    expected = {**before, field: value}
+    if field == "machine_profile_override":
+        expected["machine_profile"] = value        # the override is what the printer slices with
+    assert body == expected  # nothing else moved
     assert await _get(client, printer["id"]) == body  # and it persisted
 
 
 async def test_patch_explicit_null_clears_the_active_preset_and_plate_type_but_omission_keeps_them(client, printer):
     kept = await client.patch(f"/api/v1/printers/{printer['id']}", json={"name": "Renamed"})
-    assert (kept.json()["current_orca_printer_profile"], kept.json()["build_plate_type"]) == ("Machine A", "Smooth PEI")
+    assert (kept.json()["machine_profile_override"], kept.json()["build_plate_type"]) == ("Machine A", "Smooth PEI")
 
     cleared = await client.patch(f"/api/v1/printers/{printer['id']}",
-                                 json={"current_orca_printer_profile": None, "build_plate_type": None})
+                                 json={"machine_profile_override": None, "build_plate_type": None})
 
-    assert (cleared.json()["current_orca_printer_profile"], cleared.json()["build_plate_type"]) == (None, None)
+    assert (cleared.json()["machine_profile_override"], cleared.json()["build_plate_type"]) == (None, None)
     assert cleared.json()["name"] == "Renamed"
 
 

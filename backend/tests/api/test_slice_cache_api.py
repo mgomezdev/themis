@@ -289,7 +289,7 @@ async def _version_for(session_factory, library, model_id, *, plate=1, name="cac
 
 async def test_sliced_versions_lists_a_models_versions_with_their_flags(
         client, library, upload_3mf, create_printer, session_factory):
-    await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])   # a Bambu: takes archives
+    await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])   # a Bambu: takes archives
     model = await upload_3mf("benchy.3mf")
     other = await upload_3mf("other.3mf", make_3mf_bytes_variant())
     fresh, fresh_file = await _version_for(session_factory, library, model, name="fresh.gcode.3mf",
@@ -318,6 +318,22 @@ async def test_sliced_versions_lists_a_models_versions_with_their_flags(
     assert by["plate2.gcode.3mf"]["printable_now"] is False   # no "Other Printer" in the fleet
     assert [v["name"] for v in (await client.get(f"/api/v1/files/{model}/sliced-versions?plate=2")).json()] == [
         "plate2.gcode.3mf"]
+
+
+async def test_a_version_is_printable_now_on_a_printer_whose_model_maps_to_its_machine_profile(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    """BIZ-294: no per-printer profile; the printer's MODEL (default variant here) names the machine profile the version was sliced for."""
+    pid = await create_printer(machine_profile_override=None)
+    assert (await client.post(f"/api/v1/printer-models/{await model_uuid_of(pid)}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": P1S})).status_code == 201
+    model = await upload_3mf("benchy.3mf")
+    await _version_for(session_factory, library, model, name="mapped.gcode.3mf")
+    await _version_for(session_factory, library, model, plate=2, name="unmapped.gcode.3mf", machine="Other Printer")
+
+    with patch("app.services.slicer_profiles.effective_provider_id", lambda preferred: preferred or "laminus"):
+        by = {v["name"]: v for v in (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()}
+
+    assert (by["mapped.gcode.3mf"]["printable_now"], by["unmapped.gcode.3mf"]["printable_now"]) == (True, False)
 
 
 def make_3mf_bytes_variant() -> bytes:
@@ -364,7 +380,7 @@ async def test_a_job_on_a_cached_version_records_the_hand_picked_hit(
         client, library, upload_3mf, create_printer, session_factory, caplog):
     import logging
     caplog.set_level(logging.INFO, logger="app.services.slice_cache")
-    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
+    pid = await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])
     version_id, cached = await _version_for(session_factory, library, await upload_3mf())
 
     resp = await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
@@ -379,18 +395,31 @@ async def test_a_job_on_a_cached_version_records_the_hand_picked_hit(
 
 
 async def test_a_cached_version_is_refused_for_another_printer_model(
-        client, library, upload_3mf, create_printer, session_factory):
-    other = await create_printer(name="X1C", current_orca_printer_profile="Bambu Lab X1 Carbon 0.4",
-                                 orca_printer_profiles=["Bambu Lab X1 Carbon 0.4"])
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    other = await create_printer(name="X1C", printer_type=None, plugin_id="bambu", manufacturer_id="bambu", model_id="x1c",
+                                 machine_profile_override="Bambu Lab X1 Carbon 0.4")
     _, cached = await _version_for(session_factory, library, await upload_3mf())
 
     by_printer = await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
         {"printer_id": other, "filament_type": "any", "filament_color": "any"}]})
     by_target = await _post_job(client, {"uploaded_file_id": cached, "model_targets": [
-        {"machine_profile": "Bambu Lab X1 Carbon 0.4"}]})
+        {"model_uuid": await model_uuid_of(other)}]})
 
     assert by_printer.status_code == 422 and "sliced for that printer model" in by_printer.json()["detail"]
-    assert by_target.status_code == 422
+    assert by_target.status_code == 422 and "This cached version was sliced for" in by_target.json()["detail"]
+
+
+async def test_a_cached_version_is_accepted_for_a_model_target_whose_mapping_names_its_machine_profile(
+        client, library, upload_3mf, create_printer, model_uuid_of, session_factory):
+    pid = await create_printer(machine_profile_override=None)
+    model = await model_uuid_of(pid)
+    _, cached = await _version_for(session_factory, library, await upload_3mf())
+    body = {"uploaded_file_id": cached, "model_targets": [{"model_uuid": model, "filament_type": "PETG", "filament_color": "#112233"}]}
+
+    assert (await _post_job(client, body)).status_code == 422             # the model maps nothing yet: not what the version was sliced for
+    assert (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
+        "provider_plugin_id": "laminus", "nozzle_diameter_mm": 0.4, "machine_profile": P1S})).status_code == 201
+    assert (await _post_job(client, body)).status_code == 201
 
 
 async def _generate(client, tmp_path, project_id, body):
@@ -520,8 +549,8 @@ async def test_a_job_printing_a_cached_version_cannot_be_flagged_to_save(client,
 
 async def test_editing_a_cached_version_job_onto_another_model_is_refused(
         client, library, upload_3mf, create_printer, session_factory):
-    pid = await create_printer(current_orca_printer_profile=P1S, orca_printer_profiles=[P1S])
-    other = await create_printer(name="X1C", current_orca_printer_profile="Bambu Lab X1 Carbon 0.4",
+    pid = await create_printer(machine_profile_override=P1S, orca_printer_profiles=[P1S])
+    other = await create_printer(name="X1C", machine_profile_override="Bambu Lab X1 Carbon 0.4",
                                  orca_printer_profiles=["Bambu Lab X1 Carbon 0.4"])
     _, cached = await _version_for(session_factory, library, await upload_3mf())
     job_id = (await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [

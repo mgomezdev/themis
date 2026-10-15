@@ -24,7 +24,7 @@ def _printer(plugin_id: str, config: dict) -> Printer:
     p.printer_type = plugin_id
     p.connection_config = config
     p.orca_printer_profiles = []
-    p.current_orca_printer_profile = None
+    p.machine_profile_override = None
     p.awaiting_plate_clear = False
     p.enabled = True
     return p

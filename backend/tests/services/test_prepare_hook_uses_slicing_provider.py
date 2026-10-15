@@ -26,7 +26,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None):
     job_id = await _seed_job(db, 1)
     async with db() as s:
         printer = await s.get(Printer, 1)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         cfg.tool_index = tool_index

@@ -246,7 +246,7 @@ async def test_check_overrides_bare_3mf_has_nothing_to_lose_and_never_calls_the_
 
 async def test_check_overrides_printer_without_active_preset_skips_the_diff(check):
     resp, sidecar = await check(data=_project_3mf({"layer_height": "0.2"}),
-                                printer={"current_orca_printer_profile": None})
+                                printer={"machine_profile_override": None})
 
     assert resp.json() == {"has_findings": False, "setting_changes": [], "slot_warning": None,
                            "has_embedded_settings": True}

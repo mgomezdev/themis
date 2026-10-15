@@ -433,7 +433,8 @@ async def test_rollback_last_undoes_only_the_newest_migration(monkeypatch):
     so adding one doesn't break it (migrations without a `down` are cut off the end of the chain)."""
     from app.migrations import runner
 
-    chain = _MIGRATIONS[: max(i for i, m in enumerate(_MIGRATIONS) if hasattr(m, "down") and not getattr(m, "data_only", False)) + 1]
+    chain = _MIGRATIONS[: max(i for i, m in enumerate(_MIGRATIONS) if hasattr(m, "down") and not getattr(m, "data_only", False)
+                                                              and not getattr(m, "reshapes_schema", False)) + 1]
     monkeypatch.setattr(runner, "_MIGRATIONS", chain)
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")

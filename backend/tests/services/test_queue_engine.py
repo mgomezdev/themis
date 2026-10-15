@@ -58,7 +58,7 @@ async def _seed_job(factory, printer_id: int, status: str = "queued") -> int:
                 name=f"Printer {printer_id}",
                 printer_type="elegoo_centauri",
                 connection_config={},
-                current_orca_printer_profile="Test Machine Preset",
+                machine_profile_override="Test Machine Preset",
             ))
             await session.flush()
         f = UploadedFile(
@@ -587,7 +587,7 @@ async def test_actual_values_captured_at_slice_time(db):
     # Set up a printer with filament profile
     async with db() as session:
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -642,7 +642,7 @@ async def test_run_slice_and_print_removes_gcode_when_cancelled_during_slice(db)
 
     async with db() as session:
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -696,7 +696,7 @@ async def test_run_estimate_sets_done_with_fields(db):
         await session.commit()
 
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -750,7 +750,7 @@ async def test_run_estimate_takes_its_numbers_from_the_slicing_providers_parser(
         job.estimate_status = "pending"
         job.estimate_token = 1
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "Test Machine"
+        printer.machine_profile_override = "Test Machine"
         printer.loaded_filaments = [{"filament_profile": "PLA Generic", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -866,7 +866,7 @@ async def test_run_estimate_conditional_update_guards_against_cancel(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -919,7 +919,7 @@ async def test_run_estimate_failure_sets_failed(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -967,7 +967,7 @@ async def test_run_estimate_unexpected_exception_marks_failed_not_pending(db):
         job.estimate_token = 1
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 
@@ -1020,7 +1020,7 @@ async def test_run_estimate_discards_result_when_token_incremented(db):
         job.estimate_token = 1  # original token
         await session.commit()
         printer = await session.get(Printer, printer_id)
-        printer.current_orca_printer_profile = "M"
+        printer.machine_profile_override = "M"
         printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
         await session.commit()
 

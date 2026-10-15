@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from ..models import Printer
 from ..plugins import get_plugin
+from .slicer_profiles import MachineProfileResolution
 from .providers.contract import (
     DEFAULT_HEALTH_TIMEOUT_S, Action, InputKind, Reason, Readiness, TargetPrinter, WorkItem, WorkOutcome, resolve_work,
 )
@@ -28,11 +29,15 @@ class PrinterView:
     bed_x_mm: float
     bed_y_mm: float
     model_uuid: str | None
+    # The machine profile this printer slices with under its effective provider (services/slicer_profiles.py, BIZ-294), resolved by the
+    # caller with a session; None = no mapping for its model/variant, which makes the provider ineligible (`profile_reason` says why).
+    machine_profile: str | None = None
+    profile_reason: str | None = None
 
     @classmethod
-    def of(cls, printer: Printer) -> "PrinterView":
+    def of(cls, printer: Printer, resolution: MachineProfileResolution | None = None) -> "PrinterView":
         return cls(printer.name, printer.preferred_slicer_plugin_id, float(printer.bed_x_mm), float(printer.bed_y_mm),
-                   printer.model_uuid)
+                   printer.model_uuid, resolution.profile if resolution else None, resolution.reason if resolution else None)
 
 
 @dataclass(frozen=True)
@@ -62,7 +67,8 @@ def _input_kind(filename: str) -> InputKind:
 
 
 def target_of(printer: "Printer | PrinterView") -> TargetPrinter:
-    return TargetPrinter(bed_mm=(float(printer.bed_x_mm), float(printer.bed_y_mm), _BED_Z_MM), model_uuid=printer.model_uuid)
+    return TargetPrinter(bed_mm=(float(printer.bed_x_mm), float(printer.bed_y_mm), _BED_Z_MM), model_uuid=printer.model_uuid,
+                         machine_profile=getattr(printer, "machine_profile", None))
 
 
 def _unavailable(printer: "Printer | PrinterView", outcome: WorkOutcome, state: Readiness | None) -> SliceDecision:
@@ -76,13 +82,19 @@ def _unavailable(printer: "Printer | PrinterView", outcome: WorkOutcome, state: 
     return SliceDecision(outcome, msg, recoverable=True)
 
 
-async def resolve_slicing(printer: "Printer | PrinterView", filename: str, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_S) -> SliceDecision:
-    """Resolve the slicing provider for `filename` (an unsliced model) on `printer`. Never raises for an unusable provider."""
+async def resolve_slicing(printer: PrinterView, filename: str, *, timeout: float = DEFAULT_HEALTH_TIMEOUT_S) -> SliceDecision:
+    """Resolve the slicing provider for `filename` (an unsliced model) on `printer`. Never raises for an unusable provider.
+    An enabled provider with no machine profile mapped for the printer's model/variant is INELIGIBLE (hard block, the user maps it)."""
     preferred = printer.preferred_slicer_plugin_id or None
     default = default_provider_id()
     enabled = enabled_provider_ids()
     producers = {pid: p for pid in enabled if (p := gcode_producer_for(pid)) is not None}   # unconfigured ones are absent
     chosen = preferred or default
+
+    if chosen in enabled and printer.machine_profile is None:    # BIZ-294: no machine profile for this model/variant
+        reason = Reason.PREFERENCE_INELIGIBLE if preferred else Reason.DEFAULT_INELIGIBLE
+        return SliceDecision(WorkOutcome(Action.BLOCKED, chosen, reason),
+                             f"{printer.profile_reason or 'no machine profile for ' + printer.name} — slicing paused", recoverable=False)
 
     if chosen in enabled and chosen not in producers:    # enabled but no URL / invalid settings: down, not missing
         reason = Reason.PREFERENCE_UNAVAILABLE if preferred else Reason.DEFAULT_UNAVAILABLE

@@ -27,7 +27,7 @@ def _fake_printer_plugin():
 
 async def _post(client, **body):
     base = {"name": "Shop printer", "connection_config": {}, "orca_printer_profiles": [],
-            "current_orca_printer_profile": None}
+            "machine_profile_override": None}
     base.update(body)
     return await client.post("/api/v1/printers", json=base)
 

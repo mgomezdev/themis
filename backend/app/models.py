@@ -19,7 +19,11 @@ class Printer(Base):
     connection_config: Mapped[dict] = mapped_column(JSON)
     awaiting_plate_clear: Mapped[bool] = mapped_column(Boolean, default=False)
     orca_printer_profiles: Mapped[list] = mapped_column(JSON, default=list)
-    current_orca_printer_profile: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # Advanced per-printer escape hatch (BIZ-294): a raw slicer machine profile that wins over the model mapping, for custom presets
+    # and printers with no registered model. Normally NULL: the profile comes from `printer_model_slicer_profiles` + `nozzle_variant`.
+    machine_profile_override: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    # The physical nozzle, {"diameter_mm": 0.6, "flow": "standard"|"high_flow"}; NULL = the model's default variant (BIZ-294).
+    nozzle_variant: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     queue_on: Mapped[bool] = mapped_column(Boolean, default=True)
     loaded_filaments: Mapped[list] = mapped_column(JSON, default=list)
@@ -57,6 +61,27 @@ class PrinterModelRecord(Base):
     toolheads: Mapped[int] = mapped_column(Integer, default=1)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     declared: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PrinterModelSlicerProfile(Base):
+    """Which slicer machine profile a printer model uses, per slicing provider and nozzle variant (BIZ-294). Set once per model, not
+    per printer: ten identical printers need zero per-printer entry; only a physical difference (nozzle diameter / high-flow) picks
+    another row via `printers.nozzle_variant`. Keyed per provider because profile names are provider-specific. Exactly one
+    `is_default` row per (model, provider) (partial unique index). `provider_plugin_id` is not a FK: a plugin may go dormant."""
+    __tablename__ = "printer_model_slicer_profiles"
+    __table_args__ = (
+        UniqueConstraint("model_uuid", "provider_plugin_id", "nozzle_diameter_mm", "flow"),
+        Index("ux_printer_model_slicer_profiles_default", "model_uuid", "provider_plugin_id", unique=True,
+              sqlite_where=text("is_default = 1")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
+    provider_plugin_id: Mapped[str] = mapped_column(String(64))
+    nozzle_diameter_mm: Mapped[float] = mapped_column(Float)
+    flow: Mapped[str] = mapped_column(String(16), default="standard")   # standard | high_flow
+    machine_profile: Mapped[str] = mapped_column(String(255))
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class FileMachineEligibility(Base):
@@ -265,14 +290,14 @@ class JobPrinterConfig(Base):
 
 
 class JobModelTarget(Base):
-    """A job eligible on *any* printer whose `current_orca_printer_profile` equals `machine_profile`. The queue
+    """A job eligible on *any* printer of the model `model_uuid` (BIZ-294; was keyed by the printers' machine profile). The queue
     engine materializes it into per-printer `JobPrinterConfig` rows (services/model_targets.py), so everything
     downstream keeps looking configs up by (job, printer). Slot-specific asks (tool_index) don't apply here."""
     __tablename__ = "job_model_targets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
-    machine_profile: Mapped[str] = mapped_column(String(255), index=True)
+    model_uuid: Mapped[str] = mapped_column(ForeignKey("printer_models.id"), index=True)
     print_profile: Mapped[str] = mapped_column(String(512))
     filament_profile: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(nullable=True)

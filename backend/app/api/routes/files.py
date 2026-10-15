@@ -25,7 +25,7 @@ from ...models import UploadedFile, Tag, FileTag, Job, Printer, ProjectItem, Sli
 from ...services.library_scanner import (
     LibraryScanner, file_kind, folder_of, is_presliced_name, ACTIVE_JOB_STATUSES, MODEL_EXTS,
 )
-from ...services import gcode_eligibility, model_targets, slice_cache
+from ...services import gcode_eligibility, model_targets, slice_cache, slicer_profiles
 from ...services.artifact_store import (
     ArtifactError, ArtifactExists, ArtifactNotFound, ArtifactStore, InvalidArtifactKey, PART_SUFFIX, validate_key,
 )
@@ -710,6 +710,7 @@ async def list_sliced_versions(
         q = q.where(SlicedVersion.plate_number == plate)
     rows = (await session.execute(q)).all()
     printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
+    profiles = await slicer_profiles.resolve_many(session, list(printers))
     slicing = get_slicing_provider()
     fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
     results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), slicing)
@@ -729,7 +730,7 @@ async def list_sliced_versions(
             "created_at": v.created_at,
             "source_changed": bool(model.content_hash) and model.content_hash != v.source_content_hash,
             "stale": stale, "stale_reasons": reasons,
-            "printable_now": any(p.current_orca_printer_profile == v.machine_preset
+            "printable_now": any(profiles[p.id].profile == v.machine_preset
                                  and model_targets.accepts_file(p.printer_type, f.original_filename)
                                  for p in printers),
         })

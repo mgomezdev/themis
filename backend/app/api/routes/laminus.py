@@ -5,12 +5,14 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
 from ...services import catalog_service
 from ...services.catalog_service import CatalogUnavailable
+from ...services.catalog_utils import MODEL_PROFILE_FIELD
 from ...plugins.capabilities.filament_inventory import PROFILE_LINKS_READ, PROFILE_LINKS_WRITE
 from ...services.inventory import provider as inventory_provider
 from ...services.providers.slicing import Catalog
@@ -173,17 +175,23 @@ async def confirm_remap(
         raise HTTPException(422, {"detail": "Unresolved required remaps", "unresolved": unresolved})
 
     # Apply Printer updates
-    from ...models import JobModelTarget, Printer as PrinterModel, JobPrinterConfig as JPC
+    from ...models import JobModelTarget, Printer as PrinterModel, JobPrinterConfig as JPC, PrinterModelSlicerProfile
     applied_printers = 0
     for entry in pending.get("printers", []):
         key = (entry["field"], entry["stale_value"])
         new_val = printer_res_map.get(key)
+        if entry["field"] == MODEL_PROFILE_FIELD and new_val:
+            for row in (await session.execute(select(PrinterModelSlicerProfile).where(
+                    PrinterModelSlicerProfile.machine_profile == entry["stale_value"]))).scalars():
+                row.machine_profile = new_val
         for printer_id, slot in zip(entry["affected_printer_ids"], entry["affected_slots"]):
             printer = await session.get(PrinterModel, printer_id)
             if printer is None:
                 continue
-            if slot is None:
-                printer.current_orca_printer_profile = new_val
+            if slot is None and entry["field"] == MODEL_PROFILE_FIELD:
+                applied_printers += 1          # the mapping rows are rewritten once per entry, below
+            elif slot is None:
+                printer.machine_profile_override = new_val
                 applied_printers += 1
             else:
                 loaded = list(printer.loaded_filaments or [])

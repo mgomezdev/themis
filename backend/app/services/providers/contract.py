@@ -127,6 +127,9 @@ class TargetPrinter:
     bed_mm: tuple[float, float, float]
     model_uuid: str | None = None
     toolheads: int = 1
+    # The provider's machine profile for this printer, resolved by Themis from the model mapping + nozzle variant (BIZ-294). None for
+    # printer-less work or an unmapped model/variant (which makes the provider ineligible before produce() is reached).
+    machine_profile: str | None = None
 
 
 @dataclass(frozen=True)

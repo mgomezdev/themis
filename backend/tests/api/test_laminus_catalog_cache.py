@@ -215,7 +215,7 @@ async def test_rescan_keeps_polling_through_health_errors(rescan):
 async def test_rescan_reports_pending_remaps_instead_of_swapping_a_catalog_that_drops_used_presets(rescan, sidecar, create_printer):
     prime_catalog({"machine": [{"name": "Old Machine", "uuid": "m0"}], "process": [], "filament": []})
     catalog_service._catalog_bytes = b"old"
-    await create_printer(current_orca_printer_profile="Old Machine")
+    await create_printer(machine_profile_override="Old Machine")
     sidecar.catalog = catalog_from_dict(CATALOG)  # the rebuilt catalog no longer has "Old Machine"
 
     resp, _ = await rescan(health=[_health()])

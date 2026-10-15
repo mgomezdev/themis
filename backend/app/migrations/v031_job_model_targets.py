@@ -21,8 +21,10 @@ async def up(conn) -> None:
         )
     """))
     await conn.execute(text("CREATE INDEX IF NOT EXISTS ix_job_model_targets_job_id ON job_model_targets (job_id)"))
-    await conn.execute(text(
-        "CREATE INDEX IF NOT EXISTS ix_job_model_targets_machine_profile ON job_model_targets (machine_profile)"))
+    target_cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(job_model_targets)"))).fetchall()}
+    if "machine_profile" in target_cols:     # a v001 create_all of the current models (v052+) already keys targets by model_uuid
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_model_targets_machine_profile ON job_model_targets (machine_profile)"))
     cols = {row[1] for row in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
     if "model_target_id" not in cols:
         await conn.execute(text(

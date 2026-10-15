@@ -51,7 +51,7 @@ def test_item_applies_to_printer_model_scoped_matches_exactly():
 async def test_compute_due_status_job_count_trigger(db):
     async with db() as session:
         printer = Printer(name="P1", printer_type="elegoo_centauri", connection_config={},
-                           current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
+                           machine_profile_override="Elegoo Centauri Carbon 0.4 nozzle",
                            lifetime_job_count=12, lifetime_print_seconds=0)
         session.add(printer)
         item = MaintenanceItem(name="Wash plate", scope="general",
@@ -76,7 +76,7 @@ async def test_compute_due_status_job_count_trigger(db):
 async def test_compute_due_status_model_scoped_item_excludes_non_matching_printer(db):
     async with db() as session:
         printer = Printer(name="P1", printer_type="elegoo_centauri", connection_config={},
-                           current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle")
+                           machine_profile_override="Elegoo Centauri Carbon 0.4 nozzle")
         session.add(printer)
         item = MaintenanceItem(name="AMS desiccant", scope="model",
                                 machine_vendor="Bambu Lab", machine_model="X1 Carbon",
@@ -211,7 +211,7 @@ async def test_mark_done_resets_every_trigger_baseline_not_just_the_one_that_fir
 
     async with db() as session:
         printer = Printer(name="P1", printer_type="elegoo_centauri", connection_config={},
-                           current_orca_printer_profile="Elegoo Centauri Carbon 0.4 nozzle",
+                           machine_profile_override="Elegoo Centauri Carbon 0.4 nozzle",
                            lifetime_job_count=10, lifetime_print_seconds=0)
         session.add(printer)
         item = MaintenanceItem(name="Multi-trigger item", scope="general",
@@ -266,3 +266,32 @@ async def test_mark_done_resets_every_trigger_baseline_not_just_the_one_that_fir
         item = await session.get(MaintenanceItem, item_id)
         rows = await ms.compute_due_status(session, [printer], [item], {item_id: triggers}, CATALOG)
     assert rows[0]["due"] is False  # 12 - baseline(10) = 2 < 5 -> confirms baseline_job_count was reset
+
+
+async def test_a_model_scoped_item_applies_to_a_printer_whose_model_maps_to_the_catalog_machine(db):
+    """BIZ-294: the printer has no profile of its own; its MODEL's mapping (for its variant) says which vendor/model it is."""
+    from unittest.mock import patch
+    from app.models import PrinterModelRecord, PrinterModelSlicerProfile
+    async with db() as session:
+        session.add(PrinterModelRecord(id="m-x1c", plugin_id="bambu", manufacturer_id="bambu", model_id="x1c", display_name="X1C"))
+        await session.flush()
+        session.add(PrinterModelSlicerProfile(model_uuid="m-x1c", provider_plugin_id="laminus", nozzle_diameter_mm=0.4, flow="standard",
+                                              machine_profile="Bambu Lab X1 Carbon 0.4 nozzle", is_default=True))
+        printer = Printer(name="P1", printer_type="bambu", connection_config={}, model_uuid="m-x1c")
+        other = Printer(name="P2", printer_type="bambu", connection_config={}, model_uuid=None)
+        item = MaintenanceItem(name="Carbon rods", scope="model", machine_vendor="Bambu Lab", machine_model="X1 Carbon",
+                               created_at="2026-01-01T00:00:00", updated_at="2026-01-01T00:00:00")
+        session.add_all([printer, other, item])
+        await session.flush()
+        trigger = MaintenanceTrigger(maintenance_item_id=item.id, trigger_type="job_count", amount=1, unit=None)
+        session.add(trigger)
+        await session.commit()
+        ids = (printer.id, other.id, item.id)
+
+    async with db() as session:
+        printers = [await session.get(Printer, ids[0]), await session.get(Printer, ids[1])]
+        item = await session.get(MaintenanceItem, ids[2])
+        with patch("app.services.slicer_profiles.effective_provider_id", lambda preferred: preferred or "laminus"):
+            rows = await ms.compute_due_status(session, printers, [item], {ids[2]: [trigger]}, CATALOG)
+
+    assert [r["printer_id"] for r in rows] == [ids[0]]

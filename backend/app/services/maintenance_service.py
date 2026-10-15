@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from . import slicer_profiles
 from ..models import MaintenanceItem, MaintenanceTrigger, Printer, PrinterMaintenanceState
 
 _CALENDAR_DAYS = {"hours": 1 / 24, "days": 1.0, "weeks": 7.0, "months": 30.0}
@@ -15,7 +16,7 @@ def _now() -> str:
 
 
 def resolve_vendor_model(profile_name: str | None, catalog: list[dict]) -> tuple[str, str] | None:
-    """Match a printer's current_orca_printer_profile against the machine catalog
+    """Match a printer's resolved machine profile (model mapping or override, BIZ-294) against the machine catalog
     (GET /printers/orca-machine-catalog shape: {name, vendor, printer_model, nozzle})
     to get (vendor, printer_model). Returns None if unset or not found."""
     if not profile_name:
@@ -95,8 +96,9 @@ async def compute_due_status(
     not have unrelated uncommitted changes pending on the same session.
     """
     rows: list[dict] = []
+    profiles = await slicer_profiles.resolve_many(session, list(printers))
     for printer in printers:
-        resolved = resolve_vendor_model(printer.current_orca_printer_profile, catalog)
+        resolved = resolve_vendor_model(profiles[printer.id].profile, catalog)
         for item in items:
             if not item.enabled or not item_applies_to_printer(item, resolved):
                 continue

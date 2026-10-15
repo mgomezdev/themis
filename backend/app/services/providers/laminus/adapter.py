@@ -9,6 +9,8 @@ from .sidecar_client import (
 )
 from ..slicing import (
     Catalog,
+    MachineCandidate,
+    NozzleVariantOption,
     Preset,
     SliceSpec,
     SlicingProvider,
@@ -40,6 +42,7 @@ class LaminusSlicingProvider(SlicingProvider):
     PACK_MODELS = True
     PREPARED_PROJECT = True
     TOOL_MAPPING = True
+    SUGGEST_PROFILES = True
 
     def __init__(self, url: str, *, request_timeout_s: float = DEFAULT_REQUEST_TIMEOUT_S,
                  poll_timeout_s: float = DEFAULT_POLL_TIMEOUT_S) -> None:
@@ -88,6 +91,26 @@ class LaminusSlicingProvider(SlicingProvider):
             return catalog_from_legacy(self._client().get_catalog())
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
+
+    def suggest_machines(self, manufacturer: str, model: str, model_key: str | None = None) -> list[MachineCandidate]:
+        try:
+            raw = self._client(15).suggest_machines(manufacturer, model, model_key)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+        return [MachineCandidate(name=c.get("name") or "", nozzle_diameter_mm=c.get("nozzle_diameter_mm"),
+                                 flow=c.get("flow") or "standard", ref=c.get("ref") or "",
+                                 confidence=float(c.get("confidence") or 0.0), match_reason=c.get("match_reason") or "")
+                for c in raw if c.get("name")]
+
+    def nozzle_variants(self, manufacturer: str, model: str, model_key: str | None = None) -> list[NozzleVariantOption]:
+        try:
+            raw = self._client(15).model_variants(manufacturer, model, model_key)
+        except SidecarError as e:
+            raise SlicingProviderError(str(e)) from e
+        return [NozzleVariantOption(name=v.get("name") or "", nozzle_diameter_mm=v.get("nozzle_diameter_mm"),
+                                    flow=v.get("flow") or "standard", ref=v.get("ref") or "",
+                                    is_default_guess=bool(v.get("is_default_guess")))
+                for v in raw if v.get("name")]
 
     def merged_config(
         self, machine_ref: str, process_ref: str, filament_refs: list[str], timeout: float | None = None,

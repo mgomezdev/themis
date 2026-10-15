@@ -168,49 +168,45 @@ async def test_editing_a_job_onto_an_incompatible_printer_is_refused_and_keeps_t
     assert [c["printer_id"] for c in (await client.get(f"/api/v1/jobs/{job['id']}/details")).json()["printer_configs"]] == [good]
 
 
-async def test_a_make_model_target_only_materialises_onto_eligible_printers(client, session_factory):
+async def test_a_model_target_materialises_onto_every_printer_of_that_model_and_no_other(client, session_factory):
     models = await model_ids(client)
-    x1 = await printer_on(client, models, "x1")
-    x2 = await printer_on(client, models, "x2")
-    for pid in (x1, x2):
-        await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Shared 0.4"})
-    f = await upload(client, "ok.gcode", [models["x1"]])
+    a, b = await printer_on(client, models, "x1"), await printer_on(client, models, "x1")
+    other = await printer_on(client, models, "x2")
+    f = await upload(client, "ok.gcode", [models["x1"], models["x2"]])
 
     with patch("app.api.routes.jobs.queue_engine"):
-        r = await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"machine_profile": "Shared 0.4"}]})
+        r = await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"model_uuid": models["x1"]}]})
 
     assert r.status_code == 201, r.text
-    assert [c["printer_id"] for c in (await client.get(f"/api/v1/jobs/{r.json()['id']}/details")).json()["printer_configs"]] == [x1]
+    got = [c["printer_id"] for c in (await client.get(f"/api/v1/jobs/{r.json()['id']}/details")).json()["printer_configs"]]
+    assert sorted(got) == sorted([a, b]) and other not in got
 
 
-async def test_a_make_model_target_nobody_eligible_can_take_is_refused(client):
+async def test_a_model_target_nobody_eligible_can_take_is_refused(client):
     models = await model_ids(client)
-    pid = await printer_on(client, models, "x2")
-    await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Shared 0.4"})
+    await printer_on(client, models, "x2")
     f = await upload(client, "ok.gcode", [models["x1"]])
 
     with patch("app.api.routes.jobs.queue_engine"):
-        r = await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"machine_profile": "Shared 0.4"}]})
+        r = await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"model_uuid": models["x2"]}]})
 
-    assert r.status_code == 422 and "No Shared 0.4 printer can take this file" in r.json()["detail"]
+    assert r.status_code == 422 and "printer can take this file" in r.json()["detail"]
 
 
-async def test_a_printer_that_later_joins_a_machine_preset_does_not_inherit_waiting_jobs_for_files_it_cannot_take(client, session_factory):
-    """Target sync (printer re-profiled / added after the job): the eligibility gate keeps an incompatible printer off the job."""
+async def test_a_printer_of_a_targeted_model_added_later_only_gets_the_job_if_the_file_fits_it(client, session_factory):
+    """Target sync (printer added after the job): the eligibility gate keeps an incompatible printer off the job."""
     from sqlalchemy import select
-    from app.models import JobPrinterConfig
+    from app.models import JobPrinterConfig, Printer
     from app.services import model_targets
 
     models = await model_ids(client)
     good = await printer_on(client, models, "x1")
-    await client.patch(f"/api/v1/printers/{good}", json={"current_orca_printer_profile": "Shared 0.4"})
     f = await upload(client, "ok.gcode", [models["x1"]])
     with patch("app.api.routes.jobs.queue_engine"):
-        job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [{"machine_profile": "Shared 0.4"}]})).json()
-    bad = await printer_on(client, models, "x2")                      # a new printer, then moved onto the preset
-    await client.patch(f"/api/v1/printers/{bad}", json={"current_orca_printer_profile": "Shared 0.4"})
+        job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": f["id"], "model_targets": [
+            {"model_uuid": models["x1"]}, {"model_uuid": models["x2"]}]})).json()      # no x2 printer yet: nothing to refuse
+    bad = await printer_on(client, models, "x2")
     async with session_factory() as s:
-        from app.models import Printer
         await model_targets.sync_targets_for_printer(s, await s.get(Printer, bad))
         await s.commit()
         printers = (await s.execute(select(JobPrinterConfig.printer_id).where(JobPrinterConfig.job_id == job["id"]))).scalars().all()

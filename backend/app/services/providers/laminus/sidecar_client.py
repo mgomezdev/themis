@@ -203,6 +203,27 @@ class LaminusSidecarClient:
             raise SidecarError(f"profiles returned {r.status_code}: {r.text[:200]}")
         return r.json()
 
+    def _post_json(self, path: str, payload: dict, what: str, timeout: float = 15) -> dict:
+        try:
+            r = self._client.post(path, json=payload, timeout=timeout)
+        except httpx.HTTPError as e:
+            raise SidecarError(f"{what} request failed: {e}") from e
+        if r.status_code != 200:
+            raise SidecarError(f"{what} returned {r.status_code}: {r.text[:200]}")
+        return r.json()
+
+    def suggest_machines(self, manufacturer: str, model: str, model_key: str | None = None) -> list[dict]:
+        """POST /api/profiles/machines/suggest -> candidates, best first (empty list when nothing matches)."""
+        body = self._post_json("/api/profiles/machines/suggest",
+                               {"manufacturer": manufacturer, "model": model, "model_key": model_key}, "profiles/machines/suggest")
+        return list(body.get("candidates") or [])
+
+    def model_variants(self, manufacturer: str, model: str, model_key: str | None = None) -> list[dict]:
+        """POST /api/profiles/models/variants -> the model's nozzle variants (empty list for an unknown model)."""
+        body = self._post_json("/api/profiles/models/variants",
+                               {"manufacturer": manufacturer, "model": model, "model_key": model_key}, "profiles/models/variants")
+        return list(body.get("variants") or [])
+
     def get_merged_config(
         self,
         machine_uuid: str,

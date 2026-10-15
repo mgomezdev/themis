@@ -233,7 +233,7 @@ async def test_generate_multi_plate_uses_id_range_subfolder(client, tmp_path):
 
 async def test_generate_printer_configs_use_process_preset_not_machine_preset(client, tmp_path, create_printer):
     """JobPrinterConfig.print_profile must be the user-supplied process_preset —
-    never current_orca_printer_profile (a machine preset, wrong namespace entirely)."""
+    never machine_profile_override (a machine preset, wrong namespace entirely)."""
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
     printer_id = await create_printer()
 
@@ -392,7 +392,7 @@ async def test_project_estimate_remaining_excludes_terminal_jobs(client, tmp_pat
         "name": "P1S", "printer_type": "bambu",
         "connection_config": {},
         "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-        "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+        "machine_profile_override": "Bambu Lab P1S 0.4",
     })
     printer_id = printer_resp.json()["id"]
 
@@ -514,15 +514,16 @@ async def test_delete_part(client):
     assert detail["parts"] == []
 
 
-async def test_generate_with_machine_profile_creates_model_targets_and_configs(
-        client, tmp_path, create_printer, session_factory):
-    """eligible_machine_profiles -> a model target per job, materialized onto matching printers only."""
+async def test_generate_with_model_uuids_creates_model_targets_and_configs(
+        client, tmp_path, create_printer, model_uuid_of, session_factory):
+    """eligible_model_uuids -> a model target per job, materialized onto printers of that model only."""
     from sqlalchemy import select
     from app.models import JobModelTarget, JobPrinterConfig
 
     project_id, _ = await _setup_project_with_stl(client, tmp_path)
-    p1s = await create_printer(name="A")  # default preset: Bambu Lab P1S 0.4
-    await create_printer(name="B", current_orca_printer_profile="Other 0.4", orca_printer_profiles=["Other 0.4"])
+    p1s = await create_printer(name="A")  # a Bambu P1S
+    await create_printer(name="B", printer_type="elegoo_centauri")
+    model = await model_uuid_of(p1s)
     lib = tmp_path / "library"
     with (
         patch("app.config.get_library_dir", return_value=lib),
@@ -532,14 +533,14 @@ async def test_generate_with_machine_profile_creates_model_targets_and_configs(
         mock_get.return_value = fake_packer(_make_3mf_bytes(plate_count=1))
         resp = await client.post(
             f"/api/v1/projects/{project_id}/generate",
-            json={"eligible_machine_profiles": ["Bambu Lab P1S 0.4"], "process_preset": "0.20mm"},
+            json={"eligible_model_uuids": [model], "process_preset": "0.20mm"},
         )
 
     assert resp.status_code == 200, resp.text
     job_id = resp.json()["jobs"][0]["id"]
     async with session_factory() as s:
         targets = (await s.execute(select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars().all()
-        assert [(t.machine_profile, t.print_profile) for t in targets] == [("Bambu Lab P1S 0.4", "0.20mm")]
+        assert [(t.model_uuid, t.print_profile) for t in targets] == [(model, "0.20mm")]
         cfgs = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars().all()
         assert [c.printer_id for c in cfgs] == [p1s]
 
