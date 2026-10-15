@@ -11,7 +11,7 @@ No mapping for the printer's variant means the provider is ineligible for that p
 Pure helpers + small async loaders; nothing here names a slicer or a vendor. Profile NAMES are provider-specific, hence the per-provider key."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable
 
 from sqlalchemy import select
@@ -62,6 +62,7 @@ class MachineProfileResolution:
     reason: str | None = None
     provider_id: str | None = None
     from_override: bool = False
+    model_label: str | None = None      # "<manufacturer> <model>" of the printer's registry model, for pickers ("Any Bambu Lab P1S")
 
 
 def _no_profile(model_name: str | None, variant: NozzleVariant | None, provider_id: str | None) -> MachineProfileResolution:
@@ -74,9 +75,13 @@ def _no_profile(model_name: str | None, variant: NozzleVariant | None, provider_
 
 def resolve_from_rows(
     *, override: str | None, model_uuid: str | None, model_name: str | None, nozzle_variant: object,
-    provider_id: str | None, rows: Iterable[PrinterModelSlicerProfile],
+    provider_id: str | None, rows: Iterable[PrinterModelSlicerProfile], model_label: str | None = None,
 ) -> MachineProfileResolution:
     """The pure resolver: `rows` are the mapping rows of this printer's model (any provider)."""
+    return replace(_resolve(override, model_uuid, model_name, nozzle_variant, provider_id, rows), model_label=model_label)
+
+
+def _resolve(override, model_uuid, model_name, nozzle_variant, provider_id, rows) -> MachineProfileResolution:
     if override:
         return MachineProfileResolution(override, None, provider_id, from_override=True)
     variant = NozzleVariant.parse(nozzle_variant)
@@ -90,6 +95,10 @@ def resolve_from_rows(
     if row is None:
         return _no_profile(model_name, variant, provider_id)
     return MachineProfileResolution(row.machine_profile, None, provider_id)
+
+
+def _label(rec: PrinterModelRecord) -> str:
+    return f"{rec.manufacturer_name} {rec.display_name or rec.model_id}".strip()
 
 
 async def model_display_name(session: AsyncSession, model_uuid: str | None) -> str | None:
@@ -111,12 +120,12 @@ async def resolve_for_printer(session: AsyncSession, printer: Printer, provider_
     `gcode.produce` plugin, else the capability default)."""
     if provider_id is ...:
         provider_id = effective_provider_id(printer.preferred_slicer_plugin_id)
-    if printer.machine_profile_override:
-        return MachineProfileResolution(printer.machine_profile_override, None, provider_id, from_override=True)
     rows = await mapping_rows(session, printer.model_uuid) if printer.model_uuid else []
-    name = await model_display_name(session, printer.model_uuid)
-    return resolve_from_rows(override=None, model_uuid=printer.model_uuid, model_name=name, nozzle_variant=printer.nozzle_variant,
-                             provider_id=provider_id, rows=rows)
+    rec = await session.get(PrinterModelRecord, printer.model_uuid) if printer.model_uuid else None
+    return resolve_from_rows(override=printer.machine_profile_override, model_uuid=printer.model_uuid,
+                             model_name=(rec.display_name or rec.model_id) if rec else printer.model_uuid,
+                             nozzle_variant=printer.nozzle_variant, provider_id=provider_id, rows=rows,
+                             model_label=_label(rec) if rec else None)
 
 
 async def machine_profile_for(session: AsyncSession, printer: Printer | None) -> str | None:
@@ -128,14 +137,16 @@ async def resolve_many(session: AsyncSession, printers: list[Printer]) -> dict[i
     """Resolution for many printers with two queries (list routes are polled; never per-printer)."""
     uuids = {p.model_uuid for p in printers if p.model_uuid}
     rows = [r for r in await mapping_rows(session) if r.model_uuid in uuids] if uuids else []
-    names = {}
+    recs = {}
     if uuids:
-        for rec in (await session.execute(select(PrinterModelRecord).where(PrinterModelRecord.id.in_(uuids)))).scalars():
-            names[rec.id] = rec.display_name or rec.model_id
+        recs = {rec.id: rec for rec in (await session.execute(
+            select(PrinterModelRecord).where(PrinterModelRecord.id.in_(uuids)))).scalars()}
     return {p.id: resolve_from_rows(override=p.machine_profile_override, model_uuid=p.model_uuid,
-                                    model_name=names.get(p.model_uuid) if p.model_uuid else None,
+                                    model_name=(recs[p.model_uuid].display_name or recs[p.model_uuid].model_id) if p.model_uuid in recs
+                                    else p.model_uuid,
                                     nozzle_variant=p.nozzle_variant,
-                                    provider_id=effective_provider_id(p.preferred_slicer_plugin_id), rows=rows)
+                                    provider_id=effective_provider_id(p.preferred_slicer_plugin_id), rows=rows,
+                                    model_label=_label(recs[p.model_uuid]) if p.model_uuid in recs else None)
             for p in printers}
 
 

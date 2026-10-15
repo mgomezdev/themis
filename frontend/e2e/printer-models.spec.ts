@@ -53,3 +53,37 @@ test('disabling a model in the registry removes it from the add-printer model pi
   const options = await page.getByLabel('Model').locator('option').allTextContents();
   expect(options).toEqual(['X1']);
 });
+
+test('a model without a slicer profile is flagged and its profile is confirmed once from the provider\'s suggestion', async ({ page }) => {
+  const plugins = { plugins: [{ id: 'laminus', name: 'Laminus', enabled: true, provides: [{ capability: 'gcode.produce' }] }], selections: {} };
+  await mockApi(page, { printers: [], plugins });
+  await fakeRegistry(page);
+  const rows: any[] = [];
+  const posts: any[] = [];
+  const json = (body: unknown, status = 200) => ({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  await page.route('**/api/v1/printer-models/*/slicer-profiles**', async route => {
+    const req = route.request();
+    if (req.url().includes('/suggestions')) {
+      return route.fulfill(json({ provider_plugin_id: 'laminus', available: true, error: null, variants: [], candidates: [
+        { name: 'Acme X1 0.4 nozzle', nozzle_diameter_mm: 0.4, flow: 'standard', ref: 'machine:acme-x1-0.4-nozzle', confidence: 0.97, match_reason: 'exact_model' }] }));
+    }
+    if (req.method() === 'POST') {
+      const body = req.postDataJSON();
+      posts.push(body);
+      const row = { id: rows.length + 1, model_uuid: 'uuid-x1', provider_plugin_id: body.provider_plugin_id, nozzle_diameter_mm: body.nozzle_diameter_mm,
+                    flow: body.flow, machine_profile: body.machine_profile, is_default: body.is_default };
+      rows.push(row);
+      return route.fulfill(json(row, 201));
+    }
+    return route.fulfill(json(rows));
+  });
+  await page.goto('/settings/printer-models');
+
+  await expect(page.getByText('no slicer profile').first()).toBeVisible();
+  await page.getByRole('button', { name: 'Slicer profile' }).first().click();
+  await page.getByRole('radio', { name: /Acme X1 0\.4 nozzle/ }).check();
+  await page.getByRole('button', { name: 'Confirm profile' }).click();
+
+  await expect(page.getByTestId('msp-row-1')).toBeVisible();
+  expect(posts).toEqual([{ provider_plugin_id: 'laminus', nozzle_diameter_mm: 0.4, flow: 'standard', machine_profile: 'Acme X1 0.4 nozzle', is_default: true }]);
+});

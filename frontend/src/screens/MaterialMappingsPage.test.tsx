@@ -12,10 +12,10 @@ const FILAMENTS = [
   mkMaterial({ ref: '3', name: 'Silk Gold', material: 'PLA', profile_links: { 'Retired Machine': ['Old Silk'] } }),
 ];
 const PRINTERS = [
-  { id: 10, name: 'Forge', current_orca_printer_profile: 'Machine A' },
-  { id: 11, name: 'Anvil', current_orca_printer_profile: 'Machine A' },   // same preset: one field, one profiles fetch
-  { id: 12, name: 'Kiln', current_orca_printer_profile: 'Machine B' },
-  { id: 13, name: 'No preset', current_orca_printer_profile: null },
+  { id: 10, name: 'Forge', machine_profile: 'Machine A' },
+  { id: 11, name: 'Anvil', machine_profile: 'Machine A' },   // same preset: one field, one profiles fetch
+  { id: 12, name: 'Kiln', machine_profile: 'Machine B' },
+  { id: 13, name: 'No preset', machine_profile: null },
 ];
 
 function routes(over: Record<string, unknown> = {}) {
@@ -45,10 +45,10 @@ describe('MaterialMappingsPage', () => {
   });
 
   it('explains what is missing when no printer has an Orca machine preset', async () => {
-    stubFetch(routes({ 'GET /api/v1/printers': [{ id: 13, name: 'No preset', current_orca_printer_profile: null }] }));
+    stubFetch(routes({ 'GET /api/v1/printers': [{ id: 13, name: 'No preset', machine_profile: null }] }));
     render(<MaterialMappingsPage />);
 
-    expect(await screen.findByText(/No printers with an OrcaSlicer machine preset configured/)).toBeTruthy();
+    expect(await screen.findByText(/No printer has a slicer machine profile yet/)).toBeTruthy();
   });
 
   it('shows the load error instead of an empty page', async () => {

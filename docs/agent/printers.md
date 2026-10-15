@@ -100,6 +100,19 @@ Normalized keys: `state, current_print, progress, remaining_time, layer_num, tot
 temperatures, fan_model/aux/box, speed_factor, klippy_state, cover_url`. `loaded_filaments`/`awaiting_plate_clear`/`queue_on`/`enabled`
 come from the DB row in `fleet.py`, not the serializer.
 
+## Slicer machine profile per model (BIZ-294)
+
+A printer has no machine profile of its own. `services/slicer_profiles.py` resolves it: `Printer.machine_profile_override` (advanced raw override) → else the
+`printer_model_slicer_profiles` row of the printer's model for the provider that slices it (preferred slicer, else the default) and its `nozzle_variant`
+(NULL = the model's default row). `PrinterView.machine_profile` / `profile_reason` carry the result into `slice_resolution.resolve_slicing`: an enabled provider
+with no profile for the model/variant is **ineligible** (`preference_ineligible` / `default_ineligible`, a hard, non-recoverable block whose message is
+`no machine profile for <model> <variant> — slicing paused`) — checked before readiness, never a silent fallback to another provider. The queue engine slices
+with the resolved name (`_slice_params`, estimates, cached-version checks, manual slices), and `TargetPrinter.machine_profile` hands it to the neutral
+`GcodeProducer` contract. Model targets ("any printer of this model") match on `printers.model_uuid`; nozzle differences never split a model. UI: Settings →
+Printer models sets the profile once (provider suggestions via `SlicingProvider.suggest_machines` / `nozzle_variants`, an optional capability — Laminus implements
+it against its profiles API; manual pick always works), the add-printer wizard asks only when the model has none, and Edit printer has a *Nozzle* dropdown
+listing just the variants the model maps.
+
 ## Slicing pipeline (`SlicerService` → Laminus sidecar)
 
 **As of the 2026-06-23 Orca-sidecar migration, Themis does not invoke OrcaSlicer locally for

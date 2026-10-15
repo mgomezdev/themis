@@ -167,6 +167,8 @@ async def test_a_printer_resolves_its_profile_from_the_model_default_and_a_varia
     await add(client, model, P1S_06, d=0.6)
     with laminus_default():
         assert (await client.get(f"/api/v1/printers/{pid}")).json()["machine_profile"] == P1S_04
+        assert (await client.get(f"/api/v1/printers/{pid}")).json()["model_label"] == "Bambu Lab P1S"
+        assert [p["model_label"] for p in (await client.get("/api/v1/printers")).json()] == ["Bambu Lab P1S"]
         r = await client.patch(f"/api/v1/printers/{pid}", json={"nozzle_variant": {"diameter_mm": 0.6, "flow": "standard"}})
         assert r.status_code == 200 and r.json()["machine_profile"] == P1S_06
         assert [p["machine_profile"] for p in (await client.get("/api/v1/printers")).json()] == [P1S_06]
@@ -297,3 +299,13 @@ async def test_an_empty_suggestion_list_is_available_not_an_error(client, p1s, s
     with real_laminus_provider():
         body = (await client.get(url(model, "suggestions"), params={"provider_plugin_id": "laminus"})).json()
     assert body["available"] is True and body["candidates"] == [] and body["variants"] == []
+
+
+async def test_the_model_registry_listing_says_how_many_profiles_each_model_has_mapped(client, p1s):
+    _, model = p1s
+    def count(rows):
+        return {m["id"]: m["slicer_profile_count"] for m in rows}[model]
+    assert count((await client.get("/api/v1/printer-models")).json()) == 0
+    await add(client, model)
+    await add(client, model, P1S_06, d=0.6)
+    assert count((await client.get("/api/v1/printer-models")).json()) == 2

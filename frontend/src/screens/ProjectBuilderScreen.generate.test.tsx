@@ -11,7 +11,7 @@ const FILES = [
 ];
 const printer = (id: number, name: string, extra: object = {}) => ({
   id, name, printer_type: 'bambu_x1c', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [],
-  current_orca_printer_profile: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [],
+  machine_profile_override: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [],
   build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256, ...extra,
 });
 const PRINTERS = [printer(1, 'Printer A'), printer(2, 'Printer B'), printer(3, 'Retired', { enabled: false })];

@@ -33,7 +33,7 @@ function stubFetch() {
     }
     if (url === '/api/v1/printers') {
       return new Response(JSON.stringify([
-        { id: 1, name: 'P1', current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+        { id: 1, name: 'P1', machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
       ]), { status: 200 });
     }
     // Other settings sub-pages' unrelated calls (spoolman config, queue config, etc.)

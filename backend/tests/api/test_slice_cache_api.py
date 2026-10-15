@@ -316,6 +316,7 @@ async def test_sliced_versions_lists_a_models_versions_with_their_flags(
         "printable_now": True}
     assert (by["stale.gcode.3mf"]["stale"], by["stale.gcode.3mf"]["stale_reasons"]) == (True, ["presets_changed"])
     assert by["plate2.gcode.3mf"]["printable_now"] is False   # no "Other Printer" in the fleet
+    assert by["fresh.gcode.3mf"]["model_uuids"] == []         # no model maps that machine profile
     assert [v["name"] for v in (await client.get(f"/api/v1/files/{model}/sliced-versions?plate=2")).json()] == [
         "plate2.gcode.3mf"]
 
@@ -334,6 +335,7 @@ async def test_a_version_is_printable_now_on_a_printer_whose_model_maps_to_its_m
         by = {v["name"]: v for v in (await client.get(f"/api/v1/files/{model}/sliced-versions")).json()}
 
     assert (by["mapped.gcode.3mf"]["printable_now"], by["unmapped.gcode.3mf"]["printable_now"]) == (True, False)
+    assert by["mapped.gcode.3mf"]["model_uuids"] == [await model_uuid_of(pid)] and by["unmapped.gcode.3mf"]["model_uuids"] == []
 
 
 def make_3mf_bytes_variant() -> bytes:

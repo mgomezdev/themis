@@ -25,7 +25,7 @@ const FLEET_PRINTER: FleetPrinter = {
 const API_PRINTER = {
   id: 2, name: 'Atlas', printer_type: 'legacy_voron', plugin_id: 'moonraker', manufacturer_id: 'voron', model_id: 'v2',
   enabled: true, queue_on: true, awaiting_plate_clear: false, no_snapshots_while_idle: false, connected: true,
-  current_orca_printer_profile: null, orca_printer_profiles: [], connection_config: { hostname: 'voron.local' },
+  machine_profile_override: null, orca_printer_profiles: [], connection_config: { hostname: 'voron.local' },
   loaded_filaments: [], machine_rate_per_hour: null, preferred_slicer_plugin_id: null, quiet_start: null, quiet_end: null,
 };
 

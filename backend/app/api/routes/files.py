@@ -711,6 +711,11 @@ async def list_sliced_versions(
     rows = (await session.execute(q)).all()
     printers = (await session.execute(select(Printer).where(Printer.enabled.is_(True)))).scalars().all()
     profiles = await slicer_profiles.resolve_many(session, list(printers))
+    models_by_profile: dict[str, list[str]] = {}
+    for m in await slicer_profiles.mapping_rows(session):       # the models whose slicer profile a version was sliced for
+        models_by_profile.setdefault(m.machine_profile, [])
+        if m.model_uuid not in models_by_profile[m.machine_profile]:
+            models_by_profile[m.machine_profile].append(m.model_uuid)
     slicing = get_slicing_provider()
     fkeys = list(dict.fromkeys((v.machine_preset, v.process_preset, tuple(v.filament_presets or [])) for v, _ in rows))
     results = await asyncio.gather(*(asyncio.to_thread(slice_cache.cached_fingerprint, m, pr, list(fl), slicing)
@@ -730,6 +735,7 @@ async def list_sliced_versions(
             "created_at": v.created_at,
             "source_changed": bool(model.content_hash) and model.content_hash != v.source_content_hash,
             "stale": stale, "stale_reasons": reasons,
+            "model_uuids": models_by_profile.get(v.machine_preset, []),
             "printable_now": any(profiles[p.id].profile == v.machine_preset
                                  and model_targets.accepts_file(p.printer_type, f.original_filename)
                                  for p in printers),

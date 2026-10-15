@@ -17,6 +17,7 @@ const VERSION = {
   process_preset: '0.20mm Standard', filament_presets: ['Generic PETG @System'], filament_type: 'PETG',
   filament_color: '#000000', bed_type: null, overrides: {}, estimated_seconds: 3600, filament_grams: 12,
   created_at: '2026-10-01T00:00:00Z', source_changed: false, stale: false, stale_reasons: [], printable_now: true,
+  model_uuids: ['model-mono'],
 };
 
 test('New Job offers cached gcode and queues it for the model it was sliced for', async ({ page }) => {
@@ -43,6 +44,6 @@ test('New Job offers cached gcode and queues it for the model it was sliced for'
   expect(posts).toHaveLength(1);   // the cached gcode has one plate
   expect(posts[0].body).toMatchObject({
     uploaded_file_id: 7, printer_configs: [], overrides: null,
-    model_targets: [{ machine_profile: 'Mono', print_profile: '', filament_type: 'PETG', filament_color: '#000000' }],
+    model_targets: [{ model_uuid: 'model-mono', print_profile: '', filament_type: 'PETG', filament_color: '#000000' }],
   });
 });

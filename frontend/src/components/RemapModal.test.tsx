@@ -14,7 +14,7 @@ function payload(over: Partial<PendingRemaps> = {}): PendingRemaps {
     sync_id: 'sync-1',
     pending: {
       printers: [
-        { field: 'current_orca_printer_profile', stale_value: 'Old Machine', options_kind: 'machine', required: true,
+        { field: 'machine_profile_override', stale_value: 'Old Machine', options_kind: 'machine', required: true,
           affected_printer_ids: [1, 2], affected_printer_names: ['Forge', 'Anvil'], affected_slots: [null, null] },
         { field: 'filament_profile', stale_value: 'Old PLA', options_kind: 'filament', required: true,
           affected_printer_ids: [1], affected_printer_names: ['Forge'], affected_slots: [0] },
@@ -127,7 +127,7 @@ describe('RemapModal', () => {
       sync_id: 'sync-1',
       resolutions: {
         printers: [
-          { field: 'current_orca_printer_profile', stale_value: 'Old Machine', new_value: 'New Machine A' },
+          { field: 'machine_profile_override', stale_value: 'Old Machine', new_value: 'New Machine A' },
           { field: 'filament_profile', stale_value: 'Old PLA', new_value: 'Generic PLA @Test' },
         ],
         jobs: [{ field: 'print_profile', stale_value: 'Old Process', new_value: null }],

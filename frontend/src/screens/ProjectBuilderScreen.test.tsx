@@ -10,7 +10,7 @@ const FILES = [
 ];
 
 const PRINTERS = [
-  { id: 1, name: 'Printer A', printer_type: 'bambu_x1c', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], current_orca_printer_profile: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [], build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256 },
+  { id: 1, name: 'Printer A', printer_type: 'bambu_x1c', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null, enabled: true, queue_on: true, connected: true, loaded_filaments: [], build_plate_type: null, no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256 },
 ];
 
 function jsonResponse(data: unknown) {

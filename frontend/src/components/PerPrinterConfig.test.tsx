@@ -24,14 +24,14 @@ vi.mock('../api/queue', async (importOriginal) => {
 });
 
 const MULTI = {
-  id: 3, name: 'U1', printer_type: 'snapmaker_extended', current_orca_printer_profile: 'U1',
+  id: 3, name: 'U1', printer_type: 'snapmaker_extended', machine_profile: 'U1',
   loaded_filaments: [
     { slot: 0, type: 'PLA', color: '#fff', name: 'PLA', filament_profile: 'PLA @U1' },
     { slot: 1, type: 'PETG', color: '#000', name: 'PETG', filament_profile: 'PETG @U1' },
     { slot: 2, type: 'TPU', color: '#0f0', name: 'TPU', filament_profile: 'TPU @U1' },
   ],
 };
-const SINGLE = { id: 1, name: 'Mono', printer_type: 'elegoo_centauri', current_orca_printer_profile: 'M', loaded_filaments: [] };
+const SINGLE = { id: 1, name: 'Mono', printer_type: 'elegoo_centauri', machine_profile: 'M', loaded_filaments: [] };
 
 function renderCfg(printer: any, config = defaultPerPrinterCfg(), modelFilaments?: any[]) {
   const onChange = vi.fn();

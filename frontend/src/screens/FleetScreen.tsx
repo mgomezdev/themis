@@ -6,12 +6,12 @@ import { StatusPill, Progress, VideoTile, Swatch, Kv } from '../components/ui';
 import { Icons } from '../components/icons';
 import { SEVERITY_COLOR } from '../lib/severity';
 import type { Printer } from '../data/types';
-import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type MachinePreset, type LoadedFilament } from '../api/printers';
+import { pausePrinter, resumePrinter, stopPrinter, fetchPrinterTypes, fetchPrinter, updatePrinter, deletePrinter, fetchMachineCatalog, markPlateCleared, testConnection, reconnectPrinter, type PrinterType, type ApiPrinter, type NozzleVariant, type LoadedFilament } from '../api/printers';
 import { CAP, useInventory, useSpools } from '../api/inventory';
 import { fetchPlugins, type PluginSummary } from '../api/plugins';
 import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
-import { MachinePicker } from '../components/MachinePicker';
+import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
@@ -103,7 +103,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
 }) {
   const [draftName, setDraftName] = useState(p.name);
   const [draftConn, setDraftConn] = useState<Record<string, string>>({});
-  const [machinePreset, setMachinePreset] = useState<string>('');
+  const [nozzle, setNozzle] = useState<NozzleVariant | null>(null);   // null = the model's default nozzle
+  const [apiPrinter, setApiPrinter] = useState<ApiPrinter | null>(null);
   const [noSnapshotsWhileIdle, setNoSnapshotsWhileIdle] = useState(false);
   const [quietStart, setQuietStart] = useState('');   // '' = no quiet hours
   const [quietEnd, setQuietEnd] = useState('');
@@ -111,7 +112,6 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
   const [slicer, setSlicer] = useState('');   // '' = the default slicing provider
   const [slicerTouched, setSlicerTouched] = useState(false);   // only a changed choice is sent, so an unloaded list can never wipe it
   const [slicers, setSlicers] = useState<PluginSummary[]>([]);   // enabled plugins that provide gcode.produce
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);   // Save stays off until the printer's real values are in the form
   const [saving, setSaving] = useState(false);
@@ -130,7 +130,8 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
           conn[k] = String(v ?? '');
         }
         setDraftConn(conn);
-        setMachinePreset(api.current_orca_printer_profile ?? '');
+        setApiPrinter(api);
+        setNozzle(api.nozzle_variant ?? null);
         setNoSnapshotsWhileIdle(api.no_snapshots_while_idle ?? false);
         setQuietStart(api.quiet_start ?? '');
         setQuietEnd(api.quiet_end ?? '');
@@ -140,7 +141,6 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-    fetchMachineCatalog().then(setCatalog).catch(console.error);
     fetchPlugins()
       .then(list => setSlicers((list?.plugins ?? []).filter(pl => pl.enabled && pl.provides.some(x => x.capability === 'gcode.produce'))))
       .catch(console.error);
@@ -167,7 +167,7 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
       await updatePrinter(Number(p.id), {
         name: draftName,
         connection_config: draftConn,
-        current_orca_printer_profile: machinePreset || null,
+        nozzle_variant: nozzle,
         no_snapshots_while_idle: noSnapshotsWhileIdle,
         machine_rate_per_hour: machineRate.trim() === '' ? null : Number(machineRate),
         ...(slicerTouched ? { preferred_slicer_plugin_id: slicer || null } : {}),
@@ -285,14 +285,10 @@ function EditPrinterModal({ printer: p, printerTypes, onSaved, onDeleted, onClos
             )}
           </div>
 
-          <div className="col gap-2">
-            <div className="tag-key">Slicer profile</div>
-            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
-            <div className="tiny muted">
-              Sets which OrcaSlicer process &amp; filament profiles are offered when queuing jobs, and the machine config used for slicing.
-              {machinePreset && <> Preset: <span className="mono">{machinePreset}</span>.</>}
-            </div>
-          </div>
+          {loaded && apiPrinter && (
+            <NozzleVariantPicker modelUuid={apiPrinter.model_uuid} value={nozzle} onChange={setNozzle}
+                                 resolvedProfile={apiPrinter.machine_profile} reason={apiPrinter.machine_profile_reason} />
+          )}
 
           <div className="col gap-2">
             <div className="tag-key">Machine cost</div>
@@ -408,7 +404,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
 }) {
   const inventory = useInventory();
   const spools = useSpools(!!inventory.plugin);
-  const [machinePreset, setMachinePreset] = useState<string | null>(null);
+  const [machinePreset, setMachinePreset] = useState<string | null>(null);   // what the printer slices with (its model's profile)
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [slots, setSlots] = useState<LoadedFilament[]>([]);
   const [saving, setSaving] = useState(false);
@@ -423,7 +419,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
       .then(p => {
         if (alive) {
           setSlots(p.loaded_filaments ?? []);
-          setMachinePreset(p.current_orca_printer_profile ?? null);
+          setMachinePreset(p.machine_profile ?? null);
         }
       })
       .catch(() => {});
@@ -521,7 +517,7 @@ function QuickAddMaintenanceModal({ printer, fleetModels, onClose, onSaved }: {
     Promise.all([fetchPrinter(Number(printer.id)), fetchMachineCatalog()])
       .then(([apiPrinter, catalog]) => {
         if (!alive || userEditedRef.current) return;
-        const resolved = resolveVendorModelForProfile(apiPrinter.current_orca_printer_profile, catalog);
+        const resolved = resolveVendorModelForProfile(apiPrinter.machine_profile, catalog);
         if (resolved) {
           setDraft(d => ({ ...d, scope: 'model', machine_vendor: resolved.vendor, machine_model: resolved.printer_model }));
         }

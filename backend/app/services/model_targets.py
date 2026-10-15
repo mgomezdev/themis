@@ -10,7 +10,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
 from . import gcode_eligibility
 from .library_scanner import file_kind
 
@@ -123,9 +123,10 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     await session.flush()
 
 
-def _target_dict(t: JobModelTarget) -> dict:
+def _target_dict(t: JobModelTarget, labels: dict[str, str]) -> dict:
     return {
         "model_uuid": t.model_uuid,
+        "model_label": labels.get(t.model_uuid),
         "print_profile": t.print_profile,
         "filament_profile": t.filament_profile,
         "filament_id": t.filament_id,
@@ -145,8 +146,11 @@ async def target_dicts_by_job(session: AsyncSession, job_ids: list[int]) -> dict
     rows = (await session.execute(
         select(JobModelTarget).where(JobModelTarget.job_id.in_(job_ids)).order_by(JobModelTarget.id)
     )).scalars().all()
+    recs = {r.id: r for r in (await session.execute(select(PrinterModelRecord).where(
+        PrinterModelRecord.id.in_({t.model_uuid for t in rows})))).scalars()} if rows else {}
+    labels = {uid: f"{r.manufacturer_name} {r.display_name or r.model_id}".strip() for uid, r in recs.items()}
     for t in rows:
-        out[t.job_id].append(_target_dict(t))
+        out[t.job_id].append(_target_dict(t, labels))
     return out
 
 

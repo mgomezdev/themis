@@ -163,6 +163,7 @@ def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = 
         # The machine profile this printer slices with right now (override, else model mapping + variant); null + reason when unmapped.
         "machine_profile": res.profile if res else None,
         "machine_profile_reason": res.reason if res else None,
+        "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],

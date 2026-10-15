@@ -54,13 +54,13 @@ export function resolveVendorModelForProfile(
 }
 
 export function resolveFleetVendorModels(
-  printers: Pick<ApiPrinter, 'current_orca_printer_profile'>[],
+  printers: Pick<ApiPrinter, 'machine_profile'>[],
   catalog: Pick<MachinePreset, 'name' | 'vendor' | 'printer_model'>[],
 ): FleetVendorModel[] {
   const seen = new Set<string>();
   const result: FleetVendorModel[] = [];
   for (const p of printers) {
-    const resolved = resolveVendorModelForProfile(p.current_orca_printer_profile, catalog);
+    const resolved = resolveVendorModelForProfile(p.machine_profile, catalog);
     if (!resolved) continue;
     const key = `${resolved.vendor} ${resolved.printer_model}`;
     if (seen.has(key)) continue;

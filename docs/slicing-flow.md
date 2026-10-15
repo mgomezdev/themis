@@ -88,7 +88,7 @@ sequenceDiagram
     TB-->>UI: { print_profiles: ["0.16mm Optimal", ...],<br/>             filament_profiles: ["Elegoo PLA Basic", ...] }
 ```
 
-The printer's `current_orca_printer_profile` (e.g. `"Elegoo Centauri Carbon 0.4 nozzle"`) is the key used to filter compatible process and filament profiles.
+The printer's resolved machine profile (`machine_profile` in the printer response, e.g. `"Elegoo Centauri Carbon 0.4 nozzle"`: its model's slicer profile for the printer's nozzle variant, or the advanced per-printer override, BIZ-294) is the key used to filter compatible process and filament profiles.
 
 ---
 

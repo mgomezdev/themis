@@ -256,7 +256,7 @@ describe('JobDetailScreen — make/model targets', () => {
       ...BASE_JOB,
       printer_configs: [],
       model_targets: [{
-        machine_profile: 'Bambu Lab P1S 0.4 nozzle', print_profile: '0.20mm', filament_profile: null,
+        model_uuid: 'model-p1s', model_label: 'Bambu Lab P1S', print_profile: '0.20mm', filament_profile: null,
         filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
       }],
     });
@@ -264,7 +264,7 @@ describe('JobDetailScreen — make/model targets', () => {
     renderJobDetail();
 
     const card = await screen.findByTestId('model-targets');
-    expect(card.textContent).toContain('Bambu Lab P1S 0.4 nozzle');
+    expect(card.textContent).toContain('Bambu Lab P1S');
     expect(card.textContent).toMatch(/No printer of this model is set up yet/);
   });
 });

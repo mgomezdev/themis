@@ -6,8 +6,8 @@ import { NewJobScreen } from './NewJobScreen';
 import { Reply, stubFetch } from '../test/fetchStub';
 
 const PRINTER = {
-  id: 1, name: 'Barnabus', printer_type: 'elegoo_centauri', connection_config: {}, awaiting_plate_clear: false,
-  orca_printer_profiles: ['Elegoo Centauri Carbon'], current_orca_printer_profile: 'Elegoo Centauri Carbon',
+  id: 1, name: 'Barnabus', printer_type: 'elegoo_centauri', model_uuid: 'model-ecc', model_label: 'Elegoo Centauri Carbon', connection_config: {}, awaiting_plate_clear: false,
+  orca_printer_profiles: ['Elegoo Centauri Carbon'], machine_profile: 'Elegoo Centauri Carbon',
   enabled: true, connected: true, loaded_filaments: [],
 };
 const plate = (n: number) => ({ plate_number: n, estimated_time: 300, filament_g: 10, thumbnail_path: null });
@@ -167,7 +167,7 @@ describe('NewJobScreen - creating the job', () => {
     const api = open();
     await upload();
 
-    await userEvent.click(await screen.findByTestId('model-target-Elegoo Centauri Carbon'));
+    await userEvent.click(await screen.findByTestId('model-target-model-ecc'));
     await userEvent.selectOptions(await screen.findByTestId('print-profile-select'), PROFILE);
     await userEvent.click(addButton());
 
@@ -176,7 +176,7 @@ describe('NewJobScreen - creating the job', () => {
       uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [],
       model_targets: [{
-        machine_profile: 'Elegoo Centauri Carbon', print_profile: PROFILE, filament_profile: null,
+        model_uuid: 'model-ecc', print_profile: PROFILE, filament_profile: null,
         filament_id: null, material_provider: null, material_ref: null, filament_type: 'any', filament_color: 'any',
       }],
     }]);

@@ -280,7 +280,8 @@ erDiagram
     json connection_config "vendor creds"
     bool awaiting_plate_clear
     json orca_printer_profiles "preset names"
-    string current_orca_printer_profile "active machine"
+    string machine_profile_override "raw override (advanced)"
+    json nozzle_variant "model variant, null = default"
     bool enabled
     bool queue_on "pull from queue?"
     json loaded_filaments "slot/type/color/orca filament profile"
@@ -549,7 +550,7 @@ them choose. <span class="src">providers/laminus/overrides.py</span></div>
 <h3 id="profiles">Preset compatibility</h3>
 <p>The New-Job process/filament dropdowns show only presets valid for the chosen machine. Compatibility comes from the
 sidecar catalog: a preset's <code>compatible_printers</code> is matched against the printer's
-<code>current_orca_printer_profile</code> (<code>SlicingProvider.compatible_presets</code>). A preset with an empty
+machine profile (its model's slicer profile for the printer's nozzle variant, or the raw override) (<code>SlicingProvider.compatible_presets</code>). A preset with an empty
 <code>compatible_printers</code> is compatible with every printer, which is how the generic system filaments ship.
 <code>POST /printers/rescan-profiles</code> refreshes the cached catalog.
 <span class="src">catalog_service.py</span></p>

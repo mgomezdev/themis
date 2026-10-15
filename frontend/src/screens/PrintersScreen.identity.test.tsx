@@ -16,7 +16,7 @@ const TYPES: PrinterType[] = [
 
 const mk = (over: Partial<ApiPrinter>): ApiPrinter => ({
   id: 1, name: 'Forge', printer_type: 'legacy_string', plugin_id: 'bambu', manufacturer_id: 'bambu', model_id: 'p1s', model_uuid: null,
-  connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], current_orca_printer_profile: null,
+  connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [], machine_profile_override: null, nozzle_variant: null, machine_profile: null, machine_profile_reason: null, model_label: null,
   enabled: true, queue_on: true, connected: true, loaded_filaments: [], build_plate_type: null,
   no_snapshots_while_idle: false, bed_x_mm: 256, bed_y_mm: 256, machine_rate_per_hour: null, preferred_slicer_plugin_id: null, quiet_start: null, quiet_end: null,
   ...over,

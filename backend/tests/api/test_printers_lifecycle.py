@@ -9,7 +9,7 @@ from fastapi import HTTPException
 from app.services.printer_manager import printer_manager
 
 _PRINTER_KEYS = {"id", "name", "printer_type", "plugin_id", "manufacturer_id", "model_id", "model_uuid", "connection_config", "awaiting_plate_clear", "orca_printer_profiles",
-                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
+                 "machine_profile_override", "nozzle_variant", "machine_profile", "machine_profile_reason", "model_label", "enabled", "queue_on", "loaded_filaments", "build_plate_type",
                  "no_snapshots_while_idle", "bed_x_mm", "bed_y_mm", "machine_rate_per_hour", "preferred_slicer_plugin_id", "quiet_start", "quiet_end", "connected"}  # ApiPrinter in src/api/printers.ts
 
 

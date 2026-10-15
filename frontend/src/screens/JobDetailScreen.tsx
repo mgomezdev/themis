@@ -380,7 +380,7 @@ export function JobDetailScreen() {
             <div className="card" style={{ padding: 20 }} data-testid="model-targets">
               <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>Any printer of</div>
               <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-                {job.model_targets.map(t => <span key={t.machine_profile} className="elig on">{t.machine_profile}</span>)}
+                {job.model_targets.map(t => <span key={t.model_uuid} className="elig on">{t.model_label ?? t.model_uuid}</span>)}
               </div>
               {job.printer_configs.length === 0 && (
                 <div className="tiny muted" style={{ marginTop: 8 }}>No printer of this model is set up yet — the job waits for one.</div>

@@ -13,7 +13,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Printer, PrinterModelRecord
+from ..models import Printer, PrinterModelRecord, PrinterModelSlicerProfile
 from ..plugins import get_plugin, registered_plugins
 from ..plugins.host import plugin_host
 
@@ -91,12 +91,14 @@ async def list_models(session: AsyncSession, *, enabled: bool | None = None, plu
     rows = (await session.execute(q)).scalars().all()
     counts = dict((await session.execute(
         select(Printer.model_uuid, func.count()).where(Printer.model_uuid.is_not(None)).group_by(Printer.model_uuid))).all())
+    mapped = dict((await session.execute(
+        select(PrinterModelSlicerProfile.model_uuid, func.count()).group_by(PrinterModelSlicerProfile.model_uuid))).all())
     out = []
     for r in rows:
         reason = dormant_reason(r)
         if usable_only and reason is not None:
             continue
-        out.append(model_view(r, reason, counts.get(r.id, 0)))
+        out.append({**model_view(r, reason, counts.get(r.id, 0)), "slicer_profile_count": mapped.get(r.id, 0)})
     return sorted(out, key=lambda m: (m["manufacturer_name"].lower(), m["display_name"].lower()))
 
 

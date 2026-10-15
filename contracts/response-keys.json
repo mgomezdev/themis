@@ -44,6 +44,7 @@
     "nozzle_variant",
     "machine_profile",
     "machine_profile_reason",
+    "model_label",
     "enabled",
     "queue_on",
     "connected",
@@ -377,7 +378,8 @@
     "source_changed",
     "stale",
     "stale_reasons",
-    "printable_now"
+    "printable_now",
+    "model_uuids"
   ],
   "plugin_summary": [
     "id",
@@ -461,6 +463,7 @@
   ],
   "model_target": [
     "model_uuid",
+    "model_label",
     "print_profile",
     "filament_profile",
     "filament_id",

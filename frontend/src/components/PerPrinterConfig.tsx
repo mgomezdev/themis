@@ -110,9 +110,9 @@ export function PerPrinterConfig({ printerId, printers, config: rawConfig, onCha
     : null;
 
   const mappedProfiles: string[] | null = useMemo(() => {
-    if (!selectedFilament || !printer?.current_orca_printer_profile) return null;
+    if (!selectedFilament || !printer?.machine_profile) return null;
     const orcaProfiles = profileLinks(selectedFilament);
-    const list = orcaProfiles[printer.current_orca_printer_profile];
+    const list = orcaProfiles[printer.machine_profile];
     return list && list.length > 0 ? list : null;
   }, [selectedFilament, printer]);
 

@@ -47,7 +47,7 @@ async def test_create_with_model_target_only_materializes_matching_printers(
     assert all(c.model_target_id is not None and c.filament_type == "PLA" for c in cfgs)
     details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
     assert details["model_targets"] == [{
-        "model_uuid": model, "print_profile": "0.20mm", "filament_profile": None, "filament_id": None,
+        "model_uuid": model, "model_label": "Bambu Lab P1S", "print_profile": "0.20mm", "filament_profile": None, "filament_id": None,
         "material_provider": None, "material_ref": None, "filament_type": "PLA", "filament_color": "any", "filament_map": None}]
     assert {c["printer_id"] for c in details["printer_configs"]} == {p1, p3}
     assert all(c["from_model_target"] for c in details["printer_configs"])
