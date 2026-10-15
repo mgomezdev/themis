@@ -116,6 +116,10 @@ export async function mockApi(page: Page, over: Partial<{
     if (path === '/jobs') return ok(route, []);
     if (path === '/orders' || path === '/projects') return ok(route, []);
     if (path === '/machine-catalog') return ok(route, []);
+    // A model's slicer profiles (BIZ-294): none mapped, and the provider offers no suggestions
+    if (/^\/printer-models\/[^/]+\/slicer-profiles$/.test(path)) return ok(route, []);
+    if (/^\/printer-models\/[^/]+\/slicer-profiles\/suggestions$/.test(path))
+      return ok(route, { provider_plugin_id: null, available: false, candidates: [], variants: [], error: null });
     return ok(route, {});  // permissive default for any unlisted GET
   });
   return mocks;

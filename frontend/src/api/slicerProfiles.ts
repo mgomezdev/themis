@@ -58,8 +58,9 @@ const json = (method: string, body: unknown): RequestInit =>
 export const variantOf = (m: Pick<ModelSlicerProfile, 'nozzle_diameter_mm' | 'flow'>): NozzleVariant =>
   ({ diameter_mm: m.nozzle_diameter_mm, flow: m.flow });
 
-export function fetchModelSlicerProfiles(modelUuid: string): Promise<ModelSlicerProfile[]> {
-  return request(`/api/v1/printer-models/${encodeURIComponent(modelUuid)}/slicer-profiles`);
+export async function fetchModelSlicerProfiles(modelUuid: string): Promise<ModelSlicerProfile[]> {
+  const rows = await request<ModelSlicerProfile[]>(`/api/v1/printer-models/${encodeURIComponent(modelUuid)}/slicer-profiles`);
+  return Array.isArray(rows) ? rows : [];     // a malformed body must never crash the pickers that render this
 }
 
 export function createModelSlicerProfile(modelUuid: string, body: {
@@ -76,7 +77,9 @@ export function deleteModelSlicerProfile(modelUuid: string, id: number): Promise
   return request(`/api/v1/printer-models/${encodeURIComponent(modelUuid)}/slicer-profiles/${id}`, { method: 'DELETE' });
 }
 
-export function fetchProfileSuggestions(modelUuid: string, providerPluginId?: string): Promise<ProfileSuggestions> {
+export async function fetchProfileSuggestions(modelUuid: string, providerPluginId?: string): Promise<ProfileSuggestions> {
   const q = providerPluginId ? `?provider_plugin_id=${encodeURIComponent(providerPluginId)}` : '';
-  return request(`/api/v1/printer-models/${encodeURIComponent(modelUuid)}/slicer-profiles/suggestions${q}`);
+  const s = await request<Partial<ProfileSuggestions>>(`/api/v1/printer-models/${encodeURIComponent(modelUuid)}/slicer-profiles/suggestions${q}`);
+  return { provider_plugin_id: s?.provider_plugin_id ?? providerPluginId ?? null, available: !!s?.available, error: s?.error ?? null,
+           candidates: Array.isArray(s?.candidates) ? s.candidates : [], variants: Array.isArray(s?.variants) ? s.variants : [] };
 }

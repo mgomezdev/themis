@@ -55,7 +55,14 @@ test('disabling a model in the registry removes it from the add-printer model pi
 });
 
 test('a model without a slicer profile is flagged and its profile is confirmed once from the provider\'s suggestion', async ({ page }) => {
-  const plugins = { plugins: [{ id: 'laminus', name: 'Laminus', enabled: true, provides: [{ capability: 'gcode.produce' }] }], selections: {} };
+  // a complete plugin summary: the sidebar reads `ui.mode` / `ui.nav_placement` of every plugin, so a partial one blanks the page
+  const laminus = {
+    id: 'laminus', name: 'Laminus', version: '1', description: 'Slicer', docs_url: null, source: 'bundled', requires: [], optional: [], defines: [],
+    provides: [{ capability: 'gcode.produce', version: 1, selected: true, status: 'serving', waiting_on: [], features: [] }],
+    enabled: true, active: true, error: null, loaded: true, install: null,
+    ui: { mode: 'section', nav_label: 'Laminus', nav_placement: 'settings', nav_icon: null, tabs: [] },
+  };
+  const plugins = { plugins: [laminus], selections: { 'gcode.produce': 'laminus' } };
   await mockApi(page, { printers: [], plugins });
   await fakeRegistry(page);
   const rows: any[] = [];

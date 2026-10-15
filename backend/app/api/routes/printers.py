@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,7 +53,8 @@ class PrinterCreate(BaseModel):
     printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
-    machine_profile_override: str | None = None     # advanced: a raw slicer machine profile that wins over the model mapping (BIZ-294)
+    # advanced: a raw slicer machine profile that wins over the model mapping (BIZ-294); the pre-BIZ-294 name is still accepted on input
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))
     nozzle_variant: dict | None = None              # {"diameter_mm", "flow"}; must be mapped for the model
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
@@ -69,7 +70,7 @@ class PrinterUpdate(BaseModel):
     model_id: str | None = None
     connection_config: dict | None = None
     orca_printer_profiles: list[str] | None = None
-    machine_profile_override: str | None = None    # explicit null clears the override
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))   # explicit null clears
     nozzle_variant: dict | None = None             # explicit null = the model's default variant
     enabled: bool | None = None
     queue_on: bool | None = None

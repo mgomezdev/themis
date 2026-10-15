@@ -341,3 +341,20 @@ async def test_preferred_slicer_must_be_a_gcode_produce_plugin(client):
         r = await client.patch(f"/api/v1/printers/{pid}", json={"preferred_slicer_plugin_id": bad})
         assert r.status_code == 422 and "gcode.produce" in r.text
     assert (await client.get(f"/api/v1/printers/{pid}")).json()["preferred_slicer_plugin_id"] is None
+
+
+async def test_the_legacy_current_orca_printer_profile_key_is_still_accepted_as_the_machine_profile_override(client):
+    """BIZ-294 renamed the field, but external API clients (the e2e suite, scripts) still send the old key on create and edit."""
+    created = await client.post("/api/v1/printers", json={"name": "Old client", "printer_type": "bambu", "connection_config": {},
+                                                          "current_orca_printer_profile": "Bambu Lab P1S 0.4 nozzle"})
+    assert created.status_code == 201, created.text
+    assert created.json()["machine_profile_override"] == "Bambu Lab P1S 0.4 nozzle"
+    assert created.json()["machine_profile"] == "Bambu Lab P1S 0.4 nozzle"
+
+    pid = created.json()["id"]
+    patched = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": "Other"})
+    assert patched.json()["machine_profile_override"] == "Other"
+    cleared = await client.patch(f"/api/v1/printers/{pid}", json={"current_orca_printer_profile": None})
+    assert cleared.json()["machine_profile_override"] is None
+    omitted = await client.patch(f"/api/v1/printers/{pid}", json={"name": "Renamed"})
+    assert omitted.json()["machine_profile_override"] is None and omitted.json()["name"] == "Renamed"
