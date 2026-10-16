@@ -4,6 +4,7 @@ test_library_cached_versions.py."""
 from __future__ import annotations
 
 import os
+import sys
 from unittest.mock import patch
 
 import pytest
@@ -32,6 +33,7 @@ def _tree(root):
     return sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_file())
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows has no umask")
 async def test_uploads_get_umask_permissions_not_0600(client, dirs):
     lib, _ = dirs
     old = os.umask(0o022)

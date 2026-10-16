@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import dataclasses
 import io
+import sys
 import zipfile
 from pathlib import Path
 from unittest.mock import patch
@@ -189,6 +190,7 @@ async def test_a_row_with_no_hash_is_rehashed_even_when_size_and_mtime_match(tmp
     assert summary["added"] == 0 and row.content_hash == info.sha256
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a path separator on Windows; that filename cannot exist")
 async def test_a_row_whose_file_is_readable_but_not_listable_is_kept_not_deleted_or_flagged(tmp_path, session_factory):
     lib_dir, cache_dir, outside = tmp_path / "lib", tmp_path / "cache", tmp_path / "nas.stl"
     (lib_dir / "Models").mkdir(parents=True)
@@ -255,6 +257,7 @@ def test_parse_plates_removes_its_scratch_dir_when_parsing_raises(tmp_path):
 
 # ---- local-disk store: only valid keys are listed -------------------------------------------------------------
 
+@pytest.mark.skipif(sys.platform == "win32", reason="a backslash is a path separator on Windows; that filename cannot exist")
 def test_list_skips_names_that_are_not_valid_keys_and_symlinks_out_of_the_root(tmp_path):
     root, outside = tmp_path / "root", tmp_path / "outside.stl"
     store = LocalDiskArtifactStore(root)

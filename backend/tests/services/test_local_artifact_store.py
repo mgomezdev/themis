@@ -6,6 +6,7 @@ import errno
 import io
 import os
 import stat
+import sys
 
 import pytest
 from sqlalchemy import select
@@ -67,6 +68,7 @@ def test_no_part_files_survive_success_or_failure_and_are_never_listed(store, ro
     assert [i.key for i in store.list()] == ["a/ok.3mf"]       # in-flight temp never listed
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX mode bits; Windows has no umask")
 def test_file_mode_follows_umask_like_a_plain_open(store, root):
     old = os.umask(0o027)
     try:
@@ -124,11 +126,23 @@ def test_materialize_is_zero_copy_the_stored_file_itself(store):
     assert p.exists()                                           # nothing to clean up: the artifact stays
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows refuses to replace a file that is open; see the next test")
 def test_overwrite_does_not_disturb_an_open_reader(store):
     store.put("r/f.3mf", io.BytesIO(b"old-content"))
     with store.open("r/f.3mf") as fh:
         store.put("r/f.3mf", io.BytesIO(b"new"), overwrite=True)
         assert fh.read() == b"old-content"
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows refuses to replace a file that is open")
+def test_windows_refuses_overwrite_of_an_open_reader_and_keeps_old_bytes(store, root):
+    store.put("r/f.3mf", io.BytesIO(b"old-content"))
+    with store.open("r/f.3mf") as fh:
+        with pytest.raises(ArtifactStoreError):
+            store.put("r/f.3mf", io.BytesIO(b"new"), overwrite=True)
+        assert fh.read() == b"old-content"
+    assert (root / "r" / "f.3mf").read_bytes() == b"old-content"
+    assert [p.name for p in (root / "r").iterdir()] == ["f.3mf"]     # the failed write's temp was cleaned up
 
 
 def test_emptied_folders_disappear_but_root_stays(store, root):

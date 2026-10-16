@@ -288,6 +288,8 @@ class LocalDiskArtifactStore(ArtifactStore):
     # -- read
     def open(self, key: str) -> BinaryIO:
         path = self._path(key)
+        if not path.is_file():   # Windows reports a directory as EACCES, not IsADirectoryError
+            raise ArtifactNotFound(key)
         try:
             return open(path, "rb")
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
