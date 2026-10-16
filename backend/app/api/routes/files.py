@@ -329,6 +329,9 @@ async def upload_file(
                 # stays valid.
                 with contextlib.suppress(ArtifactExists):   # lost a race to another restore: theirs is the same bytes
                     await asyncio.to_thread(store.move, scratch, existing.relative_path)
+            if existing.missing:
+                existing.missing = False
+                await session.commit()
             if eligible_model_uuids and is_presliced_name(existing.original_filename):
                 await _apply_eligibility(session, existing, eligible_model_uuids)
                 await session.commit()

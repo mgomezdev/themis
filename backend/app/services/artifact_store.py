@@ -292,6 +292,10 @@ class LocalDiskArtifactStore(ArtifactStore):
             return open(path, "rb")
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
             raise ArtifactNotFound(key) from None
+        except PermissionError as exc:
+            if os.path.isdir(path):   # Windows reports opening a directory as EACCES, not IsADirectoryError
+                raise ArtifactNotFound(key) from None
+            raise ArtifactStoreError(f"cannot read {key!r}: {exc}") from exc
         except OSError as exc:
             raise ArtifactStoreError(f"cannot read {key!r}: {exc}") from exc
 
