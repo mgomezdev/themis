@@ -39,9 +39,9 @@ export interface PrinterConfigInput {
   filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
 }
 
-/** Eligible on any printer whose active machine preset equals `machine_profile` (a make/model). */
+/** Eligible on any printer of the registry model `model_uuid` (BIZ-294). */
 export interface ModelTargetInput {
-  machine_profile: string;
+  model_uuid: string;
   print_profile: string;
   filament_profile?: string | null;
   filament_id?: number | null;
@@ -52,7 +52,8 @@ export interface ModelTargetInput {
 }
 
 export interface ApiModelTarget {
-  machine_profile: string;
+  model_uuid: string;
+  model_label: string | null;     // "<manufacturer> <model>"
   print_profile: string;
   filament_profile: string | null;
   filament_id: number | null;

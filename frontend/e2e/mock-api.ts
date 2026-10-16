@@ -4,7 +4,8 @@ export interface Mocks { captured: { url: string; method: string; body: any }[];
 
 const U1 = {
   id: 3, name: 'U1', printer_type: 'snapmaker_extended', connected: true, state: 'IDLE',
-  current_orca_printer_profile: 'Snapmaker U1 (0.4 nozzle)', queue_on: true, enabled: true,
+  machine_profile_override: null, machine_profile: 'Snapmaker U1 (0.4 nozzle)', machine_profile_reason: null, nozzle_variant: null,
+  model_uuid: 'model-u1', model_label: 'Snapmaker U1', queue_on: true, enabled: true,
   awaiting_plate_clear: false, progress: 0, remaining_time: 0,
   temperatures: { nozzle: 27, bed: 25, extruders: [{index:0,temp:27},{index:1,temp:27},{index:2,temp:28},{index:3,temp:28}] },
   loaded_filaments: [
@@ -16,7 +17,8 @@ const U1 = {
 };
 const MONO = {
   id: 1, name: 'Mono', printer_type: 'elegoo_centauri', connected: true, state: 'IDLE',
-  current_orca_printer_profile: 'Mono', queue_on: true, enabled: true, awaiting_plate_clear: false,
+  machine_profile_override: null, machine_profile: 'Mono', machine_profile_reason: null, nozzle_variant: null,
+  model_uuid: 'model-mono', model_label: 'Elegoo Mono', queue_on: true, enabled: true, awaiting_plate_clear: false,
   progress: 0, remaining_time: 0, temperatures: { nozzle: 25, bed: 25 }, loaded_filaments: [],
 };
 const PROFILES = { print_profiles: ['0.20mm Standard', '0.08 Extra Fine'], filament_profiles: ['Generic PLA @System', 'Generic PETG @System', 'Generic TPU @System'] };
@@ -114,6 +116,10 @@ export async function mockApi(page: Page, over: Partial<{
     if (path === '/jobs') return ok(route, []);
     if (path === '/orders' || path === '/projects') return ok(route, []);
     if (path === '/machine-catalog') return ok(route, []);
+    // A model's slicer profiles (BIZ-294): none mapped, and the provider offers no suggestions
+    if (/^\/printer-models\/[^/]+\/slicer-profiles$/.test(path)) return ok(route, []);
+    if (/^\/printer-models\/[^/]+\/slicer-profiles\/suggestions$/.test(path))
+      return ok(route, { provider_plugin_id: null, available: false, candidates: [], variants: [], error: null });
     return ok(route, {});  // permissive default for any unlisted GET
   });
   return mocks;

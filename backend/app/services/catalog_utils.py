@@ -11,6 +11,9 @@ from app.services.inventory import provider as inventory_provider, read as inven
 
 logger = logging.getLogger("app.catalog_utils")
 
+# Drift/remap field for a model's slicer profile mapping rows (as opposed to a printer's own raw override).
+MODEL_PROFILE_FIELD = "model_slicer_profile"
+
 
 def catalog_name_sets(catalog: Catalog) -> tuple[set[str], set[str], set[str], set[str]]:
     """Return (machine_names, process_names, filament_names, filament_refs)."""
@@ -69,12 +72,38 @@ async def compute_drift(
     # Printers: group by (field, stale_value)
     printer_groups: dict[tuple[str, str], dict] = {}
     printers = (await session.execute(select(Printer))).scalars().all()
+    # Machine profiles now live on the model mapping rows (BIZ-294): one entry per stale profile, listing the printers whose model
+    # uses it. Applying it (routes/laminus.py) rewrites the mapping rows, so a model with no printers yet is still reported.
+    from app.models import PrinterModelRecord, PrinterModelSlicerProfile
+    stale_rows = [r for r in (await session.execute(select(PrinterModelSlicerProfile))).scalars().all()
+                  if r.machine_profile in removed_machines]
+    for row in stale_rows:
+        key = (MODEL_PROFILE_FIELD, row.machine_profile)
+        g = printer_groups.setdefault(key, {
+            "field": MODEL_PROFILE_FIELD,
+            "stale_value": row.machine_profile,
+            "options_kind": "machine",
+            "required": True,
+            "affected_printer_ids": [],
+            "affected_printer_names": [],
+            "affected_slots": [],
+        })
+        for printer in printers:
+            if printer.model_uuid == row.model_uuid and printer.id not in g["affected_printer_ids"]:
+                g["affected_printer_ids"].append(printer.id)
+                g["affected_printer_names"].append(printer.name)
+                g["affected_slots"].append(None)
+        if not any(p.model_uuid == row.model_uuid for p in printers):      # a model with no printers is only reachable by name
+            rec = await session.get(PrinterModelRecord, row.model_uuid)
+            name = rec.display_name if rec else row.model_uuid
+            if name not in g.setdefault("affected_model_names", []):
+                g["affected_model_names"].append(name)
     for printer in printers:
-        if printer.current_orca_printer_profile in removed_machines:
-            key = ("current_orca_printer_profile", printer.current_orca_printer_profile)
+        if printer.machine_profile_override in removed_machines:
+            key = ("machine_profile_override", printer.machine_profile_override)
             g = printer_groups.setdefault(key, {
-                "field": "current_orca_printer_profile",
-                "stale_value": printer.current_orca_printer_profile,
+                "field": "machine_profile_override",
+                "stale_value": printer.machine_profile_override,
                 "options_kind": "machine",
                 "required": True,
                 "affected_printer_ids": [],

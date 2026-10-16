@@ -52,6 +52,7 @@ export interface PrinterModelEntry {
   dormant: boolean;
   dormant_reason: 'plugin_removed' | 'plugin_disabled' | 'model_removed' | null;
   printer_count: number;              // printers that reference this model (a dormant model stays while referenced)
+  slicer_profile_count?: number;      // slicer machine profiles mapped for this model (BIZ-294); absent on a PATCH response
 }
 
 export interface LoadedFilament {
@@ -77,6 +78,16 @@ export function slotBinding(slot: Pick<LoadedFilament, 'inventory' | 'spoolman_s
   return null;
 }
 
+/** A physical nozzle: diameter and flow. A model maps one slicer machine profile per variant (BIZ-294). */
+export interface NozzleVariant {
+  diameter_mm: number;
+  flow: 'standard' | 'high_flow';
+}
+
+export const variantLabel = (v: NozzleVariant): string => `${v.diameter_mm}mm${v.flow === 'high_flow' ? ' high-flow' : ''}`;
+export const sameVariant = (a: NozzleVariant | null | undefined, b: NozzleVariant | null | undefined): boolean =>
+  !!a && !!b && a.diameter_mm === b.diameter_mm && a.flow === b.flow;
+
 export interface ApiPrinter {
   id: number;
   name: string;
@@ -88,7 +99,11 @@ export interface ApiPrinter {
   connection_config: Record<string, unknown>;
   awaiting_plate_clear: boolean;
   orca_printer_profiles: string[];
-  current_orca_printer_profile: string | null;
+  machine_profile_override: string | null;   // advanced: a raw slicer machine profile that wins over the model's mapping
+  nozzle_variant: NozzleVariant | null;      // the physical nozzle; null = the model's default variant
+  machine_profile: string | null;            // what this printer slices with now (override, else model mapping + variant)
+  machine_profile_reason: string | null;     // why `machine_profile` is null ("no machine profile for P1S 0.6mm")
+  model_label: string | null;                // "<manufacturer> <model>" of the printer's registry model
   enabled: boolean;
   queue_on: boolean;
   connected: boolean;
@@ -112,7 +127,8 @@ export interface CreatePrinterBody {
   bed_x_mm?: number;                    // default: the declared model's bed (a custom model's is the user's input)
   bed_y_mm?: number;
   orca_printer_profiles?: string[];
-  current_orca_printer_profile?: string | null;
+  machine_profile_override?: string | null;
+  nozzle_variant?: NozzleVariant | null;
   loaded_filaments?: LoadedFilament[];
 }
 
@@ -122,7 +138,8 @@ export interface UpdatePrinterBody {
   model_id?: string;
   connection_config?: Record<string, unknown>;
   orca_printer_profiles?: string[];
-  current_orca_printer_profile?: string | null;
+  machine_profile_override?: string | null;
+  nozzle_variant?: NozzleVariant | null;   // null = the model's default variant; omit to leave unchanged
   enabled?: boolean;
   queue_on?: boolean;
   loaded_filaments?: LoadedFilament[];

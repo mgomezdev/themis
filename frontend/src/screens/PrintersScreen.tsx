@@ -8,15 +8,16 @@ import {
   updatePrinter,
   deletePrinter,
   testConnection,
-  fetchMachineCatalog,
   type ApiPrinter,
+  type NozzleVariant,
   type PrinterType,
   type ConnectionField,
   type LoadedFilament,
-  type MachinePreset,
   type DiscoveredPrinter,
 } from '../api/printers';
-import { MachinePicker } from '../components/MachinePicker';
+import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
+import { ModelSlicerProfiles } from '../components/ModelSlicerProfiles';
+import type { ModelSlicerProfile } from '../api/slicerProfiles';
 import { getPrinterProfiles } from '../api/queue';
 import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
@@ -131,9 +132,8 @@ export function EditForm({
     )
   );
   const [slots, setSlots] = useState<LoadedFilament[]>(printer.loaded_filaments ?? []);
-  const [preset, setPreset] = useState<string>(printer.current_orca_printer_profile ?? '');
+  const [nozzle, setNozzle] = useState<NozzleVariant | null>(printer.nozzle_variant ?? null);   // null = the model's default nozzle
   const [buildPlate, setBuildPlate] = useState<string>(printer.build_plate_type ?? '');
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +141,6 @@ export function EditForm({
   const inventory = useInventory();
   const spools = useSpools(!!inventory.plugin);
 
-  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
   useEffect(() => {
     setFilamentProfiles([]);
     let alive = true;
@@ -149,7 +148,7 @@ export function EditForm({
       .then(p => { if (alive) setFilamentProfiles(p.filament_profiles); })
       .catch(() => { if (alive) setFilamentProfiles([]); });
     return () => { alive = false; };
-  }, [printer.id, preset]);
+  }, [printer.id, printer.machine_profile]);
 
   function addSlot() {
     setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
@@ -167,8 +166,7 @@ export function EditForm({
       await updatePrinter(printer.id, {
         name,
         connection_config: config,
-        current_orca_printer_profile: preset || null,
-        orca_printer_profiles: preset ? [preset] : [],
+        nozzle_variant: nozzle,
         loaded_filaments: slots,
         build_plate_type: buildPlate || null,
       });
@@ -201,10 +199,8 @@ export function EditForm({
           </div>
         ))}
 
-        <div>
-          <div className="label" style={{ marginBottom: 8 }}>Printer profile (make / model)</div>
-          <MachinePicker catalog={catalog} value={preset} onChange={setPreset} />
-        </div>
+        <NozzleVariantPicker modelUuid={printer.model_uuid} value={nozzle} onChange={setNozzle}
+                             resolvedProfile={printer.machine_profile} reason={printer.machine_profile_reason} />
 
         <div>
           <label className="label">Build plate</label>
@@ -243,7 +239,7 @@ export function EditForm({
                 </div>
                 <SlotSpoolPicker
                   slot={s}
-                  printerPreset={preset || null}
+                  printerPreset={printer.machine_profile}
                   provider={inventory.id ?? ''}
                   spools={spools}
                   filamentProfiles={filamentProfiles}
@@ -295,9 +291,8 @@ export function PrinterAddForm({
   const [connError, setConnError] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
   const [finishError, setFinishError] = useState<string | null>(null);
-  const [machinePreset, setMachinePreset] = useState<string>('');
-  const [catalog, setCatalog] = useState<MachinePreset[]>([]);
-  useEffect(() => { fetchMachineCatalog().then(setCatalog).catch(() => {}); }, []);
+  const [modelProfiles, setModelProfiles] = useState<ModelSlicerProfile[] | null>(null);   // the chosen model's slicer profile mappings
+  useEffect(() => { setModelProfiles(null); }, [data.printerType?.model_uuid]);
 
   async function handleTestConnection() {
     if (!data.printerType) return;
@@ -353,8 +348,6 @@ export function PrinterAddForm({
           bed_x_mm: positive(data.bedX, data.printerType.bed_mm[0]),
           bed_y_mm: positive(data.bedY, data.printerType.bed_mm[1]),
         } : {}),
-        current_orca_printer_profile: machinePreset || null,
-        orca_printer_profiles: machinePreset ? [machinePreset] : [],
       });
       onCreated();
     } catch (e) {
@@ -366,7 +359,7 @@ export function PrinterAddForm({
   const steps = [
     { n: 1, label: 'Type' },
     { n: 2, label: 'Connect' },
-    { n: 3, label: 'Profile' },
+    { n: 3, label: 'Slicer profile' },
     { n: 4, label: 'Review' },
   ] as const;
 
@@ -539,17 +532,16 @@ export function PrinterAddForm({
           </div>
         )}
 
-        {/* Step 3: Printer profile (make/model) */}
+        {/* Step 3: the model's slicer profile — set once per model, so only asked for when the model has none */}
         {step === 3 && data.printerType && (
           <div className="card" style={{ padding: 24 }}>
-            <SectionHeader title="Printer profile"
-              sub="Pick the make/model so jobs slice with the right OrcaSlicer machine + filament presets. You can set this later." />
-            <MachinePicker catalog={catalog} value={machinePreset} onChange={setMachinePreset} />
-            <div className="tiny muted" style={{ marginTop: 8 }}>
-              {machinePreset
-                ? <>Preset: <span className="mono">{machinePreset}</span></>
-                : 'Optional now — required before this printer can slice.'}
-            </div>
+            <SectionHeader title="Slicer profile"
+              sub={`Which slicer machine profile ${data.printerType.manufacturer_name} ${data.printerType.display_name} printers slice with. It is set once per model — every printer of this model uses it.`} />
+            {data.printerType.model_uuid
+              ? <ModelSlicerProfiles modelUuid={data.printerType.model_uuid}
+                                     modelLabel={`${data.printerType.manufacturer_name} ${data.printerType.display_name}`}
+                                     onChange={setModelProfiles} />
+              : <div className="tiny muted">This model is not in the registry yet, so its slicer profile can be set later under Settings → Printer models.</div>}
             <div className="row gap-2" style={{ marginTop: 24, justifyContent: 'flex-end' }}>
               <button className="btn" onClick={() => setStep(2)}>{Icons.chevL} Back</button>
               <button className="btn primary" onClick={() => setStep(4)}>Next {Icons.chevR}</button>
@@ -571,8 +563,8 @@ export function PrinterAddForm({
                 <span className="small">{data.nickname || data.printerType.display_name}</span>
               </div>
               <div className="row gap-3">
-                <span className="muted small" style={{ width: 120 }}>Printer profile</span>
-                <span className="small mono">{machinePreset || '— not set —'}</span>
+                <span className="muted small" style={{ width: 120 }}>Slicer profile</span>
+                <span className="small mono">{modelProfiles?.find(r => r.is_default)?.machine_profile ?? '— not set for this model —'}</span>
               </div>
               {Object.entries(data.connectionConfig).map(([k, v]) => {
                 const field = data.printerType!.connection_fields.find(f => f.name === k);

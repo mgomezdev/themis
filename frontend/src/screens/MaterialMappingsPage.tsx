@@ -8,8 +8,8 @@ import { FilamentProfileMultiSelect } from '../components/FilamentProfileMultiSe
 function buildPresetPrinterMap(printers: ApiPrinter[]): Map<string, number> {
   const map = new Map<string, number>();
   for (const p of printers) {
-    if (p.current_orca_printer_profile && !map.has(p.current_orca_printer_profile)) {
-      map.set(p.current_orca_printer_profile, p.id);
+    if (p.machine_profile && !map.has(p.machine_profile)) {
+      map.set(p.machine_profile, p.id);
     }
   }
   return map;
@@ -233,11 +233,11 @@ export function MaterialMappingsPage() {
       </div>
     );
   }
-  if (printers.filter(p => p.current_orca_printer_profile).length === 0) {
+  if (printers.filter(p => p.machine_profile).length === 0) {
     return (
       <div className="card" style={{ padding: 28 }}>
         <div className="small muted">
-          No printers with an OrcaSlicer machine preset configured. Set a machine preset in Fleet → Edit printer first.
+          No printer has a slicer machine profile yet. Set one for its model under Settings → Printer models first.
         </div>
       </div>
     );

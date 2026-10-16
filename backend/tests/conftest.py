@@ -242,6 +242,14 @@ async def upload_3mf(client, tmp_path):
 
 
 @pytest_asyncio.fixture
+async def model_uuid_of(client):
+    """`await model_uuid_of(printer_id)` -> the registry model UUID of that printer (what a model target is keyed by, BIZ-294)."""
+    async def _uuid(printer_id: int) -> str:
+        return (await client.get(f"/api/v1/printers/{printer_id}")).json()["model_uuid"]
+    return _uuid
+
+
+@pytest_asyncio.fixture
 async def create_printer(client):
     """`await create_printer(**overrides)` -> printer id (a Bambu with an active OrcaSlicer preset)."""
     async def _create(**overrides) -> int:
@@ -249,7 +257,7 @@ async def create_printer(client):
             "name": "P1S", "printer_type": "bambu",
             "connection_config": {},
             "orca_printer_profiles": ["Bambu Lab P1S 0.4"],
-            "current_orca_printer_profile": "Bambu Lab P1S 0.4",
+            "machine_profile_override": "Bambu Lab P1S 0.4",
         }
         body.update(overrides)
         resp = await client.post("/api/v1/printers", json=body)

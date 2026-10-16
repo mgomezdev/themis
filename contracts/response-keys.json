@@ -40,7 +40,11 @@
     "connection_config",
     "awaiting_plate_clear",
     "orca_printer_profiles",
-    "current_orca_printer_profile",
+    "machine_profile_override",
+    "nozzle_variant",
+    "machine_profile",
+    "machine_profile_reason",
+    "model_label",
     "enabled",
     "queue_on",
     "connected",
@@ -374,7 +378,8 @@
     "source_changed",
     "stale",
     "stale_reasons",
-    "printable_now"
+    "printable_now",
+    "model_uuids"
   ],
   "plugin_summary": [
     "id",
@@ -424,5 +429,48 @@
     "requires_by",
     "mode",
     "dormant_default"
+  ],
+  "printer_model_slicer_profile": [
+    "id",
+    "model_uuid",
+    "provider_plugin_id",
+    "nozzle_diameter_mm",
+    "flow",
+    "machine_profile",
+    "is_default"
+  ],
+  "slicer_profile_suggestions": [
+    "provider_plugin_id",
+    "available",
+    "candidates",
+    "variants",
+    "error"
+  ],
+  "slicer_profile_candidate": [
+    "name",
+    "nozzle_diameter_mm",
+    "flow",
+    "ref",
+    "confidence",
+    "match_reason"
+  ],
+  "slicer_profile_variant": [
+    "name",
+    "nozzle_diameter_mm",
+    "flow",
+    "ref",
+    "is_default_guess"
+  ],
+  "model_target": [
+    "model_uuid",
+    "model_label",
+    "print_profile",
+    "filament_profile",
+    "filament_id",
+    "material_provider",
+    "material_ref",
+    "filament_type",
+    "filament_color",
+    "filament_map"
   ]
 }

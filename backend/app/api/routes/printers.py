@@ -9,7 +9,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,7 +27,7 @@ from ...services.printer_client_factory import (
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
-from ...services import scheduling
+from ...services import scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -53,7 +53,9 @@ class PrinterCreate(BaseModel):
     printer_type: str | None = None
     connection_config: dict
     orca_printer_profiles: list[str] = []
-    current_orca_printer_profile: str | None = None
+    # advanced: a raw slicer machine profile that wins over the model mapping (BIZ-294); the pre-BIZ-294 name is still accepted on input
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))
+    nozzle_variant: dict | None = None              # {"diameter_mm", "flow"}; must be mapped for the model
     loaded_filaments: list[dict] = []
     build_plate_type: str | None = None
     no_snapshots_while_idle: bool = False
@@ -68,7 +70,8 @@ class PrinterUpdate(BaseModel):
     model_id: str | None = None
     connection_config: dict | None = None
     orca_printer_profiles: list[str] | None = None
-    current_orca_printer_profile: str | None = None
+    machine_profile_override: str | None = Field(default=None, validation_alias=AliasChoices("machine_profile_override", "current_orca_printer_profile"))   # explicit null clears
+    nozzle_variant: dict | None = None             # explicit null = the model's default variant
     enabled: bool | None = None
     queue_on: bool | None = None
     loaded_filaments: list[dict] | None = None
@@ -93,10 +96,6 @@ class PrinterUpdate(BaseModel):
         if (self.quiet_start is None) != (self.quiet_end is None):
             raise ValueError("quiet_start and quiet_end must be set together (or both null)")
         return self
-
-
-class ActivePresetUpdate(BaseModel):
-    preset: str
 
 
 class LightBody(BaseModel):
@@ -133,7 +132,21 @@ class ChamberTempBody(BaseModel):
     celsius: int = Field(..., ge=0, le=100)
 
 
-def _to_dict(p: Printer) -> dict:
+async def _check_variant(session: AsyncSession, model_uuid: str | None, raw: dict | None) -> dict | None:
+    """A posted nozzle variant must be one the printer's model has a mapping for (any provider); returns its canonical form."""
+    if raw is None:
+        return None
+    variant = slicer_profiles.NozzleVariant.parse(raw)
+    if variant is None:
+        raise HTTPException(422, "nozzle_variant must be {diameter_mm > 0, flow: standard|high_flow}")
+    rows = await slicer_profiles.mapping_rows(session, model_uuid) if model_uuid else []
+    if not any(slicer_profiles.variant_of(r) == variant for r in rows):
+        label = await slicer_profiles.model_display_name(session, model_uuid) or "this printer"
+        raise HTTPException(422, f"No slicer profile is mapped for {label} {variant.label}; map it in Settings > Printer models")
+    return variant.as_dict()
+
+
+def _to_dict(p: Printer, res: slicer_profiles.MachineProfileResolution | None = None) -> dict:
     live_client = printer_manager._clients.get(p.id)
     return {
         "id": p.id,
@@ -146,7 +159,12 @@ def _to_dict(p: Printer) -> dict:
         "connection_config": p.connection_config,
         "awaiting_plate_clear": p.awaiting_plate_clear,
         "orca_printer_profiles": p.orca_printer_profiles,
-        "current_orca_printer_profile": p.current_orca_printer_profile,
+        "machine_profile_override": p.machine_profile_override,
+        "nozzle_variant": p.nozzle_variant,
+        # The machine profile this printer slices with right now (override, else model mapping + variant); null + reason when unmapped.
+        "machine_profile": res.profile if res else None,
+        "machine_profile_reason": res.reason if res else None,
+        "model_label": res.model_label if res else None,      # "<manufacturer> <model>" of the registry model, for pickers
         "enabled": p.enabled,
         "queue_on": p.queue_on,
         "loaded_filaments": p.loaded_filaments or [],
@@ -272,8 +290,9 @@ async def list_all_printer_files(session: AsyncSession = Depends(get_session)) -
 @router.get("", summary="List printers", dependencies=[Depends(require_scope("printers:read"))])
 async def list_printers(session: AsyncSession = Depends(get_session)) -> list[dict]:
     """All configured printers with their current connection status."""
-    result = await session.execute(select(Printer))
-    return [_to_dict(p) for p in result.scalars().all()]
+    printers = list((await session.execute(select(Printer))).scalars().all())
+    resolved = await slicer_profiles.resolve_many(session, printers)
+    return [_to_dict(p, resolved[p.id]) for p in printers]
 
 
 @router.post(
@@ -310,7 +329,8 @@ async def create_printer(
         model_id=model_id,
         connection_config=body.connection_config,
         orca_printer_profiles=body.orca_printer_profiles,
-        current_orca_printer_profile=body.current_orca_printer_profile,
+        machine_profile_override=body.machine_profile_override,
+        nozzle_variant=await _check_variant(session, model_uuid, body.nozzle_variant),
         loaded_filaments=inventory_refs.normalize_slots(body.loaded_filaments),
         build_plate_type=body.build_plate_type,
         no_snapshots_while_idle=body.no_snapshots_while_idle,
@@ -327,7 +347,7 @@ async def create_printer(
         printer_manager.connect_printer(printer.id, client)
     except Exception:
         pass  # non-fatal: printer saved, connection will retry on next restart
-    return _to_dict(printer)
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
 @router.get("/orca-presets", summary="List OrcaSlicer machine preset names",
@@ -533,9 +553,9 @@ async def get_profiles(
 ) -> dict:
     """OrcaSlicer print and filament profiles compatible with this printer's active machine preset."""
     printer = await _get_or_404(printer_id, session)
-    if not printer.current_orca_printer_profile:
+    machine_name = await slicer_profiles.machine_profile_for(session, printer)
+    if not machine_name:
         return {"print_profiles": [], "filament_profiles": []}
-    machine_name = printer.current_orca_printer_profile
 
     cat = await _fetch_sidecar_catalog()
     if cat is None:
@@ -560,7 +580,8 @@ async def get_printer(
     printer_id: int,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    return _to_dict(await _get_or_404(printer_id, session))
+    printer = await _get_or_404(printer_id, session)
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
 @router.patch(
@@ -577,7 +598,7 @@ async def update_printer(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     """Update one or more printer fields. Omitted fields are left unchanged.
-    `current_orca_printer_profile` supports explicit null to clear the preset."""
+    `machine_profile_override` and `nozzle_variant` support explicit null to clear them."""
     printer = await _get_or_404(printer_id, session)
     if body.manufacturer_id is not None or body.model_id is not None:
         # validated before anything is changed: a rejected identity leaves the printer exactly as it was
@@ -589,7 +610,19 @@ async def update_printer(
             raise HTTPException(422, str(e))
         await registry.sync_registry(session)      # commits: done before any field below is touched
         printer.manufacturer_id, printer.model_id = manufacturer_id, model_id
-        printer.model_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
+        new_uuid = await registry.model_uuid_for(session, printer.plugin_id or "", manufacturer_id, model_id)
+        if new_uuid != printer.model_uuid:
+            # A different model: the old model's nozzle variant and raw override do not carry over. The variant is kept only when the new
+            # model maps the same one (else cleared to NULL = the new model's default, never a silent 422 on an identity edit); the override
+            # is cleared unless this same request sets it.
+            current = slicer_profiles.NozzleVariant.parse(printer.nozzle_variant)
+            if "nozzle_variant" not in body.model_fields_set and current is not None:
+                rows = await slicer_profiles.mapping_rows(session, new_uuid) if new_uuid else []
+                if not any(slicer_profiles.variant_of(r) == current for r in rows):
+                    printer.nozzle_variant = None
+            if "machine_profile_override" not in body.model_fields_set:
+                printer.machine_profile_override = None
+        printer.model_uuid = new_uuid
     if body.name is not None:
         printer.name = body.name
     if body.connection_config is not None:
@@ -598,8 +631,10 @@ async def update_printer(
         printer.orca_printer_profiles = body.orca_printer_profiles
     # Use model_fields_set so an explicit null clears the preset (EditForm sends
     # null to unset make/model); an omitted key leaves it unchanged.
-    if "current_orca_printer_profile" in body.model_fields_set:
-        printer.current_orca_printer_profile = body.current_orca_printer_profile
+    if "machine_profile_override" in body.model_fields_set:
+        printer.machine_profile_override = body.machine_profile_override
+    if "nozzle_variant" in body.model_fields_set:
+        printer.nozzle_variant = await _check_variant(session, printer.model_uuid, body.nozzle_variant)
     if body.enabled is not None:
         printer.enabled = body.enabled
     if body.queue_on is not None:
@@ -626,7 +661,7 @@ async def update_printer(
         printer.preferred_slicer_plugin_id = wanted
     await session.commit()
     await session.refresh(printer)
-    return _to_dict(printer)
+    return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
 @router.delete(
@@ -730,31 +765,6 @@ async def plate_cleared(
     printer_manager.set_awaiting_plate_clear(printer_id, False)
     queue_engine.wake()
     return {"ok": True}
-
-
-@router.patch(
-    "/{printer_id}/active-preset",
-    summary="Switch active OrcaSlicer preset",
-    responses={
-        404: {"description": "Printer not found"},
-        422: {"description": "Preset not in this printer's configured profiles"},
-    },
-    dependencies=[Depends(require_scope("printers:write"))],
-)
-async def switch_active_preset(
-    printer_id: int,
-    body: ActivePresetUpdate,
-    session: AsyncSession = Depends(get_session),
-) -> dict:
-    """Change the active OrcaSlicer machine preset. The preset must already be in
-    the printer's `orca_printer_profiles` list."""
-    printer = await _get_or_404(printer_id, session)
-    if body.preset not in (printer.orca_printer_profiles or []):
-        raise HTTPException(422, f"Preset {body.preset!r} not in this printer's configured profiles")
-    printer.current_orca_printer_profile = body.preset
-    await session.commit()
-    await session.refresh(printer)
-    return _to_dict(printer)
 
 
 @router.post(

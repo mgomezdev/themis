@@ -59,6 +59,21 @@ machine preset maps to exactly one model; everything else stays unknown. Decisio
 incompatible | printer_model_unknown`; used by job create/edit (each printer independently; 422 incompatible, 409 unknown), make/model
 target materialisation, and the queue claim (blocks the job with the message as `block_reason`).
 
+### printer_model_slicer_profiles (v052, BIZ-294)
+Which slicer **machine profile** a printer *model* uses, set once per model instead of per printer (ten identical printers need no per-printer
+profile). `id, model_uuid FK printer_models, provider_plugin_id` (a `gcode.produce` plugin id, not a FK: profile names are provider-specific and a plugin
+may go dormant), `nozzle_diameter_mm, flow` (`standard|high_flow`), `machine_profile` (the provider's profile **name**, what `SliceRequest.machine_preset`
+carries), `is_default`. Unique `(model, provider, diameter, flow)`; a partial unique index allows exactly one `is_default` per `(model, provider)` (the API
+moves the default atomically; the first mapping of a pair is the default; the default cannot be unset or deleted while other variants exist; a variant a printer
+uses cannot be deleted). Hardened nozzles do not change the machine preset (filament gating only) so they are not part of the variant.
+**Resolution** (`services/slicer_profiles.py`): `Printer.machine_profile_override` if set, else the model's row for the provider that will slice the printer
+(`preferred_slicer_plugin_id` or the capability default) and the printer's `nozzle_variant` (NULL = the default row). No row => no machine profile: the provider is
+**ineligible** for that printer (`preference_ineligible` / `default_ineligible`, block reason `no machine profile for <model> <variant>`), a hard block the user fixes
+under Settings → Printer models. The slice-cache key already hashes `machine_preset`, so a 0.4 and a 0.6 printer never share a slice. v052 backfills from the
+printers' distinct `(model, profile)` pairs (most common = default; a differing profile becomes a variant when its name says the nozzle, else stays the raw override;
+printers without a model keep the override; the provider is the printer's preferred slicer, else `laminus`) and re-keys `job_model_targets`; its `down()` restores the
+per-printer profiles. Written by `/printer-models/{uuid}/slicer-profiles` and fleet import.
+
 ### printer_models (BIZ-262)
 Core-owned registry: `id` (UUID4 string, **never changes**), `plugin_id, manufacturer_id, model_id` (the supplying plugin's own key, unique
 together), `manufacturer_name, display_name, bed_x_mm, bed_y_mm, toolheads` (refreshed from the manifest on every sync), `enabled` (the
@@ -70,7 +85,7 @@ declares the key). Rows are never deleted or re-keyed; dormancy (`plugin_removed
 ### printers
 `id, name, printer_type` (legacy key, kept: `bambu`|`elegoo_centauri`|`snapmaker_extended`|`mock` for old rows/backups; new identity-based rows store the plugin id), `plugin_id, manufacturer_id, model_id: str?` (v042 — which plugin serves the printer and which of its declared models it is; all three set on every row after v042; create/patch validate them against the plugin manifests; a disabled/removed plugin makes the printer *dormant*, never deletes it), `connection_config: JSON`,
 `preferred_slicer_plugin_id: str?` (v050, BIZ-291) — the `gcode.produce` plugin this printer slices with; null = the capability default. Not a FK: a plugin can go dormant and the printer keeps naming it, so its jobs block (`preference_dormant`) instead of using another slicer. Set via `PATCH /printers/{id}` (422 unless the id provides `gcode.produce`; null/`""` clears). Part of every slice-cache key via the provider id.
-`awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `current_orca_printer_profile: str?`,
+`awaiting_plate_clear: bool`, `orca_printer_profiles: JSON[str]`, `machine_profile_override: str?` (v052, BIZ-294 — the old `current_orca_printer_profile`, no longer the make/model key: an advanced raw slicer machine profile that **wins** over the model mapping, for custom presets and printers with no registered model; normally NULL), `nozzle_variant: JSON?` (v052 — `{diameter_mm, flow: standard|high_flow}`, NULL = the model's default variant; must be a variant the model has a mapping for, else 422),
 `enabled: bool`, `queue_on: bool`, `loaded_filaments: JSON`, `build_plate_type: str?` (OrcaSlicer
 `curr_bed_type` override, merged into `SliceRequest.extra_config`), `no_snapshots_while_idle: bool`
 (Fleet camera-polling toggle), `bed_x_mm: float=256.0, bed_y_mm: float=256.0` (bed footprint, shown in
@@ -237,8 +252,8 @@ hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack
 - `slice_inputs: JSON?` (v033) — the slicing-cache key inputs this artifact was sliced from (null for pre-sliced files /
   uncacheable sources), so a job flagged "save" after slicing can still be saved.
 
-### job_model_targets  (v031 — "any printer of this make/model")
-`id, job_id FK (CASCADE), machine_profile` (a printer's make/model = its `current_orca_printer_profile`),
+### job_model_targets  (v031 — "any printer of this model"; keyed by model since v052)
+`id, job_id FK (CASCADE), model_uuid FK printer_models` (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
 `print_profile, filament_profile?, filament_id?, filament_type, filament_color` (`"any"` default),
 `filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
 Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
@@ -249,7 +264,7 @@ only for `queued`/`blocked` jobs. An explicit per-printer config wins over a tar
 `slice_failed` stays per printer. Unique `(model_target_id, printer_id)` where not null, and unique `(job_id, printer_id)` on the configs table
 (v031 de-duplicates first). A target's `filament_profile` is a real preset or null (never the type/"any"). API: `model_targets`
 on `POST /jobs`, `PATCH /jobs/{id}/configs` (either list may be empty, not both), `GET /jobs[/{id}/details]`,
-`POST /projects/{id}/generate` (`eligible_machine_profiles`).
+`POST /projects/{id}/generate` (`eligible_model_uuids`). Job responses add `model_label` ("<manufacturer> <model>").
 
 ### printer_alarms (v030)
 `id, printer_id (FK → printers, ON DELETE CASCADE), code, severity ('info'|'warning'|'error'|'fatal'), message, source ('hms'|'klipper'|'sdcp'), help_url?, first_seen, last_seen, resolved_at?, acknowledged_at?`. A row is *active* while the printer keeps reporting `code` (`resolved_at` null); it resolves when the report stops and is kept as history (resolved > 90 d purged at startup). A code that returns is a new row. `acknowledged_at` only silences badges/the unacknowledged list. `queue_config.alarm_min_severity` (default `warning`) filters `printer.alarm` webhooks/notifications. Bambu `hms` severity = `code >> 16` (1 fatal, 2 error, 3 warning, 4 info).

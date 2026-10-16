@@ -9,9 +9,10 @@ import { Reply, stubFetch } from '../test/fetchStub';
 // prompt.
 
 const MACHINE = 'Elegoo Centauri Carbon';
+const MODEL = 'model-ecc';
 const PRINTER = {
-  id: 1, name: 'Barnabus', printer_type: 'elegoo_centauri', connection_config: {}, awaiting_plate_clear: false,
-  orca_printer_profiles: [MACHINE], current_orca_printer_profile: MACHINE, enabled: true, connected: true,
+  id: 1, name: 'Barnabus', printer_type: 'elegoo_centauri', model_uuid: MODEL, model_label: 'Elegoo Centauri Carbon', connection_config: {}, awaiting_plate_clear: false,
+  orca_printer_profiles: [MACHINE], machine_profile: MACHINE, enabled: true, connected: true,
   loaded_filaments: [],
 };
 const plate = (n: number) => ({ plate_number: n, estimated_time: 300, filament_g: 10, thumbnail_path: null });
@@ -20,7 +21,7 @@ const version = (over: Record<string, unknown> = {}) => ({
   id: 5, file_id: 77, name: 'model - PETG - 0.20mm - ECC.gcode', kind: 'gcode', plate_number: 1,
   machine_preset: MACHINE, process_preset: PROFILE, filament_presets: ['Generic PETG'], filament_type: 'PETG',
   filament_color: '#112233', bed_type: null, overrides: {}, estimated_seconds: 3600, filament_grams: 12.5,
-  created_at: '2026-10-01T00:00:00Z', source_changed: false, stale: false, stale_reasons: [], printable_now: true,
+  created_at: '2026-10-01T00:00:00Z', source_changed: false, stale: false, stale_reasons: [], printable_now: true, model_uuids: [MODEL],
   ...over,
 });
 
@@ -110,10 +111,24 @@ describe('NewJobScreen — cached sliced versions', () => {
     expect(jobPosts(api)).toEqual([{
       uploaded_file_id: 77, plate_number: 1, project_id: null, overrides: null, printer_configs: [],
       model_targets: [{
-        machine_profile: MACHINE, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
+        model_uuid: MODEL, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
         filament_type: 'PETG', filament_color: '#112233',
       }],
     }]);
+  });
+
+  it('"Use this version" falls back to the printers on that machine profile when no model maps it', async () => {
+    localStorage.clear();
+    const api = open([version({ model_uuids: [] })]);
+    await upload();
+    await userEvent.click(within(await screen.findByRole('region', { name: 'Cached sliced versions' })).getByRole('button', { name: 'Use this version' }));
+    await screen.findByTestId('using-cached');
+    await userEvent.click(addButton());
+
+    await screen.findByText(/1 job added to queue/);
+    const body = jobPosts(api)[0] as { printer_configs: { printer_id: number }[]; model_targets: unknown[] };
+    expect(body.model_targets).toEqual([]);
+    expect(body.printer_configs.map(c => c.printer_id)).toEqual([1]);
   });
 
   it('"Reslice instead" goes back to the model and doesn\'t ask again', async () => {

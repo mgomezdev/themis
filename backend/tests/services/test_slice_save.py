@@ -42,7 +42,7 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
     async with factory() as s:
         if await s.get(Printer, 1) is None:
             s.add(Printer(id=1, name="P1", printer_type=printer_type, connection_config={},
-                          current_orca_printer_profile=MACHINE,
+                          machine_profile_override=MACHINE,
                           loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                              "filament_profile": "Generic PETG"}]))
             await s.flush()
@@ -431,7 +431,7 @@ async def test_a_saved_slice_is_eligible_for_its_target_model_and_only_its_decla
             await registry.sync_registry(s)
             models = {m["model_id"]: m["id"] for m in await registry.list_models(s, plugin_id="fake_printers")}
             s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={}, model_uuid=models["x1"],
-                          current_orca_printer_profile=MACHINE,
+                          machine_profile_override=MACHINE,
                           loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]))
             await s.commit()
         qe, _ = _engine(session_factory, tmp_path)

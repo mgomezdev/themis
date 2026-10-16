@@ -42,10 +42,12 @@ const MULTI_PRINTER = {
   id: 3,
   name: 'U1',
   printer_type: 'snapmaker_extended',
+  model_uuid: 'model-u1',
+  model_label: 'Snapmaker U1',
   connection_config: {},
   awaiting_plate_clear: false,
   orca_printer_profiles: ['U1 Profile'],
-  current_orca_printer_profile: 'U1 Profile',
+  machine_profile: 'U1 Profile',
   enabled: true,
   connected: true,
   loaded_filaments: [
@@ -231,7 +233,7 @@ describe('EditJobScreen — make/model targets', () => {
   const targetJob: queueApi.ApiJobDetails = {
     ...JOB_WITH_TOOL2,
     model_targets: [{
-      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      model_uuid: 'model-u1', model_label: 'Snapmaker U1', print_profile: '0.20mm Standard @U1', filament_profile: null,
       filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
     }],
     // The materialized row for the target must not come back as an explicit printer pick.
@@ -251,7 +253,7 @@ describe('EditJobScreen — make/model targets', () => {
     const [, configs, , targets] = vi.mocked(queueApi.updateJobConfigs).mock.calls[0];
     expect(configs).toEqual([]);
     expect(targets).toEqual([{
-      machine_profile: 'U1 Profile', print_profile: '0.20mm Standard @U1', filament_profile: null,
+      model_uuid: 'model-u1', print_profile: '0.20mm Standard @U1', filament_profile: null,
       filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any',
     }]);
   });

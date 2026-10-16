@@ -15,7 +15,8 @@ import type { AlarmSummary, PrinterAlarm } from './alarms';
 import type { ApiPrinter } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
-import type { ApiJob, ApiJobDetails } from './queue';
+import type { ApiJob, ApiJobDetails, ApiModelTarget } from './queue';
+import type { ModelSlicerProfile, ProfileCandidate, ProfileSuggestions, ProfileVariantOption } from './slicerProfiles';
 import type { CapabilityInfo } from './capabilities';
 import type { PluginConnectionResult, PluginProvides, PluginSummary } from './plugins';
 
@@ -32,7 +33,7 @@ const FLEET = {
 
 const PRINTER = {
   id: 1, name: 1, printer_type: 1, plugin_id: 1, manufacturer_id: 1, model_id: 1, model_uuid: 1, connection_config: 1, awaiting_plate_clear: 1, orca_printer_profiles: 1,
-  current_orca_printer_profile: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
+  machine_profile_override: 1, nozzle_variant: 1, machine_profile: 1, machine_profile_reason: 1, model_label: 1, enabled: 1, queue_on: 1, connected: 1, loaded_filaments: 1, build_plate_type: 1,
   no_snapshots_while_idle: 1, bed_x_mm: 1, bed_y_mm: 1, machine_rate_per_hour: 1, preferred_slicer_plugin_id: 1, quiet_start: 1, quiet_end: 1,
 } satisfies Record<keyof ApiPrinter, 1>;
 
@@ -80,8 +81,25 @@ const LIBRARY_FILE = {
 } satisfies Record<keyof LibraryFile, 1>;
 
 const SLICED_VERSION = {
-  id: 1, file_id: 1, name: 1, kind: 1, plate_number: 1, machine_preset: 1, process_preset: 1, filament_presets: 1, filament_type: 1, filament_color: 1, bed_type: 1, overrides: 1, estimated_seconds: 1, filament_grams: 1, created_at: 1, source_changed: 1, stale: 1, stale_reasons: 1, printable_now: 1,
+  id: 1, file_id: 1, name: 1, kind: 1, plate_number: 1, machine_preset: 1, process_preset: 1, filament_presets: 1, filament_type: 1, filament_color: 1, bed_type: 1, overrides: 1, estimated_seconds: 1, filament_grams: 1, created_at: 1, source_changed: 1, stale: 1, stale_reasons: 1, printable_now: 1, model_uuids: 1,
 } satisfies Record<keyof SlicedVersion, 1>;
+
+const MODEL_SLICER_PROFILE = {
+  id: 1, model_uuid: 1, provider_plugin_id: 1, nozzle_diameter_mm: 1, flow: 1, machine_profile: 1, is_default: 1,
+} satisfies Record<keyof ModelSlicerProfile, 1>;
+const PROFILE_SUGGESTIONS = {
+  provider_plugin_id: 1, available: 1, candidates: 1, variants: 1, error: 1,
+} satisfies Record<keyof ProfileSuggestions, 1>;
+const PROFILE_CANDIDATE = {
+  name: 1, nozzle_diameter_mm: 1, flow: 1, ref: 1, confidence: 1, match_reason: 1,
+} satisfies Record<keyof ProfileCandidate, 1>;
+const PROFILE_VARIANT = {
+  name: 1, nozzle_diameter_mm: 1, flow: 1, ref: 1, is_default_guess: 1,
+} satisfies Record<keyof ProfileVariantOption, 1>;
+const MODEL_TARGET = {
+  model_uuid: 1, model_label: 1, print_profile: 1, filament_profile: 1, filament_id: 1, material_provider: 1, material_ref: 1,
+  filament_type: 1, filament_color: 1, filament_map: 1,
+} satisfies Record<keyof ApiModelTarget, 1>;
 
 const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;
 const ANALYTICS_RANGE = { start: 1, end: 1, days: 1 } satisfies Record<keyof AnalyticsRange, 1>;
@@ -140,6 +158,11 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['job details (core + extra + queue-only enrichments)', [...contract.queue_job, ...contract.job_details_core, ...contract.job_details_extra], keysOf(JOB_DETAILS)],
     ['project', contract.project, keysOf(PROJECT)],
     ['sliced version (GET /files/{id}/sliced-versions item)', contract.sliced_version_item, keysOf(SLICED_VERSION)],
+    ['model slicer profile mapping', contract.printer_model_slicer_profile, keysOf(MODEL_SLICER_PROFILE)],
+    ['slicer profile suggestions', contract.slicer_profile_suggestions, keysOf(PROFILE_SUGGESTIONS)],
+    ['slicer profile candidate', contract.slicer_profile_candidate, keysOf(PROFILE_CANDIDATE)],
+    ['slicer profile variant option', contract.slicer_profile_variant, keysOf(PROFILE_VARIANT)],
+    ['job model target', contract.model_target, keysOf(MODEL_TARGET)],
     ['project item', contract.project_item, keysOf(PROJECT_ITEM)],
     ['project link', contract.project_link, keysOf(PROJECT_LINK)],
     ['project part', contract.project_part, keysOf(PROJECT_PART)],
@@ -181,6 +204,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'printer_alarm', 'alarm_summary', 'printer_file', 'printer_files_listing', 'printer_files_merged',
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
+      'printer_model_slicer_profile', 'slicer_profile_suggestions', 'slicer_profile_candidate', 'slicer_profile_variant', 'model_target',
       'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'capability_info']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });

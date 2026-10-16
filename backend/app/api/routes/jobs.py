@@ -16,14 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
+from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, PrinterModelRecord, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
 from ...services import completion_events, slice_cache, slice_saver
 from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file
 from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
-from ...services import model_targets, scheduling
+from ...services import model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
@@ -105,9 +105,9 @@ class PrinterConfigInput(BaseModel):
 
 
 class ModelTargetInput(BaseModel):
-    """Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).
+    """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
-    machine_profile: str
+    model_uuid: str
     print_profile: str = ""
     filament_profile: str | None = None
     filament_id: int | None = None
@@ -117,11 +117,11 @@ class ModelTargetInput(BaseModel):
     filament_color: str = "any"
     filament_map: list[dict] | None = None
 
-    @field_validator("machine_profile")
+    @field_validator("model_uuid")
     @classmethod
-    def _machine_profile_set(cls, v: str) -> str:
+    def _model_uuid_set(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("machine_profile must not be blank")
+            raise ValueError("model_uuid must not be blank")
         return v
 
     @field_validator("filament_map")
@@ -185,11 +185,10 @@ async def _check_gcode_printers(
         if printer is not None and not model_targets.accepts_file(printer.printer_type, filename):
             raise HTTPException(422, f"{printer.name} {why}")
     for t in targets:
-        matching = (await session.execute(
-            select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile)
-        )).scalars().all()
+        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
         if matching and not any(model_targets.accepts_file(p.printer_type, filename) for p in matching):
-            raise HTTPException(422, f"No {t.machine_profile} printer can take this file: each one {why}")
+            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            raise HTTPException(422, f"No {label} printer can take this file: each one {why}")
 
 
 async def _check_machine_eligibility(
@@ -211,11 +210,11 @@ async def _check_machine_eligibility(
         if not outcome.allowed:
             refused.append(outcome)
     for t in targets:
-        matching = (await session.execute(
-            select(Printer).where(Printer.current_orca_printer_profile == t.machine_profile))).scalars().all()
+        matching = (await session.execute(select(Printer).where(Printer.model_uuid == t.model_uuid))).scalars().all()
         outcomes = [await eligibility.evaluate(session, uploaded_file, p, confirmed=confirmed) for p in matching]
         if outcomes and not any(o.allowed for o in outcomes):
-            refused.append(eligibility.Outcome(False, outcomes[0].code, f"No {t.machine_profile} printer can take this file: "
+            label = await slicer_profiles.model_display_name(session, t.model_uuid)
+            refused.append(eligibility.Outcome(False, outcomes[0].code, f"No {label} printer can take this file: "
                                                                         f"{outcomes[0].message}"))
     if not refused:
         return
@@ -239,35 +238,42 @@ async def _check_version_printers(
         return
     for cfg in configs:
         printer = await session.get(Printer, cfg.printer_id)
-        if printer is not None and printer.current_orca_printer_profile != version.machine_preset:
+        if printer is not None and await slicer_profiles.machine_profile_for(session, printer) != version.machine_preset:
             raise HTTPException(422, f"{printer.name} isn't a {version.machine_preset} — this cached version was "
                                      "sliced for that printer model")
     for t in targets:
-        if t.machine_profile != version.machine_preset:
+        if version.machine_preset not in await slicer_profiles.profiles_of_model(session, t.model_uuid):
+            label = await slicer_profiles.model_display_name(session, t.model_uuid)
             raise HTTPException(422, f"This cached version was sliced for {version.machine_preset}, not "
-                                     f"{t.machine_profile}")
+                                     f"{label}")
 
 
 def _validate_targets(targets: list[ModelTargetInput]) -> None:
     seen: set[str] = set()
     for t in targets:
-        if t.machine_profile in seen:
-            raise HTTPException(422, f"Duplicate make/model target {t.machine_profile!r}")
-        seen.add(t.machine_profile)
+        if t.model_uuid in seen:
+            raise HTTPException(422, f"Duplicate make/model target {t.model_uuid!r}")
+        seen.add(t.model_uuid)
+
+
+async def _require_known_models(session: AsyncSession, targets: list[ModelTargetInput]) -> None:
+    for t in targets:
+        if await session.get(PrinterModelRecord, t.model_uuid) is None:
+            raise HTTPException(422, f"Unknown printer model {t.model_uuid!r}")
 
 
 def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput],
                  previous: dict[str, tuple] | None = None) -> None:
-    """`previous`: stored material asks by machine_profile (when an edit replaces the targets)."""
+    """`previous`: stored material asks by model_uuid (when an edit replaces the targets)."""
     for t in targets:
         session.add(JobModelTarget(
             job_id=job_id,
-            machine_profile=t.machine_profile,
+            model_uuid=t.model_uuid,
             print_profile=t.print_profile,
             # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
             # each printer's loaded slot supplies the preset.
             filament_profile=t.filament_profile or None,
-            **material_columns(t.filament_id, t.material_provider, t.material_ref, (previous or {}).get(t.machine_profile)),
+            **material_columns(t.filament_id, t.material_provider, t.material_ref, (previous or {}).get(t.model_uuid)),
             filament_type=t.filament_type,
             filament_color=t.filament_color,
             filament_map=t.filament_map,
@@ -416,6 +422,7 @@ async def create_job(
     if not body.printer_configs and not body.model_targets:
         raise HTTPException(422, "printer_configs or model_targets must not be empty")
     _validate_targets(body.model_targets)
+    await _require_known_models(session, body.model_targets)
 
     for cfg in body.printer_configs:
         printer = await session.get(Printer, cfg.printer_id)
@@ -540,7 +547,8 @@ async def check_overrides(
     if not await asyncio.to_thread(with_local_path, get_library_store(), uploaded_file.relative_path,
                                    source_has_project_settings, False):
         return {**empty, "has_embedded_settings": False}
-    if not printer.current_orca_printer_profile:
+    machine_name = await slicer_profiles.machine_profile_for(session, printer)
+    if not machine_name:
         return {**empty, "has_embedded_settings": True}
 
     # Resolve profile names to UUIDs via the Orca sidecar, then fetch the merged
@@ -558,7 +566,6 @@ async def check_overrides(
     except Exception as e:
         return {**empty, "has_embedded_settings": True, "error": f"Catalog unavailable: {e}"}
 
-    machine_name = printer.current_orca_printer_profile
     machine_uuid = catalog.ref_for("machine", machine_name)
     process_uuid = catalog.ref_for("process", body.print_profile)
     if not machine_uuid or not process_uuid:
@@ -864,6 +871,7 @@ async def update_job_configs(
     if not body.printer_configs and not body.model_targets:
         raise HTTPException(422, "printer_configs or model_targets must not be empty")
     _validate_targets(body.model_targets)
+    await _require_known_models(session, body.model_targets)
     for cfg in body.printer_configs:
         if await session.get(Printer, cfg.printer_id) is None:
             raise HTTPException(404, f"Printer {cfg.printer_id} not found")
@@ -878,7 +886,7 @@ async def update_job_configs(
     # Remember the stored material asks: an old client echoes the whole object back with a stale `material_ref`.
     prev_cfg = {c.printer_id: stored(c) for c in (await session.execute(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars()}
-    prev_target = {t.machine_profile: stored(t) for t in (await session.execute(
+    prev_target = {t.model_uuid: stored(t) for t in (await session.execute(
         select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars()}
 
     # Configs first (they reference the targets), then the targets themselves.
@@ -1056,7 +1064,7 @@ class CompleteManuallyBody(BaseModel):
 
 
 def _build_slice_request(
-    job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile,
+    job: Job, config: JobPrinterConfig, printer: Printer, uploaded_file: UploadedFile, machine_preset: str | None,
 ) -> SliceRequest:
     """Build the SliceRequest for a debug/manual slice of `job` against `printer`'s
     matched `config` - shared by verify-slice and complete-manually, both of which
@@ -1090,7 +1098,7 @@ def _build_slice_request(
         source_3mf="",
         source_key=uploaded_file.relative_path,
         plate_number=job.plate_number,
-        machine_preset=printer.current_orca_printer_profile,
+        machine_preset=machine_preset,
         process_preset=config.print_profile,
         filament_presets=filament_presets,
         filament_colours=[config.filament_color] if config.filament_color else [],
@@ -1139,10 +1147,11 @@ async def verify_slice(
     if is_presliced_file(uploaded_file):
         raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
-    if not printer.current_orca_printer_profile:
-        return {"ok": False, "error": "Printer has no OrcaSlicer machine preset configured"}
+    resolution = await slicer_profiles.resolve_for_printer(session, printer)
+    if not resolution.profile:
+        return {"ok": False, "error": resolution.reason or "Printer has no slicer machine profile"}
 
-    req = _build_slice_request(job, config, printer, uploaded_file)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
 
     # Isolated from the production gcode dir (<data_dir>/gcode/<job_id>) — slice()
     # unlinks *.gcode/*.gcode.3mf in its output dir before writing, which would
@@ -1216,8 +1225,9 @@ async def complete_job_manually(
     if is_presliced_file(uploaded_file):
         raise HTTPException(422, "This job prints a pre-sliced file; there is nothing to slice")
 
-    if not printer.current_orca_printer_profile:
-        raise HTTPException(422, "Printer has no OrcaSlicer machine preset configured")
+    resolution = await slicer_profiles.resolve_for_printer(session, printer)
+    if not resolution.profile:
+        raise HTTPException(422, resolution.reason or "Printer has no slicer machine profile")
 
     # No status/assigned_printer_id change before the slice: the job may genuinely be
     # printing/uploading, and clobbering either would orphan the live print from
@@ -1227,7 +1237,7 @@ async def complete_job_manually(
         raise HTTPException(409, f"Job {job_id} is already being manually completed")
     _manual_complete_in_flight.add(job_id)
 
-    req = _build_slice_request(job, config, printer, uploaded_file)
+    req = _build_slice_request(job, config, printer, uploaded_file, resolution.profile)
     output_dir = queue_engine._slicer._data_dir / "gcode_manual_complete" / str(job_id)
     try:
         gcode_path = await queue_engine.run_verify_slice(req, output_dir)

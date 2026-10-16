@@ -392,9 +392,9 @@ function PrinterPicker({ printers, selectedPrinters, onToggle }: {
               </div>
               <Checkbox checked={selected} />
             </div>
-            {printer.current_orca_printer_profile && (
+            {printer.machine_profile && (
               <div className="tiny" style={{ marginTop: 8, color: 'var(--text-3)' }}>
-                {printer.current_orca_printer_profile}
+                {printer.machine_profile}
               </div>
             )}
           </button>
@@ -863,14 +863,17 @@ export function NewJobScreen() {
     try {
       await loadFileIntoState(version.file_id, { name: version.name, size: 0, type: version.kind, folder: file.folder });
       setCachedFrom({ modelId: model.id, model: model.info, version });
-      // Eligibility: any printer of the make/model it was sliced for, asking for the filament it was sliced with.
-      const key = modelKey(version.machine_preset);
+      // Eligibility: any printer of the model(s) whose slicer profile it was sliced for (else the printers on that profile), asking
+      // for the filament it was sliced with.
+      const keys = version.model_uuids.length > 0
+        ? version.model_uuids.map(modelKey)
+        : printers.filter(p => p.machine_profile === version.machine_preset).map(p => String(p.id));
       setPlateConfigs(prev => {
         const next = { ...prev };
         for (const [id, cfg] of Object.entries(next)) {
           next[id] = {
-            ...cfg, selectedPrinters: [key],
-            perPrinter: { [key]: { ...defaultPerPrinterCfg(), filamentType: version.filament_type, filamentColor: version.filament_color } },
+            ...cfg, selectedPrinters: keys,
+            perPrinter: Object.fromEntries(keys.map(k => [k, { ...defaultPerPrinterCfg(), filamentType: version.filament_type, filamentColor: version.filament_color }])),
           };
         }
         return next;

@@ -90,7 +90,7 @@ def stores(tmp_path, monkeypatch):
 async def _seed(factory) -> int:
     async with factory() as s:
         s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile="M"))
+                      machine_profile_override="M"))
         f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
                          content_hash="srchash", plates=[{"plate_number": 1}], uploaded_at=_now(), size_bytes=5, mtime=1.0)
         s.add(f)
@@ -317,7 +317,7 @@ async def test_the_dispatch_slice_request_names_the_library_key_not_a_path(sessi
     qe, _ = _engine(session_factory, tmp_path)
     async with session_factory() as s:
         s.add(Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile="M"))
+                      machine_profile_override="M"))
         f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints",
                          plates=[], uploaded_at=_now())
         s.add(f)
@@ -339,13 +339,13 @@ def test_verify_and_manual_complete_slices_name_the_library_key_not_a_path():
     """jobs._build_slice_request (verify-slice, complete-manually) hands the slicer the library key."""
     from app.api.routes.jobs import _build_slice_request
     printer = Printer(id=1, name="P1", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile="M", loaded_filaments=[])
+                      machine_profile_override="M", loaded_filaments=[])
     f = UploadedFile(original_filename="Benchy.3mf", relative_path="Prints/Benchy.3mf", folder="/Prints", plates=[],
                      uploaded_at=_now())
     job = Job(id=5, uploaded_file_id=1, plate_number=2, status="queued", created_at=_now(), updated_at=_now())
     cfg = JobPrinterConfig(job_id=5, printer_id=1, print_profile="P", filament_type="any", filament_color="any")
 
-    req = _build_slice_request(job, cfg, printer, f)
+    req = _build_slice_request(job, cfg, printer, f, "M")
 
     assert (req.source_key, req.source_3mf) == ("Prints/Benchy.3mf", "")
     assert req.plate_number == 2

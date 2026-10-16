@@ -2,7 +2,7 @@
 
 A `JobModelTarget` is persistent intent; the per-printer `JobPrinterConfig` rows it produces (tagged with
 `model_target_id`) are what the queue engine, slicer and estimates actually read, so nothing downstream needs to
-know about targets. A printer's make/model is its `current_orca_printer_profile`.
+know about targets. A printer's make/model is its registry model (`Printer.model_uuid`, BIZ-294).
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, UploadedFile
+from ..models import Job, JobModelTarget, JobPrinterConfig, Printer, PrinterModelRecord, UploadedFile
 from . import gcode_eligibility
 from .library_scanner import file_kind
 
@@ -49,11 +49,11 @@ def _config_from_target(target: JobModelTarget, printer_id: int) -> JobPrinterCo
 
 async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> None:
     """Make this printer's materialized configs match the waiting jobs' model targets (caller commits)."""
-    profile = printer.current_orca_printer_profile or None
+    profile = printer.model_uuid or None
 
-    # Drop rows left over from a profile change, and rows whose target was deleted (e.g. the job was re-edited).
+    # Drop rows left over from a model change, and rows whose target was deleted (e.g. the job was re-edited).
     mismatch = JobModelTarget.id.is_(None) if profile is None else or_(
-        JobModelTarget.id.is_(None), JobModelTarget.machine_profile != profile)
+        JobModelTarget.id.is_(None), JobModelTarget.model_uuid != profile)
     stale_ids = (await session.execute(
         select(JobPrinterConfig.id)
         .join(Job, Job.id == JobPrinterConfig.job_id)
@@ -73,7 +73,7 @@ async def sync_targets_for_printer(session: AsyncSession, printer: Printer) -> N
         select(JobModelTarget, UploadedFile, Job.eligibility_confirmed)
         .join(Job, Job.id == JobModelTarget.job_id)
         .join(UploadedFile, UploadedFile.id == Job.uploaded_file_id)
-        .where(JobModelTarget.machine_profile == profile, Job.status.in_(_SYNCABLE))
+        .where(JobModelTarget.model_uuid == profile, Job.status.in_(_SYNCABLE))
         .order_by(JobModelTarget.id)
     )).all()
     for target, file, confirmed in rows:
@@ -112,7 +112,7 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     printers = (await session.execute(select(Printer).order_by(Printer.id))).scalars().all()
     for target in targets:
         for printer in printers:
-            if printer.id in have or printer.current_orca_printer_profile != target.machine_profile:
+            if printer.id in have or printer.model_uuid != target.model_uuid:
                 continue
             if not accepts_file(printer.printer_type, filename):
                 continue
@@ -123,9 +123,10 @@ async def materialize_job(session: AsyncSession, job_id: int) -> None:
     await session.flush()
 
 
-def _target_dict(t: JobModelTarget) -> dict:
+def _target_dict(t: JobModelTarget, labels: dict[str, str]) -> dict:
     return {
-        "machine_profile": t.machine_profile,
+        "model_uuid": t.model_uuid,
+        "model_label": labels.get(t.model_uuid),
         "print_profile": t.print_profile,
         "filament_profile": t.filament_profile,
         "filament_id": t.filament_id,
@@ -145,8 +146,11 @@ async def target_dicts_by_job(session: AsyncSession, job_ids: list[int]) -> dict
     rows = (await session.execute(
         select(JobModelTarget).where(JobModelTarget.job_id.in_(job_ids)).order_by(JobModelTarget.id)
     )).scalars().all()
+    recs = {r.id: r for r in (await session.execute(select(PrinterModelRecord).where(
+        PrinterModelRecord.id.in_({t.model_uuid for t in rows})))).scalars()} if rows else {}
+    labels = {uid: f"{r.manufacturer_name} {r.display_name or r.model_id}".strip() for uid, r in recs.items()}
     for t in rows:
-        out[t.job_id].append(_target_dict(t))
+        out[t.job_id].append(_target_dict(t, labels))
     return out
 
 

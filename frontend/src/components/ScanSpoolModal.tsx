@@ -62,7 +62,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
       const slots = [...(latest.loaded_filaments ?? [])];
       const idx = slot === NEW_SLOT ? -1 : slots.findIndex(s => String(s.slot) === slot);
       const current = idx >= 0 ? slots[idx] : undefined;
-      const patch = slotPatchForSpool(spool, inventory.id ?? '', latest.current_orca_printer_profile, current);
+      const patch = slotPatchForSpool(spool, inventory.id ?? '', latest.machine_profile, current);
       if (idx >= 0) {
         slots[idx] = { ...current!, ...patch };
       } else {

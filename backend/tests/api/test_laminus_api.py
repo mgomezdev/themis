@@ -141,7 +141,7 @@ async def test_refresh_drift_returns_pending_remaps_and_parks_catalog(client: As
 
     drift_payload = {
         "pending": {
-            "printers": [{"field": "current_orca_printer_profile", "stale_value": "Bambu X1C 0.4 nozzle",
+            "printers": [{"field": "machine_profile_override", "stale_value": "Bambu X1C 0.4 nozzle",
                           "options_kind": "machine", "required": True,
                           "affected_printer_ids": [1], "affected_printer_names": ["X1C"],
                           "affected_slots": [None]}],
@@ -209,7 +209,7 @@ async def test_confirm_remap_missing_required_printer_resolution_returns_422(cli
     catalog_service._pending_sync = {
         "sync_id": "sync-1", "raw": b'{}', "catalog": catalog_from_dict({}),
         "pending": {
-            "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
+            "printers": [{"field": "machine_profile_override", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
                           "affected_printer_ids": [1], "affected_printer_names": ["P1"],
                           "affected_slots": [None]}],
@@ -290,7 +290,7 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
         "name": "Test Printer",
         "printer_type": "bambu",
         "connection_config": {"ip_address": "1.2.3.4"},
-        "current_orca_printer_profile": "Stale Machine",
+        "machine_profile_override": "Stale Machine",
         "orca_printer_profiles": ["Stale Machine"],
         "loaded_filaments": [],
     })
@@ -305,7 +305,7 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
         "raw": pending_bytes,
         "catalog": catalog_from_dict(new_catalog),
         "pending": {
-            "printers": [{"field": "current_orca_printer_profile", "stale_value": "Stale Machine",
+            "printers": [{"field": "machine_profile_override", "stale_value": "Stale Machine",
                           "required": True, "options_kind": "machine",
                           "affected_printer_ids": [printer_id], "affected_printer_names": ["Test Printer"],
                           "affected_slots": [None]}],
@@ -317,7 +317,7 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
     resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={
         "sync_id": "sync-apply",
         "resolutions": {
-            "printers": [{"field": "current_orca_printer_profile",
+            "printers": [{"field": "machine_profile_override",
                           "stale_value": "Stale Machine", "new_value": "New Machine"}],
             "jobs": [], "inventory_filaments": [],
         }
@@ -331,7 +331,7 @@ async def test_confirm_remap_updates_printer_and_commits_catalog(client: AsyncCl
 
     # Verify DB updated
     printer_resp = await client.get(f"/api/v1/printers/{printer_id}")
-    assert printer_resp.json()["current_orca_printer_profile"] == "New Machine"
+    assert printer_resp.json()["machine_profile_override"] == "New Machine"
 
 
 async def test_confirm_remap_spoolman_only_raw_none_skips_commit_catalog(client: AsyncClient):
@@ -409,12 +409,12 @@ async def _printer_row(session_factory, printer_id):
 
 
 async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles(client, create_printer, session_factory):
-    a = await create_printer(name="A", current_orca_printer_profile="Old Machine",
+    a = await create_printer(name="A", machine_profile_override="Old Machine",
                              loaded_filaments=[{"slot": 0, "filament_profile": "Old PLA", "type": "PLA"},
                                                {"slot": 1, "filament_profile": "Keep Me", "type": "PETG"}])
-    b = await create_printer(name="B", current_orca_printer_profile="Old Machine")
+    b = await create_printer(name="B", machine_profile_override="Old Machine")
     sync = _park(_pending(printers=[
-        {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+        {"field": "machine_profile_override", "stale_value": "Old Machine", "required": True,
          "options_kind": "machine", "affected_printer_ids": [a, b, 9999], "affected_printer_names": ["A", "B", "?"],
          "affected_slots": [None, None, None]},
         {"field": "filament_profile", "stale_value": "Old PLA", "required": False, "options_kind": "filament",
@@ -422,7 +422,7 @@ async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles
     ]))
 
     resp = await _confirm(client, sync, printers=[
-        {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "new_value": "New Machine"},
+        {"field": "machine_profile_override", "stale_value": "Old Machine", "new_value": "New Machine"},
         {"field": "filament_profile", "stale_value": "Old PLA", "new_value": "New PLA"},
     ])
 
@@ -430,7 +430,7 @@ async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles
     assert resp.json() == {"status": "ok", "applied": {"printers": 3, "jobs": 0, "inventory_filaments": 0},
                            "inventory_failures": []}  # a, b machine + a slot 0; missing printer & out-of-range slot skipped
     row_a, row_b = await _printer_row(session_factory, a), await _printer_row(session_factory, b)
-    assert row_a.current_orca_printer_profile == row_b.current_orca_printer_profile == "New Machine"
+    assert row_a.machine_profile_override == row_b.machine_profile_override == "New Machine"
     assert [s["filament_profile"] for s in row_a.loaded_filaments] == ["New PLA", "Keep Me"]
     assert row_a.loaded_filaments[0]["type"] == "PLA"  # the rest of the slot survives
     assert cached_raw() == _NEW_CATALOG and catalog_service._catalog_bytes == b'{"new": true}'
@@ -438,16 +438,16 @@ async def test_confirm_remap_rewrites_the_active_preset_and_loaded_slot_profiles
 
 
 async def test_confirm_remap_optional_printer_entry_without_a_resolution_clears_the_field(client, create_printer, session_factory):
-    pid = await create_printer(current_orca_printer_profile="Gone Machine")
+    pid = await create_printer(machine_profile_override="Gone Machine")
     sync = _park(_pending(printers=[
-        {"field": "current_orca_printer_profile", "stale_value": "Gone Machine", "required": False,
+        {"field": "machine_profile_override", "stale_value": "Gone Machine", "required": False,
          "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"],
          "affected_slots": [None]}]))
 
     resp = await _confirm(client, sync)
 
     assert resp.status_code == 200 and resp.json()["applied"]["printers"] == 1
-    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile is None
+    assert (await _printer_row(session_factory, pid)).machine_profile_override is None
 
 
 async def test_confirm_remap_rewrites_job_configs_and_clears_a_dropped_filament(client, create_job, session_factory):
@@ -476,10 +476,10 @@ async def test_confirm_remap_rewrites_job_configs_and_clears_a_dropped_filament(
 
 
 async def test_confirm_remap_lists_every_unresolved_or_invalid_entry_and_changes_nothing(client, create_printer, session_factory):
-    pid = await create_printer(current_orca_printer_profile="Old Machine")
+    pid = await create_printer(machine_profile_override="Old Machine")
     sync = _park(_pending(
         printers=[
-            {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+            {"field": "machine_profile_override", "stale_value": "Old Machine", "required": True,
              "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"], "affected_slots": [None]},
             {"field": "filament_profile", "stale_value": "Old PLA", "required": False, "options_kind": "filament",
              "affected_printer_ids": [pid], "affected_printer_names": ["P"], "affected_slots": [0]},
@@ -494,18 +494,18 @@ async def test_confirm_remap_lists_every_unresolved_or_invalid_entry_and_changes
 
     assert resp.status_code == 422
     assert resp.json()["detail"]["unresolved"] == [
-        "Printer current_orca_printer_profile=Old Machine",   # required, no resolution
+        "Printer machine_profile_override=Old Machine",   # required, no resolution
         "Invalid value 'Ghost PLA' for filament_profile",     # not in the new catalog
         "Invalid value 'Ghost Process' for job print_profile",
     ]
-    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"
+    assert (await _printer_row(session_factory, pid)).machine_profile_override == "Old Machine"
     assert catalog_service._pending_sync is not None and catalog_service._pending_sync["sync_id"] == "sync-x"  # operator can retry
 
 
 async def test_confirm_remap_failure_midway_rolls_back_every_change_and_keeps_the_pending_remap(client, create_printer, session_factory):
-    pid = await create_printer(current_orca_printer_profile="Old Machine")
+    pid = await create_printer(machine_profile_override="Old Machine")
     sync = _park(_pending(
-        printers=[{"field": "current_orca_printer_profile", "stale_value": "Old Machine", "required": True,
+        printers=[{"field": "machine_profile_override", "stale_value": "Old Machine", "required": True,
                    "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P"],
                    "affected_slots": [None]}],
         jobs=[{"field": "print_profile", "stale_value": "Old Process", "options_kind": "process", "required": False,
@@ -515,9 +515,9 @@ async def test_confirm_remap_failure_midway_rolls_back_every_change_and_keeps_th
 
     with pytest.raises(TypeError):
         await _confirm(client, sync, printers=[
-            {"field": "current_orca_printer_profile", "stale_value": "Old Machine", "new_value": "New Machine"}])
+            {"field": "machine_profile_override", "stale_value": "Old Machine", "new_value": "New Machine"}])
 
-    assert (await _printer_row(session_factory, pid)).current_orca_printer_profile == "Old Machine"  # not half-applied
+    assert (await _printer_row(session_factory, pid)).machine_profile_override == "Old Machine"  # not half-applied
     assert cached_raw() is catalog_before
     assert catalog_service._pending_sync is not None
 
@@ -651,3 +651,35 @@ async def test_confirm_remap_reads_the_inventory_once_and_sees_its_own_writes_ac
     assert inventory.calls.count("list_materials") == 1
     assert _links(inventory, 5) == {preset: ["New A", "New B"]}
     assert _links(inventory, 6) == {preset: ["New A"]}
+
+
+async def test_confirm_remap_rewrites_the_model_mapping_rows_that_used_the_removed_profile(client: AsyncClient, session_factory, create_printer, model_uuid_of):
+    """BIZ-294: a removed machine profile is fixed once on the model mapping, for every variant row that named it, not per printer."""
+    from sqlalchemy import select
+    from app.models import PrinterModelSlicerProfile
+    pid = await create_printer(machine_profile_override=None)
+    model = await model_uuid_of(pid)
+    for d, name, default in ((0.4, "Stale Machine", True), (0.6, "Stale Machine", False), (0.8, "Kept Machine", False)):
+        r = await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={
+            "provider_plugin_id": "laminus", "nozzle_diameter_mm": d, "machine_profile": name, "is_default": default})
+        assert r.status_code == 201
+
+    new_catalog = {"machine": [{"name": "New Machine", "uuid": "m2"}, {"name": "Kept Machine", "uuid": "m3"}], "process": [], "filament": []}
+    catalog_service._pending_sync = {
+        "sync_id": "sync-model", "raw": json.dumps(new_catalog).encode(), "catalog": catalog_from_dict(new_catalog),
+        "pending": {"printers": [{"field": "model_slicer_profile", "stale_value": "Stale Machine", "required": True,
+                                  "options_kind": "machine", "affected_printer_ids": [pid], "affected_printer_names": ["P1S"],
+                                  "affected_slots": [None]}], "jobs": [], "inventory_filaments": []},
+        "created_at": 0,
+    }
+
+    resp = await client.post("/api/v1/laminus/catalog/confirm-remap", json={"sync_id": "sync-model", "resolutions": {
+        "printers": [{"field": "model_slicer_profile", "stale_value": "Stale Machine", "new_value": "New Machine"}],
+        "jobs": [], "inventory_filaments": []}})
+
+    assert resp.status_code == 200, resp.text
+    async with session_factory() as s:
+        names = sorted(r.machine_profile for r in (await s.execute(select(PrinterModelSlicerProfile))).scalars())
+        printer_override = (await s.get(__import__("app.models", fromlist=["Printer"]).Printer, pid)).machine_profile_override
+    assert names == ["Kept Machine", "New Machine", "New Machine"]
+    assert printer_override is None                     # the printer itself never got a per-printer profile

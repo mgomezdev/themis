@@ -36,7 +36,7 @@ async def enabled_plugin(session_factory):
 async def _create(client) -> int:
     resp = await client.post("/api/v1/printers", json={
         "name": "Dormant candidate", "plugin_id": FAKE, "manufacturer_id": "acme", "model_id": "a1",
-        "connection_config": {}, "orca_printer_profiles": [], "current_orca_printer_profile": None,
+        "connection_config": {}, "orca_printer_profiles": [], "machine_profile_override": None,
     })
     assert resp.status_code == 201, resp.text
     return resp.json()["id"]

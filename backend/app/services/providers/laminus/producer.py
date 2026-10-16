@@ -2,9 +2,9 @@
 existing `LaminusSlicingProvider`. The queue uses it to *select* and *preflight* the provider (`resolve_work`); the slice itself still
 runs through `SlicingProvider.slice` with the printer's machine/process/filament presets.
 
-`produce()` is deliberately not implemented for Laminus yet: the neutral `TargetPrinter` carries a bed and a model UUID but no Orca
-machine profile, which the sidecar needs to slice. It rejects model-less kinds exactly as the contract says and otherwise raises
-`UNSUPPORTED_TARGET` until the target grows that mapping (docs/architecture/laminus-contract.md §8)."""
+`produce()` is deliberately not implemented for Laminus yet (the `produce()` wiring issue): the neutral `TargetPrinter` now carries the
+machine profile Themis resolved from the model mapping (BIZ-294), but the slice still runs through `SlicingProvider.slice`. It rejects
+model-less kinds exactly as the contract says and otherwise raises `UNSUPPORTED_TARGET` (docs/architecture/laminus-contract.md §8)."""
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -68,4 +68,4 @@ class LaminusGcodeProducer(GcodeProducer):
             raise ProviderError(ErrorCode.UNSUPPORTED_INPUT, f"{request.input_kind.value} is not a model input")
         raise ProviderError(
             ErrorCode.UNSUPPORTED_TARGET,
-            "Laminus slices through SlicingProvider.slice with the printer's presets; the neutral target has no machine profile yet")
+            "Laminus slices through SlicingProvider.slice with the printer's presets; produce() is not wired yet")

@@ -7,7 +7,7 @@ from app.models import Job, JobPrinterConfig, Printer, UploadedFile
 
 
 def _rows(preferred):
-    printer = Printer(id=1, name="P", printer_type="bambu", connection_config={}, current_orca_printer_profile="M",
+    printer = Printer(id=1, name="P", printer_type="bambu", connection_config={}, machine_profile_override="M",
                       loaded_filaments=[{"slot": 0, "type": "PLA", "color": "#000000", "filament_profile": "PLA"}],
                       preferred_slicer_plugin_id=preferred)
     job = Job(id=7, plate_number=1, overrides={})
@@ -23,7 +23,7 @@ def _build(preferred, default="a"):
         return None
     with patch("app.services.providers.slicing.default_provider_id", return_value=default), \
             patch("app.api.routes.jobs.slicing_provider_for", side_effect=fake_for):
-        return _build_slice_request(*_rows(preferred)), seen
+        return _build_slice_request(*_rows(preferred), "Machine 0.4"), seen
 
 
 def test_a_printer_with_a_preferred_slicer_slices_manually_on_it():

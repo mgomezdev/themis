@@ -34,6 +34,28 @@ class Preset:
 
 
 @dataclass
+class MachineCandidate:
+    """A machine profile a provider suggests for a printer model (BIZ-294). `name` is what Themis stores (profile names are how presets
+    are addressed everywhere in Themis); `ref` is the provider's stable id for it. `confidence` is 0..1."""
+    name: str
+    nozzle_diameter_mm: float | None = None
+    flow: str = "standard"                 # standard | high_flow
+    ref: str = ""
+    confidence: float = 0.0
+    match_reason: str = ""                 # exact_model | fuzzy_name | vendor_only
+
+
+@dataclass
+class NozzleVariantOption:
+    """One nozzle variant a provider knows for a printer model; `is_default_guess` marks the one to default to (0.4 standard)."""
+    name: str
+    nozzle_diameter_mm: float | None = None
+    flow: str = "standard"
+    ref: str = ""
+    is_default_guess: bool = False
+
+
+@dataclass
 class Catalog:
     machines: list[Preset] = field(default_factory=list)
     processes: list[Preset] = field(default_factory=list)
@@ -84,6 +106,15 @@ class SlicingProvider(ABC):
     PACK_MODELS: ClassVar[bool] = False
     PREPARED_PROJECT: ClassVar[bool] = False
     TOOL_MAPPING: ClassVar[bool] = False       # can route a 3MF's filaments to physical tool heads (apply_tool_mapping)
+    SUGGEST_PROFILES: ClassVar[bool] = False   # can suggest machine profiles / nozzle variants for a printer model (BIZ-294)
+
+    def suggest_machines(self, manufacturer: str, model: str, model_key: str | None = None) -> list[MachineCandidate]:
+        """Machine profiles that probably belong to this printer model, best first. Optional: manual mapping entry never needs it."""
+        raise SlicingProviderError(f"{type(self).__name__} cannot suggest machine profiles")
+
+    def nozzle_variants(self, manufacturer: str, model: str, model_key: str | None = None) -> list[NozzleVariantOption]:
+        """The nozzle variants (diameter / flow) this provider has a machine profile for, for this printer model."""
+        raise SlicingProviderError(f"{type(self).__name__} cannot list nozzle variants")
 
     def apply_tool_mapping(self, source_3mf: Path, *, tool_index: int | None = None,
                            filament_map: list[dict] | None = None) -> None:

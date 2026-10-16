@@ -155,9 +155,9 @@ async def test_only_the_printer_with_a_version_claims_it(session_factory, tmp_pa
     mgr.is_printer_ready.side_effect = lambda pid: pid in (1, 2)
     job_id = await _seed_allowing(session_factory)
     async with session_factory() as s:
-        (await s.get(Printer, 1)).current_orca_printer_profile = "Some Other Machine"
+        (await s.get(Printer, 1)).machine_profile_override = "Some Other Machine"
         s.add(Printer(id=2, name="P2", printer_type="elegoo_centauri", connection_config={},
-                      current_orca_printer_profile=MACHINE,
+                      machine_profile_override=MACHINE,
                       loaded_filaments=[{"slot": 0, "type": "PETG", "color": "#000000",
                                          "filament_profile": "Generic PETG"}]))
         await s.flush()

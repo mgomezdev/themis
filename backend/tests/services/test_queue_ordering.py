@@ -65,7 +65,7 @@ async def seed(factory, printers: dict[int, dict], jobs: list[dict]) -> list[int
     async with factory() as s:
         for pid, spec in printers.items():
             s.add(Printer(id=pid, name=f"P{pid}", printer_type="elegoo_centauri", connection_config={},
-                          current_orca_printer_profile=spec.get("machine", f"Machine P{pid}"),
+                          machine_profile_override=spec.get("machine", f"Machine P{pid}"),
                           loaded_filaments=spec.get("loaded", [])))
         f = UploadedFile(original_filename="a.3mf", stored_path="/x/a.3mf", plates=[], uploaded_at="t")
         s.add(f)

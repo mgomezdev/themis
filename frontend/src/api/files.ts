@@ -112,6 +112,8 @@ export interface SlicedVersion {
   stale_reasons: ('presets_changed' | 'slicer_version_changed')[];
   /** An enabled printer of that make/model can print it now. */
   printable_now: boolean;
+  /** The printer models whose slicer profile this was sliced for (BIZ-294); empty when no model maps that machine profile. */
+  model_uuids: string[];
 }
 
 export const getSlicedVersions = (fileId: number, plate?: number) =>

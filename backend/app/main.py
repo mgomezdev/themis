@@ -38,6 +38,7 @@ from .api.routes.laminus import router as laminus_router
 from .api.routes.maintenance import router as maintenance_router
 from .api.routes.printers import router as printers_router
 from .api.routes.printer_models import router as printer_models_router
+from .api.routes.printer_model_slicer_profiles import router as printer_model_slicer_profiles_router
 from .api.routes.projects import router as projects_router
 from .api.routes.public import router as public_router
 from .api.routes.queue import router as queue_router
@@ -216,6 +217,7 @@ app.include_router(session_router)
 app.include_router(orders_router)
 app.include_router(printers_router)
 app.include_router(printer_models_router)
+app.include_router(printer_model_slicer_profiles_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)

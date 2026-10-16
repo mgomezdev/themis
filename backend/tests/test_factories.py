@@ -12,7 +12,7 @@ async def test_create_printer_applies_overrides(client, create_printer):
     printer_id = await create_printer(name="Forge")
     printer = (await client.get(f"/api/v1/printers/{printer_id}")).json()
     assert printer["name"] == "Forge"
-    assert printer["current_orca_printer_profile"] == "Bambu Lab P1S 0.4"
+    assert printer["machine_profile_override"] == "Bambu Lab P1S 0.4"
 
 
 async def test_create_job_uploads_and_creates_printer_when_not_given(client, create_job):

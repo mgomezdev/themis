@@ -34,7 +34,7 @@ from .inventory import config as inventory_config, deduction as inventory_deduct
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
-from . import gcode_eligibility, model_targets, slice_cache, slice_saver
+from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
 from . import completion_events
 from .notify import notify
 from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
@@ -187,7 +187,7 @@ def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
 
 
 
-def _slice_params(job, config, printer, uploaded_file) -> dict:
+def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
     loaded = (printer.loaded_filaments if printer else None) or []
@@ -195,7 +195,7 @@ def _slice_params(job, config, printer, uploaded_file) -> dict:
     return {
         "source_key": uploaded_file.relative_path if uploaded_file else None,
         "original_filename": uploaded_file.original_filename if uploaded_file else None,
-        "machine_preset": printer.current_orca_printer_profile if printer else None,
+        "machine_preset": machine_preset if printer else None,   # resolved from the model mapping + nozzle variant (BIZ-294)
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
         "print_profile": config.print_profile if config else None,
@@ -350,7 +350,7 @@ class QueueEngine:
             uploaded_file = await session.get(UploadedFile, job.uploaded_file_id)
 
             # Capture all scalars before session closes
-            machine_preset = (printer.current_orca_printer_profile or "") if printer else ""
+            machine_preset = ((await slicer_profiles.machine_profile_for(session, printer)) or "") if printer else ""
             print_profile = (config.print_profile or "") if config else ""
             source_key = uploaded_file.relative_path if uploaded_file else None
             printer_name = printer.name if printer else None
@@ -788,7 +788,7 @@ class QueueEngine:
             # nozzle, say) must not print it.
             version = (await session.execute(
                 select(SlicedVersion).where(SlicedVersion.file_id == source_file.id))).scalar_one_or_none()
-            if version is not None and version.machine_preset != printer.current_orca_printer_profile:
+            if version is not None and version.machine_preset != await slicer_profiles.machine_profile_for(session, printer):
                 await self._block_job(session, job, f"{printer.name} is no longer a {version.machine_preset} — this "
                                                     "cached version was sliced for that")
                 return
@@ -802,7 +802,8 @@ class QueueEngine:
         cache_only_version: int | None = None
         provider_id: str | None = None
         if not is_presliced_file(source_file):
-            decision = await resolve_slicing(printer, source_file.original_filename if source_file else "")
+            resolution = await slicer_profiles.resolve_for_printer(session, printer)
+            decision = await resolve_slicing(PrinterView.of(printer, resolution), source_file.original_filename if source_file else "")
             provider_id = decision.provider_id
             if decision.blocked:
                 if decision.recoverable and job.allow_cached_slice:
@@ -839,13 +840,14 @@ class QueueEngine:
         Only asked while Laminus is down, so staleness can't be checked (unknown counts as usable, as at dispatch).
         Never raises: any doubt means no version, and the job waits for Laminus as before."""
         try:
-            if source_file is None or not printer.current_orca_printer_profile:
+            machine_preset = await slicer_profiles.machine_profile_for(session, printer)
+            if source_file is None or not machine_preset:
                 return None
             if await refresh_content_hash(source_file, get_library_store()):   # the key hashes the model's bytes
                 await session.commit()
             try:
                 req, fmap = self._slice_request(job.id, printer.id, job.plate_number,
-                                                _slice_params(job, config, printer, source_file), provider_id)
+                                                _slice_params(job, config, printer, source_file, machine_preset), provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
                 return None
             inputs = slice_cache.key_inputs(req, source_file.content_hash, config.tool_index, fmap)
@@ -940,9 +942,11 @@ class QueueEngine:
             ams_tray_id = (slot or {}).get("ams_tray_id")
             source_key = uploaded_file.relative_path if uploaded_file else None
             original_filename = uploaded_file.original_filename if uploaded_file else None
-            machine_preset = printer.current_orca_printer_profile if printer else None
-            printer_view = PrinterView.of(printer) if printer else None
-            params = _slice_params(job, config, printer, uploaded_file)
+            resolution = (await slicer_profiles.resolve_for_printer(session, printer, provider_id or effective_provider_id(
+                printer.preferred_slicer_plugin_id))) if printer else None
+            machine_preset = resolution.profile if resolution else None
+            printer_view = PrinterView.of(printer, resolution) if printer else None
+            params = _slice_params(job, config, printer, uploaded_file, machine_preset)
             is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
             if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
@@ -971,7 +975,7 @@ class QueueEngine:
         else:
             if not machine_preset:
                 await self._handle_slice_failure(
-                    job_id, printer_id, "printer has no OrcaSlicer machine preset selected"
+                    job_id, printer_id, (resolution.reason if resolution and resolution.reason else "printer has no slicer machine profile")
                 )
                 return
 

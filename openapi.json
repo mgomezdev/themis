@@ -1576,7 +1576,7 @@
           "printers"
         ],
         "summary": "Update printer",
-        "description": "Update one or more printer fields. Omitted fields are left unchanged.\n`current_orca_printer_profile` supports explicit null to clear the preset.",
+        "description": "Update one or more printer fields. Omitted fields are left unchanged.\n`machine_profile_override` and `nozzle_variant` support explicit null to clear them.",
         "operationId": "update_printer_api_v1_printers__printer_id__patch",
         "parameters": [
           {
@@ -1711,57 +1711,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v1/printers/{printer_id}/active-preset": {
-      "patch": {
-        "tags": [
-          "printers"
-        ],
-        "summary": "Switch active OrcaSlicer preset",
-        "description": "Change the active OrcaSlicer machine preset. The preset must already be in\nthe printer's `orca_printer_profiles` list.",
-        "operationId": "switch_active_preset_api_v1_printers__printer_id__active_preset_patch",
-        "parameters": [
-          {
-            "name": "printer_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "title": "Printer Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ActivePresetUpdate"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Switch Active Preset Api V1 Printers  Printer Id  Active Preset Patch"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Printer not found"
-          },
-          "422": {
-            "description": "Preset not in this printer's configured profiles"
           }
         }
       }
@@ -3004,6 +2953,279 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Patch Printer Model Api V1 Printer Models  Model Uuid  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "List a model's slicer profile mappings",
+        "operationId": "list_mappings_api_v1_printer_models__model_uuid__slicer_profiles_get",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Mappings Api V1 Printer Models  Model Uuid  Slicer Profiles Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Map a nozzle variant of a model to a slicer machine profile",
+        "description": "The first variant mapped for a (model, provider) becomes its default; `is_default` on a later one moves the default to it.",
+        "operationId": "create_mapping_api_v1_printer_models__model_uuid__slicer_profiles_post",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Create Mapping Api V1 Printer Models  Model Uuid  Slicer Profiles Post"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown model"
+          },
+          "409": {
+            "description": "That variant is already mapped"
+          },
+          "422": {
+            "description": "Not a slicing provider, or a bad variant/profile"
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles/{mapping_id}": {
+      "patch": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Change a mapping's machine profile or make it the default",
+        "operationId": "patch_mapping_api_v1_printer_models__model_uuid__slicer_profiles__mapping_id__patch",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "mapping_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mapping Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MappingPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Patch Mapping Api V1 Printer Models  Model Uuid  Slicer Profiles  Mapping Id  Patch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown mapping"
+          },
+          "422": {
+            "description": "A default cannot be unset directly"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Remove a mapping",
+        "operationId": "delete_mapping_api_v1_printer_models__model_uuid__slicer_profiles__mapping_id__delete",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "mapping_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Mapping Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "404": {
+            "description": "Unknown mapping"
+          },
+          "409": {
+            "description": "It is the default of a model with other variants, or a printer uses it"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/printer-models/{model_uuid}/slicer-profiles/suggestions": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Ask a slicing provider which profile and nozzle variants fit this model",
+        "description": "Never fails for an unavailable provider: `available` is false (manual entry still works) and `error` says why.",
+        "operationId": "suggestions_api_v1_printer_models__model_uuid__slicer_profiles_suggestions_get",
+        "parameters": [
+          {
+            "name": "model_uuid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Model Uuid"
+            }
+          },
+          {
+            "name": "provider_plugin_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Provider Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Suggestions Api V1 Printer Models  Model Uuid  Slicer Profiles Suggestions Get"
                 }
               }
             }
@@ -10679,19 +10901,6 @@
         "type": "object",
         "title": "AccountPatch"
       },
-      "ActivePresetUpdate": {
-        "properties": {
-          "preset": {
-            "type": "string",
-            "title": "Preset"
-          }
-        },
-        "type": "object",
-        "required": [
-          "preset"
-        ],
-        "title": "ActivePresetUpdate"
-      },
       "AlarmSettings": {
         "properties": {
           "min_severity": {
@@ -11419,12 +11628,12 @@
             ],
             "title": "Process Preset"
           },
-          "eligible_machine_profiles": {
+          "eligible_model_uuids": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Eligible Machine Profiles",
+            "title": "Eligible Model Uuids",
             "default": []
           },
           "save_slice": {
@@ -12104,6 +12313,69 @@
         "type": "object",
         "title": "MaintenanceItemPatch"
       },
+      "MappingCreate": {
+        "properties": {
+          "provider_plugin_id": {
+            "type": "string",
+            "title": "Provider Plugin Id"
+          },
+          "nozzle_diameter_mm": {
+            "type": "number",
+            "maximum": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Nozzle Diameter Mm"
+          },
+          "flow": {
+            "type": "string",
+            "title": "Flow",
+            "default": "standard"
+          },
+          "machine_profile": {
+            "type": "string",
+            "title": "Machine Profile"
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "provider_plugin_id",
+          "nozzle_diameter_mm",
+          "machine_profile"
+        ],
+        "title": "MappingCreate"
+      },
+      "MappingPatch": {
+        "properties": {
+          "machine_profile": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Profile"
+          },
+          "is_default": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Is Default"
+          }
+        },
+        "type": "object",
+        "title": "MappingPatch"
+      },
       "MaterialIn": {
         "properties": {
           "name": {
@@ -12277,9 +12549,9 @@
       },
       "ModelTargetInput": {
         "properties": {
-          "machine_profile": {
+          "model_uuid": {
             "type": "string",
-            "title": "Machine Profile"
+            "title": "Model Uuid"
           },
           "print_profile": {
             "type": "string",
@@ -12358,10 +12630,10 @@
         },
         "type": "object",
         "required": [
-          "machine_profile"
+          "model_uuid"
         ],
         "title": "ModelTargetInput",
-        "description": "Eligible on *any* printer whose `current_orca_printer_profile` is `machine_profile` (a make/model).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
+        "description": "Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).\nNo `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."
       },
       "NozzleTempBody": {
         "properties": {
@@ -13105,7 +13377,7 @@
             "title": "Orca Printer Profiles",
             "default": []
           },
-          "current_orca_printer_profile": {
+          "machine_profile_override": {
             "anyOf": [
               {
                 "type": "string"
@@ -13114,7 +13386,19 @@
                 "type": "null"
               }
             ],
-            "title": "Current Orca Printer Profile"
+            "title": "Machine Profile Override"
+          },
+          "nozzle_variant": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nozzle Variant"
           },
           "loaded_filaments": {
             "items": {
@@ -13247,7 +13531,7 @@
             ],
             "title": "Orca Printer Profiles"
           },
-          "current_orca_printer_profile": {
+          "machine_profile_override": {
             "anyOf": [
               {
                 "type": "string"
@@ -13256,7 +13540,19 @@
                 "type": "null"
               }
             ],
-            "title": "Current Orca Printer Profile"
+            "title": "Machine Profile Override"
+          },
+          "nozzle_variant": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nozzle Variant"
           },
           "enabled": {
             "anyOf": [

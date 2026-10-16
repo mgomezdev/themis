@@ -53,7 +53,7 @@ const MOCK_PRINTER = {
   connection_config: {},
   awaiting_plate_clear: false,
   orca_printer_profiles: ['Elegoo Centauri Carbon'],
-  current_orca_printer_profile: 'Elegoo Centauri Carbon',
+  machine_profile: 'Elegoo Centauri Carbon',
   enabled: true,
   connected: true,
   loaded_filaments: [],

@@ -17,7 +17,7 @@ const resolve = (call: { body: unknown }) => {
 };
 const PRINTER = {
   id: 1, name: 'Forge', printer_type: 'bambu', connection_config: {}, awaiting_plate_clear: false, orca_printer_profiles: [],
-  current_orca_printer_profile: 'Bambu X1', enabled: true, queue_on: true,
+  machine_profile: 'Bambu X1', enabled: true, queue_on: true,
   loaded_filaments: [
     { slot: 0, filament_id: null, name: 'Old PETG', type: 'PETG', color: '#000000' },
     { slot: 1, filament_id: null, name: 'Mid', type: 'PLA', color: '#ffffff', inventory: { provider: 'spoolman', spool_ref: '3' } },

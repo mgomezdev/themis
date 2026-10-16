@@ -74,7 +74,7 @@ def _printer_shape(p: dict) -> dict:
         "connection_config": p.get("connection_config", {}),
         "awaiting_plate_clear": p.get("awaiting_plate_clear", False),
         "orca_printer_profiles": p.get("orca_printer_profiles", []),
-        "current_orca_printer_profile": p.get("current_orca_printer_profile"),
+        "machine_profile_override": p.get("machine_profile_override"),
         "enabled": p.get("enabled", True),
         "queue_on": p.get("queue_on", True),
         "loaded_filaments": p.get("loaded_filaments", []),

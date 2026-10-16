@@ -34,7 +34,7 @@ def _export_3mf_name(export_args: list[str]) -> str | None:
 class SliceRequest:
     """What a single (job, printer) slice needs.
 
-    ``machine_preset`` is the printer's ``current_orca_printer_profile``;
+    ``machine_preset`` is the printer's resolved machine profile (model mapping + nozzle variant, BIZ-294);
     ``process_preset``/``filament_presets`` are OrcaSlicer preset names resolved
     by the Orca sidecar catalog. ``export_args`` are the printer-specific output
     args: ``[]`` yields raw gcode, ``["--export-3mf", "<name>.gcode.3mf"]`` yields

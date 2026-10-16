@@ -252,13 +252,13 @@ describe('FleetScreen', () => {
       // which populates the form's own vendor/model dropdown options. This is a
       // SEPARATE call from the singular per-printer fetch below (used directly by
       // the modal to resolve THIS printer's pre-fill) — both must be stubbed with
-      // real current_orca_printer_profile data, or the dropdown has no options
+      // real machine_profile data, or the dropdown has no options
       // even once pre-fill resolves.
       if (url === '/api/v1/printers') {
         return Promise.resolve({
           ok: true,
           json: () => Promise.resolve([
-            { id: PRINTER_1.id, current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
+            { id: PRINTER_1.id, machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle' },
           ]),
         });
       }
@@ -271,7 +271,7 @@ describe('FleetScreen', () => {
           json: () => Promise.resolve({
             id: PRINTER_1.id, name: PRINTER_1.name, printer_type: PRINTER_1.printer_type,
             enabled: true, no_snapshots_while_idle: false,
-            current_orca_printer_profile: 'Elegoo Centauri Carbon 0.4 nozzle',
+            machine_profile: 'Elegoo Centauri Carbon 0.4 nozzle',
             orca_printer_profiles: [], connection_config: {},
             loaded_filaments: [],
           }),
@@ -346,7 +346,7 @@ const MOCK_SPOOL = mkSpool('3', {
 const MOCK_API_PRINTER = {
   id: 2, name: 'Atlas', printer_type: 'elegoo_centauri', enabled: true,
   queue_on: false, awaiting_plate_clear: false, no_snapshots_while_idle: false, connected: true,
-  current_orca_printer_profile: null,
+  machine_profile_override: null,
   orca_printer_profiles: [],
   connection_config: { host: '10.0.0.1' },
   loaded_filaments: [{ slot: 0, filament_id: null, name: 'Slot 1', type: '', color: '', filament_profile: null, spoolman_spool_id: null }],
@@ -739,5 +739,95 @@ describe('FleetScreen — edit printer slicer preference (BIZ-291)', () => {
     await save();
     await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
     expect('preferred_slicer_plugin_id' in patchBody(calls)).toBe(false);
+  });
+});
+
+// ── Edit printer: the nozzle variant replaces the per-printer slicer profile picker (BIZ-294) ───
+describe('FleetScreen — edit printer nozzle variant', () => {
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  const MODEL = 'model-ecc';
+  const row = (id: number, d: number, flow: string, profile: string, is_default = false) =>
+    ({ id, model_uuid: MODEL, provider_plugin_id: 'laminus', nozzle_diameter_mm: d, flow, machine_profile: profile, is_default });
+  const MAPPED = [row(1, 0.4, 'standard', 'ECC 0.4', true), row(2, 0.6, 'standard', 'ECC 0.6'), row(3, 0.4, 'high_flow', 'ECC 0.4 HF')];
+  const SLICING = { machine_profile: 'ECC 0.4', machine_profile_reason: null, model_uuid: MODEL, model_label: 'Elegoo Centauri Carbon', nozzle_variant: null };
+
+  async function openEdit(apiPrinter: object, mappings: object[] = MAPPED) {
+    const calls: Array<[string, RequestInit | undefined]> = [];
+    vi.stubGlobal('WebSocket', MockWS);
+    vi.stubGlobal('fetch', vi.fn((url: string, init?: RequestInit) => {
+      calls.push([url, init]);
+      if (url === '/api/v1/fleet') return Promise.resolve({ ok: true, json: () => Promise.resolve([SPOOL_INTEGRATION]) });
+      if (url === `/api/v1/printer-models/${MODEL}/slicer-profiles`) return Promise.resolve({ ok: true, json: () => Promise.resolve(mappings) });
+      if (/\/api\/v1\/printers\/\d+$/.test(url) && !init?.method) return Promise.resolve({ ok: true, json: () => Promise.resolve(apiPrinter) });
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(url.includes('types') || url.includes('catalog') ? [] : {}) });
+    }));
+    render(<FleetScreen />);
+    fireEvent.click(await screen.findByText('Atlas'));
+    fireEvent.click(await screen.findByTitle('Edit printer'));
+    return calls;
+  }
+  const patchBody = (calls: Array<[string, RequestInit | undefined]>) =>
+    JSON.parse(calls.find(([, i]) => i?.method === 'PATCH')![1]!.body as string);
+  const save = async () => {
+    const btn = await screen.findByRole('button', { name: /save changes/i }) as HTMLButtonElement;
+    await waitFor(() => expect(btn.disabled).toBe(false));
+    fireEvent.click(btn);
+  };
+
+  it('no longer offers a per-printer Orca make/model picker, and saving never touches the printer\'s profile override', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, machine_profile_override: 'Custom preset' });
+    await screen.findByLabelText('Nozzle fitted');
+    expect(screen.queryByLabelText('Make')).toBeNull();
+    expect(screen.queryByText('Slicer profile')).toBeNull();
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect('machine_profile_override' in patchBody(calls)).toBe(false);
+  });
+
+  it('lists only the variants the printer\'s model has a profile for, the default first, and saves the chosen nozzle', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING });
+    const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
+    await waitFor(() => expect([...select.options].map(o => o.textContent)).toEqual(
+      ['Model default (0.4mm)', '0.4mm', '0.4mm high-flow', '0.6mm']));
+    expect(screen.getByText('ECC 0.4')).toBeInTheDocument();                 // what it slices with now
+
+    fireEvent.change(select, { target: { value: '0.6|standard' } });
+    await save();
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toEqual({ diameter_mm: 0.6, flow: 'standard' });
+  });
+
+  it('shows a stored variant, and going back to the model default saves null', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, nozzle_variant: { diameter_mm: 0.4, flow: 'high_flow' }, machine_profile: 'ECC 0.4 HF' });
+    const select = await screen.findByLabelText('Nozzle fitted') as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('0.4|high_flow'));
+
+    fireEvent.change(select, { target: { value: '' } });
+    await save();
+
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toBeNull();
+  });
+
+  it('sends the stored variant back unchanged when it is not touched', async () => {
+    const calls = await openEdit({ ...MOCK_API_PRINTER, ...SLICING, nozzle_variant: { diameter_mm: 0.6, flow: 'standard' } });
+    await waitFor(() => expect((screen.getByLabelText('Nozzle fitted') as HTMLSelectElement).value).toBe('0.6|standard'));
+    await save();
+    await waitFor(() => expect(calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+    expect(patchBody(calls).nozzle_variant).toEqual({ diameter_mm: 0.6, flow: 'standard' });
+  });
+
+  it('says where to set the profile when the model has none', async () => {
+    await openEdit({ ...MOCK_API_PRINTER, ...SLICING, machine_profile: null, machine_profile_reason: 'no machine profile for Centauri Carbon default nozzle' }, []);
+    expect(await screen.findByText(/no machine profile for Centauri Carbon default nozzle/)).toBeInTheDocument();
+    expect(screen.getByText(/Settings → Printer models/)).toBeInTheDocument();
+  });
+
+  it('has no nozzle choice for a printer without a registered model', async () => {
+    await openEdit({ ...MOCK_API_PRINTER, ...SLICING, model_uuid: null, model_label: null });
+    expect(await screen.findByText(/no registered model/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Nozzle fitted')).toBeNull();
   });
 });

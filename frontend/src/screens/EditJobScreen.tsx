@@ -8,7 +8,7 @@ import { PerPrinterConfig, defaultPerPrinterCfg, type PerPrinterCfg } from '../c
 import { OverridePanel } from '../components/OverridePanel';
 import { GcodeWarning } from '../components/GcodeWarning';
 import { isPresliced } from '../lib/fileKind';
-import { ModelPicker, buildEligibility, isModelKey, machineProfileOf, modelConfigSource, modelKey } from '../components/ModelTargets';
+import { ModelPicker, buildEligibility, isModelKey, modelConfigSource, modelKey, modelLabelOf } from '../components/ModelTargets';
 import { apiFetch } from '../api/client';
 
 // ---- hooks ----
@@ -111,11 +111,11 @@ export function EditJobScreen() {
       setJob(j);
       // Rows materialized from a make/model target are shown through that target, not as explicit picks.
       const explicit = j.printer_configs.filter(c => !c.from_model_target);
-      const ids = [...explicit.map(c => String(c.printer_id)), ...j.model_targets.map(t => modelKey(t.machine_profile))];
+      const ids = [...explicit.map(c => String(c.printer_id)), ...j.model_targets.map(t => modelKey(t.model_uuid))];
       setSelectedPrinters(ids);
       const pp: Record<string, PerPrinterCfg> = {};
       for (const t of j.model_targets) {
-        pp[modelKey(t.machine_profile)] = {
+        pp[modelKey(t.model_uuid)] = {
           printProfile: t.print_profile,
           filamentProfile: t.filament_profile,
           filamentId: t.filament_id,
@@ -341,7 +341,7 @@ export function EditJobScreen() {
                 {selectedPrinters.map(sid => {
                   const pp = perPrinter[sid];
                   const printer = printers.find(p => String(p.id) === sid);
-                  const label = isModelKey(sid) ? `Any ${machineProfileOf(sid)}` : (printer?.name ?? sid);
+                  const label = isModelKey(sid) ? `Any ${modelLabelOf(sid, printers, job?.model_targets.find(t => modelKey(t.model_uuid) === sid)?.model_label)}` : (printer?.name ?? sid);
                   const done = gcode ? !!pp : !!(pp?.printProfile);
                   return (
                     <div key={sid} className="row gap-2" style={{ alignItems: 'center' }}>

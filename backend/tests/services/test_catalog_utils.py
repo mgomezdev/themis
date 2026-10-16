@@ -38,7 +38,7 @@ async def _add_printer(session: AsyncSession, **kwargs) -> Printer:
         name="Printer A",
         printer_type="elegoo_centauri",
         connection_config={},
-        current_orca_printer_profile=None,
+        machine_profile_override=None,
         loaded_filaments=[],
     )
     defaults.update(kwargs)
@@ -177,12 +177,12 @@ async def test_compute_drift_stale_printer_profile(drift_session):
     p1 = await _add_printer(
         drift_session,
         name="Printer One",
-        current_orca_printer_profile="Bambu X1C",
+        machine_profile_override="Bambu X1C",
     )
     p2 = await _add_printer(
         drift_session,
         name="Printer Two",
-        current_orca_printer_profile="Bambu X1C",
+        machine_profile_override="Bambu X1C",
     )
 
     new_cat = {
@@ -195,13 +195,57 @@ async def test_compute_drift_stale_printer_profile(drift_session):
     assert result is not None
 
     printer_entries = result["pending"]["printers"]
-    # Should be exactly one group for (current_orca_printer_profile, "Bambu X1C")
+    # Should be exactly one group for (machine_profile_override, "Bambu X1C")
     assert len(printer_entries) == 1
     entry = printer_entries[0]
     assert entry["stale_value"] == "Bambu X1C"
-    assert entry["field"] == "current_orca_printer_profile"
+    assert entry["field"] == "machine_profile_override"
     assert set(entry["affected_printer_ids"]) == {p1.id, p2.id}
     assert set(entry["affected_printer_names"]) == {"Printer One", "Printer Two"}
+
+
+async def _add_mapping(session, model="m-x1c", profile="Bambu X1C", default=True, diameter=0.4):
+    from app.models import PrinterModelRecord, PrinterModelSlicerProfile
+    if await session.get(PrinterModelRecord, model) is None:
+        session.add(PrinterModelRecord(id=model, plugin_id="bambu", manufacturer_id="bambu", model_id=model, display_name="X1C"))
+        await session.flush()
+    session.add(PrinterModelSlicerProfile(model_uuid=model, provider_plugin_id="laminus", nozzle_diameter_mm=diameter, flow="standard",
+                                          machine_profile=profile, is_default=default))
+    await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_compute_drift_reports_a_removed_machine_profile_a_model_mapping_uses(drift_session):
+    """BIZ-294: profiles live on the model mapping now; a removed one is reported with the printers of that model (and once)."""
+    await _add_mapping(drift_session)
+    on_model = await _add_printer(drift_session, name="On the model", model_uuid="m-x1c")
+    await _add_printer(drift_session, name="Other model", model_uuid="m-other")
+    new_cat = {"machine": [{"name": "Bambu X1C New"}], "process": [], "filament": []}
+
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
+
+    (entry,) = result["pending"]["printers"]
+    assert entry["field"] == "model_slicer_profile" and entry["stale_value"] == "Bambu X1C" and entry["required"] is True
+    assert entry["affected_printer_ids"] == [on_model.id] and entry["affected_printer_names"] == ["On the model"]
+
+
+@pytest.mark.asyncio
+async def test_compute_drift_reports_a_mapping_even_when_no_printer_uses_the_model_yet(drift_session):
+    await _add_mapping(drift_session)
+    new_cat = {"machine": [{"name": "Bambu X1C New"}], "process": [], "filament": []}
+
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
+
+    (entry,) = result["pending"]["printers"]
+    assert entry["field"] == "model_slicer_profile" and entry["affected_printer_ids"] == []
+    assert entry["affected_model_names"] == ["X1C"]
+
+
+@pytest.mark.asyncio
+async def test_compute_drift_ignores_mappings_whose_profile_survives(drift_session):
+    await _add_mapping(drift_session, profile="Bambu P1S")
+    new_cat = {"machine": [{"name": "Bambu P1S"}], "process": [{"name": "0.20mm Standard"}], "filament": [{"name": "Bambu PLA Basic", "uuid": "aaaa-1111"}]}
+    assert await compute_drift(C(OLD_CAT), C(new_cat), drift_session) is None
 
 
 @pytest.mark.asyncio
@@ -278,7 +322,7 @@ async def test_compute_drift_spoolman_fetch_failure_sets_error(drift_session):
     await _add_printer(
         drift_session,
         name="Printer One",
-        current_orca_printer_profile="Bambu X1C",
+        machine_profile_override="Bambu X1C",
     )
 
     result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
@@ -302,7 +346,7 @@ async def test_compute_drift_spoolman_disabled_skips_section(drift_session):
     await _add_printer(
         drift_session,
         name="Printer X",
-        current_orca_printer_profile=None,
+        machine_profile_override=None,
         loaded_filaments=[{"filament_profile": "Bambu PLA Basic", "slot": 0}],
     )
 
@@ -324,10 +368,25 @@ async def test_compute_drift_skips_inventories_without_profile_bindings(drift_se
         InvMaterial(ref="1", name="A", profile_links={"P": ["Bambu PLA Basic"]})], capabilities=frozenset())
     await use_provider(inventory)
     await _add_printer(
-        drift_session, name="Printer X", current_orca_printer_profile=None,
+        drift_session, name="Printer X", machine_profile_override=None,
         loaded_filaments=[{"filament_profile": "Bambu PLA Basic", "slot": 0}],
     )
     result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
 
     assert inventory.calls == []
     assert result["pending"]["inventory_filaments"] == [] and result["inventory_error"] is None
+
+
+@pytest.mark.asyncio
+async def test_compute_drift_lists_every_model_of_a_stale_profile_that_has_no_printers(drift_session):
+    """Two models share the stale profile; one has a printer, the other none: both must be reachable by the user."""
+    await _add_mapping(drift_session, model="m-a", profile="Bambu X1C")
+    await _add_mapping(drift_session, model="m-b", profile="Bambu X1C")
+    await _add_printer(drift_session, name="On A", model_uuid="m-a")
+    new_cat = {"machine": [{"name": "Bambu X1C New"}], "process": [], "filament": []}
+
+    result = await compute_drift(C(OLD_CAT), C(new_cat), drift_session)
+
+    (entry,) = result["pending"]["printers"]
+    assert entry["affected_printer_names"] == ["On A"]
+    assert entry["affected_model_names"] == ["X1C"]          # the printer-less model (named after its record)

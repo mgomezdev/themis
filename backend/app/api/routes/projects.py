@@ -208,8 +208,8 @@ class GenerateRequest(BaseModel):
     # unset print_profile fails cleanly at slice time with an actionable error
     # (see slicer_service._resolve_uuids) rather than silently misresolving.
     process_preset: Optional[str] = None
-    # Make/models ("any printer whose machine preset is X") eligible alongside the specific printers above.
-    eligible_machine_profiles: list[str] = []
+    # Printer models ("any printer of model X", registry UUIDs, BIZ-294) eligible alongside the specific printers above.
+    eligible_model_uuids: list[str] = []
     # Slicing cache (BIZ-192): keep each generated job's production slice in the library as a cached version.
     save_slice: bool = False
     # Slicing cache (BIZ-193): reuse an identical earlier pack, and let each job print a matching cached version
@@ -1283,9 +1283,9 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         )).scalars().all()
         eligible_printers = list(rows)
     model_printers: list[Printer] = []
-    if body.eligible_machine_profiles:
+    if body.eligible_model_uuids:
         model_printers = list((await session.execute(
-            select(Printer).where(Printer.current_orca_printer_profile.in_(body.eligible_machine_profiles))
+            select(Printer).where(Printer.model_uuid.in_(body.eligible_model_uuids))
         )).scalars().all())
 
     # Pack for the smallest bed among everything that could take the job (explicit picks + matching models).
@@ -1494,7 +1494,7 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
         # Create printer configs for each eligible printer × job. The machine preset
         # is deliberately NOT set here — queue_engine reads it fresh from the printer
         # at dispatch time. print_profile is the *process* preset and must come from
-        # the user (body.process_preset); current_orca_printer_profile is a machine
+        # the user (body.process_preset); machine_profile_override is a machine
         # preset name and can never resolve against the process catalog.
         for j in new_jobs:
             for p in eligible_printers:
@@ -1506,10 +1506,10 @@ async def _generate_project(project_id: int, body: GenerateRequest, session: Asy
                     filament_color=fil_color,
                     **_material_cols(mat),
                 ))
-            for machine_profile in dict.fromkeys(body.eligible_machine_profiles):
+            for model_uuid in dict.fromkeys(body.eligible_model_uuids):
                 session.add(JobModelTarget(
                     job_id=j.id,
-                    machine_profile=machine_profile,
+                    model_uuid=model_uuid,
                     print_profile=body.process_preset or "",
                     filament_profile=None,   # the loaded slot supplies the preset on each matching printer
                     filament_type=fil_type,

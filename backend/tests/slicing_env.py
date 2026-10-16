@@ -18,6 +18,7 @@ def slicing_provider(provider, plugin_id: str = PLUGIN_ID):
         for target, value in (
             ("app.services.slice_resolution.enabled_provider_ids", lambda: [plugin_id]),
             ("app.services.slice_resolution.default_provider_id", lambda: plugin_id),
+            ("app.services.slicer_profiles.effective_provider_id", lambda preferred: preferred or plugin_id),
             ("app.services.slice_resolution.gcode_producer_for", lambda pid: producer),
             ("app.services.queue_engine.slicing_provider_for", lambda pid: provider),
             ("app.services.slicer_service.slicing_provider_for", lambda pid: provider),
@@ -35,6 +36,7 @@ def slicing_providers(providers: dict, default: str | None):
         for target, value in (
             ("app.services.slice_resolution.enabled_provider_ids", lambda: list(providers)),
             ("app.services.slice_resolution.default_provider_id", lambda: default),
+            ("app.services.slicer_profiles.effective_provider_id", lambda preferred: preferred or default),
             ("app.services.slice_resolution.gcode_producer_for", lambda pid: producers.get(pid)),
             ("app.services.queue_engine.slicing_provider_for", lambda pid: providers.get(pid)),
             ("app.services.slicer_service.slicing_provider_for", lambda pid: providers.get(pid)),

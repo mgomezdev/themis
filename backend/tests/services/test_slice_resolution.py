@@ -17,7 +17,8 @@ pytestmark = pytest.mark.asyncio
 
 def printer(preferred=None, **kw):
     return SimpleNamespace(name="P1", preferred_slicer_plugin_id=preferred, bed_x_mm=256.0, bed_y_mm=256.0,
-                           model_uuid=kw.pop("model_uuid", "uuid-x1c"), **kw)
+                           model_uuid=kw.pop("model_uuid", "uuid-x1c"), machine_profile=kw.pop("machine_profile", "Machine 0.4"),
+                           profile_reason=kw.pop("profile_reason", None), **kw)
 
 
 @pytest.fixture
@@ -138,3 +139,32 @@ async def test_target_comes_from_the_printer_row(world):
     assert (await sr.resolve_slicing(printer(model_uuid="uuid-x1c"), "m.3mf")).blocked
     t = sr.target_of(printer())
     assert t.bed_mm[:2] == (256.0, 256.0) and t.model_uuid == "uuid-x1c"
+
+
+# --- BIZ-294: a provider with no machine profile for the printer's model/variant is ineligible -----------------------------------------
+
+async def test_no_machine_profile_for_the_model_makes_the_default_provider_ineligible(world):
+    world(["a"], "a", {"a": FakeGcodeProducer("a")})
+    d = await sr.resolve_slicing(printer(machine_profile=None, profile_reason="no machine profile for P1S 0.6mm"), "m.3mf")
+    assert d.blocked and not d.recoverable and d.provider_id == "a"
+    assert d.outcome.reason is Reason.DEFAULT_INELIGIBLE
+    assert "no machine profile for P1S 0.6mm" in d.message
+
+
+async def test_no_machine_profile_for_the_model_makes_an_explicit_preference_ineligible_and_never_falls_back(world):
+    world(["a", "b"], "a", {"a": FakeGcodeProducer("a"), "b": FakeGcodeProducer("b")})
+    d = await sr.resolve_slicing(printer(preferred="b", machine_profile=None, profile_reason="no machine profile for P1S default nozzle"),
+                                 "m.3mf")
+    assert d.outcome.reason is Reason.PREFERENCE_INELIGIBLE and d.provider_id == "b"
+    assert "no machine profile for P1S default nozzle" in d.message
+
+
+async def test_a_missing_profile_is_reported_even_while_the_provider_is_down(world):
+    """The mapping is the user's to fix and does not depend on readiness: it must not be hidden behind a 'down' (recoverable) wait."""
+    world(["a"], "a", {"a": FakeGcodeProducer("a", state=Readiness.UNREACHABLE)})
+    d = await sr.resolve_slicing(printer(machine_profile=None, profile_reason="no machine profile for P1S"), "m.3mf")
+    assert d.outcome.reason is Reason.DEFAULT_INELIGIBLE and not d.recoverable
+
+
+async def test_the_resolved_profile_reaches_the_neutral_target(world):
+    assert sr.target_of(printer(machine_profile="Bambu Lab P1S 0.6 nozzle")).machine_profile == "Bambu Lab P1S 0.6 nozzle"

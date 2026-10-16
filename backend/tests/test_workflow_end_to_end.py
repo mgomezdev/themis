@@ -68,7 +68,7 @@ async def test_two_jobs_flow_from_queue_to_print_to_plate_clear_to_next_print(cl
     # ── set up: a mock printer, one uploaded plate, two queued jobs ──────────────────────────────
     created = await client.post("/api/v1/printers", json={
         "name": "Mock", "printer_type": "mock", "connection_config": {},
-        "orca_printer_profiles": ["Mock Machine"], "current_orca_printer_profile": "Mock Machine",
+        "orca_printer_profiles": ["Mock Machine"], "machine_profile_override": "Mock Machine",
     })
     assert created.status_code == 201, created.text
     printer_id = created.json()["id"]

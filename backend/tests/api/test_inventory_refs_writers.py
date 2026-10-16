@@ -124,12 +124,12 @@ async def test_a_bad_material_ref_is_a_422_and_creates_nothing(client, upload_3m
         assert (await s.execute(select(Job))).scalars().all() == []
 
 
-async def test_model_targets_store_both_forms_and_materialize_them_into_configs(client, upload_3mf, create_printer, session_factory):
+async def test_model_targets_store_both_forms_and_materialize_them_into_configs(client, upload_3mf, create_printer, model_uuid_of, session_factory):
     from unittest.mock import MagicMock, patch
     p = await create_printer()
     with patch("app.api.routes.jobs.queue_engine", MagicMock()):
         resp = await client.post("/api/v1/jobs", json={"uploaded_file_id": await upload_3mf(), "plate_number": 1, "model_targets": [
-            {"machine_profile": "Bambu Lab P1S 0.4", "print_profile": "0.20mm", "filament_type": "PLA", "filament_color": "any",
+            {"model_uuid": await model_uuid_of(p), "print_profile": "0.20mm", "filament_type": "PLA", "filament_color": "any",
              "filament_id": 5}]})
     assert resp.status_code == 201, resp.text
     job_id = resp.json()["id"]
