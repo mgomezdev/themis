@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from app.models import UploadedFile
 from tests.conftest import make_3mf_bytes
 
 UP = "Job Uploads"
@@ -182,3 +183,21 @@ async def test_delete_survives_a_stale_row_with_an_unremovable_key(client, dirs,
     assert resp.status_code == 200, resp.text
     assert not (lib / UP / "v.gcode").exists()
     assert not any(r["id"] in (model, version) for r in (await client.get("/api/v1/files")).json())
+
+
+async def test_reupload_of_a_row_marked_missing_clears_missing(client, dirs, session_factory):
+    lib, _ = dirs
+    data = make_3mf_bytes()
+    fid = (await _upload(client, data=data)).json()["id"]
+    (lib / UP / "m.3mf").unlink()
+    async with session_factory() as s:
+        (await s.get(UploadedFile, fid)).missing = True
+        await s.commit()
+
+    resp = await _upload(client, data=data)
+
+    assert resp.status_code == 201 and resp.json()["id"] == fid
+    assert resp.json()["missing"] is False
+    assert (lib / UP / "m.3mf").read_bytes() == data
+    async with session_factory() as s:
+        assert (await s.get(UploadedFile, fid)).missing is False
