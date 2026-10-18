@@ -16,7 +16,7 @@ const detail = (over: Partial<PluginDetail> = {}): PluginDetail => ({
     properties: {
       url: { type: 'string', title: 'Url', description: 'Where it lives' },
       api_key: { type: 'string', title: 'Api Key', description: 'Optional key' },
-      sync_interval_minutes: { type: 'integer', title: 'Sync interval', minimum: 1, default: 15 },
+      sync_interval_minutes: { type: 'integer', title: 'Sync interval', minimum: 1, maximum: 60, default: 15 },
       max_disconnect_minutes: { anyOf: [{ type: 'integer' }, { type: 'null' }], title: 'Alert after (min)' },
       verbose: { type: 'boolean', title: 'Verbose' },
     },
@@ -50,6 +50,8 @@ describe('PluginSettingsPage', () => {
     expect((screen.getByLabelText('Url') as HTMLInputElement).value).toBe('http://demo.test');
     expect(screen.getByText('Url *')).toBeTruthy();                                        // required
     expect((screen.getByLabelText('Sync interval') as HTMLInputElement).type).toBe('number');
+    expect((screen.getByLabelText('Sync interval') as HTMLInputElement).min).toBe('1');
+    expect((screen.getByLabelText('Sync interval') as HTMLInputElement).max).toBe('60');
     expect((screen.getByLabelText('Alert after (min)') as HTMLInputElement).value).toBe('');   // nullable integer, unset
     expect(screen.getByRole('switch', { name: '' , checked: false })).toBeTruthy();       // the boolean (and the enable switch is checked)
   });
@@ -362,5 +364,36 @@ describe('PluginSettingsPage', () => {
       render(<PluginSettingsPage pluginId="demo_inv" />);
       await waitFor(() => expect(pill()?.textContent).toBe('Unavailable'));
     });
+  });
+
+  it('lists the plugin-scoped diagnostics, and shows a setting outside the contract as not editable instead of guessing an input', async () => {
+    const d = detail({
+      settings: { url: 'http://demo.test', limits: { a: 1 } },
+      settings_schema: { properties: { url: { type: 'string', title: 'Url' }, limits: { type: 'object', title: 'Limits' } } },
+      diagnostics: [{ scope: 'settings.limits', message: "setting 'limits' uses a type the settings form cannot render" }],
+    });
+    const api = stubFetch(routes(d, { 'PUT /api/v1/plugins/demo_inv': (c: { body: unknown }) => ({ ...d, ...c.body as object }) }));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    const diag = await screen.findByTestId('plugin-diagnostics');
+    expect(within(diag).getByText('settings.limits')).toBeTruthy();
+    expect(diag.textContent).toContain('cannot render');
+    expect(screen.getByTestId('unsupported-limits').textContent).toBe('Not editable here.');
+    expect(screen.queryByLabelText('Limits')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('status');
+    expect(Object.keys((api.to('PUT', '/api/v1/plugins/demo_inv')[0].body as { settings: object }).settings)).toEqual(['url']);   // never sent
+  });
+
+  it('does not render a settings form whose schema version it does not know, but the plugin can still be switched', async () => {
+    const d = detail({ settings_schema_version: 2 });
+    stubFetch(routes(d));
+    render(<PluginSettingsPage pluginId="demo_inv" />);
+
+    expect((await screen.findByRole('alert')).textContent).toContain('schema version 2');
+    expect(screen.queryByLabelText('Url')).toBeNull();
+    expect(screen.queryByLabelText('Api Key')).toBeNull();
+    expect(screen.getByRole('switch', { name: '' , checked: true })).toBeTruthy();
   });
 });

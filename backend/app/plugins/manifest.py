@@ -208,6 +208,9 @@ class PluginManifest:
             for attr in ("version", "name", "up", "down"):
                 if not hasattr(mod, attr):
                     raise PluginError(f"plugin {self.id!r}: migration {mod.__name__} lacks `{attr}` (down() is required)")
+        versions = [mod.version for mod in self.migrations]
+        if any(not isinstance(v, int) or isinstance(v, bool) or v < 1 for v in versions) or len(versions) != len(set(versions)):
+            raise PluginError(f"plugin {self.id!r}: migration versions must be unique positive integers, got {versions}")
 
     @property
     def prefix(self) -> str:

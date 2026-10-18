@@ -14,7 +14,7 @@ Use the current guides for supported behavior. The application source and genera
 
 - [Contributor guide](../CONTRIBUTING.md): development setup, repository map, and change guidance.
 - [Architecture index](agent/README.md): backend, frontend, data model, printer, provider, event, and plugin references.
-- [Plugin guide](plugins.md): plugin package, capability, install, and lifecycle contracts.
+- [Plugin guide](plugins.md): plugin package, capability, install, and lifecycle contracts. [Plugin data lifecycle](plugin-lifecycle.md): ownership, retention and recovery. [Plugin test matrix](plugin-test-matrix.md): scenario-to-test map.
 - [Printer discovery](printer-discovery.md) and [printer interface](printer-interface.md).
 - [Provider interfaces](provider-interfaces.md) and [slicing flow](slicing-flow.md).
 - [Event contract](events.md) and [protocol verification](../backend/protocol_verification/README.md).

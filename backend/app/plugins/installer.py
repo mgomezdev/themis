@@ -308,12 +308,30 @@ def _taken(top: str, plugin_id: str, base: Path | None = None) -> bool:
         return True
 
 
+def _inherited_path() -> list[str]:
+    """Themis's own import path for the dry-run subprocess, WITHOUT any installed plugin's directory: the loader appended the
+    running version's folder to `sys.path`, and an upgrade of that same plugin must import the staged package, not the
+    old version that is running (same top-level name, found first)."""
+    base = plugins_dir().resolve()
+    keep = []
+    for p in sys.path:
+        if not p:
+            continue
+        try:
+            if Path(p).resolve().is_relative_to(base):
+                continue
+        except (OSError, ValueError):
+            pass
+        keep.append(p)
+    return keep
+
+
 def dry_run(root: Path, t: PluginToml) -> dict:
     """Import the entry in a throwaway subprocess with the plugin's `vendor/` after Themis's own path: import errors,
     missing deps and a MANIFEST that disagrees with the toml fail the install without touching this process."""
     scratch = root.parent / "scratch"
     scratch.mkdir(exist_ok=True)
-    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": os.pathsep.join(p for p in sys.path if p),
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": os.pathsep.join(_inherited_path()),
            "THEMIS_DATA_DIR": str(scratch), "HOME": str(scratch), "PYTHONDONTWRITEBYTECODE": "1"}
     if os.name == "nt":                                                    # Winsock (asyncio) won't initialise without it
         env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
@@ -532,6 +550,11 @@ async def commit(session: AsyncSession, token: str, *, actor: str, expect_id: st
                 raise InstallError(f"version {t.version} of {t.id!r} is already installed; bump the version")
             info = await asyncio.to_thread(dry_run, staged.root, t)            # first time any of its code runs: after consent
             staged.migrations = tuple(info["migrations"])
+            applied = {v for (v,) in (await session.execute(
+                select(PluginSchemaVersion.version).where(PluginSchemaVersion.plugin_id == t.id))).all()}
+            if ahead := sorted(applied - set(staged.migrations)):
+                raise InstallError(f"version {t.version} of {t.id!r} does not ship migration(s) {ahead} that the database already "
+                                   f"has (a downgrade across a migration is refused); install a version that ships them")
         except BaseException:
             shutil.rmtree(staging_dir() / token, ignore_errors=True)            # a refused package is not kept
             raise

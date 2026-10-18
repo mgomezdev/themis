@@ -91,6 +91,14 @@ describe('PluginPage', () => {
     expect(await screen.findByText(/has no pages available/)).toBeTruthy();
   });
 
+  it('a tab with a renderer this build does not know says so instead of rendering nothing', async () => {
+    const ui = tabs(['x', 'X', 'default']);
+    (ui.tabs[0] as { renderer: string }).renderer = 'hologram';
+    withPlugin(mkPlugin({ id: 'future', ui }));
+    show('/plugins/future/x');
+    expect((await screen.findByRole('alert')).textContent).toContain('renderer (hologram) that this version of Themis does not support');
+  });
+
   it('a disabled plugin has no pages, and an unknown one says so', async () => {
     const api = withPlugin(mkPlugin({ id: 'demo', enabled: false, active: false }), { 'PUT /api/v1/plugins/demo': { id: 'demo' } });
     show('/plugins/demo');

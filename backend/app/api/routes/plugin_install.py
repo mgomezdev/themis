@@ -144,11 +144,21 @@ async def _remove_data(session: AsyncSession, plugin_id: str) -> None:
     await session.execute(delete(CapabilitySelection).where(CapabilitySelection.plugin_id == plugin_id))      # auto-select may reconsider later
 
 
+async def _restore_enabled(plugin_id: str, was_enabled: bool) -> None:
+    """A refused uninstall stops the plugin before it fails; put it back so "nothing was changed" is true."""
+    if was_enabled and get_plugin(plugin_id) is not None and not plugin_host.is_enabled(plugin_id):
+        try:
+            await plugin_host.update_config(plugin_id, enabled=True)
+        except Exception:
+            logger.exception("Could not re-enable plugin %s after a failed uninstall", plugin_id)
+
+
 @router.delete("/plugins/{plugin_id}", summary="Uninstall at the next restart (data is kept unless remove_data=true)")
 async def uninstall(plugin_id: str, remove_data: bool = False, key: ApiKey | None = _admin,
                     session: AsyncSession = Depends(get_session)):
     if get_plugin(plugin_id) is not None and await session.get(InstalledPlugin, plugin_id) is None:
         raise HTTPException(status_code=409, detail="Bundled plugins can be disabled, not uninstalled")
+    was_enabled = plugin_host.is_enabled(plugin_id)
     try:
         await installer.get_row(session, plugin_id)
         if remove_data and get_plugin(plugin_id) is None:
@@ -161,9 +171,11 @@ async def uninstall(plugin_id: str, remove_data: bool = False, key: ApiKey | Non
         result = _result(await installer.mark_uninstall(session, plugin_id, actor=audit.actor_of(key), removed_data=remove_data))
     except PluginError as e:
         await session.rollback()
+        await _restore_enabled(plugin_id, was_enabled)
         raise _fail(e)
     except Exception:
         await session.rollback()
+        await _restore_enabled(plugin_id, was_enabled)
         logger.exception("Uninstalling plugin %s failed", plugin_id)
         raise HTTPException(status_code=500, detail="Uninstall failed; nothing was changed")
     if remove_data:

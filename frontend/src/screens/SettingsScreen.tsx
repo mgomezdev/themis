@@ -14,7 +14,7 @@ import { PrinterModelsPanel } from './PrinterModelsPanel';
 import { FilamentInventoryPage } from './FilamentInventoryPage';
 import { PluginsPage } from './PluginsPage';
 import { CapabilitiesPage } from './CapabilitiesPage';
-import { usePlugins } from '../api/plugins';
+import { navigablePlugins, usePlugins } from '../api/plugins';
 import {
   MaintenanceItemForm, TRIGGER_LABEL, triggerChipText,
   emptyDraft, draftFromTemplate, type ItemDraft,
@@ -1520,8 +1520,8 @@ export function SettingsScreen() {
   const activePage = pageFromPath(location.pathname);
   const setActivePage = (id: PageId) => navigate(`/settings/${id}`);
   const { plugins } = usePlugins();
-  // A plugin that asks for its own page gets a sidebar entry only while it is enabled.
-  const pluginPages = plugins.filter(p => p.enabled && p.ui.mode === 'page' && p.ui.nav_placement === 'settings');
+  // A plugin that asks for its own page gets a sidebar entry only while it is installed, running and enabled.
+  const pluginPages = navigablePlugins(plugins).filter(p => p.ui.nav_placement === 'settings');
 
   const sections: NavSection[] = [
     {

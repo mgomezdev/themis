@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { Icons } from './icons';
 import { LaminusStatusChip } from './LaminusStatusChip';
 import { InventoryStatusChip } from './InventoryStatusChip';
-import { usePlugins } from '../api/plugins';
+import { navigablePlugins, usePlugins } from '../api/plugins';
 import { CAP, useInventory } from '../api/inventory';
 import { useBuildInfo, shortSha } from '../api/version';
 
@@ -53,8 +53,8 @@ export function Sidebar({ queueCounts, operatorName, printerCount, alarmCount = 
   const { plugins } = usePlugins();
   const inventory = useInventory();
   const hasLibrary = inventory.has(CAP.MANAGE_MATERIALS) || inventory.has(CAP.MANAGE_SPOOLS);   // the active provider owns its library
-  // A plugin that asks for its own page gets a sidebar entry only while it is enabled.
-  const pluginPages = plugins.filter(p => p.enabled && p.ui.mode === 'page');
+  // A plugin that asks for its own page gets a sidebar entry only while it is installed, running and enabled.
+  const pluginPages = navigablePlugins(plugins);
   const items = [
     { to: '/queue',     label: 'Job queue',   icon: Icons.queue },
     { to: '/fleet',     label: 'Fleet',       icon: Icons.fleet },
