@@ -155,6 +155,24 @@ async def test_set_eligibility_can_represent_zero_one_and_several_models_and_rej
             await eligibility.set_eligibility(s, other, [models["x1"]])
 
 
+async def test_set_eligibility_keeps_the_source_of_models_that_stay_and_labels_only_added_ones_manual(session_factory, tmp_path):
+    models = await seed_models(session_factory)
+    fid = await seed_file(session_factory, tmp_path / "lib", "s.gcode")
+    async with session_factory() as s:
+        f = await s.get(UploadedFile, fid)
+        assert await eligibility.record_slice_target(s, f, models["x1"])             # x1 = target, x1_pro = equivalent
+        await eligibility.set_eligibility(s, f, [models["x1"], models["x1_pro"], models["x2"]])
+        await s.commit()
+    async with session_factory() as s:
+        got = {m["model_uuid"]: m["source"] for m in (await eligibility.eligibility_of(s, fid))["models"]}
+        assert got == {models["x1"]: "target", models["x1_pro"]: "equivalent", models["x2"]: "manual"}
+        await eligibility.set_eligibility(s, await s.get(UploadedFile, fid), [models["x1_pro"]])
+        await s.commit()
+    async with session_factory() as s:
+        got = {m["model_uuid"]: m["source"] for m in (await eligibility.eligibility_of(s, fid))["models"]}
+        assert got == {models["x1_pro"]: "equivalent"}                                # removed models gone, kept one unchanged
+
+
 def test_a_manifest_may_only_declare_equivalents_that_exist_in_the_plugin():
     with pytest.raises(PluginError):
         make_manifest("fake_two", manufacturers=(Manufacturer("acme", "Acme", (PrinterModel("x1", "X1", equivalents=("ghost",)),)),))

@@ -11,6 +11,7 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
   const [sources, setSources] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmEmpty, setConfirmEmpty] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -28,6 +29,7 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
   const offered = models.filter(m => (m.enabled && !m.dormant) || selected.has(m.id));
 
   async function save() {
+    setConfirmEmpty(false);
     setBusy(true);
     setError(null);
     try {
@@ -42,7 +44,11 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
     }
   }
 
+  // An empty set is saved as "known, for no machine" — every printer refused — so it needs an explicit yes.
+  const onSave = () => (selected.size === 0 ? setConfirmEmpty(true) : save());
+
   const toggle = (id: string) => setSelected(prev => {
+    setConfirmEmpty(false);
     const next = new Set(prev);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
@@ -65,7 +71,14 @@ export function FileEligibilityEditor({ fileId, onSaved }: { fileId: number; onS
           {sources[m.id] === 'equivalent' && <span className="tiny muted">equivalent</span>}
         </label>
       ))}
-      <button className="btn sm" disabled={busy || known === null} onClick={save}>Save eligibility</button>
+      {confirmEmpty && (
+        <div className="tiny" role="alert" style={{ color: 'var(--warn)' }}>
+          No printer model is ticked — saving will mean no printer is allowed to run this file.
+          <button className="btn sm" style={{ marginLeft: 8 }} disabled={busy} onClick={save}>Save with no printers</button>
+          <button className="btn sm" style={{ marginLeft: 4 }} onClick={() => setConfirmEmpty(false)}>Cancel</button>
+        </div>
+      )}
+      <button className="btn sm" disabled={busy || known === null} onClick={onSave}>Save eligibility</button>
     </div>
   );
 }

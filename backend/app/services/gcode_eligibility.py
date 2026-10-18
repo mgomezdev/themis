@@ -78,7 +78,8 @@ async def eligibility_for_files(session: AsyncSession, file_ids: list[int]) -> d
 
 
 async def set_eligibility(session: AsyncSession, file: UploadedFile, model_uuids: list[str], *, source: str = "manual") -> None:
-    """Replace the file's eligibility with exactly `model_uuids` (a known set; empty = explicitly no machine). Caller commits.
+    """Replace the file's eligibility with exactly `model_uuids` (a known set; empty = explicitly no machine). Rows whose model stays
+    keep their `source`; added models get `source`. Caller commits.
     Raises ValueError for an unknown model UUID or a file that is not pre-sliced."""
     if not is_presliced_file(file):
         raise ValueError("Only pre-sliced G-code files carry machine eligibility")
@@ -87,9 +88,14 @@ async def set_eligibility(session: AsyncSession, file: UploadedFile, model_uuids
     missing = [u for u in wanted if u not in known]
     if missing:
         raise ValueError(f"Unknown printer model(s): {', '.join(missing)}")
-    await session.execute(delete(FileMachineEligibility).where(FileMachineEligibility.file_id == file.id))
+    existing = {r.model_uuid: r for r in (await session.execute(
+        select(FileMachineEligibility).where(FileMachineEligibility.file_id == file.id))).scalars()}
+    for uid, row in existing.items():
+        if uid not in wanted:
+            await session.delete(row)
     for uid in wanted:
-        session.add(FileMachineEligibility(file_id=file.id, model_uuid=uid, source=source))
+        if uid not in existing:   # a model that stays selected keeps its recorded source (e.g. `equivalent`); only added ones take `source`
+            session.add(FileMachineEligibility(file_id=file.id, model_uuid=uid, source=source))
     file.eligibility_known = True
     await session.flush()
 
