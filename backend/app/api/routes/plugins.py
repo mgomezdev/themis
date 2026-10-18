@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import InstalledPlugin
-from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins
+from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins, ui_report
+from ...plugins.ui_schema import SCHEMA_VERSION
 from ...plugins.host import plugin_host
 from ...plugins.manifest import PluginManifest
 
@@ -21,8 +22,9 @@ router = APIRouter(prefix="/api/v1", tags=["plugins"])
 def _ui(m: PluginManifest) -> dict:
     u = m.ui
     return {"mode": u.mode, "nav_label": u.nav_label or m.name, "nav_placement": u.nav_placement, "nav_icon": u.nav_icon,
+            # a schema tab whose document failed validation is not offered (it fails closed; see `diagnostics`)
             "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer, "component": t.component, "requires": t.requires}
-                     for t in u.tabs],
+                     for t in u.tabs if t.renderer != "schema" or ui_report(m.id).tab_problem(t.id) is None],
             "redirects": [{"from": src, "tab": tab} for src, tab in u.redirects],
             "connection_status": u.connection_status}
 
@@ -66,6 +68,7 @@ def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
         "docs_url": m.docs_url, "source": row.source if row else "bundled", "loaded": True, "install": install_info(row),
         "provides": provides, "requires": _refs(m.requires), "optional": _refs(m.optional),
         "defines": [d.id for d in m.defines], "ui": _ui(m),
+        "diagnostics": [d.as_dict() for d in ui_report(m.id).diagnostics],
         "enabled": plugin_host.is_enabled(m.id),
         "active": any(x["status"] == "serving" for x in provides),
         "error": plugin_host.build_error(m.id) or plugin_host.state(m.id).get("last_error"),
@@ -81,6 +84,7 @@ def _detail(m: PluginManifest) -> dict:
         "settings": {**defaults, **{k: v for k, v in stored.items() if k not in m.secret_fields}},
         "secrets": {f: plugin_host.has_secret(m.id, f) for f in sorted(m.secret_fields)},     # set / not set, never the value
         "settings_schema": m.settings_model.model_json_schema(),
+        "settings_schema_version": SCHEMA_VERSION,
         "secret_fields": sorted(m.secret_fields),
         "state": plugin_host.state(m.id),
     }
@@ -105,6 +109,7 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
             plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
                             "description": "", "docs_url": None, "source": r.source, "loaded": False,
                             "install": install_info(r), "provides": [], "requires": [], "optional": [], "defines": [],
+                            "diagnostics": [],
                             "ui": {"mode": "section", "nav_label": r.name or r.plugin_id, "nav_placement": "settings",
                                    "nav_icon": None, "tabs": []},
                             "enabled": False, "active": False, "error": r.error})
@@ -125,11 +130,12 @@ async def get_plugin_detail(plugin_id: str):
             dependencies=[Depends(require_scope("settings:read"))])
 async def get_tab_schema(plugin_id: str, tab_id: str):
     m = _get_or_404(plugin_id)
-    tab = next((t for t in m.ui.tabs if t.id == tab_id and t.renderer == "schema"), None)
-    schema = m.ui_schema(tab_id) if tab is not None and m.ui_schema is not None else None
-    if schema is None:
+    if not any(t.id == tab_id and t.renderer == "schema" for t in m.ui.tabs):
         raise HTTPException(status_code=404, detail=f"{plugin_id!r} has no schema tab {tab_id!r}")
-    return schema
+    report = ui_report(plugin_id)
+    if (problem := report.tab_problem(tab_id)) is not None:
+        raise HTTPException(status_code=422, detail=f"{plugin_id}: tab {tab_id!r} is not available: {problem}")
+    return report.tabs[tab_id]
 
 
 class PluginUpdate(BaseModel):

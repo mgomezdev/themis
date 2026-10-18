@@ -10,9 +10,10 @@ from pathlib import Path
 
 from .capabilities.definition import CapabilityDef
 from .manifest import HOST_API, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
+from .ui_schema import UiReport, inspect_manifest
 
 __all__ = ["HOST_API", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
-           "register_plugin", "plugin_root", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
+           "register_plugin", "ui_report", "plugin_root", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:
     """Bundled plugins are the sub-packages of this one that export `MANIFEST` (everything but `capabilities`, the contracts). They
@@ -27,6 +28,7 @@ BUNDLED_MODULES: tuple[str, ...] = _discover_bundled()
 
 _REGISTRY: dict[str, PluginManifest] = {}
 _ROOTS: dict[str, Path] = {}                 # plugin id -> its package directory (where themis-plugin.toml / defaults.toml live)
+_UI_REPORTS: dict[str, UiReport] = {}      # plugin id -> the declarative-UI validation done when it registered (BIZ-303)
 
 
 def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
@@ -36,6 +38,13 @@ def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
     _REGISTRY[manifest.id] = manifest
     if root is not None:
         _ROOTS[manifest.id] = root
+    _UI_REPORTS[manifest.id] = inspect_manifest(manifest)      # never raises: a bad contribution is a diagnostic, not a boot failure
+
+
+def ui_report(plugin_id: str) -> UiReport:
+    """What validating the plugin's declarative UI found when it registered (empty for an unknown plugin)."""
+    from .ui_schema import UiReport, inspect_manifest
+    return _UI_REPORTS.get(plugin_id) or UiReport()
 
 
 def plugin_root(plugin_id: str) -> Path | None:

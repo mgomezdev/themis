@@ -295,6 +295,16 @@ describe('Plugin nav entries', () => {
     expect(screen.queryByRole('link', { name: 'Other' })).toBeNull();                     // disabled: no nav entry
   });
 
+  it('a plugin that is not running (staged for removal, or failed to load) has no entry even if its row still says enabled', async () => {
+    const ui = { mode: 'page' as const, nav_label: 'Gone', nav_placement: 'settings' as const, nav_icon: null, tabs: [] };
+    withPlugins([mkPlugin({ id: 'staying', name: 'Staying', ui: { ...ui, nav_label: 'Staying' } }),
+                 { ...mkPlugin({ id: 'gone_plug', ui }), loaded: false }]);
+    renderOnSettings(false);
+
+    await screen.findByRole('link', { name: 'Staying' });
+    expect(screen.queryByRole('link', { name: 'Gone' })).toBeNull();
+  });
+
   it('a section plugin gets no sidebar entry of its own, and a main-placement page joins Workshop', async () => {
     withPlugins([mkPlugin({ id: 'small_one', ui: { mode: 'section', nav_label: 'Small', nav_placement: 'settings', nav_icon: null, tabs: [] } }),
                  mkPlugin({ id: 'ops_page', ui: { mode: 'page', nav_label: 'Ops board', nav_placement: 'main', nav_icon: null, tabs: [] } })]);

@@ -642,6 +642,9 @@ class PluginHost:
         leaked = sorted(set(settings or {}) & manifest.secret_fields)
         if leaked:
             raise PluginError(f"{leaked} are secret fields: send them as secrets, not settings")
+        unknown = sorted(set(settings or {}) - set(manifest.settings_model.model_fields))
+        if unknown and manifest.settings_model.model_config.get("extra") != "allow":
+            raise PluginError(f"unknown setting(s) {unknown} for plugin {plugin_id!r}")    # never persist what the model would ignore
         async with self._lock:
             async with self._session_factory() as s:
                 row = await s.get(PluginConfig, plugin_id)

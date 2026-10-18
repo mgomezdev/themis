@@ -395,6 +395,7 @@
     "optional",
     "defines",
     "ui",
+    "diagnostics",
     "enabled",
     "active",
     "error"

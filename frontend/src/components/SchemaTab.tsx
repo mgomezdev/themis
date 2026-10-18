@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   fetchTabSchema, pluginPath, pluginRequest, type SchemaBlock, type SchemaField, type TabSchema,
 } from '../api/plugins';
+import { validateTabSchema, visibleFields } from '../api/uiSchema';
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
 
 /** Renders a tab a plugin describes with a small JSON schema (`GET /api/v1/plugins/{id}/ui/{tab}`): `form` blocks load and
@@ -29,9 +30,11 @@ function FieldInput({ f, value, onChange }: { f: SchemaField; value: unknown; on
     );
   }
   if (f.type === 'textarea') {
-    return <textarea className="input" aria-label={f.label} rows={3} value={String(value ?? '')} onChange={e => onChange(e.target.value)} />;
+    return <textarea className="input" aria-label={f.label} rows={3} maxLength={f.max_length} value={String(value ?? '')} onChange={e => onChange(e.target.value)} />;
   }
   return <input className="input" aria-label={f.label} type={f.type === 'number' ? 'number' : 'text'} value={value == null ? '' : String(value)}
+                min={f.type === 'number' ? f.min : undefined} max={f.type === 'number' ? f.max : undefined}
+                maxLength={f.type === 'text' ? f.max_length : undefined}
                 onChange={e => onChange(e.target.value)} />;
 }
 
@@ -51,7 +54,7 @@ function FormBlock({ pluginId, block }: { pluginId: string; block: Extract<Schem
   async function save() {
     setMsg(null);
     try {
-      await pluginRequest(pluginPath(pluginId, block.save), json('PUT', Object.fromEntries(block.fields.map(f => [f.key, fieldValue(f, values[f.key])]))));
+      await pluginRequest(pluginPath(pluginId, block.save), json('PUT', Object.fromEntries(visibleFields(block.fields, values).map(f => [f.key, fieldValue(f, values[f.key])]))));
       setMsg({ ok: true, text: 'Saved' });
     } catch (e) { setMsg({ ok: false, text: e instanceof Error ? e.message : String(e) }); }
   }
@@ -62,7 +65,7 @@ function FormBlock({ pluginId, block }: { pluginId: string; block: Extract<Schem
       {block.description && <div className="muted small" style={{ marginBottom: 8 }}>{block.description}</div>}
       {!loaded ? <div className="muted small">Loading…</div> : (
         <>
-          {block.fields.map(f => (
+          {visibleFields(block.fields, values).map(f => (
             <FieldRow key={f.key} label={`${f.label}${f.required ? ' *' : ''}`} hint={f.help}>
               <FieldInput f={f} value={values[f.key]} onChange={v => setValues(s => ({ ...s, [f.key]: v }))} />
             </FieldRow>
@@ -91,7 +94,7 @@ function TableBlock({ pluginId, block }: { pluginId: string; block: Extract<Sche
 
   async function create() {
     if (!block.create) return;
-    const body = Object.fromEntries(block.create.fields.map(f => [f.key, fieldValue(f, draft[f.key])]));
+    const body = Object.fromEntries(visibleFields(block.create.fields, draft).map(f => [f.key, fieldValue(f, draft[f.key])]));
     try {
       await pluginRequest(pluginPath(pluginId, block.create.path), json('POST', body));
       setDraft({});
@@ -133,14 +136,14 @@ function TableBlock({ pluginId, block }: { pluginId: string; block: Extract<Sche
       )}
       {block.create && (
         <div className="row gap-2" style={{ marginTop: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          {block.create.fields.map(f => (
+          {visibleFields(block.create.fields, draft).map(f => (
             <label key={f.key} className="col" style={{ gap: 4 }}>
               <span className="tiny muted">{f.label}{f.required ? ' *' : ''}</span>
               <FieldInput f={f} value={draft[f.key]} onChange={v => setDraft(d => ({ ...d, [f.key]: v }))} />
             </label>
           ))}
           <button className="btn sm" onClick={create}
-                  disabled={block.create.fields.some(f => f.required && (draft[f.key] === undefined || draft[f.key] === ''))}>
+                  disabled={visibleFields(block.create.fields, draft).some(f => f.required && (draft[f.key] === undefined || draft[f.key] === ''))}>
             {block.create.label ?? 'Add'}
           </button>
         </div>
@@ -157,7 +160,12 @@ export function SchemaTab({ pluginId, tabId }: { pluginId: string; tabId: string
     let alive = true;
     setSchema(null); setError('');
     fetchTabSchema(pluginId, tabId)
-      .then(s => { if (alive) setSchema(s); })
+      .then(raw => {
+        if (!alive) return;
+        const checked = validateTabSchema(raw);                // fail closed: render nothing this build does not understand
+        if (checked.ok) setSchema(checked.schema);
+        else setError(`This tab cannot be displayed: ${checked.message}`);
+      })
       .catch(e => { if (alive) setError(e instanceof Error ? e.message : String(e)); });
     return () => { alive = false; };
   }, [pluginId, tabId]);

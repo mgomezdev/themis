@@ -141,7 +141,7 @@ const PORTAL_PAYMENT = { id: 1, received_on: 1, amount: 1, method: 1 } satisfies
 
 const PLUGIN_SUMMARY = {
   id: 1, name: 1, version: 1, description: 1, docs_url: 1, source: 1, loaded: 1, install: 1, provides: 1, requires: 1, optional: 1,
-  defines: 1, ui: 1, enabled: 1, active: 1, error: 1,
+  defines: 1, ui: 1, diagnostics: 1, enabled: 1, active: 1, error: 1,
 } satisfies Record<keyof PluginSummary, 1>;
 const PLUGIN_PROVIDES = { capability: 1, version: 1, features: 1, selected: 1, mode: 1, status: 1, waiting_on: 1 } satisfies Record<keyof PluginProvides, 1>;
 const PLUGIN_CONNECTION_RESULT = { ok: 1, state: 1 } satisfies Record<keyof PluginConnectionResult, 1>;

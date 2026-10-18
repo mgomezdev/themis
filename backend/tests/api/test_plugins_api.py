@@ -196,3 +196,62 @@ async def test_a_schema_tab_needs_the_settings_read_scope(client, session_factor
     narrow = await _client_with(session_factory, ["inventory:read"])
     async with narrow:
         assert (await narrow.get("/api/v1/plugins/schema_demo/ui/library")).status_code == 403
+
+
+# ---- the declarative UI contract (BIZ-303) -------------------------------------------------------------------------------
+
+async def test_an_invalid_schema_tab_fails_closed_with_a_plugin_scoped_diagnostic_and_nothing_else_breaks(client):
+    bad = {"blocks": [{"type": "chart"}]}
+    _schema_plugin(lambda tab: bad)
+
+    listed = (await client.get("/api/v1/plugins")).json()["plugins"]
+    (demo,) = [p for p in listed if p["id"] == "schema_demo"]
+    assert [t["id"] for t in demo["ui"]["tabs"]] == ["conn"]                     # the broken tab is not offered; the default one is
+    assert demo["diagnostics"] == [{"scope": "ui.tab.library",
+                                    "message": "blocks[0].type: unsupported block type 'chart' (supported: form, table)"}]
+    assert all(p["diagnostics"] == [] for p in listed if p["id"] != "schema_demo")      # unrelated plugins are untouched
+    resp = await client.get("/api/v1/plugins/schema_demo/ui/library")
+    assert resp.status_code == 422 and "unsupported block type 'chart'" in resp.json()["detail"]
+    assert (await client.get("/api/v1/plugins/spoolman")).status_code == 200            # other settings pages still work
+
+
+async def test_a_schema_version_mismatch_is_reported_not_rendered(client):
+    _schema_plugin(lambda tab: {"schema_version": 2, "blocks": []})
+
+    resp = await client.get("/api/v1/plugins/schema_demo/ui/library")
+
+    assert resp.status_code == 422 and "schema_version: 2 is not supported" in resp.json()["detail"]
+
+
+async def test_a_schema_provider_that_raises_never_leaks_its_message(client):
+    def boom(tab):
+        raise RuntimeError("password=hunter2")
+    _schema_plugin(boom)
+
+    resp = await client.get("/api/v1/plugins/schema_demo/ui/library")
+
+    assert resp.status_code == 422 and "RuntimeError" in resp.json()["detail"] and "hunter2" not in resp.text
+    assert "hunter2" not in (await client.get("/api/v1/plugins")).text
+
+
+async def test_the_detail_declares_the_settings_schema_version_and_unsupported_fields(client):
+    detail = (await client.get("/api/v1/plugins/spoolman")).json()
+    assert detail["settings_schema_version"] == 1 and detail["diagnostics"] == []
+
+
+async def test_a_setting_the_model_does_not_declare_is_refused_and_not_persisted(client):
+    resp = await client.put("/api/v1/plugins/spoolman", json={"settings": {"url": "http://sm.test", "not_a_setting": 1}})
+
+    assert resp.status_code == 422 and "not_a_setting" in resp.json()["detail"]
+    assert (await client.get("/api/v1/plugins/spoolman")).json()["settings"]["url"] != "http://sm.test"      # nothing was saved
+
+
+async def test_field_constraints_and_secret_handling_are_enforced_server_side(client):
+    too_small = await client.put("/api/v1/plugins/spoolman", json={"settings": {"sync_interval_minutes": 0}})
+    assert too_small.status_code == 422 and "sync_interval_minutes" in too_small.json()["detail"]
+
+    ok = await client.put("/api/v1/plugins/spoolman", json={"settings": {"sync_interval_minutes": 30}, "secrets": {"api_key": KEY}})
+    body = ok.json()
+    assert ok.status_code == 200 and body["settings"]["sync_interval_minutes"] == 30
+    assert body["secrets"] == {"api_key": True} and KEY not in ok.text
+    assert (await client.put("/api/v1/plugins/spoolman", json={"secrets": {"api_key": ""}})).json()["secrets"] == {"api_key": False}
