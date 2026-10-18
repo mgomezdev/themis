@@ -243,7 +243,7 @@ suites. Those remain the owners of behaviour; the shared suite only checks what 
 
 *Normative* (a provider that breaks any of these fails validation or the suite): the capability **id and contract version** it
 declares (`Provide.version` must equal the catalog's); the **required operations** above (the Protocol's members, or the
-definition's `required_methods`; async where the contract says so); a **closed feature vocabulary** for core capabilities (a flag the
+definition's `required_methods`; the host checks that a Protocol's members exist, and that `required_methods` are `async`); a **closed feature vocabulary** for core capabilities (a flag the
 capability does not define is rejected; a plugin-defined capability that lists no features stays open); **neutral outcomes**; and
 **secret-safe diagnostics**. The table is generated from `CapabilityDef` (`required_operations`) and a test fails if it drifts.
 
@@ -277,7 +277,7 @@ exercise. Every test above then runs for it. Keep its capability-specific behavi
 
 ### Boundary checks and their exceptions
 
-Core services and shared UI never import provider implementations or branch on a plugin id. Three scans enforce it on `app/`
+Core services and shared UI never import provider implementations or branch on a plugin id. The scans below are forgetting-guards for imports and for comparisons with an id (they do not prove the absence of every possible indirect branch). Three scans enforce it on `app/`
 (and one on `frontend/src`); an allowlist entry is a *documented compatibility exception* with its reason in the test, and a stale
 entry fails the test, so the lists only shrink:
 

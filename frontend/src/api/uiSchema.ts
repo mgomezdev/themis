@@ -1,7 +1,7 @@
 /** Runtime validation of the declarative plugin UI contract (BIZ-303). The backend validates the same constructs when a plugin
- *  registers (`backend/app/plugins/ui_schema.py`: keep the two in step); this re-checks what actually arrives, so a plugin that
- *  changes its answer later, or a newer plugin on an older Themis, fails closed for that one tab or field instead of rendering
- *  something this build does not understand. */
+ *  registers (`backend/app/plugins/ui_schema.py`: keep the two in step); this re-checks what actually arrives, so
+ *  a document written for a newer contract version fails closed for that one tab or field instead of rendering something this build
+ *  does not understand. The cases in `contracts/ui-schema-cases.json` run against both validators, so they cannot drift. */
 import type { JsonSchema, JsonSchemaProperty, SchemaBlock, SchemaField, TabSchema } from './plugins';
 
 export const SCHEMA_VERSION = 1;
@@ -18,6 +18,11 @@ type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.trim() !== '';
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+const isScalar = (v: unknown): boolean => typeof v === 'string' || typeof v === 'boolean' || isNum(v);
+/** `v` may be absent (undefined or null) or must be text. */
+const optText = (v: unknown, where: string) => need(v === undefined || v === null || typeof v === 'string', where, 'must be text');
+const exactKeys = (o: Obj, keys: string[]) => Object.keys(o).length === keys.length && keys.every(k => k in o);
 
 function noUnknown(o: Obj, allowed: string[], where: string) {
   const extra = Object.keys(o).filter(k => !allowed.includes(k));
@@ -39,20 +44,24 @@ function checkField(f: unknown, where: string, siblings: string[]) {
   noUnknown(o, ['key', 'label', 'type', 'required', 'help', 'visible_if', ...extra], where);
   need(typeof o.key === 'string' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(o.key), `${where}.key`, 'a field key must be an identifier');
   need(isStr(o.label), `${where}.label`, 'a label is required');
+  need(o.required === undefined || typeof o.required === 'boolean', `${where}.required`, 'must be true or false');
+  optText(o.help, `${where}.help`);
   if (o.type === 'select') {
     need(Array.isArray(o.options) && o.options.length > 0, `${where}.options`, 'a select needs at least one option');
     (o.options as unknown[]).forEach((opt, i) =>
-      need(isObj(opt) && typeof opt.value === 'string' && isStr(opt.label), `${where}.options[${i}]`, 'an option is {value, label}'));
+      need(isObj(opt) && exactKeys(opt, ['value', 'label']) && typeof opt.value === 'string' && isStr(opt.label), `${where}.options[${i}]`, 'an option is {value, label}'));
   }
   if (o.type === 'number') {
-    need(o.min === undefined || isNum(o.min), `${where}.min`, 'must be a number');
-    need(o.max === undefined || isNum(o.max), `${where}.max`, 'must be a number');
+    need(o.min == null || isNum(o.min), `${where}.min`, 'must be a number');
+    need(o.max == null || isNum(o.max), `${where}.max`, 'must be a number');
+    need(!isNum(o.min) || !isNum(o.max) || o.min <= o.max, where, 'min is greater than max');
   }
-  if (o.max_length !== undefined) need(Number.isInteger(o.max_length) && (o.max_length as number) > 0, `${where}.max_length`, 'must be a positive integer');
+  if (o.max_length != null) need(Number.isInteger(o.max_length) && (o.max_length as number) > 0, `${where}.max_length`, 'must be a positive integer');
   if (o.visible_if !== undefined) {
     const v = o.visible_if;
-    need(isObj(v) && typeof v.key === 'string' && 'equals' in v, `${where}.visible_if`, 'is {key, equals}');
-    need(siblings.includes((v as Obj).key as string) && (v as Obj).key !== o.key, `${where}.visible_if.key`, 'must name another field of this form');
+    need(isObj(v) && exactKeys(v, ['key', 'equals']), `${where}.visible_if`, 'is {key, equals}');
+    need(typeof (v as Obj).key === 'string' && siblings.includes((v as Obj).key as string) && (v as Obj).key !== o.key, `${where}.visible_if.key`, 'must name another field of this form');
+    need(isScalar((v as Obj).equals), `${where}.visible_if.equals`, 'must be text, a number or true/false');
   }
 }
 
@@ -67,6 +76,8 @@ function checkBlock(b: unknown, where: string) {
   need(isObj(b), where, 'a block must be an object');
   const o = b as Obj;
   need((BLOCK_TYPES as readonly unknown[]).includes(o.type), `${where}.type`, `unsupported block type ${JSON.stringify(o.type)}`);
+  optText(o.title, `${where}.title`);
+  optText(o.description, `${where}.description`);
   if (o.type === 'form') {
     noUnknown(o, ['type', 'title', 'description', 'load', 'save', 'fields'], where);
     checkPath(o.load, `${where}.load`);
@@ -77,15 +88,16 @@ function checkBlock(b: unknown, where: string) {
   noUnknown(o, ['type', 'title', 'description', 'data', 'columns', 'create', 'row_actions', 'empty'], where);
   checkPath(o.data, `${where}.data`);
   need(Array.isArray(o.columns) && o.columns.length > 0, `${where}.columns`, 'at least one column is required');
-  (o.columns as unknown[]).forEach((c, i) => need(isObj(c) && typeof c.key === 'string' && isStr(c.label), `${where}.columns[${i}]`, 'a column is {key, label}'));
-  if (o.create !== undefined) {
+  (o.columns as unknown[]).forEach((c, i) => need(isObj(c) && exactKeys(c, ['key', 'label']) && typeof c.key === 'string' && isStr(c.label), `${where}.columns[${i}]`, 'a column is {key, label}'));
+  optText(o.empty, `${where}.empty`);
+  if (o.create !== undefined && o.create !== null) {
     need(isObj(o.create), `${where}.create`, 'must be an object');
     const c = o.create as Obj;
     noUnknown(c, ['path', 'label', 'fields'], `${where}.create`);
     checkPath(c.path, `${where}.create.path`);
     checkFields(c.fields, `${where}.create.fields`);
   }
-  if (o.row_actions !== undefined) {
+  if (o.row_actions !== undefined && o.row_actions !== null) {
     need(Array.isArray(o.row_actions), `${where}.row_actions`, 'must be a list');
     (o.row_actions as unknown[]).forEach((a, i) => {
       const w = `${where}.row_actions[${i}]`;
@@ -95,6 +107,8 @@ function checkBlock(b: unknown, where: string) {
       need(isStr(ao.label), `${w}.label`, 'a label is required');
       need(ACTION_METHODS.includes(ao.method as string), `${w}.method`, `must be one of ${ACTION_METHODS.join(', ')}`);
       checkPath(ao.path, `${w}.path`);
+      optText(ao.confirm, `${w}.confirm`);
+      need(ao.body === undefined || ao.body === null || isObj(ao.body), `${w}.body`, 'must be an object');
     });
   }
 }
@@ -107,6 +121,7 @@ export function validateTabSchema(raw: unknown): SchemaResult {
     const version = o.schema_version ?? SCHEMA_VERSION;
     need(version === SCHEMA_VERSION, 'schema_version', `${JSON.stringify(version)} is not supported (this Themis renders schema_version ${SCHEMA_VERSION})`);
     noUnknown(o, ['schema_version', 'title', 'blocks'], 'schema');
+    optText(o.title, 'title');
     need(Array.isArray(o.blocks), 'blocks', 'must be a list');
     (o.blocks as unknown[]).forEach((b, i) => checkBlock(b, `blocks[${i}]`));
     return { ok: true, schema: raw as TabSchema };

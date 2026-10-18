@@ -149,7 +149,7 @@ A plugin contributes UI without frontend code through two surfaces that share on
 Field types: `text`, `number`, `textarea`, `checkbox`, `select` (needs `options`). Constraints: `min`/`max` (number),
 `max_length` (text/textarea), `required`, `visible_if` (`{key, equals}` naming *another* field of the same form: the field shows only
 while that sibling holds the value, and a hidden field is left out of what is saved). Every `load`/`save`/`data`/`path` is
-relative to `/api/v1/plugins/<id>/` and may use `{row_key}` placeholders; absolute URLs, a leading `/`, a `:` and `..` are rejected.
+relative to `/api/v1/plugins/<id>/` and may use `{key}` placeholders (any key of the row; the frontend refuses an empty value or `.`/`..`); absolute URLs, a leading `/`, a `:` and `..` are rejected.
 The same routes validate what is submitted: the contract only describes the form, the plugin's own route is the authority.
 
 **Validation and failure behaviour**

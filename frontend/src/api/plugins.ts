@@ -316,7 +316,11 @@ export const fetchTabSchema = (pluginId: string, tabId: string): Promise<TabSche
 
 /** A path relative to the plugin's own API (under the plugin's id), as the schema names it. */
 export function pluginPath(pluginId: string, path: string, vars?: Record<string, unknown>): string {
-  const filled = path.replace(/\{(\w+)\}/g, (_m, k) => encodeURIComponent(String(vars?.[k] ?? '')));
+  const filled = path.replace(/\{(\w+)\}/g, (_m, k) => {
+    const v = String(vars?.[k] ?? '');
+    if (v === '' || v === '.' || v === '..') throw new Error(`Cannot build the request: the row has no usable value for {${k}}`);
+    return encodeURIComponent(v);
+  });
   return `/api/v1/plugins/${encodeURIComponent(pluginId)}/${filled.replace(/^\/+/, '')}`;
 }
 

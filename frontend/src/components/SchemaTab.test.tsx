@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SchemaTab } from './SchemaTab';
 import { Reply, stubFetch } from '../test/fetchStub';
-import type { TabSchema } from '../api/plugins';
+import { pluginPath, type TabSchema } from '../api/plugins';
 
 const SCHEMA: TabSchema = {
   title: 'Library',
@@ -155,5 +155,12 @@ describe('SchemaTab', () => {
     const port = await screen.findByLabelText('Port') as HTMLInputElement;
     expect([port.min, port.max]).toEqual(['1', '65535']);
     expect((screen.getByLabelText('Name') as HTMLInputElement).maxLength).toBe(12);
+  });
+
+  it('refuses a path placeholder with no usable value instead of building a different URL', () => {
+    expect(() => pluginPath('demo', 'materials/{id}/archive', { id: '' })).toThrow('no usable value for {id}');
+    expect(() => pluginPath('demo', 'materials/{id}', { id: '..' })).toThrow('no usable value');
+    expect(() => pluginPath('demo', 'materials/{other}', { id: 7 })).toThrow('{other}');
+    expect(pluginPath('demo', 'materials/{id}', { id: 'a b' })).toBe('/api/v1/plugins/demo/materials/a%20b');
   });
 });

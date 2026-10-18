@@ -1,7 +1,8 @@
 """The declarative UI contract (BIZ-303): tab documents and settings forms are validated when a plugin registers, a bad
 contribution fails closed with a plugin-scoped diagnostic, and nothing about it can stop another plugin or boot."""
-import copy
+import json
 import re
+from pathlib import Path
 
 import pytest
 from pydantic import BaseModel, Field
@@ -32,52 +33,23 @@ def test_a_full_valid_document_is_accepted_unchanged():
     assert validate_tab_schema({"blocks": []}) == {"blocks": []}          # version is optional (defaults to 1)
 
 
-def _mut(block, path, value):
-    b = copy.deepcopy(block)
-    node = b
-    *head, last = path
-    for k in head:
-        node = node[k]
-    if value is KeyError:
-        del node[last]
-    else:
-        node[last] = value
-    return b
+CORPUS = json.loads((Path(__file__).resolve().parents[3] / "contracts" / "ui-schema-cases.json").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("bad, message", [
-    (doc(schema_version=2), "schema_version: 2 is not supported"),
-    (doc(schema_version="1"), "schema_version"),
-    ({"blocks": {}}, "blocks: must be a list"),
-    ({"blocks": [], "extra": 1}, "unsupported key"),
-    ([], "schema: must be an object"),
-    (doc({"type": "chart"}), "blocks[0].type: unsupported block type 'chart'"),
-    (doc("form"), "a block must be an object"),
-    (doc(_mut(FORM, ["fields", 0, "type"], "color")), "blocks[0].fields[0].type: unsupported field type 'color'"),
-    (doc(_mut(FORM, ["fields", 0, "options"], [])), "at least one option"),
-    (doc(_mut(FORM, ["fields", 0, "options"], [{"value": 1, "label": "A"}])), "an option is {value, label}"),
-    (doc(_mut(FORM, ["fields", 1, "visible_if"], {"key": "nope", "equals": "a"})), "not another field of this form"),
-    (doc(_mut(FORM, ["fields", 1, "visible_if"], {"key": "url", "equals": "a"})), "not another field of this form"),
-    (doc(_mut(FORM, ["fields", 2, "min"], 70000)), "min is greater than max"),
-    (doc(_mut(FORM, ["fields", 2, "min"], "1")), "must be a number"),
-    (doc(_mut(FORM, ["fields", 1, "max_length"], 0)), "positive integer"),
-    (doc(_mut(FORM, ["fields", 3, "max_length"], 3)), "unsupported key(s) ['max_length']"),     # not valid for a checkbox
-    (doc(_mut(FORM, ["fields", 0, "key"], "on")), "field keys must be unique"),
-    (doc(_mut(FORM, ["fields", 0, "key"], "not a key")), "must be an identifier"),
-    (doc(_mut(FORM, ["fields"], [])), "at least one field"),
-    (doc(_mut(FORM, ["load"], "https://evil.test/x")), "not a path relative to the plugin's API"),
-    (doc(_mut(FORM, ["save"], "../../auth/keys")), "not a path relative to the plugin's API"),
-    (doc(_mut(FORM, ["load"], "//evil.test")), "not a path relative"),
-    (doc(_mut(FORM, ["save"], KeyError)), "a path is required"),
-    (doc(_mut(TABLE, ["columns"], [])), "at least one column"),
-    (doc(_mut(TABLE, ["row_actions", 0, "method"], "PUT")), "must be one of POST, DELETE, PATCH"),
-    (doc(_mut(TABLE, ["row_actions", 0, "path"], "/api/v1/printers")), "blocks[0].row_actions[0].path"),
-    (doc(_mut(TABLE, ["create", "fields", 0, "type"], "date")), "blocks[0].create.fields[0].type"),
-    (doc(_mut(TABLE, ["onclick"], "x")), "unsupported key(s) ['onclick']"),
-])
-def test_anything_outside_the_contract_is_rejected_with_a_path_prefixed_message(bad, message):
-    with pytest.raises(SchemaProblem, match=re.escape(message)):
-        validate_tab_schema(bad)
+@pytest.mark.parametrize("case", CORPUS["tab_documents"], ids=lambda c: c["name"])
+def test_the_shared_corpus_is_accepted_or_rejected_with_a_path_prefixed_message(case):
+    """The same cases run against the frontend validator (uiSchema.test.ts): the two cannot drift."""
+    if case["valid"]:
+        assert validate_tab_schema(case["doc"]) is case["doc"]
+        return
+    with pytest.raises(SchemaProblem) as err:
+        validate_tab_schema(case["doc"])
+    assert case["message"] in str(err.value)
+
+
+@pytest.mark.parametrize("case", CORPUS["settings_kinds"], ids=lambda c: json.dumps(c["prop"], sort_keys=True))
+def test_the_shared_settings_kind_corpus(case):
+    assert settings_kind(case["prop"], case.get("defs")) == case["kind"]
 
 
 class _Settings(BaseModel):
@@ -99,6 +71,7 @@ def test_settings_kinds_cover_the_supported_types_and_reject_the_rest():
     assert got["flag"] == "boolean" and got["port"] == "number" and got["ratio"] == "number"
     assert got["url"] == "text" and got["maybe"] == "text" and got["tags"] == "list"
     assert got["nested"] is None and got["objs"] is None
+    assert got["kinds"] == "choices" and got["token"] is None
 
 
 def test_an_enum_setting_is_text_and_a_fixed_choice_list_is_choices():

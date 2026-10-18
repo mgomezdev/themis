@@ -43,7 +43,6 @@ def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
 
 def ui_report(plugin_id: str) -> UiReport:
     """What validating the plugin's declarative UI found when it registered (empty for an unknown plugin)."""
-    from .ui_schema import UiReport, inspect_manifest
     return _UI_REPORTS.get(plugin_id) or UiReport()
 
 

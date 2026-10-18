@@ -11,8 +11,9 @@ Two surfaces, one version (`SCHEMA_VERSION`):
 
 Both are validated when the plugin is registered (`inspect_manifest`). A problem never stops registration or boot: it is
 recorded as a plugin-scoped diagnostic and the affected contribution fails closed (a bad tab is not offered; a bad settings
-field is not rendered). The frontend re-validates what it receives (`frontend/src/api/uiSchema.ts`) so a plugin that changes
-its answer later, or a newer plugin on an older Themis, degrades the same way.
+field is not rendered). The frontend re-validates what it receives (`frontend/src/api/uiSchema.ts`, same rules, same shared test
+corpus `contracts/ui-schema-cases.json`) so it never renders a document it was not built for. The document is read once, at
+registration: a `ui_schema` that needs runtime state fails with a diagnostic rather than being asked again.
 
 Tab document (v1)::
 
@@ -29,7 +30,7 @@ Tab document (v1)::
              "max_length"?                               # text/textarea only
              "visible_if"?: {"key": <another field of the same list>, "equals": <value>}}   # conditional visibility
 
-Paths are relative to the plugin's own API (`/api/v1/plugins/<id>/...`), may carry `{row_key}` placeholders and may not
+Paths are relative to the plugin's own API (`/api/v1/plugins/<id>/...`), may carry `{key}` placeholders (any key of the row; the frontend refuses an empty value or `.`/`..`) and may not
 contain `..`, a scheme or a leading `/`."""
 from __future__ import annotations
 
@@ -94,7 +95,7 @@ def _check_unknown(obj: dict, allowed: set[str], where: str) -> None:
 
 def _check_path(v: Any, where: str) -> None:
     _need(isinstance(v, str) and bool(v), where, "a path is required")
-    _need(bool(_PATH_RE.match(v)) and ".." not in v.split("/") and not v.startswith("/") and ":" not in v,
+    _need(bool(_PATH_RE.fullmatch(v)) and ".." not in v.split("/") and not v.startswith("/") and ":" not in v,
           where, f"{v!r} is not a path relative to the plugin's API")
 
 
@@ -165,7 +166,9 @@ def _check_block(b: Any, where: str) -> None:
         _check_unknown(create, {"path", "label", "fields"}, f"{where}.create")
         _check_path(create.get("path"), f"{where}.create.path")
         _check_fields(create.get("fields"), f"{where}.create.fields")
-    for i, a in enumerate(b.get("row_actions") or []):
+    actions = b.get("row_actions")
+    _need(actions is None or isinstance(actions, list), f"{where}.row_actions", "must be a list")
+    for i, a in enumerate(actions or []):
         w = f"{where}.row_actions[{i}]"
         _need(isinstance(a, dict), w, "an action must be an object")
         _check_unknown(a, {"label", "method", "path", "confirm", "body"}, w)
@@ -209,6 +212,8 @@ def settings_kind(prop: dict, defs: dict | None = None) -> str | None:
     kinds = set()
     for b in branches:
         t = b.get("type")
+        if isinstance(t, list):                          # JSON Schema allows `"type": ["string", "null"]`
+            t = next((x for x in t if x != "null"), None)
         if t == "boolean":
             kinds.add("boolean")
         elif t in ("integer", "number"):

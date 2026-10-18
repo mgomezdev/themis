@@ -15,6 +15,8 @@ AREAS = {"manifest-host-api", "dependencies", "failure-recovery", "enable-select
 def _rows() -> list[tuple[str, str, list[str]]]:
     out = []
     for line in DOC.read_text(encoding="utf-8").splitlines():
+        if line.startswith("| M") and not re.match(r"^\| M\d+ \| [a-z-]+ \|.*\| `.*` \|$", line):
+            raise AssertionError(f"matrix row does not parse (a stray space or a missing column?): {line[:80]}")
         m = re.match(r"^\| (M\d+) \| ([a-z-]+) \|.*\| (`.*`) \|$", line)
         if m:
             out.append((m.group(1), m.group(2), re.findall(r"`([^`]+::[^`]+)`", m.group(3))))
@@ -45,11 +47,19 @@ def test_every_referenced_test_exists_and_is_not_skipped(row_id, ref):
     file = _resolve(ref)
     assert file.is_file(), f"{row_id}: {path} does not exist"
     if file.suffix == ".py":
+        tree = ast.parse(file.read_text(encoding="utf-8"))
         node = _python_test(file, name)
         assert node is not None, f"{row_id}: {name} is not defined in {path}"
         assert not any("skip" in ast.unparse(d) or "xfail" in ast.unparse(d) for d in node.decorator_list), f"{row_id}: {name} is skipped"
+        marks = [ast.unparse(n.value) for n in tree.body if isinstance(n, ast.Assign) and any(getattr(t, "id", "") == "pytestmark" for t in n.targets)]
+        assert not any("skip" in m or "xfail" in m for m in marks), f"{row_id}: {path} is skipped as a module"
     else:
-        assert name in file.read_text(encoding="utf-8"), f"{row_id}: no test titled like {name!r} in {path}"
+        text = file.read_text(encoding="utf-8")
+        call = re.search(r"\b(it|test)(\.\w+(\([^)]*\))?)?\(\s*(\[[^\]]*\],\s*)?['\"`][^'\"`]*" + re.escape(name), text) or \
+            re.search(r"\b(it|test)(\.\w+)?\(\s*['\"`][^'\"`]*" + re.escape(name), text) or \
+            re.search(r"\[\s*['\"`]" + re.escape(name), text)           # an it.each row title
+        assert call is not None, f"{row_id}: no test titled like {name!r} in {path}"
+        assert not re.search(r"\b(it|test|describe)\.(skip|todo)\b", text), f"{row_id}: {path} contains a skipped or todo test"
 
 
 def test_the_matrix_tests_need_no_hardware_or_external_service():

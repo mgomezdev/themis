@@ -7,12 +7,14 @@ from tests.plugins.dummy_plugin import DummyProvider
 
 @pytest.fixture(autouse=True)
 def _isolated_registry():
-    saved = dict(plugins._REGISTRY)
+    saved, saved_reports = dict(plugins._REGISTRY), dict(plugins._UI_REPORTS)
     plugins._REGISTRY.clear()
     DummyProvider.instances.clear()
     yield
     plugins._REGISTRY.clear()
     plugins._REGISTRY.update(saved)
+    plugins._UI_REPORTS.clear()
+    plugins._UI_REPORTS.update(saved_reports)
 
 
 @pytest.fixture

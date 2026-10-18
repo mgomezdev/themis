@@ -80,10 +80,11 @@ def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
 async def _data_info(m: PluginManifest, session: AsyncSession) -> dict:
     """What the plugin owns in the database and which host API it targets (policy: docs/plugin-lifecycle.md). `tables` are the
     existing tables under its prefix; `applied` are the plugin-owned migrations recorded as run (kept across disable and uninstall)."""
-    names = (await session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).scalars()
+    names = list((await session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).scalars())
     applied = (await session.execute(select(PluginSchemaVersion.version).where(PluginSchemaVersion.plugin_id == m.id))).scalars()
     return {"host_api": m.host_api, "supported_host_api": [HOST_API], "table_prefix": m.prefix,
-            "tables": sorted(n for n in names if n.startswith(m.prefix)),
+            "tables": sorted(n for n in names if n.startswith(m.prefix) and not any(
+                o.id != m.id and o.prefix.startswith(m.prefix) and n.startswith(o.prefix) for o in registered_plugins())),
             "migrations": {"shipped": sorted(x.version for x in m.migrations), "applied": sorted(applied)}}
 
 

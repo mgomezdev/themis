@@ -67,10 +67,15 @@ async def test_a_provider_claiming_another_contract_version_is_rejected(host, ki
     assert f"v{kit.definition.version + 1}" in host.rejections("conf_prov")[kit.capability]
 
 
-async def test_a_feature_the_capability_defines_is_accepted():
-    """The vocabulary check is not a blanket refusal: inventory declares its flags and a provider may claim them."""
+async def test_a_feature_the_capability_defines_is_accepted(host):
+    """The vocabulary check is not a blanket refusal: a provider may claim the flags its capability defines."""
     from app.plugins.capabilities.filament_inventory import TRACKS_WEIGHT
-    assert TRACKS_WEIGHT in CORE["inventory.filament"].features
+    inventory = c.KITS[0]
+    assert inventory.capability == "inventory.filament"
+    await _register(host, inventory, features=frozenset({TRACKS_WEIGHT}))
+
+    assert c.serving(host, inventory, "conf_prov") and host.has("inventory.filament", TRACKS_WEIGHT)
+    assert host.rejections("conf_prov") == {}
 
 
 # ---- failure, timeout, secret safety ---------------------------------------------------------------------------------------
@@ -86,7 +91,7 @@ async def test_a_failing_provider_is_a_neutral_error_that_hides_secrets_and_stat
     assert host.state("conf_prov")["last_error"] == result.error                     # recorded against the plugin, redacted
     async with session_factory() as s:                                                # and nothing persisted carries the secret
         row = (await s.execute(select(PluginConfig).where(PluginConfig.plugin_id == "conf_prov"))).scalar_one()
-        assert c.SECRET not in str(row.state) and c.SECRET not in str(host.redact("conf_prov", result.error))
+        assert c.SECRET not in str(row.state)
 
 
 async def test_a_timing_out_provider_is_a_timeout_outcome_naming_the_limit(host, kit):

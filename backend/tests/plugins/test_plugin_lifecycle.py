@@ -135,7 +135,7 @@ async def test_disabling_a_plugin_keeps_its_data_settings_and_selection_and_the_
     assert host.active("lc_demo.ping") is not None                                       # and it comes back as it was
 
 
-async def test_uninstall_keeps_data_then_a_reinstall_reclaims_it_without_rerunning_migrations(admin, session_factory):
+async def test_uninstall_keeps_data_and_running_the_recorded_migrations_again_is_a_noop(admin, session_factory):
     runs = []
     first = migration(1, ITEMS_UP, ITEMS_DOWN)
     original_up = first.up
@@ -166,13 +166,13 @@ async def test_uninstall_keeps_data_then_a_reinstall_reclaims_it_without_rerunni
         assert (await s.get(PluginConfig, "lc_demo")).settings == {"url": "http://lc.test"}
         assert (await s.execute(select(Printer.plugin_id))).scalars().all() == ["lc_demo"]          # core record untouched, now dormant
 
-    _REGISTRY["lc_demo"] = m                                                              # reinstall the same plugin
+    _REGISTRY["lc_demo"] = m                                                              # the same code registers again
     async with session_factory() as s:
         errors = await plugin_migrations.run_plugin_migrations(await s.connection(), [m])
         await s.commit()
         assert errors == {} and runs == [1]                                               # recorded as applied: not re-run
         assert (await s.execute(text("SELECT name FROM lc_demo_items"))).scalars().all() == ["precious"]
-        assert (await s.get(PluginConfig, "lc_demo")).enabled is False                    # back OFF until the admin enables it again
+        assert (await s.get(PluginConfig, "lc_demo")).enabled is False                    # uninstall had disabled it; the flag is kept
 
 
 async def test_uninstall_with_data_removal_removes_only_the_plugins_own_data(admin, session_factory):
@@ -390,3 +390,31 @@ async def test_a_package_that_does_not_ship_migrations_the_database_already_has_
     async with session_factory() as s:
         assert (await s.get(InstalledPlugin, "lc_up")).version == "1.0.0"                  # the row was not touched
     assert not installer.version_dir("lc_up", "0.9.0").exists()                              # and nothing was moved into place
+
+
+async def test_a_reinstall_after_the_restart_reclaims_kept_data_through_the_real_install_path(
+        data_dir, session_factory, db_path, clean_registry):  # noqa: F811
+    await _install(session_factory, "1.0.0", V1_MIGRATIONS)
+    await _restart(session_factory, db_path)
+    async with session_factory() as s:
+        await s.execute(text("INSERT INTO lc_up_items VALUES (1, 'precious')"))
+        s.add(PluginConfig(plugin_id="lc_up", enabled=False, settings={"url": "kept"}))      # what an uninstall leaves behind
+        await installer.mark_uninstall(s, "lc_up", actor="a", removed_data=False)
+    assert (installer.plugins_dir() / "lc_up").is_dir()                                       # the code goes at the restart, not now
+
+    report, errors = await _restart(session_factory, db_path)                                 # the restart applies the removal
+
+    assert report.removed == ["lc_up"] and "lc_up" not in _REGISTRY and not (installer.plugins_dir() / "lc_up").exists()
+    async with session_factory() as s:
+        assert await s.get(InstalledPlugin, "lc_up") is None                                  # the row went with the code
+        assert (await s.execute(text("SELECT name FROM lc_up_items"))).scalars().all() == ["precious"]   # the data stayed
+
+    await _install(session_factory, "1.0.0", V1_MIGRATIONS)                                   # reinstall the same plugin
+    report, errors = await _restart(session_factory, db_path)
+
+    assert errors == {} and report.loaded == {"lc_up": "1.0.0"} and (await _row(session_factory))[0] == "active"
+    async with session_factory() as s:
+        assert (await s.execute(text("SELECT name FROM lc_up_items"))).scalars().all() == ["precious"]    # reclaimed, not recreated
+        assert (await s.execute(text("SELECT version FROM plugin_schema_versions WHERE plugin_id='lc_up'"))).scalars().all() == [1]
+        cfg = await s.get(PluginConfig, "lc_up")
+        assert (cfg.settings, cfg.enabled) == ({"url": "kept"}, False)                        # settings kept; still off until enabled

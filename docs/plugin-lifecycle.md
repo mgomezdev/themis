@@ -42,13 +42,13 @@ compatibility through `host_api` (the host refuses any other value) and optional
 | **Disable** (`PUT /plugins/<id> {enabled:false}`) | Stops serving and receiving events immediately; its UI contributions disappear; no restart | Everything kept | **Yes**: enable it again, and it resumes as it was |
 | **Uninstall, keep data** (`DELETE /plugins/<id>`, the default) | Disables now; code is deleted at the next restart | Tables, migration records, settings, secrets and selections kept; core rows untouched | **Yes**, by reinstalling (below) |
 | **Uninstall + delete data** (`?remove_data=true`, an explicit choice in the dialog) | In one transaction with the uninstall mark and the audit row: every migration's `down()` newest first, then the settings row and selections | Plugin-owned data **destroyed**; core rows untouched | **No**. Refused when the plugin is not loaded (its `down()` is unavailable) or when a `down()` fails or oversteps: then nothing changes, and the plugin is left enabled as it was |
-| **Reinstall** (same id) | Allowed once the restart has applied the removal | If data was kept, the plugin **reclaims it**: its migrations are recorded as applied, so they do not run again, and its tables and settings are as they were. It comes back **disabled** until an admin enables it. If data was deleted, it starts fresh | n/a |
-| **Upgrade** (different version, same id) | Staged; the running version stays on disk as `previous_version`; applies at the restart: new code loads, then pending migrations run in version order | Migrations only add; nothing is deleted | Via rollback while no *new* migration has applied |
+| **Reinstall** (same id) | Allowed once the restart has applied the removal | If data was kept, the plugin **reclaims it**: its migrations are recorded as applied, so they do not run again, and its tables and settings are as they were. It comes back **disabled** (the uninstall disabled it and its stored flag is kept) until an admin enables it. If data was deleted, it starts fresh | n/a |
+| **Upgrade** (different version, same id) | Staged; the running version stays on disk as `previous_version`; applies at the restart: new code loads, then pending migrations run in version order | The host never deletes data on upgrade; a migration's `up()` is trusted code, and only table creation (and, on uninstall, `down()` drops) outside the prefix are guarded | Via rollback while no *new* migration has applied |
 | **Failed upgrade** | See below | v1's data intact | Recoverable |
 | **Rollback** | Swaps back to `previous_version` at the next restart | Kept | Roll forward again by upgrading |
-| **Downgrade by uploading an older release** | Refused when the database already has migrations that release does not ship | Kept | n/a |
+| **Downgrade by uploading an older release** | Refused when the database already has migrations that release does not ship (a plugin that deliberately squashed its migrations has no in-product way past this: ship the squashed versions too, or remove the plugin's data) | Kept | n/a |
 
-(Disable/uninstall/reinstall: `test_uninstall_keeps_data_then_a_reinstall_reclaims_it_without_rerunning_migrations`,
+(Disable/uninstall/reinstall: `test_a_reinstall_after_the_restart_reclaims_kept_data_through_the_real_install_path`,
 `tests/plugins/test_plugin_install_routes.py::test_uninstall_keeps_data_by_default_and_remove_data_drops_it`.)
 
 ## Migrations: sequencing, compatibility, failure
