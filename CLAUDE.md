@@ -13,10 +13,13 @@ Simplified Gitflow: `main` (releases only) + `develop` (integration) + `feature/
   the linked issue when there is one).
 - PR feature branches back into `develop`. Delete the feature branch once merged — don't leave merged
   branches lying around.
-- **Auto-merge:** after opening a PR, enable auto-merge if the repo allows it, so it lands once required
-  checks pass: `gh pr merge <PR> --auto --merge` (merge commit — squash is disabled here). If it errors
-  (auto-merge off, no required checks/branch protection, or the PR is already mergeable), say so and
-  leave the PR open rather than merging manually. Skip for PRs the user wants to review first or marked draft.
+- **Auto-merge:** after opening a feature PR into `develop`, enable auto-merge if the repo allows it, so it
+  lands once required checks pass: `gh pr merge <PR> --auto --merge` (merge commit — squash is disabled
+  here). If it errors (auto-merge off, no required checks, or the PR is already mergeable), say so and
+  leave the PR open rather than merging manually. Skip draft PRs, PRs the user wants to review first, and
+  `develop`→`main` release PRs unless asked. Auto-merge doesn't replace the post-merge steps: once you see
+  the PR merged (or before ending the session if it already is), move the Linear issue to *Done* and delete
+  the local branch after the `merge-base --is-ancestor` check.
 - **Linear sync:** when working off a Linear issue (tracker ID in the request or branch name), keep its
   status current via the Linear MCP (`save_issue`): move to *In Progress* when work starts, *In Review*
   when the PR is opened (link the PR), *Done* once merged into `develop`. If blocked or abandoned, set it
