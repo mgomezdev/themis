@@ -177,7 +177,7 @@ settings page.
 blocks above. They are not versioned by this contract: they are part of the build and keyed in `frontend/src/plugins/registry.ts`,
 so an installed plugin cannot use one and a missing key renders an explicit "component not part of this build" notice.
 
-Data ownership, retention and recovery on disable / uninstall / reinstall / upgrade / rollback: [plugin-lifecycle.md](plugin-lifecycle.md).
+Data ownership, retention and recovery on disable / uninstall / reinstall / upgrade / rollback: [plugin-lifecycle.md](plugin-lifecycle.md). The scenario-to-test map for plugin compatibility and failures: [plugin-test-matrix.md](plugin-test-matrix.md).
 
 ### What an installed plugin may and may not do
 
