@@ -37,6 +37,7 @@ describe('FileEligibilityEditor', () => {
     await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1));
     expect(api.to('PUT', '/api/v1/files/5/eligibility')[0].body).toEqual({ model_uuids: ['x2'] });
     expect(screen.queryByRole('status')).toBeNull();                                      // no longer "unknown"
+    expect(screen.queryByRole('alert')).toBeNull();                                       // a non-empty set saves without the prompt
   });
 
   it('keeps a model the user later disabled visible (and removable) while the file still lists it', async () => {
@@ -62,5 +63,43 @@ describe('FileEligibilityEditor', () => {
 
     expect((await screen.findByRole('alert')).textContent).toMatch(/422/);
     expect(screen.getByRole('button', { name: 'Save eligibility' })).not.toBeDisabled();
+  });
+
+  it('asks before saving an empty set, saying no printer will be allowed, and PUTs only after confirming', async () => {
+    const api = stubFetch({
+      'GET /api/v1/printer-models': MODELS, 'GET /api/v1/files/5/eligibility': { known: false, models: [] },
+      'PUT /api/v1/files/5/eligibility': { known: true, models: [] },
+    });
+    render(<FileEligibilityEditor fileId={5} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Save eligibility' }));
+    expect((await screen.findByRole('alert')).textContent).toMatch(/no printer is allowed/);
+    expect(api.to('PUT', '/api/v1/files/5/eligibility')).toHaveLength(0);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save with no printers' }));
+    await waitFor(() => expect(api.to('PUT', '/api/v1/files/5/eligibility')).toHaveLength(1));
+    expect(api.to('PUT', '/api/v1/files/5/eligibility')[0].body).toEqual({ model_uuids: [] });
+  });
+
+  it('cancelling the empty-set prompt saves nothing', async () => {
+    const api = stubFetch({ 'GET /api/v1/printer-models': MODELS, 'GET /api/v1/files/5/eligibility': { known: false, models: [] } });
+    render(<FileEligibilityEditor fileId={5} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Save eligibility' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(api.to('PUT', '/api/v1/files/5/eligibility')).toHaveLength(0);
+  });
+
+  it('ticking a model dismisses an open empty-set prompt', async () => {
+    stubFetch({ 'GET /api/v1/printer-models': MODELS, 'GET /api/v1/files/5/eligibility': { known: false, models: [] } });
+    render(<FileEligibilityEditor fileId={5} />);
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Save eligibility' }));
+    expect(await screen.findByRole('alert')).toBeTruthy();
+    await userEvent.click(screen.getByLabelText('Acme X1'));
+
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 });
