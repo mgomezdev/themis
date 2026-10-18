@@ -5,16 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import InstalledPlugin
+from ...models import InstalledPlugin, PluginSchemaVersion
 from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins, ui_report
 from ...plugins.ui_schema import SCHEMA_VERSION
 from ...plugins.host import plugin_host
-from ...plugins.manifest import PluginManifest
+from ...plugins.manifest import HOST_API, PluginManifest
 
 router = APIRouter(prefix="/api/v1", tags=["plugins"])
 
@@ -75,7 +75,17 @@ def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
     }
 
 
-def _detail(m: PluginManifest) -> dict:
+async def _data_info(m: PluginManifest, session: AsyncSession) -> dict:
+    """What the plugin owns in the database and which host API it targets (policy: docs/plugin-lifecycle.md). `tables` are the
+    existing tables under its prefix; `applied` are the plugin-owned migrations recorded as run (kept across disable and uninstall)."""
+    names = (await session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).scalars()
+    applied = (await session.execute(select(PluginSchemaVersion.version).where(PluginSchemaVersion.plugin_id == m.id))).scalars()
+    return {"host_api": m.host_api, "supported_host_api": [HOST_API], "table_prefix": m.prefix,
+            "tables": sorted(n for n in names if n.startswith(m.prefix)),
+            "migrations": {"shipped": sorted(x.version for x in m.migrations), "applied": sorted(applied)}}
+
+
+def _detail(m: PluginManifest, data: dict) -> dict:
     stored = plugin_host.settings(m.id)
     defaults = {k: f.default for k, f in m.settings_model.model_fields.items()
                 if k not in m.secret_fields and not f.is_required()}
@@ -87,6 +97,7 @@ def _detail(m: PluginManifest) -> dict:
         "settings_schema_version": SCHEMA_VERSION,
         "secret_fields": sorted(m.secret_fields),
         "state": plugin_host.state(m.id),
+        "data": data,
     }
 
 
@@ -121,8 +132,9 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
 
 @router.get("/plugins/{plugin_id}", summary="One plugin: settings (secrets as set/unset), schema and state",
             dependencies=[Depends(require_scope("settings:read"))])
-async def get_plugin_detail(plugin_id: str):
-    return _detail(_get_or_404(plugin_id))
+async def get_plugin_detail(plugin_id: str, session: AsyncSession = Depends(get_session)):
+    m = _get_or_404(plugin_id)
+    return _detail(m, await _data_info(m, session))
 
 
 @router.get("/plugins/{plugin_id}/ui/{tab_id}", summary="The schema a `schema` tab is rendered from",
@@ -146,13 +158,13 @@ class PluginUpdate(BaseModel):
 
 @router.put("/plugins/{plugin_id}", summary="Update a plugin's settings / enabled flag",
             dependencies=[Depends(require_scope("settings:write"))])
-async def update_plugin(plugin_id: str, body: PluginUpdate):
+async def update_plugin(plugin_id: str, body: PluginUpdate, session: AsyncSession = Depends(get_session)):
     m = _get_or_404(plugin_id)
     try:
         await plugin_host.update_config(plugin_id, enabled=body.enabled, settings=body.settings, secrets=body.secrets)
     except PluginError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return _detail(m)
+    return _detail(m, await _data_info(m, session))
 
 
 class PluginTest(BaseModel):

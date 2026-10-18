@@ -177,6 +177,8 @@ settings page.
 blocks above. They are not versioned by this contract: they are part of the build and keyed in `frontend/src/plugins/registry.ts`,
 so an installed plugin cannot use one and a missing key renders an explicit "component not part of this build" notice.
 
+Data ownership, retention and recovery on disable / uninstall / reinstall / upgrade / rollback: [plugin-lifecycle.md](plugin-lifecycle.md).
+
 ### What an installed plugin may and may not do
 
 * UI: **`default` and `schema` tabs only.** `default` is the generated settings page; `schema` is a form/table Themis renders
