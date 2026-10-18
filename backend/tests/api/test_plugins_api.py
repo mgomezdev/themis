@@ -255,3 +255,31 @@ async def test_field_constraints_and_secret_handling_are_enforced_server_side(cl
     assert ok.status_code == 200 and body["settings"]["sync_interval_minutes"] == 30
     assert body["secrets"] == {"api_key": True} and KEY not in ok.text
     assert (await client.put("/api/v1/plugins/spoolman", json={"secrets": {"api_key": ""}})).json()["secrets"] == {"api_key": False}
+
+
+# ---- contract rejections are visible (BIZ-301) -------------------------------------------------------------------------------
+
+async def test_a_provider_rejected_by_contract_validation_is_reported_with_its_reason_in_every_capability_mode(client):
+    from pydantic import BaseModel
+    from app import plugins
+    from app.plugins.manifest import HOST_API, PluginManifest, Provide
+
+    class _S(BaseModel):
+        pass
+
+    class Duck:                                   # has neither the inventory operations nor a notification channel's
+        async def test_connection(self): return {}
+
+    for pid, cap in (("rejected_inv", "inventory.filament"), ("rejected_notify", "notify.channel")):
+        plugins.register_plugin(PluginManifest(id=pid, name=pid, version="1", host_api=HOST_API, settings_model=_S,
+                                               factory=lambda _s: Duck(), provides={cap: Provide()}))
+        assert (await client.put(f"/api/v1/plugins/{pid}", json={"enabled": True})).status_code == 200
+    assert (await client.put("/api/v1/capabilities/inventory.filament/provider", json={"plugin_id": "rejected_inv"})).status_code == 200
+
+    listed = {p["id"]: p for p in (await client.get("/api/v1/plugins")).json()["plugins"]}
+
+    inv, notify = listed["rejected_inv"], listed["rejected_notify"]
+    assert inv["provides"][0]["status"] == "error" and not inv["active"]                    # exclusive: selected but rejected
+    assert "missing async method(s)" in inv["error"] and "list_materials" in inv["error"]
+    assert notify["provides"][0]["status"] == "error" and not notify["active"]               # fan-out: was shown as plain "disabled"
+    assert "NotificationChannel" in notify["error"]

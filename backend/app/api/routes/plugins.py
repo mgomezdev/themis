@@ -46,7 +46,8 @@ def _provides(m: PluginManifest) -> list[dict]:
         mode = d.mode if d else "exclusive"
         if mode in ("routed", "fan_out"):                 # no selection: every enabled provider serves it
             serving = plugin_host.active_for(cap, m.id) is not None
-            state = "serving" if serving else ("error" if plugin_host.build_error(m.id) else "disabled")
+            failed = plugin_host.build_error(m.id) or cap in plugin_host.rejections(m.id)
+            state = "serving" if serving else ("error" if failed else "disabled")
             out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": serving, "mode": mode,
                         "status": state, "waiting_on": []})
             continue
@@ -71,7 +72,8 @@ def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
         "diagnostics": [d.as_dict() for d in ui_report(m.id).diagnostics],
         "enabled": plugin_host.is_enabled(m.id),
         "active": any(x["status"] == "serving" for x in provides),
-        "error": plugin_host.build_error(m.id) or plugin_host.state(m.id).get("last_error"),
+        "error": plugin_host.build_error(m.id) or "; ".join(plugin_host.rejections(m.id).values())
+        or plugin_host.state(m.id).get("last_error"),
     }
 
 

@@ -30,6 +30,8 @@ ALL_CAPABILITIES = frozenset({TRACKS_WEIGHT, WRITE_WEIGHT, PROFILE_LINKS_READ, P
 DEFINITION = CapabilityDef(
     id=CAPABILITY, version=1, label="Filament inventory",
     description="Where Themis looks up spools and materials, and keeps their weights up to date.",
+    # The required (abstract) surface, checked on any provider the host builds, ABC subclass or not.
+    required_methods=("test_connection", "list_materials", "list_spools", "get_spool"),
     features=ALL_CAPABILITIES)
 
 # Machine-readable contract (BIZ-247): every optional provider method and the one capability flag that gates it. A provider that

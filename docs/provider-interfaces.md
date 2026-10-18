@@ -222,3 +222,71 @@ package in `ADAPTER_PACKAGES`, and a parameter in the provider contract suite
   (`sidecar` fixture in `test_slicing_provider_contract.py`).
 - `tests/catalog_helpers.py` primes/inspects the catalog cache (`prime_catalog`, `cached_raw`,
   `patch_cached_catalog`).
+
+## Conformance
+
+Every core capability is checked against the same **host-side contract**, once, by `backend/tests/plugins/test_provider_conformance.py`
+(helpers: `tests/plugins/conformance.py`). It exercises fake providers registered at runtime (valid, incomplete, failing,
+timing out, misdeclaring), so adding a provider never touches a core service and the suite never needs a printer or a network.
+What differs between capabilities (what an operation *means*) stays in that capability's own suite: `test_filament_inventory_contract.py`
+(inventory, run against fakes, Spoolman and Local), `test_routed_capability.py` (printers), the slicing-provider and notification
+suites. Those remain the owners of behaviour; the shared suite only checks what the host promises everyone.
+
+### Which contracts are normative
+
+| Capability | Mode | Required operations (a provider without one is rejected) | Optional: feature flags (each gates specific operations; claim only what works) |
+|---|---|---|---|
+| `inventory.filament` | exclusive | `get_spool`, `list_materials`, `list_spools`, `test_connection` | `LABEL_SCAN`, `MANAGE_MATERIALS`, `MANAGE_SPOOLS`, `PROFILE_LINKS_READ`, `PROFILE_LINKS_WRITE`, `REMOTE`, `TRACKS_WEIGHT`, `WRITE_WEIGHT` |
+| `printer.client` | routed | `connect`, `connected`, `delete_file`, `disconnect`, `download_file`, `get_alarms`, `get_capabilities`, `home`, `home_axes`, `is_idle`, `is_printing`, `jog`, `jog_z`, `list_files`, `orca_export_args`, `pause_print`, `request_status_update`, `resume_print`, `send_gcode`, `set_bed_temp`, `set_chamber_light`, `set_chamber_temp`, `set_fan_speeds`, `set_nozzle_temp`, `start_print`, `stop_print`, `upload_file` | none defined |
+| `notify.channel` | fan_out | `deliver`, `test_connection` | none defined |
+| `gcode.produce` | choose_one | `gcode_producer`, `slicing_provider` | none defined |
+
+*Normative* (a provider that breaks any of these fails validation or the suite): the capability **id and contract version** it
+declares (`Provide.version` must equal the catalog's); the **required operations** above (the Protocol's members, or the
+definition's `required_methods`; async where the contract says so); a **closed feature vocabulary** for core capabilities (a flag the
+capability does not define is rejected; a plugin-defined capability that lists no features stays open); **neutral outcomes**; and
+**secret-safe diagnostics**. The table is generated from `CapabilityDef` (`required_operations`) and a test fails if it drifts.
+
+*Optional* (never required, never checked beyond "claimed means implemented"): feature-gated operations; `Provide.routers`;
+`UiContribution`; events (`subscribes`/`defines_events`); `optional` capabilities. Printer vendor plugins serve `printer.client`
+through their client class (the plugin's `factory`) instead of a `provides` entry; `test_every_bundled_printer_plugin_satisfies_the_printer_client_contract`
+holds that class to the same operation list.
+
+### What the shared suite asserts, per capability
+
+| Behaviour | Outcome | Test |
+|---|---|---|
+| A valid fake registers, is selected/enabled and exercised with no core edit | serves; the call is `ok` | `test_a_valid_provider_registers_serves_and_is_exercised_without_editing_core` |
+| A required operation is missing | the entry is **rejected** (`host.rejections`, `GET /plugins` → `error`), never called (`inactive`) | `test_a_provider_missing_a_required_operation_fails_validation_and_serves_nothing` |
+| Advertises a feature the capability does not define | rejected | `test_a_provider_advertising_a_feature_the_capability_does_not_define_is_rejected` |
+| Declares another contract version | rejected | `test_a_provider_claiming_another_contract_version_is_rejected` |
+| The provider raises | `CallResult(ok=False, reason="error")`; secrets masked, no traceback, `last_error` recorded on the plugin only | `test_a_failing_provider_is_a_neutral_error_that_hides_secrets_…` |
+| The provider hangs | `reason="timeout"` naming the limit | `test_a_timing_out_provider_is_a_timeout_outcome_naming_the_limit` |
+| One provider fails | unrelated plugins keep serving; a healthy replacement clears the error | `test_a_failing_provider_leaves_unrelated_plugins_serving_…` |
+| Disable / uninstall / reinstall | stops all calls at once; re-registering restores them | `test_disabling_or_removing_a_provider_stops_every_call_…` |
+| Every bundled provider | matching version, known feature vocabulary, builds and validates | `test_every_bundled_*` |
+
+Host outcomes are always one of `CallResult.reason` = `ok` \| `inactive` (no active provider, or the entry was rejected) \| `timeout` \|
+`error`; callers never see a provider exception, and `CallResult.exception` (which may embed a secret) is never persisted: show it only
+through `PluginHost.redact`.
+
+### Adding a capability to the shared suite
+
+Add a `Kit` to `KITS` in `tests/plugins/conformance.py`: a factory for a well-behaved provider and the name of one operation to
+exercise. Every test above then runs for it. Keep its capability-specific behaviour in its own suite.
+
+### Boundary checks and their exceptions
+
+Core services and shared UI never import provider implementations or branch on a plugin id. Three scans enforce it on `app/`
+(and one on `frontend/src`); an allowlist entry is a *documented compatibility exception* with its reason in the test, and a stale
+entry fails the test, so the lists only shrink:
+
+* `tests/test_plugin_id_boundary.py` (all bundled plugins, derived from the plugin directories): no module outside `app/plugins/` imports
+  a bundled plugin package or compares a value with a bundled plugin id. **No exceptions.**
+* `tests/test_provider_boundary.py` (slicing and inventory adapters): adapter-internal modules, vendor symbols and `httpx` stay behind the
+  adapters; exceptions: the accessor modules that register an adapter, the Laminus connection settings handed to its plugin, and the
+  `HTTPX_ALLOWED` modules that talk to something other than Laminus/Spoolman (printers, webhooks, notification channels, camera, discovery, the
+  GitHub installer).
+* `tests/test_vendor_extraction_boundary.py` (printer vendors) and `tests/test_no_provider_in_core.py` (inventory providers): the migrations,
+  models, auth scopes and the legacy dual-write key names are the permanent exceptions.
+* `frontend/src/inventoryGuard.test.ts` and `frontend/src/pluginIdGuard.test.ts`: UI code does not name a provider or branch on a plugin id.
