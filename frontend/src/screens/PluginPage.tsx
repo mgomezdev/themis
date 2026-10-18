@@ -44,6 +44,8 @@ export function PluginPage() {
       )}
       {active.renderer === 'default' && <PluginSettingsPage pluginId={plugin.id} />}
       {active.renderer === 'schema' && <SchemaTab pluginId={plugin.id} tabId={active.id} />}
+      {!['default', 'schema', 'component'].includes(active.renderer) && (
+        <div role="alert" className="small" style={{ color: 'var(--err)' }}>This tab uses a renderer ({String(active.renderer)}) that this version of Themis does not support.</div>)}
       {active.renderer === 'component' && (Component
         ? <Component />
         : <div role="alert" className="small" style={{ color: 'var(--err)' }}>This tab needs a component that is not part of this build.</div>)}

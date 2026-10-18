@@ -57,7 +57,7 @@ describe('PrinterModelsPanel — slicer profile per model', () => {
     await expand();
 
     expect(await screen.findByText(/No slicer profile is set for Bambu Lab P1S yet/)).toBeTruthy();
-    expect(screen.getByText('90% match')).toBeTruthy();
+    expect(await screen.findByText('90% match')).toBeTruthy();                     // suggestions load on their own fetch
     await userEvent.click(screen.getByRole('radio', { name: /Bambu Lab P1S 0\.4 nozzle/ }));
     await userEvent.click(screen.getByRole('button', { name: 'Confirm profile' }));
 

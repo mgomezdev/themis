@@ -5,15 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth import require_scope
 from ...database import get_session
-from ...models import InstalledPlugin
-from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins
+from ...models import InstalledPlugin, PluginSchemaVersion
+from ...plugins import PluginError, capability_catalog, get_plugin, registered_plugins, ui_report
+from ...plugins.ui_schema import SCHEMA_VERSION
 from ...plugins.host import plugin_host
-from ...plugins.manifest import PluginManifest
+from ...plugins.manifest import HOST_API, PluginManifest
 
 router = APIRouter(prefix="/api/v1", tags=["plugins"])
 
@@ -21,8 +22,9 @@ router = APIRouter(prefix="/api/v1", tags=["plugins"])
 def _ui(m: PluginManifest) -> dict:
     u = m.ui
     return {"mode": u.mode, "nav_label": u.nav_label or m.name, "nav_placement": u.nav_placement, "nav_icon": u.nav_icon,
+            # a schema tab whose document failed validation is not offered (it fails closed; see `diagnostics`)
             "tabs": [{"id": t.id, "label": t.label, "renderer": t.renderer, "component": t.component, "requires": t.requires}
-                     for t in u.tabs],
+                     for t in u.tabs if t.renderer != "schema" or ui_report(m.id).tab_problem(t.id) is None],
             "redirects": [{"from": src, "tab": tab} for src, tab in u.redirects],
             "connection_status": u.connection_status}
 
@@ -44,7 +46,8 @@ def _provides(m: PluginManifest) -> list[dict]:
         mode = d.mode if d else "exclusive"
         if mode in ("routed", "fan_out"):                 # no selection: every enabled provider serves it
             serving = plugin_host.active_for(cap, m.id) is not None
-            state = "serving" if serving else ("error" if plugin_host.build_error(m.id) else "disabled")
+            failed = plugin_host.build_error(m.id) or cap in plugin_host.rejections(m.id)
+            state = "serving" if serving else ("error" if failed else "disabled")
             out.append({"capability": cap, "version": p.version, "features": sorted(p.features), "selected": serving, "mode": mode,
                         "status": state, "waiting_on": []})
             continue
@@ -66,13 +69,26 @@ def _summary(m: PluginManifest, row: InstalledPlugin | None = None) -> dict:
         "docs_url": m.docs_url, "source": row.source if row else "bundled", "loaded": True, "install": install_info(row),
         "provides": provides, "requires": _refs(m.requires), "optional": _refs(m.optional),
         "defines": [d.id for d in m.defines], "ui": _ui(m),
+        "diagnostics": [d.as_dict() for d in ui_report(m.id).diagnostics],
         "enabled": plugin_host.is_enabled(m.id),
         "active": any(x["status"] == "serving" for x in provides),
-        "error": plugin_host.build_error(m.id) or plugin_host.state(m.id).get("last_error"),
+        "error": plugin_host.build_error(m.id) or "; ".join(plugin_host.rejections(m.id).values())
+        or plugin_host.state(m.id).get("last_error"),
     }
 
 
-def _detail(m: PluginManifest) -> dict:
+async def _data_info(m: PluginManifest, session: AsyncSession) -> dict:
+    """What the plugin owns in the database and which host API it targets (policy: docs/plugin-lifecycle.md). `tables` are the
+    existing tables under its prefix; `applied` are the plugin-owned migrations recorded as run (kept across disable and uninstall)."""
+    names = list((await session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).scalars())
+    applied = (await session.execute(select(PluginSchemaVersion.version).where(PluginSchemaVersion.plugin_id == m.id))).scalars()
+    return {"host_api": m.host_api, "supported_host_api": [HOST_API], "table_prefix": m.prefix,
+            "tables": sorted(n for n in names if n.startswith(m.prefix) and not any(
+                o.id != m.id and o.prefix.startswith(m.prefix) and n.startswith(o.prefix) for o in registered_plugins())),
+            "migrations": {"shipped": sorted(x.version for x in m.migrations), "applied": sorted(applied)}}
+
+
+def _detail(m: PluginManifest, data: dict) -> dict:
     stored = plugin_host.settings(m.id)
     defaults = {k: f.default for k, f in m.settings_model.model_fields.items()
                 if k not in m.secret_fields and not f.is_required()}
@@ -81,8 +97,10 @@ def _detail(m: PluginManifest) -> dict:
         "settings": {**defaults, **{k: v for k, v in stored.items() if k not in m.secret_fields}},
         "secrets": {f: plugin_host.has_secret(m.id, f) for f in sorted(m.secret_fields)},     # set / not set, never the value
         "settings_schema": m.settings_model.model_json_schema(),
+        "settings_schema_version": SCHEMA_VERSION,
         "secret_fields": sorted(m.secret_fields),
         "state": plugin_host.state(m.id),
+        "data": data,
     }
 
 
@@ -105,6 +123,7 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
             plugins.append({"id": r.plugin_id, "name": r.name or r.plugin_id, "version": r.version,
                             "description": "", "docs_url": None, "source": r.source, "loaded": False,
                             "install": install_info(r), "provides": [], "requires": [], "optional": [], "defines": [],
+                            "diagnostics": [],
                             "ui": {"mode": "section", "nav_label": r.name or r.plugin_id, "nav_placement": "settings",
                                    "nav_icon": None, "tabs": []},
                             "enabled": False, "active": False, "error": r.error})
@@ -116,8 +135,9 @@ async def list_plugins(session: AsyncSession = Depends(get_session)):
 
 @router.get("/plugins/{plugin_id}", summary="One plugin: settings (secrets as set/unset), schema and state",
             dependencies=[Depends(require_scope("settings:read"))])
-async def get_plugin_detail(plugin_id: str):
-    return _detail(_get_or_404(plugin_id))
+async def get_plugin_detail(plugin_id: str, session: AsyncSession = Depends(get_session)):
+    m = _get_or_404(plugin_id)
+    return _detail(m, await _data_info(m, session))
 
 
 @router.get("/plugins/{plugin_id}/ui/{tab_id}", summary="The schema a `schema` tab is rendered from",
@@ -125,11 +145,12 @@ async def get_plugin_detail(plugin_id: str):
             dependencies=[Depends(require_scope("settings:read"))])
 async def get_tab_schema(plugin_id: str, tab_id: str):
     m = _get_or_404(plugin_id)
-    tab = next((t for t in m.ui.tabs if t.id == tab_id and t.renderer == "schema"), None)
-    schema = m.ui_schema(tab_id) if tab is not None and m.ui_schema is not None else None
-    if schema is None:
+    if not any(t.id == tab_id and t.renderer == "schema" for t in m.ui.tabs):
         raise HTTPException(status_code=404, detail=f"{plugin_id!r} has no schema tab {tab_id!r}")
-    return schema
+    report = ui_report(plugin_id)
+    if (problem := report.tab_problem(tab_id)) is not None:
+        raise HTTPException(status_code=422, detail=f"{plugin_id}: tab {tab_id!r} is not available: {problem}")
+    return report.tabs[tab_id]
 
 
 class PluginUpdate(BaseModel):
@@ -140,13 +161,13 @@ class PluginUpdate(BaseModel):
 
 @router.put("/plugins/{plugin_id}", summary="Update a plugin's settings / enabled flag",
             dependencies=[Depends(require_scope("settings:write"))])
-async def update_plugin(plugin_id: str, body: PluginUpdate):
+async def update_plugin(plugin_id: str, body: PluginUpdate, session: AsyncSession = Depends(get_session)):
     m = _get_or_404(plugin_id)
     try:
         await plugin_host.update_config(plugin_id, enabled=body.enabled, settings=body.settings, secrets=body.secrets)
     except PluginError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    return _detail(m)
+    return _detail(m, await _data_info(m, session))
 
 
 class PluginTest(BaseModel):

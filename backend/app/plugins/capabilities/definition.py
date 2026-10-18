@@ -37,3 +37,17 @@ class CapabilityDef:
 class RoutedCapability(Generic[P]):
     """Typed handle for a routed capability: `host.call_for(HANDLE, plugin_id, lambda p: p.method(...))` type-checks `p` as P."""
     id: str
+
+
+def required_operations(d: CapabilityDef) -> tuple[str, ...]:
+    """Every operation a provider of `d` must have: the duck-typed `required_methods` plus the members of its `protocol`
+    (sorted). This is the "required" column of the conformance tables in docs/provider-interfaces.md; optional operations are
+    the ones a feature flag gates (`features`) and are never listed here."""
+    import typing
+    members: set[str] = set()
+    if d.protocol is not None:
+        if hasattr(typing, "get_protocol_members"):                       # Python 3.13+
+            members = set(typing.get_protocol_members(d.protocol))
+        else:                                                             # 3.11 / 3.12
+            members = set(getattr(d.protocol, "__protocol_attrs__", None) or typing._get_protocol_attrs(d.protocol))  # type: ignore[attr-defined]
+    return tuple(sorted(members | set(d.required_methods)))

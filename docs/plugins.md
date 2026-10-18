@@ -122,6 +122,63 @@ payload_model=…),)`, names start `<id>.`) and **subscribe** to core or other p
 resumes it (no replay of best-effort events). Handlers are contained like any provider call, must be idempotent on `envelope.id`,
 and their errors are redacted. Contract, delivery guarantees and operator endpoints: `docs/events.md`.
 
+### Declarative UI (BIZ-303)
+
+A plugin contributes UI without frontend code through two surfaces that share one contract version (`schema_version` 1,
+`backend/app/plugins/ui_schema.py`, mirrored at runtime by `frontend/src/api/uiSchema.ts`):
+
+* **Settings form**: generated from `settings_model`. Supported field kinds: boolean, number (`ge`/`le` become the input's
+  min/max), text, list of text, and a list over a fixed string enum (checkboxes); an enum string is text. Secrets are always
+  write-only password inputs. Anything else (a nested model, a dict, a list of numbers, a union of kinds) is *unsupported*: the
+  page shows "Not editable here", never sends that field, and the plugin carries a `settings.<field>` diagnostic.
+* **`schema` tabs**: the document `ui_schema(tab_id)` returns. It is evaluated **once, when the plugin registers**.
+
+```json
+{"schema_version": 1, "title": "Library", "blocks": [
+  {"type": "form", "title": "Defaults", "load": "defaults", "save": "defaults", "fields": [
+    {"key": "currency", "label": "Currency", "type": "text", "required": true, "max_length": 3},
+    {"key": "spool_g", "label": "Spool size (g)", "type": "number", "min": 1, "max": 10000},
+    {"key": "unit", "label": "Unit", "type": "select", "options": [{"value": "g", "label": "grams"}, {"value": "kg", "label": "kilograms"}]},
+    {"key": "kg_note", "label": "Note", "type": "textarea", "visible_if": {"key": "unit", "equals": "kg"}}]},
+  {"type": "table", "title": "Materials", "data": "materials", "empty": "No materials yet.",
+   "columns": [{"key": "name", "label": "Name"}, {"key": "material", "label": "Type"}],
+   "create": {"path": "materials", "label": "Add material", "fields": [{"key": "name", "label": "Name", "type": "text", "required": true}]},
+   "row_actions": [{"label": "Archive", "method": "POST", "path": "materials/{id}/archive", "confirm": "Archive it?"}]}]}
+```
+
+Field types: `text`, `number`, `textarea`, `checkbox`, `select` (needs `options`). Constraints: `min`/`max` (number),
+`max_length` (text/textarea), `required`, `visible_if` (`{key, equals}` naming *another* field of the same form: the field shows only
+while that sibling holds the value, and a hidden field is left out of what is saved). Every `load`/`save`/`data`/`path` is
+relative to `/api/v1/plugins/<id>/` and may use `{key}` placeholders (any key of the row; the frontend refuses an empty value or `.`/`..`); absolute URLs, a leading `/`, a `:` and `..` are rejected.
+The same routes validate what is submitted: the contract only describes the form, the plugin's own route is the authority.
+
+**Validation and failure behaviour**
+
+| Situation | Backend | Frontend |
+|---|---|---|
+| Unknown `schema_version`, block type, field type, extra key, bad path or constraint | The tab is dropped from `ui.tabs`, a `ui.tab.<id>` diagnostic names the path and reason, `GET /plugins/<id>/ui/<tab>` answers 422; the plugin and every other plugin keep running | The tab shows "This tab cannot be displayed: ‹reason›" and nothing else on the page is affected |
+| `ui_schema` raises, or returns nothing for a schema tab | Same; the diagnostic names the exception *type* only (its message may carry a secret) | n/a |
+| Settings field outside the contract | `settings.<field>` diagnostic | "Not editable here"; not sent on save |
+| Unknown `settings_schema_version` | n/a (the backend only emits 1) | The settings form and secret inputs are not rendered; the enable switch still works |
+| Submitted setting key the model does not declare | 422, nothing saved | n/a |
+| Invalid value / constraint violated | 422 naming the *fields*, never the value | The message is shown |
+
+Diagnostics appear in `GET /plugins` and `GET /plugins/<id>` (`diagnostics`), and on the plugin's settings page.
+
+**When a contribution exists** (`navigablePlugins`, `PluginPage`): a plugin's navigation entry, tabs and settings section exist only
+while the plugin is **installed and running** (`loaded`: not staged for removal, not failed to load) and **enabled**. Disabling hides
+them at once; uninstalling drops them at the restart that applies it; a bundled plugin that is disabled shows only an "Enable"
+prompt. A *transient provider error* (for example the server is unreachable) does not hide the page: it is where the admin fixes
+the setting. A `component` tab additionally needs the capability feature it names (`requires`), so switching the provider of a
+capability adds or removes those tabs on the next refresh. When every declared tab is dropped, the plugin falls back to its default
+settings page.
+
+**Custom components.** `component` tabs (compiled-in React, bundled plugins only) are for UI that cannot be described by the
+blocks above. They are not versioned by this contract: they are part of the build and keyed in `frontend/src/plugins/registry.ts`,
+so an installed plugin cannot use one and a missing key renders an explicit "component not part of this build" notice.
+
+Data ownership, retention and recovery on disable / uninstall / reinstall / upgrade / rollback: [plugin-lifecycle.md](plugin-lifecycle.md). The scenario-to-test map for plugin compatibility and failures: [plugin-test-matrix.md](plugin-test-matrix.md).
+
 ### What an installed plugin may and may not do
 
 * UI: **`default` and `schema` tabs only.** `default` is the generated settings page; `schema` is a form/table Themis renders

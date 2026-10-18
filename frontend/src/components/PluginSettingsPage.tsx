@@ -3,6 +3,7 @@ import {
   fetchPlugin, setCapabilityProvider, testPlugin, updatePlugin, usePlugins,
   type ConnectionState, type JsonSchemaProperty, type PluginDetail,
 } from '../api/plugins';
+import { SCHEMA_VERSION, settingsKind, type SettingsKind } from '../api/uiSchema';
 import { FieldRow, PageHeader, Toggle } from './settingsUi';
 import { INVENTORY_CAPABILITY } from '../api/inventory';
 import { InventoryProviderPanel } from './InventoryProviderPanel';
@@ -13,15 +14,8 @@ import { InventoryProviderPanel } from './InventoryProviderPanel';
 
 type Draft = Record<string, unknown>;
 
-type PropKind = 'boolean' | 'number' | 'text' | 'choices' | 'list';
-
-function propType(p: JsonSchemaProperty): PropKind {
-  const types = [p.type, ...(p.anyOf ?? []).map(a => a.type)].flat().filter((t): t is string => !!t && t !== 'null');
-  if (types.includes('array')) return p.items?.enum?.length ? 'choices' : 'list';
-  if (types.includes('boolean')) return 'boolean';
-  if (types.includes('integer') || types.includes('number')) return 'number';
-  return 'text';
-}
+/** A settings property outside the declarative contract (nested objects, lists of non-strings, ...) renders as a notice, never a guessed input. */
+type PropKind = SettingsKind | 'unsupported';
 
 const asList = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : []);
 const humanize = (key: string) => key.replace(/_/g, ' ').replace(/^./, c => c.toUpperCase());
@@ -74,11 +68,14 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchConnection, probeKey]);
 
+  // A settings schema of a version this build does not know is not rendered at all (fail closed); the enable switch still works.
+  const schemaSupported = (plugin?.settings_schema_version ?? SCHEMA_VERSION) === SCHEMA_VERSION;
+  const propType = (p: JsonSchemaProperty): PropKind => settingsKind(p, plugin?.settings_schema?.$defs) ?? 'unsupported';
   const fields = useMemo(() => {
-    if (!plugin) return [];
+    if (!plugin || !schemaSupported) return [];
     const props = plugin.settings_schema?.properties ?? {};
     return Object.entries(props).filter(([k]) => !(plugin.secret_fields ?? []).includes(k));
-  }, [plugin]);
+  }, [plugin, schemaSupported]);
 
   if (loadError) return <div role="alert" style={{ color: 'var(--err)' }}>{loadError}</div>;
   if (!plugin) return <div className="muted small">Loading…</div>;
@@ -98,6 +95,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
     for (const [k, p] of fields) {
       const v = draft[k];
       const kind = propType(p);
+      if (kind === 'unsupported') continue;                // never sent: the page cannot edit it, so it keeps its stored value
       settings[k] = kind === 'number' ? (v === '' || v == null ? null : Number(v))
         : kind === 'choices' || kind === 'list' ? asList(v)
         : (v === '' ? null : v);
@@ -150,6 +148,19 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
       />
       {plugin.docs_url && <div className="small" style={{ marginBottom: 12 }}><a href={plugin.docs_url} target="_blank" rel="noreferrer">Documentation</a></div>}
       {plugin.error && <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>{plugin.error}</div>}
+      {(plugin.diagnostics ?? []).length > 0 && (
+        <div data-testid="plugin-diagnostics" role="group" aria-label="Plugin diagnostics" className="small" style={{ color: 'var(--warn)', marginBottom: 12 }}>
+          <div>Parts of this plugin's interface were left out:</div>
+          <ul style={{ margin: '4px 0 0 18px' }}>
+            {(plugin.diagnostics ?? []).map(d => <li key={d.scope}><code>{d.scope}</code>: {d.message}</li>)}
+          </ul>
+        </div>
+      )}
+      {!schemaSupported && (
+        <div role="alert" className="small" style={{ color: 'var(--err)', marginBottom: 12 }}>
+          This plugin's settings form uses schema version {plugin.settings_schema_version}, which this Themis cannot display.
+        </div>
+      )}
 
       <FieldRow label={`Enable ${plugin.name}`} hint="When off, Themis ignores this plugin entirely.">
         <Toggle checked={plugin.enabled} onChange={setEnabled} />
@@ -172,7 +183,9 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
         const label = prop.title ?? humanize(key);
         return (
           <FieldRow key={key} label={`${label}${required.has(key) ? ' *' : ''}`} hint={prop.description}>
-            {type === 'boolean'
+            {type === 'unsupported'
+              ? <div className="small muted" data-testid={`unsupported-${key}`}>Not editable here.</div>
+              : type === 'boolean'
               ? <Toggle checked={!!draft[key]} onChange={v => setDraft(d => ({ ...d, [key]: v }))} />
               : type === 'choices'
               ? <div className="col" style={{ gap: 10 }} role="group" aria-label={label}>
@@ -196,7 +209,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
                          setDraft(d => ({ ...d, [key]: text.split(',').map(x => x.trim()).filter(Boolean) }));
                        }} />
               : <input className="input" aria-label={label} type={type === 'number' ? 'number' : 'text'}
-                       min={type === 'number' ? prop.minimum : undefined}
+                       min={type === 'number' ? prop.minimum : undefined} max={type === 'number' ? prop.maximum : undefined}
                        value={draft[key] == null ? '' : String(draft[key])}
                        placeholder={prop.default != null ? String(prop.default) : ''}
                        onChange={e => setDraft(d => ({ ...d, [key]: e.target.value }))} />}
@@ -204,7 +217,7 @@ export function PluginSettingsPage({ pluginId }: { pluginId: string }) {
         );
       })}
 
-      {(plugin.secret_fields ?? []).map(key => {
+      {(schemaSupported ? plugin.secret_fields ?? [] : []).map(key => {
         const prop = plugin.settings_schema?.properties?.[key] ?? {};
         const label = prop.title ?? humanize(key);
         const stored = plugin.secrets?.[key];

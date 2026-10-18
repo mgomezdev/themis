@@ -29,6 +29,7 @@ from . import PluginError, capability_catalog, get_plugin, plugin_root, provider
 from .context import PluginContext, wants_context
 from .defaults import core_overrides_of, defaults_of
 from . import migrations as plugin_migrations
+from .capabilities import CORE
 from .capabilities.definition import BUILDS_ALL, CapabilityDef, RoutedCapability
 from .manifest import PluginManifest, Provide
 
@@ -260,6 +261,10 @@ class PluginHost:
                 continue                                    # definer not registered: nothing to verify yet
             elif d.version != prov.version:
                 rejected[cap] = f"provides {cap} v{prov.version} but this Themis knows v{d.version}"
+            elif (d.features or cap in CORE) and (extra := prov.features - d.features):
+                # a feature flag the capability does not define (a core capability is a closed vocabulary; a plugin-defined one
+                # that lists no features stays open): core would never call what the flag promises
+                rejected[cap] = f"{cap}: advertises unsupported feature(s) {', '.join(sorted(extra))}"
             elif d.protocol is not None and not isinstance(part, d.protocol):
                 rejected[cap] = f"{cap}: does not satisfy {d.protocol.__name__}"
             else:
@@ -404,6 +409,11 @@ class PluginHost:
 
     def build_error(self, plugin_id: str) -> str | None:
         return self._build_errors.get(plugin_id)
+
+    def rejections(self, plugin_id: str) -> dict[str, str]:
+        """{capability: why} for the provide entries of a built plugin that failed validation (missing operation, unsupported
+        feature, wrong contract version). The plugin still serves its other capabilities; each entry here serves nothing."""
+        return dict(self._rejected.get(plugin_id, {}))
 
     def state(self, plugin_id: str) -> dict:
         cfg = self._configs.get(plugin_id)
@@ -642,6 +652,9 @@ class PluginHost:
         leaked = sorted(set(settings or {}) & manifest.secret_fields)
         if leaked:
             raise PluginError(f"{leaked} are secret fields: send them as secrets, not settings")
+        unknown = sorted(set(settings or {}) - set(manifest.settings_model.model_fields))
+        if unknown and manifest.settings_model.model_config.get("extra") != "allow":
+            raise PluginError(f"unknown setting(s) {unknown} for plugin {plugin_id!r}")    # never persist what the model would ignore
         async with self._lock:
             async with self._session_factory() as s:
                 row = await s.get(PluginConfig, plugin_id)
