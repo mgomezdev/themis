@@ -62,6 +62,14 @@ def _slot_for_config(config, loaded: list, conflicts=frozenset(), plan: list | N
     return filament_matching.slot_for_config(config, loaded, conflicts, plan)
 
 
+def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
+    if config.tool_index is not None:
+        return config.tool_index
+    if not config.filament_map and len(loaded) >= 2 and plan and plan[0].slot > 0:      # T0 is where an unrouted model prints anyway
+        return plan[0].slot
+    return None
+
+
 def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
@@ -78,7 +86,9 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
         # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
-        "tool_index": config.tool_index if config else None,
+        # A pinned tool, else (tool-changer printers, where the 3MF is routed at slice time) the one slot the ask matched, so what is
+        # sliced, printed and deducted is the slot the claim chose.
+        "tool_index": _effective_tool_index(config, loaded, plan) if config else None,
         # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
         "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
         "slot_plan": plan,
@@ -735,7 +745,7 @@ class QueueEngine:
                                                 _slice_params(job, config, printer, source_file, machine_preset, plan), provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
                 return None
-            inputs = slice_cache.key_inputs(req, source_file.content_hash, config.tool_index, fmap)
+            inputs = slice_cache.key_inputs(req, source_file.content_hash, params["tool_index"], fmap)
             if inputs is None:
                 return None
             key = slice_cache.cache_key(inputs)
@@ -824,7 +834,7 @@ class QueueEngine:
             plan = filament_matching.plan_for(config, loaded) if config else []
             slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if plan else None
             plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
-            cfg_tool_index = config.tool_index if config else None
+            cfg_tool_index = None   # set from the slice params below
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
             source_key = uploaded_file.relative_path if uploaded_file else None
@@ -834,6 +844,7 @@ class QueueEngine:
             machine_preset = resolution.profile if resolution else None
             printer_view = PrinterView.of(printer, resolution) if printer else None
             params = _slice_params(job, config, printer, uploaded_file, machine_preset, plan)
+            cfg_tool_index = params["tool_index"]
             is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
             if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):

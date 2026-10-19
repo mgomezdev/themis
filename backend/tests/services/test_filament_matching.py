@@ -189,3 +189,14 @@ def test_plan_json_round_trip_and_garbage():
 def test_orm_config_rows_are_matched_by_their_ask_columns():
     row = JobPrinterConfig(job_id=1, printer_id=1, print_profile="p", ask_type="PETG", ask_subtype="any")
     assert slots_of(fm.evaluate(row, LOADED)) == [(None, 2)]
+
+
+async def test_no_provider_call_unless_a_hardware_reported_slot_is_bound(session_factory):
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    fake = FakeInventoryProvider(spools=[spool("1")])
+    await use_provider(fake, plugin_id="spoolman")
+    await fm.conflicts_for([bound(0, "1", reported=False)])                       # hand-entered: can never conflict
+    assert fake.calls == []
+    await fm.conflicts_for([bound(0, "1", reported=True)])
+    assert fake.calls != []

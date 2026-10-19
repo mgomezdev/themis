@@ -218,7 +218,8 @@ def conflicting_slots(loaded: list | None, spools_by_ref: dict) -> set[int]:
 async def conflicts_for(loaded: list | None) -> set[int]:
     """`conflicting_slots` against the active inventory provider's current spools (empty without bound slots, a provider, or data:
     an unreachable inventory must never stop matching)."""
-    if not any(inventory_refs.slot_spool_ref(s) is not None for s in loaded or []):
+    # only a hardware-reported slot can conflict, so no provider call unless one of those is bound
+    if not any(s.get("reported") and inventory_refs.slot_spool_ref(s) is not None for s in loaded or []):
         return set()
     try:
         spools = await inventory_read.spools()

@@ -183,3 +183,10 @@ async def test_a_conflicting_slot_is_named_in_the_reasons_and_listed_by_the_prin
     assert cfg["filament_match"]["reasons"] == ["T0: bound spool conflicts with what the printer reports"]
     assert (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json() == {"conflicts": [0]}
     assert (await client.get("/api/v1/printers/999/slot-conflicts")).status_code == 404
+
+
+async def test_clearing_a_project_items_type_with_the_legacy_any_also_drops_its_subtype(client, project, upload_3mf):
+    f = await upload_3mf()
+    item = (await client.post(f"/api/v1/projects/{project}/items", json={"file_id": f, **TUPLE})).json()
+    out = (await client.put(f"/api/v1/projects/{project}/items/{item['id']}", json={"filament_type": "any"})).json()
+    assert (out["filament_type"], out["filament_subtype"]) == (None, None)       # not "silk with no type", which would narrow the ask

@@ -38,7 +38,7 @@ export function FilamentAskEditor({ value, onChange, materials = [], catalogEnab
           data-testid={`${id}-manufacturer`} aria-label="Manufacturer" className="input" list={`${id}-makers`}
           placeholder="Any maker" style={{ flex: '1 1 110px', minWidth: 0, fontSize: 12 }}
           value={value.filament_manufacturer ?? ''}
-          onChange={e => set({ filament_manufacturer: e.target.value })}
+          onChange={e => onChange({ ...value, filament_manufacturer: e.target.value.trim() ? e.target.value : null })}   // keep inner spaces while typing ("Bambu Lab"); the server trims
         />
         <datalist id={`${id}-makers`}>{makers.map(m => <option key={m} value={m} />)}</datalist>
 

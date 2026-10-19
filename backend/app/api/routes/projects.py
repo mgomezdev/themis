@@ -884,8 +884,8 @@ async def update_item(
         merged = {f: (getattr(body, f) if f in sent else getattr(item, c)) for f, c in zip(
             ("filament_manufacturer", "filament_type", "filament_subtype", "filament_color"),
             ("ask_manufacturer", "ask_type", "ask_subtype", "ask_color"))}
-        if "filament_type" in sent and "filament_subtype" not in sent and not body.filament_type:
-            merged["filament_subtype"] = None                      # clearing the type clears the subtype that belonged to it
+        if "filament_subtype" not in sent and not _normalize_ask(None, merged["filament_type"], "any", None).type:
+            merged["filament_subtype"] = None                      # no type left (cleared, or the legacy "any"): its subtype goes too
         try:
             ask = _normalize_ask(merged["filament_manufacturer"], merged["filament_type"], merged["filament_subtype"],
                                  merged["filament_color"])

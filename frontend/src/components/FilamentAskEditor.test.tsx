@@ -62,3 +62,16 @@ describe('FilamentAskEditor', () => {
     expect(screen.getByTestId('ask-type')).toBeEnabled();
   });
 });
+
+describe('FilamentAskEditor typing', () => {
+  it('keeps the space while a multi-word manufacturer is typed ("Bambu Lab")', () => {
+    const onChange = vi.fn();
+    const { rerender } = render(<FilamentAskEditor value={NO_ASK} onChange={onChange} />);
+    for (const text of ['Bambu', 'Bambu ', 'Bambu Lab']) {
+      fireEvent.change(screen.getByTestId('ask-manufacturer'), { target: { value: text } });
+      expect(onChange).toHaveBeenLastCalledWith({ ...NO_ASK, filament_manufacturer: text });
+      rerender(<FilamentAskEditor value={{ ...NO_ASK, filament_manufacturer: text }} onChange={onChange} />);
+      expect(screen.getByTestId('ask-manufacturer')).toHaveValue(text);
+    }
+  });
+});

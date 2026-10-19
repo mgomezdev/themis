@@ -24,7 +24,10 @@ const clean = (v: string | null | undefined): string | null => {
 const name = (v: string | null | undefined): string | null => clean(v)?.toLowerCase() ?? null;
 export const normColor = (v: string | null | undefined): string | null => clean(clean(v)?.replace(/^#+/, ''))?.toLowerCase() ?? null;
 
-const SUFFIX: Record<string, string> = { '+': 'plus', plus: 'plus', silk: 'silk', cf: 'cf', gf: 'gf', hf: 'hf', basic: STANDARD, standard: STANDARD };
+const SUFFIX: Record<string, string> = {
+  '+': 'plus', plus: 'plus', silk: 'silk', cf: 'cf', gf: 'gf', hf: 'hf', basic: STANDARD, standard: STANDARD,
+  'carbon fiber': 'cf', carbon: 'cf', 'glass fiber': 'gf', glass: 'gf', 'high flow': 'hf',    // same aliases as the server's split_type
+};
 
 /** "PLA+" -> PLA/plus, "PLA-CF" -> PLA/cf, "PLA Silk" -> PLA/silk, plain -> standard (same suffix rules as the server). */
 export function splitType(raw: string | null | undefined): { type: string | null; subtype: string | null } {

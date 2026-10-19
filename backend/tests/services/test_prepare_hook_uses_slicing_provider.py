@@ -22,7 +22,7 @@ class RecordingProvider(FakeSlicingProvider):
         self.calls.append(("apply_tool_mapping", Path(source_3mf), tool_index, filament_map))
 
 
-async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None):
+async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None, ask_slot=None):
     job_id = await _seed_job(db, 1)
     async with db() as s:
         printer = await s.get(Printer, 1)
@@ -31,6 +31,9 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None):
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         cfg.tool_index = tool_index
         cfg.filament_map = filament_map
+        if ask_slot is not None:                                        # only this slot is PETG: the (unpinned) ask can only match it
+            printer.loaded_filaments = [{**f, "type": "PETG" if i == ask_slot else "PLA"} for i, f in enumerate(printer.loaded_filaments)]
+            cfg.ask_type, cfg.ask_subtype = "PETG", "any"
         await s.commit()
 
     mgr = _make_mock_printer_manager([1])
@@ -91,3 +94,11 @@ async def test_no_hook_when_neither_set(session_factory, tmp_path):
 async def test_no_hook_when_client_flag_false(session_factory, tmp_path):
     hook, provider, _ = await _run(session_factory, tmp_path, flag=False, tool_index=2)
     assert hook is None and _applied(provider) == []
+
+
+@pytest.mark.asyncio
+async def test_an_unpinned_ask_matched_to_a_later_tool_routes_the_model_there(session_factory, tmp_path):
+    """The claim chose T2 for the ask; the model must be sliced onto T2 (and deducted from T2), not left on the default tool."""
+    hook, provider, _ = await _run(session_factory, tmp_path, flag=True, ask_slot=2)
+    assert hook is not None
+    assert _applied(provider) == [("apply_tool_mapping", tmp_path / "copy.3mf", 2, None)]
