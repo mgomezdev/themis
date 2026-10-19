@@ -16,7 +16,9 @@ async def enable_spoolman(url: str = "http://spoolman.test", api_key: str | None
 
 
 class _NoSettings(BaseModel):
-    pass
+    """What a fake provider's plugin declares. Core reads `max_disconnect_minutes` from the active provider's settings, and the host
+    refuses a setting its model does not declare, so the fake declares the one core-read setting like the real providers do."""
+    max_disconnect_minutes: int | None = None
 
 
 async def use_provider(provider, plugin_id: str = "spoolman") -> None:

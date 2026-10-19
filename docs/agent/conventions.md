@@ -40,8 +40,12 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 - **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
   `/fleet`, and is never ready (`is_printer_ready` false → the queue never claims or starts a job on it and never fails one; like an offline printer it may still pre-slice for it). Never delete
   or rewrite `plugin_id/manufacturer_id/model_id` because a plugin went away. Bundled vendors are `default_enabled=True` so an upgrade
-  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1`, read by core via `plugins/mock/defaults.toml` `[legacy_env]` (the test conftest sets it;
-  set it locally to add mock printers).
+  does not make existing printers dormant; the **mock** plugin is enabled only with `THEMIS_MOCK_PRINTERS=1`, read by core via `plugins/mock/defaults.toml` `[legacy_env]` (the test conftest and the `/themis-start` launcher set it;
+  set it yourself if you run uvicorn directly).
+- **Cross-capability conformance** (`tests/plugins/conformance.py`, `test_provider_conformance.py`, docs/provider-interfaces.md "Conformance"): a new
+  capability gets a `Kit` and inherits the shared host-side checks; `tests/test_plugin_id_boundary.py` + `frontend/src/pluginIdGuard.test.ts` fail on core/UI
+  importing or branching on any bundled plugin id (no exceptions). Plugin scenarios that cross boundaries are listed in `docs/plugin-test-matrix.md`
+  (a meta-test fails on a row naming a missing test); data lifecycle rules are `docs/plugin-lifecycle.md`.
 - **Core names no vendor**: clients/alarms/serializers live in `app/plugins/<vendor>/`; core reaches them through
   `printer_client_factory` + `AbstractPrinterClient` (`tests/test_vendor_extraction_boundary.py` fails on a vendor import outside `app/plugins/`).
 - **Cancel ↔ stop are bidirectional**: cancelling an active job stops the printer; stopping a printer

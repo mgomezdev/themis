@@ -4,7 +4,8 @@ tracked in `plugin_schema_versions`. They run after core migrations on startup, 
 * Every table a plugin migration creates must start with the plugin's `table_prefix` (default `<id>_`).
 * Failure is contained: one plugin's failing migration is rolled back (savepoint), reported in the returned dict and
   `migrations.failed` (the host then refuses to build that plugin), and never stops Themis or other plugins.
-* Only table *creation* outside the prefix is detected; plugins are trusted (spec D17) and may still ALTER core tables."""
+* Table creation (`up`) and table removal (`down`) outside the prefix are refused and rolled back; plugins are trusted
+  (spec D17) and may still ALTER core tables or touch their rows. Lifecycle policy: docs/plugin-lifecycle.md."""
 from __future__ import annotations
 
 import logging
@@ -95,7 +96,12 @@ async def rollback_plugin_migration(conn, manifest: PluginManifest) -> int | Non
     if mod is None:
         raise PluginError(f"plugin {manifest.id!r} no longer ships migration v{version}; cannot roll it back")
     async with conn.begin_nested():             # all-or-nothing: a failing down() leaves the version recorded
+        before = await _tables(conn)
         await mod.down(conn)
+        dropped = sorted(t for t in before - await _tables(conn) if not t.startswith(manifest.prefix))
+        if dropped:                             # uninstall must never take core-owned (or another plugin's) tables with it
+            raise PluginError(f"plugin {manifest.id!r} migration v{version} down() dropped tables outside its prefix "
+                              f"{manifest.prefix!r}: {dropped}")
         await conn.execute(text("DELETE FROM plugin_schema_versions WHERE plugin_id = :p AND version = :v"),
                            {"p": manifest.id, "v": version})
     return version

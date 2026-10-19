@@ -36,6 +36,8 @@ export interface PluginProvides {
 }
 export interface CapabilityRef { capability: string; min_version: number }
 
+export interface PluginDiagnostic { scope: string; message: string }
+
 export interface PluginSummary {
   id: string;
   name: string;
@@ -52,6 +54,8 @@ export interface PluginSummary {
   optional: CapabilityRef[];
   defines: string[];
   ui: PluginUi;
+  /** Problems found with this plugin's declarative UI when it loaded; each names the contribution (`ui.tab.<id>`, `settings.<field>`). */
+  diagnostics?: PluginDiagnostic[];
   /** The plugin's own switch (it also has to be the selected provider of a capability to be in use). */
   enabled: boolean;
   /** Serving at least one capability right now. */
@@ -64,21 +68,28 @@ export interface PluginDetail extends PluginSummary {
   /** Secret fields: whether a value is stored (the value itself never leaves the server). */
   secrets: Record<string, boolean>;
   settings_schema: JsonSchema;
+  /** Version of the declarative settings contract the backend validated against; the page renders only version 1. */
+  settings_schema_version?: number;
   secret_fields: string[];
   state: Record<string, unknown>;
 }
 
 export interface JsonSchemaProperty {
   type?: string | string[];
-  anyOf?: { type?: string }[];
+  anyOf?: JsonSchemaProperty[];
+  allOf?: JsonSchemaProperty[];
+  $ref?: string;
+  enum?: string[];
   title?: string;
   description?: string;
   default?: unknown;
   minimum?: number;
+  maximum?: number;
+  maxLength?: number;
   /** `array` settings: a fixed set of choices renders as checkboxes, anything else as a comma-separated list. */
-  items?: { type?: string; enum?: string[] };
+  items?: JsonSchemaProperty;
 }
-export interface JsonSchema { properties?: Record<string, JsonSchemaProperty>; required?: string[] }
+export interface JsonSchema { properties?: Record<string, JsonSchemaProperty>; required?: string[]; $defs?: Record<string, JsonSchemaProperty> }
 
 export interface PluginInstall {
   status: 'pending_restart' | 'active' | 'error' | 'pending_removal';
@@ -261,6 +272,11 @@ export function usePlugins(): { plugins: PluginSummary[]; selections: Record<str
   return { plugins: s.data?.plugins ?? NO_PLUGINS, selections: s.data?.selections ?? NO_SELECTIONS, pending: s.data?.pending ?? NO_PENDING, loaded: s.loaded, refresh };
 }
 
+/** Plugins that contribute a navigation entry: installed AND running (not staged for removal or failed to load), enabled, and asking for
+ *  their own page. A transient provider error does not hide the entry: the plugin's page is where the admin fixes it. */
+export const navigablePlugins = (plugins: PluginSummary[]): PluginSummary[] =>
+  plugins.filter(p => p.loaded !== false && p.enabled && p.ui.mode === 'page');
+
 /** The plugin currently serving `capability` (selected, enabled, requirements met), or null. */
 export function useCapabilityProvider(capability: string): PluginSummary | null {
   const { plugins } = usePlugins();
@@ -275,9 +291,16 @@ export function useFeature(capability: string, feature: string): boolean {
 
 // ---- schema-renderer tabs (`renderer: 'schema'`): a UI the plugin describes, rendered by Themis ----
 
+interface FieldBase {
+  key: string; label: string; required?: boolean; help?: string;
+  /** Show this field only while the named sibling holds `equals`. */
+  visible_if?: { key: string; equals: string | number | boolean };
+}
 export type SchemaField =
-  | { key: string; label: string; type: 'text' | 'number' | 'textarea' | 'checkbox'; required?: boolean; help?: string }
-  | { key: string; label: string; type: 'select'; options: { value: string; label: string }[]; required?: boolean; help?: string };
+  | (FieldBase & { type: 'text' | 'textarea'; max_length?: number })
+  | (FieldBase & { type: 'number'; min?: number; max?: number })
+  | (FieldBase & { type: 'checkbox' })
+  | (FieldBase & { type: 'select'; options: { value: string; label: string }[] });
 
 export type SchemaBlock =
   | { type: 'form'; title?: string; description?: string; load: string; save: string; fields: SchemaField[] }
@@ -286,14 +309,18 @@ export type SchemaBlock =
       row_actions?: { label: string; method: 'POST' | 'DELETE' | 'PATCH'; path: string; confirm?: string; body?: Record<string, unknown> }[];
       empty?: string };
 
-export interface TabSchema { title?: string; blocks: SchemaBlock[] }
+export interface TabSchema { schema_version?: number; title?: string; blocks: SchemaBlock[] }
 
 export const fetchTabSchema = (pluginId: string, tabId: string): Promise<TabSchema> =>
   request(`/api/v1/plugins/${encodeURIComponent(pluginId)}/ui/${encodeURIComponent(tabId)}`);
 
 /** A path relative to the plugin's own API (under the plugin's id), as the schema names it. */
 export function pluginPath(pluginId: string, path: string, vars?: Record<string, unknown>): string {
-  const filled = path.replace(/\{(\w+)\}/g, (_m, k) => encodeURIComponent(String(vars?.[k] ?? '')));
+  const filled = path.replace(/\{(\w+)\}/g, (_m, k) => {
+    const v = String(vars?.[k] ?? '');
+    if (v === '' || v === '.' || v === '..') throw new Error(`Cannot build the request: the row has no usable value for {${k}}`);
+    return encodeURIComponent(v);
+  });
   return `/api/v1/plugins/${encodeURIComponent(pluginId)}/${filled.replace(/^\/+/, '')}`;
 }
 

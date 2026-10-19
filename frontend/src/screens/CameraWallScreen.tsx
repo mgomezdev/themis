@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useInRouterContext } from 'react-router-dom';
 import { withKeyParam } from '../api/client';
 import { useFleetData } from '../api/fleet';
@@ -61,7 +61,13 @@ function LiveFeed({ printer, onFail }: { printer: Printer; onFail: () => void })
 function WallTile({ printer: p, live }: { printer: Printer; live: boolean }) {
   const inRouter = useInRouterContext();
   const [liveFailed, setLiveFailed] = useState(false);
-  useEffect(() => setLiveFailed(false), [live, p.id]);
+  // A new stream slot or printer gets a fresh chance. Reset during render, not in an effect: a mount-time effect that flushes
+  // late would overwrite a stream failure that landed first.
+  const [slot, setSlot] = useState({ live, id: p.id });
+  if (slot.live !== live || slot.id !== p.id) {
+    setSlot({ live, id: p.id });
+    setLiveFailed(false);
+  }
   const asLive = live && !liveFailed;
   const to = `/fleet/${p.id}/console`;
   const label = <>{Icons.alert} {p.alarmCount}</>;

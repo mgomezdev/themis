@@ -20,10 +20,9 @@ Simplified Gitflow: `main` (releases only) + `develop` (integration) + `feature/
   `develop`→`main` release PRs unless asked. Auto-merge doesn't replace the post-merge steps: once you see
   the PR merged (or before ending the session if it already is), move the Linear issue to *Done* and delete
   the local branch after the `merge-base --is-ancestor` check.
-- **Linear sync:** when working off a Linear issue (tracker ID in the request or branch name), keep its
-  status current via the Linear MCP (`save_issue`): move to *In Progress* when work starts, *In Review*
-  when the PR is opened (link the PR), *Done* once merged into `develop`. If blocked or abandoned, set it
-  back and leave a comment saying why. Skip if the issue has no matching workflow state; say so instead of guessing.
+- **Linear sync:** when working off a Linear issue (tracker ID in the request or branch name), keep its status
+  current via the Linear MCP (`save_issue`) following `docs/agent/linear-sync.md`. Skip if the issue has no
+  matching workflow state; say so instead of guessing.
 - `develop` merges to `main` only to cut a release. No `release/*` or `hotfix/*` branches — this repo
   doesn't carry enough concurrent in-flight work to justify them; revisit if that changes.
 - Before deleting any branch, confirm it's actually merged (`git merge-base --is-ancestor <branch>

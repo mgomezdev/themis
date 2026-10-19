@@ -1,0 +1,1780 @@
+{
+ "_comment": "Shared by backend/tests/plugins/test_ui_schema.py and frontend/src/api/uiSchema.test.ts: both validators must agree on every case.",
+ "tab_documents": [
+  {
+   "name": "full document",
+   "valid": true,
+   "doc": {
+    "schema_version": 1,
+    "title": "T",
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     },
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "version is optional",
+   "valid": true,
+   "doc": {
+    "blocks": []
+   }
+  },
+  {
+   "name": "null optional members are absent",
+   "valid": true,
+   "doc": {
+    "title": null,
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": null,
+      "row_actions": null,
+      "empty": null,
+      "title": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "a newer schema version",
+   "valid": false,
+   "doc": {
+    "schema_version": 2,
+    "blocks": []
+   },
+   "message": "schema_version: 2 is not supported"
+  },
+  {
+   "name": "a string version",
+   "valid": false,
+   "doc": {
+    "schema_version": "1",
+    "blocks": []
+   },
+   "message": "schema_version"
+  },
+  {
+   "name": "a non-object",
+   "valid": false,
+   "doc": [],
+   "message": "schema: must be an object"
+  },
+  {
+   "name": "blocks that are not a list",
+   "valid": false,
+   "doc": {
+    "blocks": {}
+   },
+   "message": "blocks: must be a list"
+  },
+  {
+   "name": "an unknown top-level key",
+   "valid": false,
+   "doc": {
+    "blocks": [],
+    "extra": 1
+   },
+   "message": "unsupported key"
+  },
+  {
+   "name": "a non-text document title",
+   "valid": false,
+   "doc": {
+    "title": {},
+    "blocks": []
+   },
+   "message": "title"
+  },
+  {
+   "name": "an unknown block type",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "chart"
+     }
+    ]
+   },
+   "message": "unsupported block type"
+  },
+  {
+   "name": "a non-text block title",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ],
+      "title": {}
+     }
+    ]
+   },
+   "message": "title"
+  },
+  {
+   "name": "a non-text block description",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ],
+      "description": 5
+     }
+    ]
+   },
+   "message": "description"
+  },
+  {
+   "name": "a non-text table empty message",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ],
+      "empty": []
+     }
+    ]
+   },
+   "message": "empty"
+  },
+  {
+   "name": "an unknown field type",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "color",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "unsupported field type"
+  },
+  {
+   "name": "a non-boolean required",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ],
+        "required": "yes"
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "required"
+  },
+  {
+   "name": "a non-text help",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ],
+        "help": {}
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "help"
+  },
+  {
+   "name": "a select without options",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": []
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "at least one option"
+  },
+  {
+   "name": "an option with an extra key",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A",
+          "x": 1
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "an option is"
+  },
+  {
+   "name": "an option with a non-text value",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": 1,
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "an option is"
+  },
+  {
+   "name": "visible_if naming a missing field",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "nope",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "another field"
+  },
+  {
+   "name": "visible_if naming itself",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "url",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "another field"
+  },
+  {
+   "name": "visible_if with an extra key",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a",
+         "x": 1
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "visible_if"
+  },
+  {
+   "name": "visible_if with a non-scalar equals",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": [
+          "a"
+         ]
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "equals"
+  },
+  {
+   "name": "min greater than max",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 70000,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "min is greater than max"
+  },
+  {
+   "name": "a non-numeric min",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": "1",
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "must be a number"
+  },
+  {
+   "name": "a non-positive max_length",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 0,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "positive integer"
+  },
+  {
+   "name": "a constraint on the wrong field type",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox",
+        "max_length": 3
+       }
+      ]
+     }
+    ]
+   },
+   "message": "unsupported key"
+  },
+  {
+   "name": "duplicate field keys",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "on",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "unique"
+  },
+  {
+   "name": "a field key that is not an identifier",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "not a key",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "identifier"
+  },
+  {
+   "name": "a form without fields",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "settings",
+      "fields": []
+     }
+    ]
+   },
+   "message": "at least one field"
+  },
+  {
+   "name": "an absolute URL as a path",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "https://evil.test/x",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "not a path relative"
+  },
+  {
+   "name": "a path that climbs out",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "save": "../../auth/keys",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "not a path relative"
+  },
+  {
+   "name": "a rooted path",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "/api/v1/printers",
+        "confirm": "Sure?"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "not a path relative"
+  },
+  {
+   "name": "a path with a trailing newline",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "items\n",
+      "save": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "not a path relative"
+  },
+  {
+   "name": "a missing path",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "form",
+      "load": "settings",
+      "fields": [
+       {
+        "key": "mode",
+        "label": "Mode",
+        "type": "select",
+        "options": [
+         {
+          "value": "a",
+          "label": "A"
+         }
+        ]
+       },
+       {
+        "key": "url",
+        "label": "URL",
+        "type": "text",
+        "max_length": 200,
+        "visible_if": {
+         "key": "mode",
+         "equals": "a"
+        }
+       },
+       {
+        "key": "port",
+        "label": "Port",
+        "type": "number",
+        "min": 1,
+        "max": 65535
+       },
+       {
+        "key": "on",
+        "label": "On",
+        "type": "checkbox"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "a path is required"
+  },
+  {
+   "name": "a table without columns",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "at least one column"
+  },
+  {
+   "name": "a column with an extra key",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "a",
+        "label": "A",
+        "x": 1
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "a column is"
+  },
+  {
+   "name": "an unsupported action method",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "PUT",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ]
+     }
+    ]
+   },
+   "message": "must be one of"
+  },
+  {
+   "name": "row_actions that is not a list",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": {}
+     }
+    ]
+   },
+   "message": "row_actions"
+  },
+  {
+   "name": "a non-text confirm",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": 5
+       }
+      ]
+     }
+    ]
+   },
+   "message": "confirm"
+  },
+  {
+   "name": "a non-object action body",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?",
+        "body": [
+         1
+        ]
+       }
+      ]
+     }
+    ]
+   },
+   "message": "body"
+  },
+  {
+   "name": "an unknown table key",
+   "valid": false,
+   "doc": {
+    "blocks": [
+     {
+      "type": "table",
+      "data": "items",
+      "columns": [
+       {
+        "key": "name",
+        "label": "Name"
+       }
+      ],
+      "create": {
+       "path": "items",
+       "fields": [
+        {
+         "key": "name",
+         "label": "Name",
+         "type": "text",
+         "required": true
+        }
+       ]
+      },
+      "row_actions": [
+       {
+        "label": "Delete",
+        "method": "DELETE",
+        "path": "items/{id}",
+        "confirm": "Sure?"
+       }
+      ],
+      "onclick": "x"
+     }
+    ]
+   },
+   "message": "unsupported key"
+  }
+ ],
+ "settings_kinds": [
+  {
+   "prop": {
+    "type": "boolean"
+   },
+   "kind": "boolean"
+  },
+  {
+   "prop": {
+    "type": "integer",
+    "minimum": 1
+   },
+   "kind": "number"
+  },
+  {
+   "prop": {
+    "anyOf": [
+     {
+      "type": "number"
+     },
+     {
+      "type": "null"
+     }
+    ]
+   },
+   "kind": "number"
+  },
+  {
+   "prop": {
+    "type": "string"
+   },
+   "kind": "text"
+  },
+  {
+   "prop": {
+    "anyOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "null"
+     }
+    ]
+   },
+   "kind": "text"
+  },
+  {
+   "prop": {
+    "type": [
+     "string",
+     "null"
+    ]
+   },
+   "kind": "text"
+  },
+  {
+   "prop": {
+    "type": "array",
+    "items": {
+     "type": "string"
+    }
+   },
+   "kind": "list"
+  },
+  {
+   "prop": {
+    "type": "array",
+    "items": {
+     "type": "string",
+     "enum": [
+      "a",
+      "b"
+     ]
+    }
+   },
+   "kind": "choices"
+  },
+  {
+   "prop": {
+    "type": "object"
+   },
+   "kind": null
+  },
+  {
+   "prop": {
+    "type": "array",
+    "items": {
+     "type": "object"
+    }
+   },
+   "kind": null
+  },
+  {
+   "prop": {
+    "type": "array",
+    "items": {
+     "type": "integer"
+    }
+   },
+   "kind": null
+  },
+  {
+   "prop": {},
+   "kind": null
+  },
+  {
+   "prop": {
+    "anyOf": [
+     {
+      "type": "string"
+     },
+     {
+      "type": "integer"
+     }
+    ]
+   },
+   "kind": null
+  },
+  {
+   "prop": {
+    "$ref": "#/$defs/Level"
+   },
+   "defs": {
+    "Level": {
+     "type": "string",
+     "enum": [
+      "low",
+      "high"
+     ]
+    }
+   },
+   "kind": "text"
+  },
+  {
+   "prop": {
+    "allOf": [
+     {
+      "$ref": "#/$defs/Level"
+     }
+    ],
+    "default": "low"
+   },
+   "defs": {
+    "Level": {
+     "type": "string",
+     "enum": [
+      "low",
+      "high"
+     ]
+    }
+   },
+   "kind": "text"
+  },
+  {
+   "prop": {
+    "type": "array",
+    "items": {
+     "$ref": "#/$defs/Level"
+    }
+   },
+   "defs": {
+    "Level": {
+     "type": "string",
+     "enum": [
+      "low",
+      "high"
+     ]
+    }
+   },
+   "kind": "choices"
+  }
+ ]
+}

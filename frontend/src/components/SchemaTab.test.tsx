@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SchemaTab } from './SchemaTab';
 import { Reply, stubFetch } from '../test/fetchStub';
-import type { TabSchema } from '../api/plugins';
+import { pluginPath, type TabSchema } from '../api/plugins';
 
 const SCHEMA: TabSchema = {
   title: 'Library',
@@ -109,5 +109,58 @@ describe('SchemaTab', () => {
     stubFetch({ [`GET ${P}/ui/library`]: new Reply(404, { detail: "'demo' has no schema tab 'library'" }) });
     render(<SchemaTab pluginId="demo" tabId="library" />);
     expect((await screen.findByRole('alert')).textContent).toBe("'demo' has no schema tab 'library'");
+  });
+
+  it('refuses a document outside the contract instead of rendering part of it (unknown version, block or field type)', async () => {
+    for (const [doc, message] of [
+      [{ schema_version: 2, blocks: [] }, 'schema_version: 2 is not supported'],
+      [{ blocks: [{ type: 'chart' }] }, 'unsupported block type "chart"'],
+      [{ blocks: [{ type: 'form', load: 'a', save: 'a', fields: [{ key: 'c', label: 'C', type: 'color' }] }] }, 'unsupported field type "color"'],
+    ] as [unknown, string][]) {
+      stubFetch({ [`GET ${P}/ui/library`]: doc });
+      const { unmount } = render(<SchemaTab pluginId="demo" tabId="library" />);
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain('This tab cannot be displayed');
+      expect(alert.textContent).toContain(message);
+      expect(screen.queryByTestId('schema-form')).toBeNull();
+      unmount();
+    }
+  });
+
+  it('shows a field only while its visible_if holds, and leaves a hidden field out of the saved body', async () => {
+    const schema: TabSchema = { blocks: [{ type: 'form', load: 'conn', save: 'conn', fields: [
+      { key: 'auth', label: 'Auth', type: 'select', options: [{ value: 'none', label: 'None' }, { value: 'basic', label: 'Basic' }] },
+      { key: 'user', label: 'User', type: 'text', visible_if: { key: 'auth', equals: 'basic' } },
+    ] }] };
+    const api = stubFetch({ [`GET ${P}/ui/library`]: schema, [`GET ${P}/conn`]: { auth: 'none', user: 'old' }, [`PUT ${P}/conn`]: { ok: true } });
+    render(<SchemaTab pluginId="demo" tabId="library" />);
+    await screen.findByLabelText('Auth');
+    expect(screen.queryByLabelText('User')).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('status');
+    expect(api.to('PUT', `${P}/conn`)[0].body).toEqual({ auth: 'none' });                 // the hidden field is not sent
+
+    await userEvent.selectOptions(screen.getByLabelText('Auth'), 'basic');
+    expect((await screen.findByLabelText('User') as HTMLInputElement).value).toBe('old');
+  });
+
+  it('passes the declared constraints to the inputs', async () => {
+    const schema: TabSchema = { blocks: [{ type: 'form', load: 'c', save: 'c', fields: [
+      { key: 'port', label: 'Port', type: 'number', min: 1, max: 65535 },
+      { key: 'name', label: 'Name', type: 'text', max_length: 12 },
+    ] }] };
+    stubFetch({ [`GET ${P}/ui/library`]: schema, [`GET ${P}/c`]: {} });
+    render(<SchemaTab pluginId="demo" tabId="library" />);
+    const port = await screen.findByLabelText('Port') as HTMLInputElement;
+    expect([port.min, port.max]).toEqual(['1', '65535']);
+    expect((screen.getByLabelText('Name') as HTMLInputElement).maxLength).toBe(12);
+  });
+
+  it('refuses a path placeholder with no usable value instead of building a different URL', () => {
+    expect(() => pluginPath('demo', 'materials/{id}/archive', { id: '' })).toThrow('no usable value for {id}');
+    expect(() => pluginPath('demo', 'materials/{id}', { id: '..' })).toThrow('no usable value');
+    expect(() => pluginPath('demo', 'materials/{other}', { id: 7 })).toThrow('{other}');
+    expect(pluginPath('demo', 'materials/{id}', { id: 'a b' })).toBe('/api/v1/plugins/demo/materials/a%20b');
   });
 });

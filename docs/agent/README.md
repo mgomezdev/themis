@@ -15,6 +15,7 @@ These references describe the implementation in this checkout. For operator-faci
 | [backend-review.md](backend-review.md), [frontend-review.md](frontend-review.md) | Change-review checklists. |
 | [events.md](../events.md) | Event contracts, durability, subscribers, and operator endpoints. |
 | [plugins.md](../plugins.md) | Plugin manifests, capabilities, lifecycle, and installation behavior. |
+| [linear-sync.md](linear-sync.md) | Linear status names, how an agent moves an issue, and when *Human review* applies. |
 | [mcp-server.md](../mcp-server.md) | Optional MCP package setup and tools. |
 
 These are maintained architecture notes, not generated specifications. When details differ, current source code is authoritative; for REST request/response contracts, OpenAPI is authoritative. The dated design specs, implementation plans, and handoffs under `docs/superpowers/` are historical records and may describe behavior that was changed or never shipped.
