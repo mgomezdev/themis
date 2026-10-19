@@ -46,7 +46,7 @@ async def _targeted_job(factory, model: str = P1S, status: str = "queued") -> tu
         s.add(j)
         await s.flush()
         t = JobModelTarget(job_id=j.id, model_uuid=model, print_profile="0.20mm",
-                           filament_type="PLA", filament_color="any")
+                           ask_type="PLA", ask_subtype="any")
         s.add(t)
         await s.commit()
         return j.id, t.id
@@ -72,7 +72,7 @@ async def test_materialize_job_creates_configs_only_for_matching_printers(sessio
 
     cfgs = await _configs(session_factory, job_id)
     assert [c.printer_id for c in cfgs] == [1, 3]
-    assert all(c.model_target_id == target_id and c.print_profile == "0.20mm" and c.filament_type == "PLA"
+    assert all(c.model_target_id == target_id and c.print_profile == "0.20mm" and (c.ask_type, c.ask_subtype) == ("PLA", "any")
                for c in cfgs)
 
 

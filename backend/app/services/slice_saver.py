@@ -129,8 +129,9 @@ async def _save_locked(session, job_id, printer_id, artifact_path, inputs, key, 
 
         cfg = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
-        filament_type = cfg.filament_type if cfg else "any"
-        filament_color = cfg.filament_color if cfg else "any"
+        # SlicedVersion keeps the pre-tuple display fields ("any" = unspecified); the tuple's base type and colour fill them
+        filament_type = (cfg.ask_type if cfg else None) or "any"
+        filament_color = (cfg.ask_color if cfg else None) or "any"
         display = safe_display_name(job.save_slice_name or default_display_name(source, inputs, filament_type))
         suffix = ".gcode.3mf" if inputs.artifact_kind == "gcode_3mf" else ".gcode"
 

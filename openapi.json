@@ -12395,6 +12395,18 @@
             ],
             "title": "Material"
           },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
           "color_hex": {
             "anyOf": [
               {
@@ -12479,6 +12491,18 @@
             ],
             "title": "Material"
           },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
           "color_hex": {
             "anyOf": [
               {
@@ -12549,6 +12573,50 @@
       },
       "ModelTargetInput": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "model_uuid": {
             "type": "string",
             "title": "Model Uuid"
@@ -12568,49 +12636,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
           },
           "filament_map": {
             "anyOf": [
@@ -12721,6 +12746,50 @@
       },
       "OrderPartIn": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "id": {
             "anyOf": [
               {
@@ -12750,50 +12819,6 @@
             "type": "integer",
             "title": "Est Minutes",
             "default": 0
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_color": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Color"
           }
         },
         "type": "object",
@@ -13207,6 +13232,50 @@
       },
       "PrinterConfigInput": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "printer_id": {
             "type": "integer",
             "title": "Printer Id"
@@ -13226,47 +13295,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color"
           },
           "tool_index": {
             "anyOf": [
@@ -13297,9 +13325,7 @@
         },
         "type": "object",
         "required": [
-          "printer_id",
-          "filament_type",
-          "filament_color"
+          "printer_id"
         ],
         "title": "PrinterConfigInput"
       },
@@ -13828,6 +13854,50 @@
       },
       "ProjectItemCreate": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "file_id": {
             "type": "integer",
             "title": "File Id"
@@ -13836,49 +13906,6 @@
             "type": "integer",
             "title": "Quantity",
             "default": 1
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
           },
           "sort_order": {
             "type": "integer",
@@ -13905,6 +13932,17 @@
             ],
             "title": "Quantity"
           },
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
           "filament_type": {
             "anyOf": [
               {
@@ -13916,6 +13954,17 @@
             ],
             "title": "Filament Type"
           },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
           "filament_color": {
             "anyOf": [
               {
@@ -13926,39 +13975,6 @@
               }
             ],
             "title": "Filament Color"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
           },
           "sort_order": {
             "anyOf": [
@@ -13973,7 +13989,8 @@
           }
         },
         "type": "object",
-        "title": "ProjectItemUpdate"
+        "title": "ProjectItemUpdate",
+        "description": "A PATCH: only the fields sent change. The resulting ask must still be valid (a type needs a subtype)."
       },
       "ProjectLink": {
         "properties": {

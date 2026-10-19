@@ -77,8 +77,8 @@ def _job_material_grams(job, config) -> list[tuple[str, float]]:
     """(material, grams) pairs for one completed job."""
     config_material = None
     if config is not None:
-        ft = (config.filament_type or "").strip()
-        config_material = (ft.upper() if ft and ft.lower() != "any" else None) or material_from_name(config.filament_profile)
+        ft = (config.ask_type or "").strip()
+        config_material = (ft.upper() if ft else None) or material_from_name(config.filament_profile)
     if job.actual_filament_breakdown:
         return [
             (material_from_name(e.get("filament_profile")) or config_material or UNKNOWN_MATERIAL, float(e.get("grams") or 0.0))

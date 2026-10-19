@@ -315,7 +315,7 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
 
         item_resp = await client.post(
             f"/api/v1/projects/{project_id}/items",
-            json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_color": "#FF0000"},
+            json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#FF0000"},
         )
         assert item_resp.status_code == 201
 
@@ -340,8 +340,8 @@ async def test_generate_carries_filament_requirement_to_printer_config(client, t
 
     detail = await client.get(f"/api/v1/jobs/{job_id}/details")
     cfg = detail.json()["printer_configs"][0]
-    assert cfg["filament_type"] == "PETG"
-    assert cfg["filament_color"] == "#FF0000"
+    assert (cfg["filament_manufacturer"], cfg["filament_type"], cfg["filament_subtype"], cfg["filament_color"]) \
+        == (None, "PETG", "any", "#FF0000")
 
 
 async def test_project_estimate_rollup_keys(client):

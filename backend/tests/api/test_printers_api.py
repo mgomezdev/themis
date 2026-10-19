@@ -293,10 +293,11 @@ async def test_loaded_filaments_round_trip_on_create_including_null_filament_id(
     ]
     created = await client.post("/api/v1/printers", json=_bambu("SN2", loaded_filaments=slots))
     assert created.status_code == 201
-    assert created.json()["loaded_filaments"] == slots
+    stored = [{**s, "subtype": "standard", "manufacturer": None} for s in slots]          # every stored slot carries the tuple
+    assert created.json()["loaded_filaments"] == stored
 
     fetched = (await client.get(f"/api/v1/printers/{created.json()['id']}")).json()
-    assert fetched["loaded_filaments"] == slots
+    assert fetched["loaded_filaments"] == stored
     assert fetched["loaded_filaments"][0]["filament_id"] is None
 
 
@@ -307,8 +308,9 @@ async def test_patch_loaded_filaments_replaces_and_persists(client):
 
     resp = await client.patch(f"/api/v1/printers/{printer_id}", json={"loaded_filaments": slots})
     assert resp.status_code == 200
-    assert resp.json()["loaded_filaments"] == slots
-    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == slots
+    stored = [{**slots[0], "subtype": "standard", "manufacturer": None}]
+    assert resp.json()["loaded_filaments"] == stored
+    assert (await client.get(f"/api/v1/printers/{printer_id}")).json()["loaded_filaments"] == stored
 
 
 async def _printer_for_slicer(client):

@@ -272,6 +272,12 @@ class JobPrinterConfig(Base):
     # Filament ask — "any" means no constraint (never null/blank; see v012 migration)
     filament_type: Mapped[str] = mapped_column(String(100), nullable=False, server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), nullable=False, server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -305,6 +311,12 @@ class JobModelTarget(Base):
     material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     filament_type: Mapped[str] = mapped_column(String(100), default="any", server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any", server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
@@ -452,6 +464,12 @@ class ProjectItem(Base):
     # Filament requirement spec — "any" means no constraint
     filament_type: Mapped[str] = mapped_column(String(50), default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     material_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)

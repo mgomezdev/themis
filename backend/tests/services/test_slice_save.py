@@ -38,7 +38,7 @@ def env(tmp_path, monkeypatch):
 
 
 async def _seed(factory, *, save=True, name=None, content_hash="srchash", printer_type="elegoo_centauri",
-                filament_type="PETG") -> int:
+                filament_type="PETG") -> int:    # the ask's base type (subtype any)
     async with factory() as s:
         if await s.get(Printer, 1) is None:
             s.add(Printer(id=1, name="P1", printer_type=printer_type, connection_config={},
@@ -59,7 +59,7 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
         s.add(j)
         await s.flush()
         s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="0.20mm Standard",
-                               filament_type=filament_type, filament_color="#000000"))
+                               ask_type=filament_type, ask_subtype="any", ask_color="#000000"))
         await s.commit()
         return j.id
 

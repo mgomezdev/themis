@@ -463,7 +463,7 @@ async def test_list_jobs_includes_materials_and_printers(client, session_factory
 
         cfg = JobPrinterConfig(job_id=j.id, printer_id=p1.id,
                                print_profile="0.20mm", filament_profile="PLA Basic",
-                               filament_type="PLA")
+                               ask_type="PLA", ask_subtype="any")
         session.add(cfg)
         await session.commit()
 
