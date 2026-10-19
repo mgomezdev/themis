@@ -34,8 +34,8 @@ def _restore_spoolman_mock():
 
 
 def _fake() -> FakeInventoryProvider:
-    white = InvMaterial(ref="1", name="PLA White", vendor="Elegoo", material="PLA", color_hex="#FFFFFF", profile_links={})
-    black = InvMaterial(ref="2", name="PLA Black", vendor="Elegoo", material="PLA", color_hex="#000000", profile_links={})
+    white = InvMaterial(ref="1", name="PLA White", vendor="Elegoo", material="PLA", subtype="standard", color_hex="#FFFFFF", profile_links={})
+    black = InvMaterial(ref="2", name="PLA Black", vendor="Elegoo", material="PLA", subtype="standard", color_hex="#000000", profile_links={})
     return FakeInventoryProvider(
         materials=[white, black],
         spools=[InvSpool(ref="1", material_ref="1", material=white, remaining_g=800.0, label="Elegoo PLA White"),
@@ -55,8 +55,8 @@ async def _local(session_factory) -> LocalInventoryProvider:
     """The same two materials / two spools the other providers start with (refs 1 and 2)."""
     async with session_factory() as s:
         for name, color in (("PLA White", "#FFFFFF"), ("PLA Black", "#000000")):
-            await s.execute(text("INSERT INTO local_inv_materials (name, material, vendor, color_hex, created_at, updated_at) "
-                                 "VALUES (:n, 'PLA', 'Elegoo', :c, 'x', 'x')"), {"n": name, "c": color})
+            await s.execute(text("INSERT INTO local_inv_materials (name, material, subtype, vendor, color_hex, created_at, updated_at) "
+                                 "VALUES (:n, 'PLA', 'standard', 'Elegoo', :c, 'x', 'x')"), {"n": name, "c": color})
         for mat, label, g in ((1, "Elegoo PLA White", 800.0), (2, "Elegoo PLA Black", 500.0)):
             await s.execute(text("INSERT INTO local_inv_spools (material_id, label, initial_g, remaining_g, created_at, updated_at) "
                                  "VALUES (:m, :l, 1000, :g, 'x', 'x')"), {"m": mat, "l": label, "g": g})
@@ -93,6 +93,7 @@ async def test_refs_are_strings_and_materials_are_complete(provider):
     assert materials and all(isinstance(m.ref, str) and isinstance(m, InvMaterial) for m in materials)
     white = next(m for m in materials if m.ref == "1")
     assert (white.name, white.vendor, white.material, white.color_hex) == ("PLA White", "Elegoo", "PLA", "#FFFFFF")
+    assert white.subtype == "standard"                      # type and subtype are two fields; plain filament is explicit
 
 
 async def test_spools_reference_their_material_and_carry_a_label(provider):
@@ -177,6 +178,8 @@ async def test_materials_can_be_created_updated_and_archived_or_every_call_is_re
         return
     created = await provider.create_material(MaterialDraft(name="PETG Blue", material="PETG", color_hex="#0000FF", vendor="Acme", diameter=1.75))
     assert isinstance(created.ref, str) and (created.name, created.material, created.color_hex, created.vendor) == ("PETG Blue", "PETG", "#0000FF", "Acme")
+    assert created.subtype == "standard"                        # a type with no subtype is plain filament
+    assert (await provider.create_material(MaterialDraft(name="PLA Silk", material="PLA", subtype="silk"))).subtype == "silk"
     assert created.ref in {m.ref for m in await provider.list_materials()}
     updated = await provider.update_material(created.ref, {"name": "PETG Navy", "vendor": None})
     assert (updated.name, updated.vendor, updated.material) == ("PETG Navy", None, "PETG")          # only the sent fields changed

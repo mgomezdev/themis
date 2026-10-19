@@ -5,7 +5,7 @@ from __future__ import annotations
 from ..capabilities.filament_inventory import CAPABILITY
 from ..capabilities.inventory_routes import shared_router
 from ..manifest import HOST_API, PluginManifest, Provide, UiContribution, UiTab
-from .migrations import v001_tables
+from .migrations import v001_tables, v002_subtype
 from .provider import LocalInventoryProvider
 from .routes import router
 from .settings import LocalInventorySettings
@@ -18,7 +18,7 @@ MANIFEST = PluginManifest(
     settings_model=LocalInventorySettings,
     factory=LocalInventoryProvider,
     provides={CAPABILITY: Provide(version=1, features=LocalInventoryProvider.capabilities, routers=(router, shared_router))},
-    migrations=(v001_tables,),
+    migrations=(v001_tables, v002_subtype),
     table_prefix="local_inv_",
     ui=UiContribution(mode="page", nav_label="Local inventory", nav_placement="settings",
                       tabs=(UiTab("settings", "Settings", "default"),)),

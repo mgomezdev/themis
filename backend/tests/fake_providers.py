@@ -251,7 +251,8 @@ class FakeLibraryProvider(FakeInventoryProvider):
         self._enter("create_material")
         if not draft.name.strip():
             raise InventoryProviderError("a material needs a name", code="422", status=422)
-        m = InvMaterial(ref=self._new_ref(), name=draft.name, material=draft.material, color_hex=draft.color_hex,
+        m = InvMaterial(ref=self._new_ref(), name=draft.name, material=draft.material, subtype=draft.subtype or ('standard' if draft.material else None),
+                        color_hex=draft.color_hex,
                         vendor=draft.vendor, density=draft.density, diameter=draft.diameter, profile_links={})
         self.materials[m.ref] = m
         return m
