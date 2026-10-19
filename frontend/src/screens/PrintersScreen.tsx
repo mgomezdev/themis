@@ -141,7 +141,7 @@ export function EditForm({
 
   const inventory = useInventory();
   const spools = useSpools(!!inventory.plugin);
-  const slotConflicts = useSlotConflicts(printer.id);
+  const slotConflicts = useSlotConflicts(printer.id, printer.loaded_filaments, slots);
 
   useEffect(() => {
     setFilamentProfiles([]);

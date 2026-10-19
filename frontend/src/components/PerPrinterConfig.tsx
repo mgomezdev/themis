@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { ApiPrinter } from '../api/printers';
 import { getPrinterProfiles, type FilamentMapEntry, type ModelFilament } from '../api/queue';
 import { useInventory, useMaterials } from '../api/inventory';
+import { useSlotConflicts } from './useSlotConflicts';
 import { NO_ASK, askIsUndefined, describeAsk, firstMatchingSlot, type FilamentAsk } from '../lib/filamentAsk';
 import { FilamentAskEditor } from './FilamentAskEditor';
 import { FilamentProfileSelect } from './FilamentProfileSelect';
@@ -68,8 +69,8 @@ const CHIP = {
 } as const;
 
 /** Which slot would print this ask right now — a preview only; the queue decides (a job nothing matches simply waits, queued). */
-function MatchChip({ ask, slots, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; testId?: string }) {
-  const idx = firstMatchingSlot(ask, slots);
+function MatchChip({ ask, slots, conflicts, testId }: { ask: FilamentAsk; slots: ApiPrinter['loaded_filaments']; conflicts: number[]; testId?: string }) {
+  const idx = firstMatchingSlot(ask, slots, conflicts);       // a slot in conflict with its bound spool is skipped, as the queue does
   const undefinedAsk = askIsUndefined(ask);
   const tone = idx !== null || undefinedAsk ? CHIP.ok : CHIP.warn;
   const text = idx !== null
@@ -97,6 +98,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const inventory = useInventory();
   const catalogActive = !!inventory.plugin;          // "a material catalog is available" (only to fill the tuple from)
   const materials = useMaterials(catalogActive);
+  const conflicts = useSlotConflicts(pid, printer?.loaded_filaments);
 
   if (!printer) return null;
   const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
@@ -189,7 +191,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
                       <div className="col gap-2" style={{ marginLeft: 22, marginTop: 4 }}>
                         <FilamentAskEditor id={`map-ask-${f.index}`} value={entryAsk(entry)} materials={materials} catalogEnabled={catalogActive}
                                            onChange={a => setEntry(f.index, { model_filament: f.index, tool_index: null, ...a })} />
-                        <div><MatchChip ask={entryAsk(entry)} slots={slots} testId={`map-match-${f.index}`} /></div>
+                        <div><MatchChip ask={entryAsk(entry)} slots={slots} conflicts={conflicts} testId={`map-match-${f.index}`} /></div>
                       </div>
                     )}
                   </div>
@@ -217,7 +219,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
               <div className="col gap-2" style={{ marginTop: 8 }}>
                 <FilamentAskEditor id="filament-ask" value={ask} materials={materials} catalogEnabled={catalogActive}
                                    onChange={a => onChange(askToCfg(a))} />
-                <div><MatchChip ask={ask} slots={slots} testId="filament-match" /></div>
+                <div><MatchChip ask={ask} slots={slots} conflicts={conflicts} testId="filament-match" /></div>
               </div>
             ) : (
               <div className="tiny muted" style={{ marginTop: 4 }}>
@@ -230,7 +232,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
             <label className="label">Filament</label>
             <FilamentAskEditor id="filament-ask" value={ask} materials={materials} catalogEnabled={catalogActive}
                                onChange={a => onChange(askToCfg(a))} />
-            <div style={{ marginTop: 8 }}><MatchChip ask={ask} slots={slots} testId="filament-match" /></div>
+            <div style={{ marginTop: 8 }}><MatchChip ask={ask} slots={slots} conflicts={conflicts} testId="filament-match" /></div>
           </div>
         )}
       </div>

@@ -13,7 +13,7 @@ from typing import Callable, ClassVar, Optional
 
 import paho.mqtt.client as mqtt
 
-from . import camera
+from . import camera, rfid
 from ...services.filament_tuple import split_type
 
 from ...services.abstract_printer_client import (
@@ -121,11 +121,6 @@ def parse_unix_list_line(line: str) -> tuple[str, int, bool, str | None] | None:
         except ValueError:
             pass
     return name, size, parts[0][0] == "d", modified
-
-
-def _has_rfid(tray: dict) -> bool:
-    """The AMS read a tag off this spool: `tray_uuid` / `tag_uid` is a non-empty, not-all-zero id (an untagged spool reports zeros)."""
-    return any(str(tray.get(k) or "").strip("0 ") for k in ("tray_uuid", "tag_uid"))
 
 
 def _as_bool(v) -> bool:
@@ -497,8 +492,7 @@ class BambuMQTTClient(AbstractPrinterClient):
                 "ams_unit": unit_id,
                 "filament_id": tray.get("tray_info_idx") or None,
                 "name": (tray.get("tray_sub_brands") or ttype).strip(),
-                # an RFID-tagged spool (non-zero tag uid) is Bambu Lab's own; anything else the AMS cannot attribute
-                "manufacturer": "Bambu Lab" if _has_rfid(tray) else None,
+                "manufacturer": rfid.manufacturer(tray),           # decoded from the spool's tag; None when untagged / unknown
                 "type": base,
                 "subtype": subtype,
                 "color": color,

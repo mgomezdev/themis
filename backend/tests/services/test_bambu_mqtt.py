@@ -171,7 +171,8 @@ def test_parse_ams_flattens_trays_and_skips_empty():
 
 def test_ams_trays_report_the_tuple_subtype_from_the_sub_brand_and_maker_only_for_an_rfid_spool():
     report = {"ams": {"ams": [{"id": "0", "tray": [
-        {"id": "0", "tray_type": "PLA", "tray_sub_brands": "PLA Silk", "tray_color": "FF0000FF", "tray_uuid": "A1B2C3D4" * 4},
+        {"id": "0", "tray_type": "PLA", "tray_sub_brands": "PLA Silk", "tray_color": "FF0000FF", "tray_uuid": "A1B2C3D4" * 4,
+         "tray_info_idx": "GFA05"},
         {"id": "1", "tray_type": "PETG", "tray_color": "000000FF", "tray_uuid": "0" * 32},
         {"id": "2", "tray_type": "PLA", "tray_sub_brands": "PLA Basic", "tray_color": "00FF00FF"},
         {"id": "3", "tray_type": "PA-CF", "tray_color": "0000FFFF"},

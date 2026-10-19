@@ -213,8 +213,14 @@ for printers without slot data.
 * **Many colours on one slot:** Themis' own routing (`snapmaker/remap.remap_3mf`, dict-based) already handles several model filaments on
   one tool, so only the "two colours, one slot" error was removed; no slicing-provider (Laminus) change is needed.
 * **Migration of blocked jobs:** v053 returns jobs `blocked` with one of the old filament block reasons to `queued`; other blocks are untouched.
-* **Bambu manufacturer:** "Bambu Lab" is reported only for an RFID-tagged spool (non-zero `tray_uuid`/`tag_uid`) — an assumption to confirm
-  on hardware. Snapmaker U1 reports its tool `filament_vendor` ("Generic"/"NONE" = unknown); Elegoo reports no filament data.
+* **Bambu manufacturer:** the Bambu plugin decodes its own RFID data (`plugins/bambu/rfid.py`): a tag (non-zero `tray_uuid`/`tag_uid`)
+  plus the material code (`tray_info_idx`) looked up in a plugin-owned table of RFID spool makers; no tag or an unknown maker = unknown
+  manufacturer, never a guess (BIZ-320). The table is an assumption to confirm on hardware. Snapmaker U1 reports its tool `filament_vendor` ("Generic"/"NONE" = unknown); Elegoo reports no filament data.
+* **Blends:** `split_type` keeps a blend of two base materials whole ("PC-ABS" = type `PC-ABS`, subtype `standard`), not PC with an "abs"
+  subtype; the frontend `splitType` mirrors it (BIZ-324).
+* **`reported`:** hardware-owned — API slot writes drop a client-supplied value and keep a stored `true`; only the telemetry merge sets it (BIZ-322).
+* **Rollback:** v053 `down()` writes each ask back into the legacy `filament_type`/`filament_color` (subtype folds into the type string:
+  any/standard dropped, plus -> "PLA+", other -> "PLA-silk"; manufacturer is lost) and the map / order-part keys before dropping the columns (BIZ-326).
 * **Deduction:** per used slot from the plan; several slots take their share from the per-extruder breakdown (extruder index = tool index);
   a slot with no bound spool deducts nothing, flags the job (`deduction_note`) and emits `inventory.no_spool_tracked`.
 

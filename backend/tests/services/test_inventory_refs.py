@@ -19,6 +19,13 @@ def test_a_new_client_that_only_sends_inventory_gets_the_legacy_key_mirrored_for
     assert refs.normalize_slot({"slot": 0, "inventory": INV}) == {"slot": 0, "inventory": INV, "spoolman_spool_id": 7}
 
 
+def test_reported_is_hardware_owned_a_client_can_neither_claim_nor_clear_it():
+    assert "reported" not in refs.normalize_slot({"slot": 0, "type": "PLA", "reported": True})                          # hand-entered stays so
+    assert "reported" not in refs.normalize_slot({"slot": 0, "type": "PLA", "reported": True}, previous={"slot": 0})
+    assert refs.normalize_slot({"slot": 0, "type": "PLA", "reported": False}, previous={"slot": 0, "reported": True})["reported"] is True
+    assert refs.normalize_slot({"slot": 0, "type": "PLA"}, previous={"slot": 0, "reported": True})["reported"] is True
+
+
 def test_a_binding_to_another_provider_clears_the_legacy_key():
     out = refs.normalize_slot({"slot": 0, "spoolman_spool_id": 7, "inventory": {"provider": "local", "spool_ref": "3"}},
                               previous={"slot": 0, "spoolman_spool_id": 7, "inventory": INV})

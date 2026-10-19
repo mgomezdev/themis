@@ -46,6 +46,8 @@ describe('helpers', () => {
     expect(splitType('PLA+')).toEqual({ type: 'PLA', subtype: 'plus' });
     expect(splitType('PLA-CF')).toEqual({ type: 'PLA', subtype: 'cf' });
     expect(splitType('PLA Silk')).toEqual({ type: 'PLA', subtype: 'silk' });
+    expect(splitType('PC-ABS')).toEqual({ type: 'PC-ABS', subtype: 'standard' });       // a blend of two base materials is one type
+    expect(splitType('PETG-CF')).toEqual({ type: 'PETG', subtype: 'cf' });
     expect(splitType('PETG')).toEqual({ type: 'PETG', subtype: STANDARD });
     expect(splitType('')).toEqual({ type: null, subtype: null });
   });

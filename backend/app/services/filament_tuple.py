@@ -15,6 +15,8 @@ PLUS = "plus"
 # Suffix text -> canonical subtype. Anything else is kept (lower-cased) as the subtype text.
 _SUFFIX_ALIASES = {"+": PLUS, "plus": PLUS, "silk": "silk", "cf": "cf", "gf": "gf", "hf": "hf", "carbon fiber": "cf",
                    "carbon": "cf", "glass fiber": "gf", "glass": "gf", "high flow": "hf", "basic": STANDARD, "standard": STANDARD}
+# Base materials: "PC-ABS" is a blend of two of these, so it is one type, not PC with an "abs" subtype.
+_BASE_TYPES = frozenset({"pla", "petg", "pet", "abs", "asa", "pc", "pa", "tpu", "hips", "pp", "pva", "pps", "pei", "pctg"})
 _SPLIT = re.compile(r"[\s_/-]+")
 
 
@@ -40,7 +42,8 @@ def norm_color(value) -> str | None:
 
 def split_type(raw) -> tuple[str | None, str | None]:
     """Split a combined material string into (base type, subtype). Blank -> (None, None); plain -> (type, "standard");
-    "PLA+" -> ("PLA", "plus"); "PLA-CF"/"PLA CF" -> ("PLA", "cf"); "PLA Silk" -> ("PLA", "silk"); unknown suffix kept as text."""
+    "PLA+" -> ("PLA", "plus"); "PLA-CF"/"PLA CF" -> ("PLA", "cf"); "PLA Silk" -> ("PLA", "silk"); unknown suffix kept as text;
+    a blend of two base materials ("PC-ABS") stays whole as the type with subtype "standard"."""
     text = clean(raw)
     if not text:
         return None, None
@@ -53,6 +56,8 @@ def split_type(raw) -> tuple[str | None, str | None]:
         return text, STANDARD
     if not suffix:
         return base, STANDARD
+    if base.casefold() in _BASE_TYPES and suffix.casefold() in _BASE_TYPES:
+        return text, STANDARD
     return base, _SUFFIX_ALIASES.get(suffix.casefold(), suffix.casefold())
 
 

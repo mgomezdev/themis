@@ -192,7 +192,8 @@ export function fetchPrinters(): Promise<ApiPrinter[]> {
 }
 
 /** Indexes of the slots whose bound spool differs from what the printer reports (skipped by the queue's filament matching). */
-export function fetchSlotConflicts(id: number): Promise<{ conflicts: number[] }> {
+export interface SlotConflicts { conflicts: number[] }
+export function fetchSlotConflicts(id: number): Promise<SlotConflicts> {
   return request(`${BASE}/${id}/slot-conflicts`);
 }
 

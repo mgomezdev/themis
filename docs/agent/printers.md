@@ -179,8 +179,9 @@ with fresh tray dicts, `on_ams_change` merges rather than overwrites — the inc
 the existing `loaded_filaments` by `slot`; each matched slot's `filament_profile` and `spoolman_spool_id`
 are preserved from the previous DB value; the slot's tuple (manufacturer/type/subtype/color) is **replaced** from the report and flagged
 `reported`. Slots no longer reported in the AMS payload are dropped along with their mappings. Tuple per vendor: Bambu = `tray_type` +
-`tray_sub_brands` (variant), manufacturer "Bambu Lab" only for an RFID-tagged spool (non-zero `tray_uuid`/`tag_uid`; **assumption to
-confirm against hardware**); Snapmaker U1 = `print_task_config` `filament_vendor` ("Generic"/"NONE" = unknown) + `filament_sub_type`
+`tray_sub_brands` (variant), manufacturer decoded by the plugin's own `rfid.py` (a non-zero `tray_uuid`/`tag_uid` tag + the material code `tray_info_idx`
+looked up in its `TAG_VENDORS` table — one row per RFID spool maker; no tag or an unknown maker = unknown manufacturer; **table
+contents are an assumption to confirm against hardware** with `protocol_verification/test_bambu_ams.py`); Snapmaker U1 = `print_task_config` `filament_vendor` ("Generic"/"NONE" = unknown) + `filament_sub_type`
 (blank = standard); Elegoo reports none (hand-entered). `filament_id` in a tray dict carries the Bambu AMS material code (e.g. `"GFL99"`)
 and is never repurposed for Spoolman.
 
