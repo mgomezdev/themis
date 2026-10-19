@@ -197,7 +197,28 @@ spool matches exactly as above; only deduction differs.
 Considered and not adopted: choosing a slot by remaining weight, an operator-pinned choice among several matches, operator confirmation
 for printers without slot data.
 
+## Implementation notes (BIZ-312; names the spec left open, and decisions)
+
+* **Inventory contract:** `InvMaterial.material` keeps its name but now means the base type only; a new `subtype` field sits beside it
+  (`MaterialDraft` and `MATERIAL_FIELDS` too). Local stores two columns (plugin migration v002 splits existing strings); Spoolman splits
+  its single `material` text with the shared suffix rules in its own plugin.
+* **Job asks:** new nullable columns `ask_manufacturer/ask_type/ask_subtype/ask_color` on `job_printer_configs`, `job_model_targets`,
+  `project_items` (migration v053; the old `filament_type/color`, `filament_id`, `material_provider/ref` columns stay as history, unread).
+  API/JSON names are `filament_manufacturer/filament_type/filament_subtype/filament_color` (also on `filament_map` entries and order parts).
+* **Slot dict:** `manufacturer`, `type` (base), `subtype`, `color`; `reported: true` marks what hardware telemetry replaced (only those slots
+  can be in conflict). Spool binding stays `inventory`.
+* **Claim-time plan:** `job_printer_configs.slot_plan` stores the chosen slots; slicing and deduction follow it. A planned slot emptied
+  before slicing is a slice failure (blocked, recoverable).
+* **Head of line:** a job the printer cannot supply is skipped for that printer (it stays queued); every other block still holds the line.
+* **Many colours on one slot:** Themis' own routing (`snapmaker/remap.remap_3mf`, dict-based) already handles several model filaments on
+  one tool, so only the "two colours, one slot" error was removed; no slicing-provider (Laminus) change is needed.
+* **Migration of blocked jobs:** v053 returns jobs `blocked` with one of the old filament block reasons to `queued`; other blocks are untouched.
+* **Bambu manufacturer:** "Bambu Lab" is reported only for an RFID-tagged spool (non-zero `tray_uuid`/`tag_uid`) — an assumption to confirm
+  on hardware. Snapmaker U1 reports its tool `filament_vendor` ("Generic"/"NONE" = unknown); Elegoo reports no filament data.
+* **Deduction:** per used slot from the plan; several slots take their share from the per-extruder breakdown (extruder index = tool index);
+  a slot with no bound spool deducts nothing, flags the job (`deduction_note`) and emits `inventory.no_spool_tracked`.
+
 ## Open
 
-* How a non-hex color text behaves until BIZ-311: propose a default in the implementing PR (suggestion: it matches only an identical
-  text, compared case-insensitively).
+* Non-hex colour text (until BIZ-311): decided — it matches only an identical text, compared case-insensitively (the colour key strips a
+  leading `#` and lower-cases whatever is there).

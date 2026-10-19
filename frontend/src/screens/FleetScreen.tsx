@@ -13,6 +13,7 @@ import { getPrinterProfiles, getQueueConfig } from '../api/queue';
 import { PrinterAddForm } from './PrintersScreen';
 import { NozzleVariantPicker } from '../components/NozzleVariantPicker';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useSlotConflicts } from '../components/useSlotConflicts';
 import { useMaintenanceStatus, type MaintenanceStatusRow } from '../api/maintenance';
 import { DueMaintenanceHat } from '../components/DueMaintenanceHat';
 import { useMediaQuery } from '../components/useMediaQuery';
@@ -407,6 +408,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   const [machinePreset, setMachinePreset] = useState<string | null>(null);   // what the printer slices with (its model's profile)
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [slots, setSlots] = useState<LoadedFilament[]>([]);
+  const slotConflicts = useSlotConflicts(printerId);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -427,7 +429,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   }, [printerId]);
 
   const addSlot = () =>
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
   const removeSlot = (i: number) =>
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
   const updateSlot = (i: number, patch: Partial<LoadedFilament>) =>
@@ -472,6 +474,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
               spools={spools}
               filamentProfiles={filamentProfiles}
               onChange={patch => updateSlot(i, patch)}
+              conflict={slotConflicts.includes(i)}
             />
           </div>
         ))}

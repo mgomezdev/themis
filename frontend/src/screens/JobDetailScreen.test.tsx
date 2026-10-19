@@ -57,8 +57,9 @@ const BASE_JOB: queueApi.ApiJobDetails = {
       printer_type: 'snapmaker_extended',
       print_profile: '0.20mm Standard @U1',
       filament_profile: 'PLA @U1',
-      filament_id: 12,
+      filament_manufacturer: 'Acme',
       filament_type: 'PLA',
+      filament_subtype: 'silk',
       filament_color: '#000000',
       tool_index: 0,
       from_model_target: false,
@@ -250,6 +251,40 @@ describe('JobDetailScreen — scheduled start', () => {
   });
 });
 
+describe('JobDetailScreen — why a printer does not match', () => {
+  const withMatch = (filament_match: queueApi.ApiJobPrinterConfig['filament_match']): queueApi.ApiJobDetails => ({
+    ...BASE_JOB, printer_configs: [{ ...BASE_JOB.printer_configs[0], filament_match }],
+  });
+
+  it('lists every reason under the printer when the loaded filament does not satisfy the ask, and says the ask in full', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(withMatch({
+      eligible: false, slots: [], reasons: ['T0: Acme PLA standard #FF0000; wanted Acme PLA silk #000000', 'T1 is empty'],
+    }));
+    renderJobDetail();
+
+    const box = await screen.findByTestId('filament-match-reasons');
+    expect(within(box).getByText("Filament doesn't match")).toBeTruthy();
+    expect(within(box).getByText('T0: Acme PLA standard #FF0000; wanted Acme PLA silk #000000')).toBeTruthy();
+    expect(within(box).getByText('T1 is empty')).toBeTruthy();
+    expect(screen.getByText('Acme PLA silk #000000')).toBeTruthy();                       // the ask, as a tuple
+  });
+
+  it('shows nothing extra for a printer that matches (or an older server that sends no match)', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(withMatch({ eligible: true, slots: [0], reasons: [] }));
+    renderJobDetail();
+    await screen.findByText('U1');
+    expect(screen.queryByTestId('filament-match-reasons')).toBeNull();
+  });
+
+  it('an undefined ask reads "Any loaded filament"', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...BASE_JOB, printer_configs: [{ ...BASE_JOB.printer_configs[0], filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null }],
+    });
+    renderJobDetail();
+    expect(await screen.findByText('Any loaded filament')).toBeTruthy();
+  });
+});
+
 describe('JobDetailScreen — make/model targets', () => {
   it('lists the models any printer of which may take the job, and says when none exists yet', async () => {
     vi.mocked(queueApi.getJobDetails).mockResolvedValue({
@@ -257,7 +292,7 @@ describe('JobDetailScreen — make/model targets', () => {
       printer_configs: [],
       model_targets: [{
         model_uuid: 'model-p1s', model_label: 'Bambu Lab P1S', print_profile: '0.20mm', filament_profile: null,
-        filament_id: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+        filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, filament_map: null,
       }],
     });
 

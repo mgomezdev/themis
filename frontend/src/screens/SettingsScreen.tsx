@@ -823,7 +823,7 @@ function FleetBackupPage() {
 // =========================================================================
 
 // Raised by the inventory host: spool tracking suspended/restored, a remote provider unreachable/back.
-const INVENTORY_EVENTS = ['inventory.tracking_unavailable', 'inventory.tracking_restored', 'inventory.disconnected', 'inventory.reconnected', 'inventory.weight_conflict'];
+const INVENTORY_EVENTS = ['inventory.tracking_unavailable', 'inventory.tracking_restored', 'inventory.disconnected', 'inventory.reconnected', 'inventory.weight_conflict', 'inventory.no_spool_tracked'];
 const ALL_WEBHOOK_EVENTS = ['job.complete', 'job.failed', 'job.blocked', 'spool.low', 'printer.alarm', ...INVENTORY_EVENTS];
 
 function WebhookPage() {

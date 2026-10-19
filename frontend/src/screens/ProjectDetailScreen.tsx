@@ -1,3 +1,4 @@
+import { describeAsk } from '../lib/filamentAsk';
 import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
@@ -550,9 +551,7 @@ export function ProjectDetailScreen() {
               <span>File</span><span>Qty</span><span>Filament</span><span>Progress</span>
             </div>
             {project.items.map(item => {
-              const filamentLabel = (item.material_ref ?? item.filament_id) != null
-                ? `Material #${item.material_ref ?? item.filament_id}`
-                : `${item.filament_type} / ${item.filament_color}`;
+              const filamentLabel = describeAsk(item);
               const done = item.quantity_completed;
               const failed = item.quantity_failed;
               return (

@@ -4,6 +4,7 @@ import {
   setSpoolWeight, spoolColor, spoolDisplayName, updateMaterial, updateSpool, useInventory,
   type InvMaterial, type InvSpool,
 } from '../api/inventory';
+import { SUBTYPES } from '../lib/filamentAsk';
 
 /** The filament library: materials and spools of the active provider, for providers that own their library. Works only
  *  through the neutral inventory API and its capabilities (MANAGE_MATERIALS / MANAGE_SPOOLS / WRITE_WEIGHT). */
@@ -13,7 +14,7 @@ const num = (s: string): number | null => (s.trim() === '' || Number.isNaN(Numbe
 
 function MaterialForm({ initial, onSave, onCancel }: { initial?: InvMaterial; onSave: (v: Record<string, unknown>) => Promise<void>; onCancel: () => void }) {
   const [v, setV] = useState({
-    name: initial?.name ?? '', material: initial?.material ?? '', vendor: initial?.vendor ?? '', color_hex: initial?.color_hex ?? '',
+    name: initial?.name ?? '', material: initial?.material ?? '', subtype: initial?.subtype ?? '', vendor: initial?.vendor ?? '', color_hex: initial?.color_hex ?? '',
     density: initial?.density != null ? String(initial.density) : '', diameter: initial?.diameter != null ? String(initial.diameter) : '',
   });
   const set = (k: keyof typeof v) => (e: React.ChangeEvent<HTMLInputElement>) => setV(s => ({ ...s, [k]: e.target.value }));
@@ -22,6 +23,9 @@ function MaterialForm({ initial, onSave, onCancel }: { initial?: InvMaterial; on
       <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
         <input className="input" aria-label="Material name" placeholder="Name *" value={v.name} onChange={set('name')} />
         <input className="input" aria-label="Material type" placeholder="Type (PLA…)" value={v.material} onChange={set('material')} style={{ width: 120 }} />
+        <input className="input" aria-label="Material subtype" list="material-subtypes" placeholder="Subtype (standard)" value={v.subtype} onChange={set('subtype')}
+               disabled={!v.material.trim()} style={{ width: 140 }} />
+        <datalist id="material-subtypes">{SUBTYPES.filter(s => s !== 'any').map(s => <option key={s} value={s} />)}</datalist>
         <input className="input" aria-label="Vendor" placeholder="Vendor" value={v.vendor} onChange={set('vendor')} />
         <input className="input" aria-label="Colour" placeholder="#RRGGBB" value={v.color_hex} onChange={set('color_hex')} style={{ width: 110 }} />
         <input className="input" aria-label="Density" placeholder="Density" type="number" step="0.01" value={v.density} onChange={set('density')} style={{ width: 90 }} />
@@ -29,7 +33,7 @@ function MaterialForm({ initial, onSave, onCancel }: { initial?: InvMaterial; on
       </div>
       <div className="row gap-2">
         <button className="btn primary sm" disabled={!v.name.trim()}
-                onClick={() => onSave({ name: v.name, material: v.material || null, vendor: v.vendor || null, color_hex: v.color_hex || null, density: num(v.density), diameter: num(v.diameter) })}>
+                onClick={() => onSave({ name: v.name, material: v.material || null, subtype: v.material.trim() ? (v.subtype.trim() || null) : null, vendor: v.vendor || null, color_hex: v.color_hex || null, density: num(v.density), diameter: num(v.diameter) })}>
           {initial ? 'Save material' : 'Add material'}
         </button>
         <button className="btn ghost sm" onClick={onCancel}>Cancel</button>

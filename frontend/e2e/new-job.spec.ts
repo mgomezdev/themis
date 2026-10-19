@@ -120,22 +120,24 @@ test.describe('New Job — filament/tool', () => {
     expect(cfg.filament_map.length).toBe(2);
   });
 
-  test('single-tool printer defaults to defer', async ({ page }) => {
+  test('single-tool printer defaults to an undefined ask and sends the typed tuple', async ({ page }) => {
     const mocks = await mockApi(page);
     await page.goto('/queue/new');
     await page.waitForLoadState('networkidle');
 
     await driveToPerPrinter(page, 'Mono');
 
-    // MONO has 0 loaded slots → single-tool path → filament-mode select renders
-    await expect(page.getByTestId('filament-mode')).toBeVisible({ timeout: 5000 });
-    await expect(page.getByTestId('filament-mode')).toHaveValue('defer');
+    // MONO has 0 loaded slots → single-slot path → the tuple editor renders, undefined = "any loaded filament"
+    await expect(page.getByTestId('filament-ask-type')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('filament-ask-type')).toHaveValue('');
+    await expect(page.getByTestId('filament-match')).toContainText('Any loaded filament');
+    await expect(page.getByTestId('filament-ask-subtype')).toBeDisabled();           // a subtype needs a type
 
-    // Switching to "require" should reveal filament-type-input
-    await page.getByTestId('filament-mode').selectOption('type-only');
-    await expect(page.getByTestId('filament-type-input')).toBeVisible({ timeout: 3000 });
+    // Choosing a type reveals a subtype (defaulting to the wildcard); a printer with no slots then says the job would wait
+    await page.getByTestId('filament-ask-type').selectOption('PETG');
+    await expect(page.getByTestId('filament-ask-subtype')).toHaveValue('any');
+    await expect(page.getByTestId('filament-match')).toContainText('nothing loaded matches');
 
-    // filament-mode is accessible via mocks too (no-op but ensures mocks is used)
     expect(mocks.captured.length).toBe(0); // no mutations yet
   });
 

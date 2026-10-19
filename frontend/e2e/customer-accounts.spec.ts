@@ -276,8 +276,8 @@ test('admin promotes a customer draft to planning, then to queued', async ({ pag
   // Has a file, so Generate is disabled only because of the draft stage.
   fake.projects.push({ id: 11, name: 'Alice Draft', customer_id: 1, stage: 'draft', jobs: [],
                        items: [{ id: 1, project_id: 11, file_id: 1, file_name: 'part.stl', quantity: 1,
-                                 quantity_completed: 0, quantity_failed: 0, filament_type: 'PLA',
-                                 filament_color: '#ffffff', filament_id: null, sort_order: 0 }] });
+                                 quantity_completed: 0, quantity_failed: 0, filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any',
+                                 filament_color: '#ffffff', sort_order: 0 }] });
   await install(page, fake, { staffKey: true });
 
   await page.goto('/projects/11');

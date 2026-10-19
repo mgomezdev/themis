@@ -10,11 +10,13 @@ shape, not generic advice.
 This codebase has more "filament identifiers" than it looks like at first, and they are not
 interchangeable:
 
-- `job_printer_configs.filament_id` — a Spoolman **filament** (catalog spec) ID.
+- `job_printer_configs.filament_id`, `material_provider`, `material_ref` — legacy columns, **no longer read or written** (a job's ask
+  is the tuple below and never references a material).
 - `printer.loaded_filaments[slot].spoolman_spool_id` — a Spoolman **spool** (physical instance) ID.
   Not the same thing as the above, despite the similar name.
-- `job_printer_configs.filament_type`/`filament_color` — the eligibility **ask**, matched against a
-  printer's loaded slots. Not what actually gets used for slicing.
+- `job_printer_configs.ask_manufacturer/ask_type/ask_subtype/ask_color` — the eligibility **ask** (a tuple; NULL = undefined, subtype
+  `any` = wildcard), matched against a printer's loaded slots (`services/filament_matching.py`). The legacy `filament_type`/`filament_color`
+  columns hold `"any"` strings and are history only. Not what actually gets used for slicing.
 - `filament_profile` (on a config, or a loaded slot) — the **OrcaSlicer preset name**, a string, used
   for slicing. Legacy fallback on the config; the real source is the matched slot's own value.
 - `printer.loaded_filaments[slot].filament_id` — for Bambu, this is the **AMS tray code**, not a

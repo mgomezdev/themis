@@ -61,7 +61,7 @@ const PROJECT = {
 
 const PROJECT_ITEM = {
   id: 1, project_id: 1, file_id: 1, file_name: 1, quantity: 1, quantity_completed: 1, quantity_failed: 1,
-  filament_type: 1, filament_color: 1, filament_id: 1, material_provider: 1, material_ref: 1, sort_order: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1,
 } satisfies Record<keyof ProjectItem, 1>;
 
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;
@@ -97,8 +97,8 @@ const PROFILE_VARIANT = {
   name: 1, nozzle_diameter_mm: 1, flow: 1, ref: 1, is_default_guess: 1,
 } satisfies Record<keyof ProfileVariantOption, 1>;
 const MODEL_TARGET = {
-  model_uuid: 1, model_label: 1, print_profile: 1, filament_profile: 1, filament_id: 1, material_provider: 1, material_ref: 1,
-  filament_type: 1, filament_color: 1, filament_map: 1,
+  model_uuid: 1, model_label: 1, print_profile: 1, filament_profile: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, filament_map: 1,
 } satisfies Record<keyof ApiModelTarget, 1>;
 
 const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;

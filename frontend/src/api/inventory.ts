@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from './client';
 import { featuresOf, useCapabilityProvider, type PluginSummary } from './plugins';
-import { askBinding, slotBinding, type LoadedFilament } from './printers';
+import { slotBinding, type LoadedFilament } from './printers';
 
 export const INVENTORY_CAPABILITY = 'inventory.filament';
 
@@ -15,7 +15,8 @@ export const CAP = {
 export interface InvMaterial {
   ref: string;
   name: string;
-  material: string | null;
+  material: string | null;           // the BASE type only ("PLA"); the variant is `subtype`
+  subtype: string | null;            // "standard" (plain), "plus", "silk", "cf"...; null only when `material` is null
   color_hex: string | null;          // "#RRGGBB"
   vendor: string | null;
   density: number | null;
@@ -182,7 +183,10 @@ export function slotPatchForSpool(
   const profiles = printerPreset ? profileLinks(spool.material)[printerPreset] ?? null : null;
   return {
     inventory: { provider, spool_ref: spool.ref },
+    // The slot keeps its own copy of the material's tuple (matching reads only this, never the bound spool's current material).
+    manufacturer: spool.material?.vendor ?? null,
     type: spool.material?.material ?? '',
+    subtype: spool.material?.material ? spool.material.subtype ?? 'standard' : null,
     color: spool.material?.color_hex || current?.color || '',
     filament_profile: profiles?.length === 1 ? profiles[0] : (current?.filament_profile ?? null),
     name: spoolDisplayName(spool),
@@ -192,17 +196,6 @@ export function slotPatchForSpool(
 /** What a slot is bound to, only when that is the active provider's spool (a binding to another provider means nothing here). */
 export function activeSlotRef(slot: Parameters<typeof slotBinding>[0], provider: string | null): string | null {
   const b = slotBinding(slot);
-  return b && (provider === null || b.provider === provider) ? b.ref : null;
-}
-
-/** The material ask a picker produces (the provider-namespaced pair; the legacy numeric id is the server's concern). */
-export function materialAsk(m: Pick<InvMaterial, 'ref'> | null, provider: string | null): { filament_id: null; material_provider: string | null; material_ref: string | null } {
-  return { filament_id: null, material_provider: m && provider ? provider : null, material_ref: m ? m.ref : null };
-}
-
-/** The material ref a stored ask names, only when it belongs to the active provider (a ref means nothing to another one). */
-export function askRef(ask: Parameters<typeof askBinding>[0], provider: string | null): string | null {
-  const b = askBinding(ask);
   return b && (provider === null || b.provider === provider) ? b.ref : null;
 }
 

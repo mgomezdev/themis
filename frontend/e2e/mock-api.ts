@@ -9,10 +9,10 @@ const U1 = {
   awaiting_plate_clear: false, progress: 0, remaining_time: 0,
   temperatures: { nozzle: 27, bed: 25, extruders: [{index:0,temp:27},{index:1,temp:27},{index:2,temp:28},{index:3,temp:28}] },
   loaded_filaments: [
-    { slot: 0, filament_id: null, name: 'PLA White', type: 'PLA', color: '#ffffff', filament_profile: 'Generic PLA @System' },
-    { slot: 1, filament_id: null, name: 'PETG Black', type: 'PETG', color: '#000000', filament_profile: 'Generic PETG @System' },
-    { slot: 2, filament_id: null, name: 'TPU Green', type: 'TPU', color: '#00ff00', filament_profile: 'Generic TPU @System' },
-    { slot: 3, filament_id: null, name: 'PLA Blue', type: 'PLA', color: '#0000ff', filament_profile: 'Generic PLA @System' },
+    { slot: 0, filament_id: null, name: 'PLA White', type: 'PLA', subtype: 'standard', manufacturer: null, color: '#ffffff', filament_profile: 'Generic PLA @System' },
+    { slot: 1, filament_id: null, name: 'PETG Black', type: 'PETG', subtype: 'standard', manufacturer: null, color: '#000000', filament_profile: 'Generic PETG @System' },
+    { slot: 2, filament_id: null, name: 'TPU Green', type: 'TPU', subtype: 'standard', manufacturer: null, color: '#00ff00', filament_profile: 'Generic TPU @System' },
+    { slot: 3, filament_id: null, name: 'PLA Blue', type: 'PLA', subtype: 'standard', manufacturer: null, color: '#0000ff', filament_profile: 'Generic PLA @System' },
   ],
 };
 const MONO = {

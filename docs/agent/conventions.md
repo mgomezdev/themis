@@ -31,10 +31,14 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   take is 422'd for that explicit printer/model and never materialized onto it, and a config that slipped through
   blocks (never fails) at claim. A staged copy, and `LibraryScanner.unique_path`'s "name (2)" collision rename, keep the
   full `.gcode.3mf` suffix. A job on an archive must name a plate the archive has (422 otherwise).
-- **filament_profile vs filament ask**: `job_printer_configs.filament_type/color` is the *ask* (matched
-  for eligibility). The OrcaSlicer filament *preset* used for slicing comes from the matched
-  `printer.loaded_filaments` slot's `filament_profile` (the config's own `filament_profile` is a legacy
-  fallback). Don't conflate them.
+- **filament_profile vs filament ask**: `job_printer_configs.ask_*` (manufacturer/type/subtype/color) is the *ask* (matched
+  for eligibility; undefined = NULL, never the string `"any"`; `ask_subtype="any"` is a real wildcard value). The OrcaSlicer filament
+  *preset* used for slicing comes from the matched `printer.loaded_filaments` slot's `filament_profile` (the operator picks it per
+  slot; the config's own `filament_profile` is an optional override). Don't conflate them.
+- **A mismatch never blocks**: a job whose filament no printer has stays `queued` (the engine skips it for a printer that cannot supply
+  it; the job detail's `filament_match.reasons` say why). Only a filament removed *after* the claim is a slice failure (`blocked`).
+  Matching is `filament_matching.evaluate` for the single ask, every `filament_map` colour and pinned `tool_index` alike; the chosen
+  slots are stored on the config (`slot_plan`) at claim and slicing + deduction follow that plan.
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads
   `self._bed_leveling` etc. `StartPrintOptions` carries only `plate_id/gcode_path/ams_mapping` reliably.
 - **Dormant printers (BIZ-251)**: a printer whose plugin is disabled or removed keeps its row and identity, shows `dormant` in
