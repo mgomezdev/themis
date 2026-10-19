@@ -56,6 +56,15 @@ def split_type(raw) -> tuple[str | None, str | None]:
     return base, _SUFFIX_ALIASES.get(suffix.casefold(), suffix.casefold())
 
 
+def canon_subtype(raw, default: str | None = STANDARD) -> str | None:
+    """A reported variant text as a subtype ("Basic" -> standard, "Silk" -> silk, "+" -> plus; unknown text kept lower-cased).
+    Blank gives `default`."""
+    text = clean(raw)
+    if not text:
+        return default
+    return _SUFFIX_ALIASES.get(text.casefold(), text.casefold())
+
+
 @dataclass(frozen=True)
 class FilamentTuple:
     manufacturer: str | None = None

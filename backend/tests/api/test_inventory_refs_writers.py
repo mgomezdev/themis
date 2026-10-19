@@ -75,6 +75,19 @@ async def test_an_ams_report_preserves_every_themis_owned_slot_key(client, creat
     assert "inventory" not in s1 and not s1.get("spoolman_spool_id")                      # a new slot starts unbound
 
 
+async def test_an_ams_report_replaces_the_whole_tuple_hardware_wins(client, create_printer, session_factory):
+    pid = await create_printer(loaded_filaments=[
+        {"slot": 0, "type": "PLA", "subtype": "silk", "manufacturer": "Acme", "color": "#FF0000", "spoolman_spool_id": "7"}])
+    printer_manager.set_session_factory(session_factory)
+    printer_manager._on_state_broadcast = None
+
+    await printer_manager.on_ams_change(pid, [{"slot": 0, "type": "PETG", "subtype": "standard", "manufacturer": None, "color": "#00FF00"}])
+
+    (s0,) = await _slots(client, pid)
+    assert (s0["manufacturer"], s0["type"], s0["subtype"], s0["color"]) == (None, "PETG", "standard", "#00FF00")
+    assert s0["inventory"] == INV7                                                       # only the Themis-owned links survive
+
+
 async def test_laminus_confirm_remap_keeps_the_inventory_binding_it_spreads(client, create_printer):
     from tests.api.test_laminus_api import _confirm, _park, _pending
     pid = await create_printer(loaded_filaments=[{"slot": 0, "type": "PLA", "filament_profile": "Old PLA", "spoolman_spool_id": "7"}])

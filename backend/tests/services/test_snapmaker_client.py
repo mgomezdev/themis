@@ -109,8 +109,10 @@ def test_loaded_filaments_come_from_print_task_config_positionally():
     c._apply_status({"print_task_config": _TASK_CONFIG})
     trays = c.get_loaded_filaments()
     assert [t["slot"] for t in trays] == [0, 1, 2, 3]                       # list index == tool index
-    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "type": "", "color": "", "empty": True}   # empty tool kept as a placeholder
-    assert trays[1] == {"slot": 1, "filament_id": None, "name": "Generic PLA", "type": "PLA", "color": "#8C9099"}
+    assert trays[0] == {"slot": 0, "filament_id": None, "name": "", "manufacturer": None, "type": "", "subtype": None, "color": "",
+                        "empty": True}                                          # empty tool kept as a placeholder
+    assert trays[1] == {"slot": 1, "filament_id": None, "name": "Generic PLA", "manufacturer": None, "type": "PLA",
+                        "subtype": "standard", "color": "#8C9099"}              # "Generic" is no maker; a blank sub-type is plain
     assert trays[3]["color"] == "#519F61"
 
 
@@ -133,6 +135,18 @@ def test_task_config_notifications_merge_changed_keys_and_fire_only_on_change():
         loop.close()
     assert len(seen) == 2
     assert seen[1][1]["type"] == "PETG" and seen[1][1]["color"] == "#8C9099"                         # colour kept from the first report
+
+
+def test_tool_data_becomes_the_slot_tuple_maker_type_subtype_colour():
+    from app.plugins.snapmaker.client import _trays_from_task_config
+    cfg = {"filament_exist": [True, True, True, True], "filament_type": ["PLA", "PLA-CF", "PETG", "NONE"],
+           "filament_vendor": ["Polymaker", "Snapmaker", "NONE", "X"], "filament_sub_type": ["Silk", "", "Basic", ""],
+           "filament_color_rgba": ["FF0000FF", "00FF00FF", "0000FFFF", ""]}
+    t0, t1, t2, t3 = _trays_from_task_config(cfg)
+    assert (t0["manufacturer"], t0["type"], t0["subtype"], t0["color"]) == ("Polymaker", "PLA", "silk", "#FF0000")
+    assert (t1["manufacturer"], t1["type"], t1["subtype"]) == ("Snapmaker", "PLA", "cf")      # the variant folded into the type is kept
+    assert (t2["manufacturer"], t2["type"], t2["subtype"]) == (None, "PETG", "standard")      # "Basic" is plain; vendor NONE is unknown
+    assert t3["empty"] is True and t3["subtype"] is None                                       # type NONE = empty tool
 
 
 def test_a_tool_with_no_spool_is_not_loaded_for_the_queue():
