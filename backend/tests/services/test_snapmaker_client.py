@@ -150,23 +150,32 @@ def test_tool_data_becomes_the_slot_tuple_maker_type_subtype_colour():
 
 
 def test_a_tool_with_no_spool_is_not_loaded_for_the_queue():
-    from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
+    from app.services.filament_matching import evaluate
     from app.plugins.snapmaker.client import _trays_from_task_config
     loaded = _trays_from_task_config(_TASK_CONFIG)
-    cfg = MagicMock(tool_index=0, filament_type=None, filament_color=None)
-    assert _slot_for_config(cfg, loaded) is None                                                      # T0 is empty
-    assert _slot_for_config(MagicMock(tool_index=2), loaded)["type"] == "PLA"
-    assert _mapped_tools_loaded([{"tool_index": 0}], loaded) is False
-    assert _mapped_tools_loaded([{"tool_index": 1}, {"tool_index": 3}], loaded) is True
-    any_ask = MagicMock(tool_index=None, filament_type="any", filament_color="any")
-    assert _slot_for_config(any_ask, loaded)["slot"] == 1                                             # "any" skips the empty T0
+
+    def ask(**kw):
+        base = dict(ask_manufacturer=None, ask_type=None, ask_subtype=None, ask_color=None, tool_index=None, filament_map=None, slot_plan=None)
+        return MagicMock(**{**base, **kw})
+
+    assert evaluate(ask(tool_index=0), loaded).reasons == ["T0 is empty"]                              # T0 is empty
+    assert [u.slot for u in evaluate(ask(tool_index=2), loaded).plan] == [2]
+    assert [u.slot for u in evaluate(ask(), loaded).plan] == [1]                                       # defer skips the empty T0
+    pinned = [{"model_filament": 1, "tool_index": 0}]
+    assert evaluate(ask(filament_map=pinned), loaded).eligible is False
+    assert evaluate(ask(filament_map=[{"model_filament": 1, "tool_index": 1}, {"model_filament": 2, "tool_index": 3}]), loaded).eligible
 
 
 def test_a_hand_entered_slot_without_a_type_still_counts_as_loaded():
     """Only the U1's explicit empty-tool placeholder is "not loaded"; a manual slot with a blank type (e.g. from the
-    scan-spool flow) used to match "any" asks and tool_index, and must keep doing so."""
-    from app.services.queue_engine import _mapped_tools_loaded, _slot_for_config
+    scan-spool flow) still serves a pinned tool and a "defer" ask."""
+    from app.services.filament_matching import evaluate
     manual = [{"slot": 0, "type": "", "name": "", "color": "", "filament_profile": "Generic PLA"}]
-    assert _slot_for_config(MagicMock(tool_index=0), manual) is manual[0]
-    assert _slot_for_config(MagicMock(tool_index=None, filament_type="any", filament_color="any"), manual) is manual[0]
-    assert _mapped_tools_loaded([{"tool_index": 0}], manual) is True
+
+    def ask(**kw):
+        base = dict(ask_manufacturer=None, ask_type=None, ask_subtype=None, ask_color=None, tool_index=None, filament_map=None, slot_plan=None)
+        return MagicMock(**{**base, **kw})
+
+    assert [u.slot for u in evaluate(ask(tool_index=0), manual).plan] == [0]
+    assert [u.slot for u in evaluate(ask(), manual).plan] == [0]
+    assert evaluate(ask(filament_map=[{"model_filament": 1, "tool_index": 0}]), manual).eligible

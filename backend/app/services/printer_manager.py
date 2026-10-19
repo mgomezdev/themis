@@ -182,6 +182,7 @@ class PrinterManager:
                     }
                     merged = []
                     for tray in trays:
+                        tray = {**tray, "reported": True}          # hardware facts: the tuple may now conflict with a bound spool
                         prev = prev_by_slot.get(tray.get("slot"))
                         if prev is not None:
                             # Keep EVERY Themis-owned key (profile, spool binding, inventory ref), not just two named ones:

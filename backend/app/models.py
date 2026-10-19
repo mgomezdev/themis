@@ -280,6 +280,9 @@ class JobPrinterConfig(Base):
     ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # The slots chosen at claim time (`[{model_filament, slot}]`, filament_matching.SlotUse): slicing, the print and the spool
+    # deduction all follow this plan instead of re-matching a slot list that may have changed since.
+    slot_plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.

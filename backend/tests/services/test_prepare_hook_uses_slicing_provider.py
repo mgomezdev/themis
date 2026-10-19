@@ -27,7 +27,7 @@ async def _run(db, tmp_path, *, flag, tool_index=None, filament_map=None):
     async with db() as s:
         printer = await s.get(Printer, 1)
         printer.machine_profile_override = "Test Machine"
-        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""}]
+        printer.loaded_filaments = [{"filament_profile": "PLA", "type": "PLA", "color": ""} for _ in range(3)]   # T0..T2 (a pinned tool must exist)
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
         cfg.tool_index = tool_index
         cfg.filament_map = filament_map

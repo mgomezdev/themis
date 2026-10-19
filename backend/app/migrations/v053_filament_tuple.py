@@ -7,6 +7,7 @@
   (`filament_manufacturer/filament_type/filament_subtype/filament_color`).
 * `printers.loaded_filaments[]` slots get `subtype` (the type string split with the shared suffix rules; plain = standard) and
   `manufacturer` (unknown = null). Empty tool placeholders are left alone.
+* `job_printer_configs.slot_plan` (JSON): the slots chosen when a printer claims the job.
 * Jobs `blocked` only because of a filament mismatch go back to `queued` (a filament mismatch no longer blocks a job).
 Idempotent."""
 from __future__ import annotations
@@ -88,6 +89,9 @@ async def up(conn) -> None:
         if changed:
             await conn.execute(text("UPDATE orders SET parts = :p WHERE id = :i"), {"p": json.dumps(parts), "i": oid})
 
+    if "slot_plan" not in await _columns(conn, "job_printer_configs"):
+        await conn.execute(text("ALTER TABLE job_printer_configs ADD COLUMN slot_plan JSON"))
+
     for pid, slots_raw in (await conn.execute(text("SELECT id, loaded_filaments FROM printers"))).fetchall():
         slots = _loads(slots_raw, [])
         changed = False
@@ -107,6 +111,8 @@ async def up(conn) -> None:
 
 
 async def down(conn) -> None:
+    if "slot_plan" in await _columns(conn, "job_printer_configs"):
+        await conn.execute(text("ALTER TABLE job_printer_configs DROP COLUMN slot_plan"))
     for table in _TABLES:
         have = await _columns(conn, table)
         for col, _ in _COLUMNS:
