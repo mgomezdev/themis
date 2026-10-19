@@ -240,3 +240,12 @@ async def test_job_model_targets_carry_the_model_target_keys(client, upload_3mf,
         job = (await client.post("/api/v1/jobs", json={"uploaded_file_id": await upload_3mf(), "model_targets": [
             {"model_uuid": model, "print_profile": "0.2"}]})).json()
     assert_carries("model_target", (await client.get(f"/api/v1/jobs/{job['id']}/details")).json()["model_targets"][0])
+
+
+async def test_filament_match_and_slot_conflicts_carry_their_keys(client, create_job, create_printer):
+    pid = await create_printer(loaded_filaments=[{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+    job_id = await create_job(printer_id=pid, filament_type="PETG", filament_subtype="any")
+    (cfg,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert_carries("filament_match", cfg["filament_match"])
+    assert cfg["filament_match"]["reasons"], "an ineligible printer lists why (the frontend renders them)"
+    assert_carries("slot_conflicts", (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json())

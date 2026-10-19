@@ -408,7 +408,8 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
   const [machinePreset, setMachinePreset] = useState<string | null>(null);   // what the printer slices with (its model's profile)
   const [filamentProfiles, setFilamentProfiles] = useState<string[]>([]);
   const [slots, setSlots] = useState<LoadedFilament[]>([]);
-  const slotConflicts = useSlotConflicts(printerId);
+  const [stored, setStored] = useState<LoadedFilament[]>([]);      // the slots as the server holds them
+  const slotConflicts = useSlotConflicts(printerId, stored, slots);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -421,6 +422,7 @@ function FilamentPicker({ printerId, onClose, onSaved }: {
       .then(p => {
         if (alive) {
           setSlots(p.loaded_filaments ?? []);
+          setStored(p.loaded_filaments ?? []);
           setMachinePreset(p.machine_profile ?? null);
         }
       })

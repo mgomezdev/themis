@@ -120,3 +120,39 @@ async def test_down_drops_the_ask_columns_and_up_is_rerunnable(db):
         await mig.down(conn)
         cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(job_printer_configs)"))).fetchall()}
     assert not {c for c in cols if c.startswith("ask_")}
+
+
+async def test_down_writes_asks_made_since_the_upgrade_back_to_the_legacy_columns(db):
+    fmap = [{"model_filament": 1, "tool_index": None, "filament_manufacturer": "Acme", "filament_type": "PLA", "filament_subtype": "silk",
+             "filament_color": "#FF0000"}, {"model_filament": 2, "tool_index": 3}]
+    async with db.begin() as conn:
+        await mig.up(conn)
+        await conn.execute(text("UPDATE job_printer_configs SET ask_manufacturer = 'Acme', ask_type = 'PLA', ask_subtype = 'plus',"
+                                " ask_color = '#00FF00', filament_type = 'stale', filament_color = 'stale', filament_map = :m"),
+                           {"m": json.dumps(fmap)})
+        await conn.execute(text("UPDATE project_items SET ask_manufacturer = NULL, ask_type = NULL, ask_subtype = NULL, ask_color = NULL,"
+                                " filament_type = 'stale', filament_color = 'stale'"))
+        await mig.down(conn)
+    async with db.connect() as conn:
+        (cfg,) = await _rows(conn, "SELECT filament_type, filament_color, filament_map FROM job_printer_configs")
+        (item,) = await _rows(conn, "SELECT filament_type, filament_color FROM project_items")
+    assert (cfg["filament_type"], cfg["filament_color"]) == ("PLA+", "#00FF00")
+    assert (item["filament_type"], item["filament_color"]) == ("any", "any")             # undefined = the legacy "any"
+    assert json.loads(cfg["filament_map"]) == [{"model_filament": 1, "tool_index": None, "filament_type": "PLA-silk",
+                                                "filament_color": "#FF0000"}, {"model_filament": 2, "tool_index": 3}]
+
+
+@pytest.mark.parametrize("ask,legacy", [(("PETG", "any", None), ("PETG", "any")), (("PETG", "standard", "#000"), ("PETG", "#000")),
+                                        ((None, None, "#123456"), ("any", "#123456")), (("PA", "cf", None), ("PA-cf", "any"))])
+def test_a_tuple_folds_into_the_legacy_type_string(ask, legacy):
+    assert mig._legacy_pair(*ask) == legacy
+
+
+async def test_down_keeps_the_legacy_value_of_a_row_not_touched_since_the_upgrade(db):
+    async with db.begin() as conn:
+        await conn.execute(text("UPDATE job_printer_configs SET filament_type = 'PLA+', filament_color = 'FFFFFF'"))
+        await mig.up(conn)                                   # ask = PLA / any / FFFFFF (broader than "PLA+")
+        await mig.down(conn)
+        await mig.down(conn)                                 # a second rollback is harmless
+        (cfg,) = await _rows(conn, "SELECT filament_type, filament_color FROM job_printer_configs")
+    assert (cfg["filament_type"], cfg["filament_color"]) == ("PLA+", "FFFFFF")

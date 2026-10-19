@@ -41,6 +41,8 @@ def test_an_undefined_ask_part_is_satisfied_by_an_unknown_slot_value():
 @pytest.mark.parametrize("raw,expected", [
     ("PLA", ("PLA", STANDARD)), ("PLA+", ("PLA", "plus")), ("PLA-CF", ("PLA", "cf")), ("PLA Silk", ("PLA", "silk")),
     ("petg gf", ("petg", "gf")), ("PLA Matte", ("PLA", "matte")), ("PA12-CF", ("PA12", "cf")), ("PLA Plus", ("PLA", "plus")),
+    ("PC-ABS", ("PC-ABS", STANDARD)), ("PC ABS", ("PC ABS", STANDARD)), ("PLA/PETG", ("PLA/PETG", STANDARD)),   # a blend is one type
+    ("PETG-CF", ("PETG", "cf")), ("ABS+", ("ABS", "plus")),
     ("", (None, None)), (None, (None, None)), ("  abs  ", ("abs", STANDARD)),
 ])
 def test_split_type_suffix_rules(raw, expected):

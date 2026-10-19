@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PerPrinterConfig, defaultPerPrinterCfg } from './PerPrinterConfig';
 import * as inventoryApi from '../api/inventory';
@@ -85,6 +85,19 @@ describe('PerPrinterConfig', () => {
     expect(await screen.findByTestId('filament-match')).toHaveTextContent('Any loaded filament');
     fireEvent.change(screen.getByTestId('filament-ask-manufacturer'), { target: { value: 'Acme' } });
     expect(onChange).toHaveBeenCalledWith({ ...NO_ASK_CFG, filamentManufacturer: 'Acme' });
+  });
+
+  it('the chip skips a slot the server reports in conflict with its bound spool, as the queue does', async () => {
+    const stubConflicts = (conflicts: number[]) => vi.stubGlobal('fetch', vi.fn(async (url: string) =>
+      new Response(JSON.stringify(url.endsWith('/slot-conflicts') ? { conflicts } : []), { status: 200 })));
+    const config = { ...defaultPerPrinterCfg(), filamentType: 'PLA', filamentSubtype: 'any' };
+    stubConflicts([0]);
+    const { unmount } = render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()} config={config} />);
+    await waitFor(() => expect(screen.getByTestId('filament-match')).toHaveTextContent(/nothing loaded matches PLA/));
+    unmount();
+    stubConflicts([]);
+    render(<PerPrinterConfig printerId="3" printers={[MULTI as any]} onChange={vi.fn()} config={config} />);
+    await waitFor(() => expect(screen.getByTestId('filament-match')).toHaveTextContent('✓ T0'));
   });
 
   it('the chip names the lowest matching slot using the whole tuple, and warns (job waits) when nothing matches', async () => {

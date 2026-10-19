@@ -67,8 +67,9 @@ def normalize_slot(slot: dict, previous: dict | None = None) -> dict:
     the stored slot: an edited `inventory` wins (new client); otherwise an edited legacy key wins (old client, which also
     echoes the stale `inventory` it read); otherwise nothing changed and the stored binding is kept."""
     out = _slot_tuple_keys(dict(slot))
-    if previous and previous.get("reported") and "reported" not in out:
-        out["reported"] = True                      # a client that does not echo the flag must not turn a reported slot into a hand-entered one
+    out.pop("reported", None)                       # hardware-owned: a client can neither claim nor clear it (only the telemetry merge sets it)
+    if previous and previous.get("reported"):
+        out["reported"] = True                      # a client edit must not turn a reported slot into a hand-entered one
     prev_inv = slot_inventory(previous)
     prev_legacy = (previous or {}).get(LEGACY_SLOT_KEY)
     legacy = slot.get(LEGACY_SLOT_KEY)

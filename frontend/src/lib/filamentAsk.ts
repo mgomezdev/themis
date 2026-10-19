@@ -29,6 +29,8 @@ const SUFFIX: Record<string, string> = {
   'carbon fiber': 'cf', carbon: 'cf', 'glass fiber': 'gf', glass: 'gf', 'high flow': 'hf',    // same aliases as the server's split_type
 };
 
+const BASE_TYPES = new Set(['pla', 'petg', 'pet', 'abs', 'asa', 'pc', 'pa', 'tpu', 'hips', 'pp', 'pva', 'pps', 'pei', 'pctg']);   // as the server's
+
 /** "PLA+" -> PLA/plus, "PLA-CF" -> PLA/cf, "PLA Silk" -> PLA/silk, plain -> standard (same suffix rules as the server). */
 export function splitType(raw: string | null | undefined): { type: string | null; subtype: string | null } {
   const text = clean(raw);
@@ -38,6 +40,7 @@ export function splitType(raw: string | null | undefined): { type: string | null
   else { const m = text.split(/[\s_/-]+/); base = m[0]; suffix = m.slice(1).join(' ').trim(); }
   if (!base) return { type: text, subtype: STANDARD };
   if (!suffix) return { type: base, subtype: STANDARD };
+  if (BASE_TYPES.has(base.toLowerCase()) && BASE_TYPES.has(suffix.toLowerCase())) return { type: text, subtype: STANDARD };   // a blend (PC-ABS) is one type
   return { type: base, subtype: SUFFIX[suffix.toLowerCase()] ?? suffix.toLowerCase() };
 }
 

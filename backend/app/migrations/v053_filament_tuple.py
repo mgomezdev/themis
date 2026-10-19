@@ -8,6 +8,8 @@
 * `printers.loaded_filaments[]` slots get `subtype` (the type string split with the shared suffix rules; plain = standard) and
   `manufacturer` (unknown = null). Empty tool placeholders are left alone.
 * `job_printer_configs.slot_plan` (JSON): the slots chosen when a printer claims the job.
+* down() writes the tuple back into the legacy `filament_type`/`filament_color` (and the map / order-part keys) before dropping the new
+  columns, so a rollback keeps every ask made since the upgrade (a tuple's subtype folds into the legacy type string; manufacturer is lost).
 * Jobs `blocked` only because of a filament mismatch go back to `queued` (a filament mismatch no longer blocks a job).
 Idempotent."""
 from __future__ import annotations
@@ -110,7 +112,45 @@ async def up(conn) -> None:
                        {f"r{i}": r for i, r in enumerate(_FILAMENT_BLOCK_REASONS)})
 
 
+def _legacy_pair(ask_type, ask_subtype, ask_color) -> tuple[str, str]:
+    """A tuple ask as the pre-tuple (type string, colour): undefined = "any"; subtype any/standard folds away, plus -> "PLA+"."""
+    if not ask_type:
+        return "any", ask_color or "any"
+    sub = (ask_subtype or "").casefold()
+    legacy = ask_type if sub in ("", "any", "standard") else f"{ask_type}+" if sub == "plus" else f"{ask_type}-{ask_subtype}"
+    return legacy, ask_color or "any"
+
+
+def _restore_keys(entry: dict) -> bool:
+    if not isinstance(entry, dict) or entry.get("tool_index") is not None or "filament_subtype" not in entry:
+        return False
+    entry["filament_type"], entry["filament_color"] = _legacy_pair(entry.get("filament_type"), entry.pop("filament_subtype"),
+                                                                    entry.get("filament_color"))
+    entry.pop("filament_manufacturer", None)
+    return True
+
+
 async def down(conn) -> None:
+    for table in _TABLES:
+        have = await _columns(conn, table)
+        if "ask_type" in have:
+            for row_id, aman, atype, asub, acolor, ltype, lcolor in (await conn.execute(text(
+                    f"SELECT id, ask_manufacturer, ask_type, ask_subtype, ask_color, filament_type, filament_color FROM {table}"))).fetchall():
+                if (aman, atype, asub, acolor) == tuple(ask_from_legacy(ltype, lcolor).__dict__.values()):
+                    continue                    # untouched since up(): the legacy value is the better (lossless) history
+                ftype, fcolor = _legacy_pair(atype, asub, acolor)
+                await conn.execute(text(f"UPDATE {table} SET filament_type = :t, filament_color = :c WHERE id = :i"),
+                                   {"t": ftype, "c": fcolor, "i": row_id})
+        if "filament_map" in have:
+            for row_id, raw in (await conn.execute(text(f"SELECT id, filament_map FROM {table} WHERE filament_map IS NOT NULL"))).fetchall():
+                entries = _loads(raw, [])
+                if any([_restore_keys(e) for e in entries]):
+                    await conn.execute(text(f"UPDATE {table} SET filament_map = :m WHERE id = :i"), {"m": json.dumps(entries), "i": row_id})
+    for oid, parts_raw in (await conn.execute(text("SELECT id, parts FROM orders"))).fetchall():
+        parts = _loads(parts_raw, [])
+        if any([_restore_keys(p) for p in parts]):
+            await conn.execute(text("UPDATE orders SET parts = :p WHERE id = :i"), {"p": json.dumps(parts), "i": oid})
+
     if "slot_plan" in await _columns(conn, "job_printer_configs"):
         await conn.execute(text("ALTER TABLE job_printer_configs DROP COLUMN slot_plan"))
     for table in _TABLES:

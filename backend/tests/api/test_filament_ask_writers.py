@@ -168,21 +168,46 @@ async def test_an_unmatched_job_stays_queued_and_the_details_still_load(client, 
     assert (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["status"] == "queued"
 
 
-async def test_a_conflicting_slot_is_named_in_the_reasons_and_listed_by_the_printer(client, create_job, create_printer):
+async def _mark_reported(session_factory, printer_id):
+    """What the telemetry merge does (a client cannot): flag every slot as hardware-reported."""
+    from app.models import Printer
+    async with session_factory() as s:
+        printer = await s.get(Printer, printer_id)
+        printer.loaded_filaments = [{**slot, "reported": True} for slot in printer.loaded_filaments]
+        await s.commit()
+
+
+async def test_a_conflicting_slot_is_named_in_the_reasons_and_listed_by_the_printer(client, create_job, create_printer, session_factory):
     from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
     from tests.fake_providers import FakeInventoryProvider
     from tests.inventory_helpers import use_provider
     silk = InvMaterial(ref="m1", name="x", material="PLA", subtype="silk", color_hex="#FF0000", vendor="Acme")
     await use_provider(FakeInventoryProvider(spools=[InvSpool(ref="9", material_ref="m1", material=silk)]), plugin_id="spoolman")
-    slots = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "reported": True,
+    slots = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000",
               "inventory": {"provider": "spoolman", "spool_ref": "9"}}]
     pid = await create_printer(loaded_filaments=slots)
+    assert (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json() == {"conflicts": []}     # hand-entered: never in conflict
+    await _mark_reported(session_factory, pid)
     job_id = await create_job(printer_id=pid, filament_type="PLA", filament_subtype="any")
     (cfg,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
     assert cfg["filament_match"]["eligible"] is False
     assert cfg["filament_match"]["reasons"] == ["T0: bound spool conflicts with what the printer reports"]
     assert (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json() == {"conflicts": [0]}
     assert (await client.get("/api/v1/printers/999/slot-conflicts")).status_code == 404
+
+
+async def test_a_client_cannot_mark_a_slot_hardware_reported(client, create_printer, session_factory):
+    from app.models import Printer
+    slot = {"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "reported": True}
+    pid = await create_printer(loaded_filaments=[slot])
+    async with session_factory() as s:
+        assert "reported" not in (await s.get(Printer, pid)).loaded_filaments[0]
+    await _mark_reported(session_factory, pid)
+    edited = {**slot, "color": "#00FF00", "reported": False}                        # an operator edit of a telemetry slot
+    assert (await client.patch(f"/api/v1/printers/{pid}", json={"loaded_filaments": [edited]})).status_code == 200
+    async with session_factory() as s:
+        stored = (await s.get(Printer, pid)).loaded_filaments[0]
+    assert stored["reported"] is True and stored["color"] == "#00FF00"
 
 
 async def test_clearing_a_project_items_type_with_the_legacy_any_also_drops_its_subtype(client, project, upload_3mf):

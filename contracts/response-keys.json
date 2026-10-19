@@ -471,5 +471,13 @@
     "filament_subtype",
     "filament_color",
     "filament_map"
+  ],
+  "filament_match": [
+    "eligible",
+    "slots",
+    "reasons"
+  ],
+  "slot_conflicts": [
+    "conflicts"
   ]
 }
