@@ -23,13 +23,13 @@ from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file
 from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
-from ...services import model_targets, scheduling, slicer_profiles
+from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
 from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
 from ...plugins.capabilities.filament_inventory import InvSpool
-from ._materials import material_columns, stored
+from ._filament_ask import AskFields, ask_columns, ask_out, type_labels
 from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.contract import OverrideInspection, PlateEstimate
@@ -65,56 +65,35 @@ router = APIRouter(prefix="/api/v1/jobs", tags=["jobs"])
 _CANCELLABLE_STATUSES = {"queued", "blocked", "slicing", "sliced", "uploading", "printing", "paused", "failed"}
 
 
-class FilamentMapEntry(BaseModel):
+class FilamentMapEntry(AskFields):
+    """One model color: pinned to a tool slot (`tool_index`), or a tuple ask (`filament_*`) resolved against the printer's slots."""
     model_filament: int | None = None
     tool_index: int | None = None
-    filament_id: int | None = None
-    filament_type: str | None = None
-    filament_color: str | None = None
 
 
-class PrinterConfigInput(BaseModel):
+class PrinterConfigInput(AskFields):
     printer_id: int
     print_profile: str = ""   # OrcaSlicer process preset; not used for pre-sliced (.gcode / .gcode.3mf) jobs
     filament_profile: str | None = None
-    filament_id: int | None = None          # legacy filament id; or send material_ref (+ material_provider)
-    material_provider: str | None = None
-    material_ref: str | None = None
-    filament_type: str
-    filament_color: str
     tool_index: int | None = None
     filament_map: list[dict] | None = None
 
     @field_validator("filament_map")
     @classmethod
     def _validate_filament_map(cls, v: list[dict] | None) -> list[dict] | None:
-        """Reject malformed entries (e.g. non-dict items, non-numeric tool_index)
+        """Reject malformed entries (e.g. non-dict items, non-numeric tool_index, a type without a subtype)
         at creation time instead of letting them poison the queue engine later."""
         if v is None:
             return None
         return [FilamentMapEntry.model_validate(e).model_dump() for e in v]
 
-    @field_validator("filament_type", "filament_color")
-    @classmethod
-    def _validate_filament_ask(cls, v: str) -> str:
-        """"any" is the only way to express "no preference" — null/blank is no
-        longer accepted here (filament_map entries are unaffected by this rule)."""
-        if not v or not v.strip():
-            raise ValueError('must be "any" or a specific value, not null/blank')
-        return v
 
-
-class ModelTargetInput(BaseModel):
+class ModelTargetInput(AskFields):
     """Eligible on *any* printer of the registry model `model_uuid` (BIZ-294).
     No `tool_index` / slot-based `filament_map`: slot numbers differ from printer to printer."""
     model_uuid: str
     print_profile: str = ""
     filament_profile: str | None = None
-    filament_id: int | None = None
-    material_provider: str | None = None
-    material_ref: str | None = None
-    filament_type: str = "any"
-    filament_color: str = "any"
     filament_map: list[dict] | None = None
 
     @field_validator("model_uuid")
@@ -133,13 +112,6 @@ class ModelTargetInput(BaseModel):
         if any(e.get("tool_index") is not None for e in entries):
             raise ValueError("tool_index is printer-specific and can't be used with a make/model target")
         return entries
-
-    @field_validator("filament_type", "filament_color")
-    @classmethod
-    def _validate_filament_ask(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError('must be "any" or a specific value, not null/blank')
-        return v
 
 
 def _apply_gcode_estimate(job: Job, uploaded_file: UploadedFile) -> None:
@@ -262,9 +234,7 @@ async def _require_known_models(session: AsyncSession, targets: list[ModelTarget
             raise HTTPException(422, f"Unknown printer model {t.model_uuid!r}")
 
 
-def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput],
-                 previous: dict[str, tuple] | None = None) -> None:
-    """`previous`: stored material asks by model_uuid (when an edit replaces the targets)."""
+def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetInput]) -> None:
     for t in targets:
         session.add(JobModelTarget(
             job_id=job_id,
@@ -273,9 +243,7 @@ def _add_targets(session: AsyncSession, job_id: int, targets: list[ModelTargetIn
             # Only a real preset: "any"/a bare type here would be sent to the slicer as a preset name. Left unset,
             # each printer's loaded slot supplies the preset.
             filament_profile=t.filament_profile or None,
-            **material_columns(t.filament_id, t.material_provider, t.material_ref, (previous or {}).get(t.model_uuid)),
-            filament_type=t.filament_type,
-            filament_color=t.filament_color,
+            **ask_columns(t),
             filament_map=t.filament_map,
         ))
 
@@ -488,9 +456,7 @@ async def create_job(
             printer_id=cfg.printer_id,
             print_profile=cfg.print_profile,
             filament_profile=cfg.filament_profile,
-            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref),
-            filament_type=cfg.filament_type,
-            filament_color=cfg.filament_color,
+            **ask_columns(cfg),
             tool_index=cfg.tool_index,
             filament_map=cfg.filament_map,
         )
@@ -611,7 +577,7 @@ async def list_jobs(session: AsyncSession = Depends(get_session)) -> list[dict]:
             select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
         )
         configs = cfg_result.scalars().all()
-        materials = sorted({c.filament_type for c in configs if c.filament_type})
+        materials = type_labels(configs)
         eligible_printers = []
         for c in configs:
             p = await session.get(Printer, c.printer_id)
@@ -718,12 +684,18 @@ async def get_job_details(
 
     # Resolve each config's loaded-filament slot up front so we know whether a
     # inventory lookup is needed at all, and so we only ever fetch spools once.
-    resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None]] = []
+    resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None, filament_matching.Verdict]] = []
     spool_ids_needed: set[str] = set()
+    conflicts_by_printer: dict[int, set[int]] = {}                  # one provider read per printer, not per config
     for cfg in configs:
         p = await session.get(Printer, cfg.printer_id)
-        slot = _slot_for_config(cfg, (p.loaded_filaments if p else None) or []) if p else None
-        resolved.append((cfg, p, slot))
+        loaded = (p.loaded_filaments if p else None) or []
+        if p and p.id not in conflicts_by_printer:
+            conflicts_by_printer[p.id] = await filament_matching.conflicts_for(loaded)
+        conflicts = conflicts_by_printer.get(p.id, set()) if p else set()
+        fit = filament_matching.evaluate(cfg, loaded, conflicts)                  # why this printer does / does not match
+        slot = _slot_for_config(cfg, loaded, conflicts) if p else None
+        resolved.append((cfg, p, slot, fit))
         if inventory_refs.slot_spool_ref(slot) is not None:
             spool_ids_needed.add(inventory_refs.slot_spool_ref(slot))
 
@@ -732,7 +704,7 @@ async def get_job_details(
         spools_by_id = await inventory_read.spools_by_ref(f"job {job_id}")
 
     printer_configs = []
-    for cfg, p, slot in resolved:
+    for cfg, p, slot, fit in resolved:
         spool_warning = None
         if inventory_refs.slot_spool_ref(slot) is not None:
             spool = spools_by_id.get(inventory_refs.slot_spool_ref(slot))
@@ -744,15 +716,13 @@ async def get_job_details(
             "printer_type": p.printer_type if p else "unknown",
             "print_profile": cfg.print_profile,
             "filament_profile": cfg.filament_profile,
-            "filament_id": cfg.filament_id,
-            "material_provider": cfg.material_provider,
-            "material_ref": cfg.material_ref,
-            "filament_type": cfg.filament_type,
-            "filament_color": cfg.filament_color,
+            **ask_out(cfg),
             "tool_index": cfg.tool_index,
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
+            # Does the printer's loaded filament satisfy the ask right now? `reasons` is one line per slot that does not.
+            "filament_match": {"eligible": fit.eligible, "slots": [u.slot for u in fit.plan], "reasons": fit.reasons},
             "from_model_target": cfg.model_target_id is not None,
             "low_stock_warning": spool_warning,
         })
@@ -883,12 +853,6 @@ async def update_job_configs(
     await _check_version_printers(
         session, await _cached_version_of(session, edited_file), body.printer_configs, body.model_targets)
 
-    # Remember the stored material asks: an old client echoes the whole object back with a stale `material_ref`.
-    prev_cfg = {c.printer_id: stored(c) for c in (await session.execute(
-        select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalars()}
-    prev_target = {t.model_uuid: stored(t) for t in (await session.execute(
-        select(JobModelTarget).where(JobModelTarget.job_id == job_id))).scalars()}
-
     # Configs first (they reference the targets), then the targets themselves.
     await session.execute(delete(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))
     await session.execute(delete(JobModelTarget).where(JobModelTarget.job_id == job_id))
@@ -905,18 +869,15 @@ async def update_job_configs(
             job_id=job_id,
             printer_id=cfg.printer_id,
             print_profile=cfg.print_profile,
-            # Mirror the New Job convention: manual filaments store the type as the
-            # profile name. Never null — legacy DBs have a NOT NULL constraint here.
-            filament_profile=cfg.filament_profile or cfg.filament_type or "",
-            **material_columns(cfg.filament_id, cfg.material_provider, cfg.material_ref, prev_cfg.get(cfg.printer_id)),
-            filament_type=cfg.filament_type,
-            filament_color=cfg.filament_color,
+            # Never null — legacy DBs have a NOT NULL constraint here. Blank = the matched slot's preset supplies it.
+            filament_profile=cfg.filament_profile or "",
+            **ask_columns(cfg),
             tool_index=cfg.tool_index,
             filament_map=cfg.filament_map,
             slice_failed=False,
             slice_error=None,
         ))
-    _add_targets(session, job_id, body.model_targets, prev_target)
+    _add_targets(session, job_id, body.model_targets)
     await session.flush()
     await model_targets.materialize_job(session, job_id)
 
@@ -1072,6 +1033,7 @@ def _build_slice_request(
     loaded = printer.loaded_filaments or []
     slot = _slot_for_config(config, loaded)
     filament_profile = config.filament_profile or (slot or {}).get("filament_profile") or None
+    colour = (slot or {}).get("color") or config.ask_color            # preview only: the colour of what is actually loaded
 
     stem = os.path.splitext(os.path.basename(uploaded_file.original_filename or "model"))[0]
     safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
@@ -1101,7 +1063,7 @@ def _build_slice_request(
         machine_preset=machine_preset,
         process_preset=config.print_profile,
         filament_presets=filament_presets,
-        filament_colours=[config.filament_color] if config.filament_color else [],
+        filament_colours=[colour] if colour else [],
         export_args=export_args,
         prepare_hook=prepare_hook,
         extra_config=plate_config,
@@ -1283,13 +1245,13 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     # Wear counters and the spool deduction run from the durable `job.complete` event written in this transaction.
-    inventory_use = None
+    inventory_use: list[dict] = []
+    deduction_notes: list[str] = []
     if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
-        slot = _slot_for_config(config, printer.loaded_filaments or [])
-        raw_spool_id = inventory_refs.slot_spool_ref(slot) if slot is not None else None
-        if raw_spool_id is not None:
-            inventory_use = {"spool_ref": str(raw_spool_id), "grams": grams}
-    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use)
+        inventory_use, deduction_notes = inventory_deduction.completion_uses(
+            config, printer.loaded_filaments or [], grams, job.actual_filament_breakdown)
+    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use,
+                                                 deduction_notes=deduction_notes)
 
     await session.commit()
     await session.refresh(job)

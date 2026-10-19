@@ -195,14 +195,13 @@ async def _set_filament(db, job_id, printer_id, req_type, req_color, loaded):
         cfg = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job_id,
             JobPrinterConfig.printer_id == printer_id))).scalar_one()
-        cfg.filament_type = req_type
-        cfg.filament_color = req_color
+        cfg.ask_type, cfg.ask_subtype, cfg.ask_color = req_type, "standard", req_color
         (await session.get(Printer, printer_id)).loaded_filaments = loaded
         await session.commit()
 
 
 @pytest.mark.asyncio
-async def test_filament_mismatch_blocks_job(db):
+async def test_filament_mismatch_keeps_the_job_queued_never_blocked(db):
     mgr = _make_mock_printer_manager([1])
     qe = QueueEngine(db, mgr, MagicMock())
     job_id = await _seed_job(db, printer_id=1)
@@ -213,8 +212,7 @@ async def test_filament_mismatch_blocks_job(db):
 
     async with db() as session:
         job = await session.get(Job, job_id)
-        assert job.status == "blocked"
-        assert "filament" in (job.block_reason or "").lower()
+        assert (job.status, job.block_reason) == ("queued", None)
 
 
 @pytest.mark.asyncio
@@ -234,6 +232,80 @@ async def test_filament_match_allows_claim(db, tmp_path):
 
     async with db() as session:
         assert (await session.get(Job, job_id)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_claim_stores_the_chosen_slots_as_the_configs_plan(db, tmp_path):
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [
+        {"slot": 0, "type": "PLA", "subtype": "silk", "color": "#FF0000"},
+        {"slot": 1, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+
+    await qe._process_queue()
+    await settle_background_tasks()
+
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert (await session.get(Job, job_id)).status == "printing"
+        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]          # the ask says standard: T0 (silk) is not it
+
+
+@pytest.mark.asyncio
+async def test_a_conflicting_slot_is_not_used_but_the_printers_other_slot_prints(db, tmp_path):
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
+    silk = InvMaterial(ref="m1", name="x", material="PLA", subtype="silk", color_hex="#FF0000", vendor="Acme")
+    await use_provider(FakeInventoryProvider(spools=[InvSpool(ref="9", material_ref="m1", material=silk)]), plugin_id="spoolman")
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
+    mock_slicer.slice.return_value = gp
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    inv = {"provider": "spoolman", "spool_ref": "9"}
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [
+        # the printer reports plain PLA but the bound spool is silk: a conflict -> skipped
+        {"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "reported": True, "inventory": inv},
+        {"slot": 1, "type": "PLA", "subtype": "standard", "color": "#FF0000"}])
+
+    await qe._process_queue()
+    await settle_background_tasks()
+
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert cfg.slot_plan == [{"model_filament": None, "slot": 1}]
+
+
+@pytest.mark.asyncio
+async def test_a_filament_removed_after_the_claim_is_a_slice_failure_that_blocks(db):
+    """Not a mismatch (which keeps the job queued): the check passed, then the slot emptied before slicing."""
+    mgr = _make_mock_printer_manager([1])
+    mock_slicer = MagicMock()
+    qe = QueueEngine(db, mgr, mock_slicer)
+    _install_fake_put(qe)
+    job_id = await _seed_job(db, printer_id=1)
+    await _set_filament(db, job_id, 1, "PLA", "#FF0000", [{"slot": 0, "type": "", "color": "", "empty": True}])
+    async with db() as session:
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        cfg.slot_plan = [{"model_filament": None, "slot": 0}]                  # what the claim recorded while PLA was there
+        await session.commit()
+
+    await qe._run_slice_and_print(job_id, 1, 1)
+
+    async with db() as session:
+        job = await session.get(Job, job_id)
+        cfg = (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
+        assert job.status == "blocked" and "removed" in (job.block_reason or "")
+        assert cfg.slice_failed is True
+    mock_slicer.slice.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -290,7 +362,7 @@ async def test_print_start_marks_printer_awaiting_plate_clear(db, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
+async def test_queued_job_is_claimed_once_the_right_filament_is_loaded(db, tmp_path):
     mgr = _make_mock_printer_manager([1])
     mock_slicer = MagicMock()
     gp = str(tmp_path / "o.gcode"); Path(gp).write_text("G28")
@@ -303,7 +375,7 @@ async def test_blocked_job_unblocks_when_correct_filament_loaded(db, tmp_path):
     await qe._process_queue()
     await settle_background_tasks()
     async with db() as session:
-        assert (await session.get(Job, job_id)).status == "blocked"
+        assert (await session.get(Job, job_id)).status == "queued"
 
     # load the matching filament, then re-check
     async with db() as session:

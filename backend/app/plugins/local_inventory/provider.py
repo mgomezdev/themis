@@ -18,6 +18,7 @@ from ..capabilities.filament_inventory import (
     TRACKS_WEIGHT, WRITE_WEIGHT, FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError, MaterialDraft,
     SpoolDraft,
 )
+from ...services.filament_tuple import STANDARD
 from .settings import LocalInventorySettings
 
 _LABEL = re.compile(r"^(?:themis:)?s-([0-9]{1,18})$|^([0-9]{1,18})$", re.IGNORECASE)
@@ -44,13 +45,23 @@ def _err(message: str, status: int) -> InventoryProviderError:
     return InventoryProviderError(message, code=str(status), status=status)
 
 
+def _type_pair(material, subtype) -> tuple[str | None, str | None]:
+    """The stored (type, subtype): blank = None; a type with no subtype is plain ("standard"); a subtype needs a type."""
+    material, subtype = (material or "").strip() or None, (subtype or "").strip() or None
+    if material is None:
+        if subtype is not None:
+            raise _err("a subtype needs a material type", 422)
+        return None, None
+    return material, subtype or STANDARD
+
+
 def _material(r) -> InvMaterial:
     try:
         links = json.loads(r["profile_links"] or "{}")
     except Exception:
         links = {}
     return InvMaterial(
-        ref=str(r["id"]), name=r["name"], material=r["material"], color_hex=r["color_hex"], vendor=r["vendor"],
+        ref=str(r["id"]), name=r["name"], material=r["material"], subtype=r["subtype"], color_hex=r["color_hex"], vendor=r["vendor"],
         density=r["density"], diameter=r["diameter"],
         profile_links={k: list(v) for k, v in links.items() if isinstance(v, list)} if isinstance(links, dict) else {},
         archived=bool(r["archived"]))
@@ -156,11 +167,12 @@ class LocalInventoryProvider(FilamentInventoryProvider):
         if not (draft.name or "").strip():
             raise _err("a material needs a name", 422)
         now = _now()
+        material, subtype = _type_pair(draft.material, draft.subtype)
         async with self._factory()() as session:
             res = await session.execute(text(
-                "INSERT INTO local_inv_materials (name, material, vendor, color_hex, density, diameter, created_at, updated_at) "
-                "VALUES (:name, :material, :vendor, :color_hex, :density, :diameter, :t, :t)"),
-                {"name": draft.name.strip(), "material": draft.material, "vendor": draft.vendor, "color_hex": draft.color_hex,
+                "INSERT INTO local_inv_materials (name, material, subtype, vendor, color_hex, density, diameter, created_at, updated_at) "
+                "VALUES (:name, :material, :subtype, :vendor, :color_hex, :density, :diameter, :t, :t)"),
+                {"name": draft.name.strip(), "material": material, "subtype": subtype, "vendor": draft.vendor, "color_hex": draft.color_hex,
                  "density": draft.density, "diameter": draft.diameter, "t": now})
             await session.commit()
             return await self._one_material(session, str(res.lastrowid))
@@ -173,7 +185,11 @@ class LocalInventoryProvider(FilamentInventoryProvider):
             raise _err("a material needs a name", 422)
         mid = self._id(ref, "Material")
         async with self._factory()() as session:
-            await self._one_material(session, ref)
+            current = await self._one_material(session, ref)
+            if "material" in patch or "subtype" in patch:
+                material = patch["material"] if "material" in patch else current.material
+                subtype = patch["subtype"] if "subtype" in patch else (None if material is None else current.subtype)
+                patch = {**patch, **dict(zip(("material", "subtype"), _type_pair(material, subtype)))}
             if patch:
                 sets = ", ".join(f"{k} = :{k}" for k in patch)
                 await session.execute(text(f"UPDATE local_inv_materials SET {sets}, updated_at = :t WHERE id = :i"),

@@ -97,8 +97,9 @@ const JOB_WITH_TOOL2: queueApi.ApiJobDetails = {
       printer_type: 'snapmaker_extended',
       print_profile: '0.20mm Standard @U1',
       filament_profile: 'TPU @U1',
-      filament_id: null,
+      filament_manufacturer: null,
       filament_type: 'TPU',
+      filament_subtype: 'standard',
       filament_color: '#00ff00',
       tool_index: 2,
       from_model_target: false,
@@ -229,12 +230,58 @@ describe('EditJobScreen — isComplete relaxed (defer)', () => {
   });
 });
 
+describe('EditJobScreen — the filament ask is the stored tuple', () => {
+  const asked: queueApi.ApiJobDetails = {
+    ...JOB_WITH_TOOL2,
+    printer_configs: [{
+      ...JOB_WITH_TOOL2.printer_configs[0],
+      filament_profile: null, tool_index: null,
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#ff0000',
+    }],
+  };
+
+  it('shows the stored tuple in the editor and saves an edit of one part with the others kept', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue(asked);
+    const user = userEvent.setup();
+    renderEditJob();
+
+    expect(await screen.findByTestId('filament-ask-manufacturer')).toHaveValue('Acme');
+    expect(screen.getByTestId('filament-ask-type')).toHaveValue('PLA');
+    expect(screen.getByTestId('filament-ask-subtype')).toHaveValue('silk');
+    await user.selectOptions(screen.getByTestId('filament-ask-subtype'), 'plus');
+
+    const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+    await waitFor(() => expect(vi.mocked(queueApi.updateJobConfigs)).toHaveBeenCalled());
+    const [, configs] = vi.mocked(queueApi.updateJobConfigs).mock.calls[0];
+    expect(configs[0]).toMatchObject({ filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'plus', filament_color: '#ff0000' });
+    expect(Object.keys(configs[0]).filter(k => /material|filament_id/.test(k))).toEqual([]);
+  });
+
+  it('an undefined ask stays undefined on save (null parts, not "any")', async () => {
+    vi.mocked(queueApi.getJobDetails).mockResolvedValue({
+      ...asked,
+      printer_configs: [{ ...asked.printer_configs[0], filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null }],
+    });
+    const user = userEvent.setup();
+    renderEditJob();
+    const saveBtn = await screen.findByRole('button', { name: /Save & re-queue/i });
+    await waitFor(() => expect(saveBtn).not.toBeDisabled());
+    await user.click(saveBtn);
+    await waitFor(() => expect(vi.mocked(queueApi.updateJobConfigs)).toHaveBeenCalled());
+    expect(vi.mocked(queueApi.updateJobConfigs).mock.calls[0][1][0]).toMatchObject({
+      filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null,
+    });
+  });
+});
+
 describe('EditJobScreen — make/model targets', () => {
   const targetJob: queueApi.ApiJobDetails = {
     ...JOB_WITH_TOOL2,
     model_targets: [{
       model_uuid: 'model-u1', model_label: 'Snapmaker U1', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any', filament_map: null,
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: null, filament_map: null,
     }],
     // The materialized row for the target must not come back as an explicit printer pick.
     printer_configs: [{ ...JOB_WITH_TOOL2.printer_configs[0], tool_index: null, from_model_target: true, slice_failed: false }],
@@ -254,7 +301,7 @@ describe('EditJobScreen — make/model targets', () => {
     expect(configs).toEqual([]);
     expect(targets).toEqual([{
       model_uuid: 'model-u1', print_profile: '0.20mm Standard @U1', filament_profile: null,
-      filament_id: null, material_provider: null, material_ref: null, filament_type: 'PLA', filament_color: 'any',
+      filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: null,   // the stored tuple comes back unchanged
     }]);
   });
 });

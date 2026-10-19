@@ -40,9 +40,10 @@ HANDLER_TIMEOUT_S = 30.0
 
 
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,
-                               inventory: dict | None) -> bool:
+                               inventory: list[dict] | None, deduction_notes: list[str] | None = None) -> bool:
     """Add the durable `job.complete` event to the caller's completion transaction (no commit; call `hub.wake()` after it).
-    One logical event per job: `dedup_key = job.complete:<id>`. `inventory` = `{"spool_ref", "grams"}` or None."""
+    One logical event per job: `dedup_key = job.complete:<id>`. `inventory` = `[{"spool_ref", "grams"}]` (one per spool to deduct from; None/empty = none);
+    `deduction_notes` = what could not be tracked (no spool bound to a printing slot), shown on the job and sent as an event."""
     entities: dict[str, int | str] = {"job_id": job.id}
     if printer_id is not None:
         entities["printer_id"] = printer_id
@@ -51,7 +52,8 @@ async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int 
     if job.order_id is not None:
         entities["order_id"] = job.order_id
     envelope = EventEnvelope(name=EVENT, entities=entities, dedup_key=f"{EVENT}:{job.id}", payload={
-        "source": source, "actual_seconds": job.actual_seconds, "actual_grams": job.actual_filament_grams, "inventory": inventory})
+        "source": source, "actual_seconds": job.actual_seconds, "actual_grams": job.actual_filament_grams, "inventory": inventory or None,
+        "deduction_notes": deduction_notes or []})
     return await hub.enqueue_durable(session, envelope)
 
 
@@ -71,25 +73,30 @@ async def accrue_maintenance(envelope: EventEnvelope) -> None:
 
 
 async def deduct_inventory(envelope: EventEnvelope) -> None:
-    use = envelope.payload.get("inventory")
-    if not use:
+    raw = envelope.payload.get("inventory")
+    uses = [raw] if isinstance(raw, dict) else list(raw or [])                 # an event written before multi-spool carried one dict
+    notes = list(envelope.payload.get("deduction_notes") or [])
+    if not uses and not notes:
         return
     job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
     source = "queue" if envelope.payload.get("source") == "queue" else "manual_complete"
     factory = hub.session_factory
-    async with factory() as session:
-        job = await session.get(Job, job_id)
-        if job is None:
-            return
-        plan = await inventory_deduction.plan_completion(session, job=job, printer_id=printer_id, spool_ref=str(use["spool_ref"]),
-                                                         grams=float(use["grams"]), source=source)
-        await session.commit()
-    if plan.kind == "deferred":
-        # No start snapshot: read the weight and write the outbox row HERE, so the event is acknowledged only once the deduction is
-        # durable (a crash or a provider error before that redelivers it; the outbox-row check makes the retry safe).
-        await inventory_deduction.complete_deferred(factory, plan)
-    else:
-        inventory_deduction.after_commit(plan, factory)
+    for use in uses:
+        async with factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None:
+                return
+            plan = await inventory_deduction.plan_completion(session, job=job, printer_id=printer_id, spool_ref=str(use["spool_ref"]),
+                                                             grams=float(use["grams"]), source=source)
+            await session.commit()
+        if plan.kind == "deferred":
+            # No start snapshot: read the weight and write the outbox row HERE, so the event is acknowledged only once the deduction is
+            # durable (a crash or a provider error before that redelivers it; the outbox-row check makes the retry safe).
+            await inventory_deduction.complete_deferred(factory, plan)
+        else:
+            inventory_deduction.after_commit(plan, factory)
+    if notes:
+        await inventory_deduction.warn_untracked(factory, job_id, printer_id, notes)
 
 
 async def notify_consumers(envelope: EventEnvelope) -> None:

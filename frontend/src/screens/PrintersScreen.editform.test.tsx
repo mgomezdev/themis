@@ -61,6 +61,29 @@ describe('EditForm per-tray mapping', () => {
   });
 });
 
+describe('EditForm slot conflicts (filament matching)', () => {
+  const bound = { ...PRINTER, loaded_filaments: [
+    { slot: 0, filament_id: null, name: 'PLA', type: 'PLA', subtype: 'standard', color: '#fff', reported: true, inventory: { provider: 'spoolman', spool_ref: '9' } },
+    { slot: 1, filament_id: null, name: 'PETG', type: 'PETG', subtype: 'standard', color: '#000', reported: true, inventory: { provider: 'spoolman', spool_ref: '4' } },
+  ] };
+
+  it('flags exactly the slots the server reports as in conflict with their bound spool', async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) =>
+      url === '/api/v1/printers/7/slot-conflicts' ? new Response(JSON.stringify({ conflicts: [1] }), { status: 200 }) : base(url, init)));
+    render(<EditForm printer={bound} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    const flags = await screen.findAllByTestId('slot-conflict');
+    expect(flags).toHaveLength(1);
+    expect(flags[0].closest('.card')?.textContent).toMatch(/Slot 2/);              // slot index 1 = "Slot 2"
+  });
+
+  it('shows no flag when the server reports no conflicts', async () => {
+    render(<EditForm printer={bound} types={TYPES} onSave={() => {}} onCancel={() => {}} />);
+    await screen.findByLabelText('Filament profile for slot 1');
+    expect(screen.queryByTestId('slot-conflict')).toBeNull();
+  });
+});
+
 describe('EditForm nozzle variant (BIZ-294)', () => {
   it('replaces the per-printer make/model picker with the nozzles its model has a profile for, and saves the chosen one', async () => {
     render(<EditForm printer={PRINTER} types={TYPES} onSave={() => {}} onCancel={() => {}} />);

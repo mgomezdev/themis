@@ -62,7 +62,7 @@ def test_an_old_client_cannot_wipe_a_binding_it_cannot_see():
 
 
 def test_slots_without_a_binding_stay_free_of_inventory_keys():
-    assert refs.normalize_slot({"slot": 2, "type": "PLA"}) == {"slot": 2, "type": "PLA"}
+    assert refs.normalize_slot({"slot": 2, "type": "PLA"}) == {"slot": 2, "type": "PLA", "subtype": "standard", "manufacturer": None}
     assert "inventory" not in refs.normalize_slot({"slot": 2, "spoolman_spool_id": "", "inventory": {"provider": "", "spool_ref": ""}})
 
 
@@ -102,39 +102,21 @@ async def test_slot_spool_ref_follows_the_active_provider(session_factory):
     assert refs.slot_spool_ref(None) is None and refs.slot_spool_ref({}) is None
 
 
-# --- material asks --------------------------------------------------------------------------------------------------------------------
-
-def test_material_accepts_the_legacy_id_and_fills_the_namespaced_pair():
-    assert refs.material(12) == (12, "spoolman", "12")
-    assert refs.material(None) == (None, None, None) and refs.material(None, "spoolman", None) == (None, None, None)
+# --- slot tuple (filament matching) ---------------------------------------------------------------------------------------------------
 
 
-def test_material_ref_wins_and_only_the_legacy_provider_gets_an_integer_mirror():
-    assert refs.material(99, "spoolman", "12") == (12, "spoolman", "12")
-    assert refs.material(99, "local", "m-5") == (None, "local", "m-5")
-    assert refs.material(None, "local", "7") == (None, "local", "7")
+def test_a_written_slot_always_has_a_subtype_when_it_has_a_type():
+    out = refs.normalize_slot({"slot": 0, "type": "PLA+", "color": "#fff"})
+    assert (out["type"], out["subtype"], out["manufacturer"]) == ("PLA", "plus", None)
+    plain = refs.normalize_slot({"slot": 1, "type": "PETG"})
+    assert (plain["type"], plain["subtype"]) == ("PETG", "standard")
+    given = refs.normalize_slot({"slot": 2, "type": "PLA", "subtype": "Silk", "manufacturer": " Acme "})
+    assert (given["type"], given["subtype"], given["manufacturer"]) == ("PLA", "Silk", "Acme")      # a given subtype wins, text trimmed
 
 
-async def test_material_ref_without_a_provider_uses_the_active_one_or_is_an_error(session_factory):
-    with pytest.raises(refs.MaterialRefError, match="material_provider"):
-        refs.material(None, None, "7")
-    await use_provider(FakeInventoryProvider(), plugin_id="local")
-    assert refs.material(None, None, "7") == (None, "local", "7")
-
-
-def test_a_legacy_provider_ref_must_be_a_number():
-    with pytest.raises(refs.MaterialRefError):
-        refs.material(None, "spoolman", "abc")
-
-
-def test_a_stale_echoed_ref_does_not_undo_a_filament_id_edit_but_a_matching_one_is_a_no_op():
-    stored = (5, "spoolman", "5")
-    assert refs.material(9, "spoolman", "5", previous=stored) == (9, "spoolman", "9")        # old client edited filament_id
-    assert refs.material(5, "spoolman", "5", previous=stored) == (5, "spoolman", "5")        # unchanged echo
-    assert refs.material(None, "spoolman", "5", previous=stored) == (5, "spoolman", "5")     # new client, same ref
-    assert refs.material(9, "spoolman", "12", previous=stored) == (12, "spoolman", "12")      # a really new ref wins
-    assert refs.material(9, "spoolman", "5") == (5, "spoolman", "5")                          # no stored row: the ref wins as before
-    assert refs.material(None, previous=stored) == (None, None, None)                          # both dropped = cleared
+def test_an_empty_tool_placeholder_and_a_typeless_slot_get_no_invented_subtype():
+    assert "subtype" not in refs.normalize_slot({"slot": 0, "type": "", "empty": True})
+    assert refs.normalize_slot({"slot": 1, "type": "", "color": "#fff"}).get("subtype") is None
 
 
 def test_the_legacy_slot_key_is_an_int_after_a_rebind_when_the_ref_is_numeric():

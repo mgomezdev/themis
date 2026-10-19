@@ -14,6 +14,7 @@ from typing import Callable, ClassVar, Optional
 import paho.mqtt.client as mqtt
 
 from . import camera
+from ...services.filament_tuple import split_type
 
 from ...services.abstract_printer_client import (
     AbstractPrinterClient,
@@ -120,6 +121,11 @@ def parse_unix_list_line(line: str) -> tuple[str, int, bool, str | None] | None:
         except ValueError:
             pass
     return name, size, parts[0][0] == "d", modified
+
+
+def _has_rfid(tray: dict) -> bool:
+    """The AMS read a tag off this spool: `tray_uuid` / `tag_uid` is a non-empty, not-all-zero id (an untagged spool reports zeros)."""
+    return any(str(tray.get(k) or "").strip("0 ") for k in ("tray_uuid", "tag_uid"))
 
 
 def _as_bool(v) -> bool:
@@ -481,13 +487,20 @@ class BambuMQTTClient(AbstractPrinterClient):
                 return  # empty slot
             color8 = (tray.get("tray_color") or "").strip()
             color = f"#{color8[:6]}" if len(color8) >= 6 else "#888888"
+            base, subtype = split_type(ttype)
+            sb_base, sb_subtype = split_type(tray.get("tray_sub_brands"))   # "PLA Silk" names the variant the type alone may not
+            if sb_base and sb_base.casefold() == (base or "").casefold():
+                subtype = sb_subtype
             out.append({
                 "slot": global_id,
                 "ams_tray_id": global_id,
                 "ams_unit": unit_id,
                 "filament_id": tray.get("tray_info_idx") or None,
                 "name": (tray.get("tray_sub_brands") or ttype).strip(),
-                "type": ttype,
+                # an RFID-tagged spool (non-zero tag uid) is Bambu Lab's own; anything else the AMS cannot attribute
+                "manufacturer": "Bambu Lab" if _has_rfid(tray) else None,
+                "type": base,
+                "subtype": subtype,
                 "color": color,
             })
 

@@ -133,6 +133,7 @@ class _Clean(BaseModel):
 class MaterialIn(_Clean):
     name: str = Field(max_length=200)                        # blank -> None -> rejected: a material needs a name
     material: str | None = Field(default=None, max_length=50)
+    subtype: str | None = Field(default=None, max_length=50)
     color_hex: str | None = Field(default=None, pattern=_HEX)
     vendor: str | None = Field(default=None, max_length=200)
     density: float | None = Field(default=None, gt=0, le=100)
@@ -143,6 +144,7 @@ class MaterialPatch(_Clean):
     """Partial update: only the fields sent change; `null` clears an optional one."""
     name: str | None = Field(default=None, min_length=1, max_length=200)
     material: str | None = Field(default=None, max_length=50)
+    subtype: str | None = Field(default=None, max_length=50)
     color_hex: str | None = Field(default=None, pattern=_HEX)
     vendor: str | None = Field(default=None, max_length=200)
     density: float | None = Field(default=None, gt=0, le=100)

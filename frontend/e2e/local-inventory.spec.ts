@@ -7,7 +7,7 @@ import { mockApi } from './mock-api';
  * of a plugin's UI remains once it is disabled. A stateful fake of the plugin + inventory API stands in for the backend.
  */
 
-interface Mat { ref: string; name: string; material: string | null; vendor: string | null; color_hex: string | null; density: null; diameter: null; profile_links: null; archived: boolean }
+interface Mat { ref: string; name: string; material: string | null; subtype: string | null; vendor: string | null; color_hex: string | null; density: null; diameter: null; profile_links: null; archived: boolean }
 interface Spool { ref: string; material_ref: string; remaining_g: number | null; initial_g: number | null; location: string | null; label: string; archived: boolean }
 
 const LIB = ['TRACKS_WEIGHT', 'WRITE_WEIGHT', 'PROFILE_LINKS_READ', 'PROFILE_LINKS_WRITE', 'LABEL_SCAN', 'MANAGE_MATERIALS', 'MANAGE_SPOOLS'];
@@ -71,7 +71,7 @@ function fakeBackend() {
       if (path === '/inventory/materials' && method === 'GET') return ok(list(state.materials.filter(x => withArchived || !x.archived)));
       if (path === '/inventory/spools' && method === 'GET') return ok(list(state.spools.filter(x => withArchived || !x.archived).map(spoolOut)));
       if (path === '/inventory/materials' && method === 'POST') {
-        const mat: Mat = { ref: String(state.next++), name: body.name, material: body.material ?? null, vendor: body.vendor ?? null, color_hex: body.color_hex ?? null, density: null, diameter: null, profile_links: null, archived: false };
+        const mat: Mat = { ref: String(state.next++), name: body.name, material: body.material ?? null, subtype: body.material ? (body.subtype ?? 'standard') : null, vendor: body.vendor ?? null, color_hex: body.color_hex ?? null, density: null, diameter: null, profile_links: null, archived: false };
         state.materials.push(mat);
         return ok(material(mat), 201);
       }
@@ -138,9 +138,11 @@ test.describe('Local inventory as the active provider (architectural acceptance)
     await page.getByLabel('Material name').fill('PLA Red');
     await page.getByLabel('Vendor').fill('Acme');
     await page.getByLabel('Material type').fill('PLA');
+    await page.getByLabel('Material subtype').fill('silk');
     await page.getByLabel('Colour').fill('#FF0000');
     await page.getByTestId('material-form').getByRole('button', { name: 'Add material' }).click();
     await expect(page.getByTestId('material-1')).toContainText('Acme PLA Red');
+    expect(be.state.materials[0]).toMatchObject({ material: 'PLA', subtype: 'silk' });          // type and subtype are two fields
 
     await page.getByRole('button', { name: 'Spools' }).click();
     await page.getByRole('button', { name: 'Add spool' }).first().click();

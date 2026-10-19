@@ -1,28 +1,24 @@
 """Provider-namespaced inventory refs and the dual-write normalizer (BIZ-202 §4).
 
 A slot binds to a spool as `slot["inventory"] = {"provider": "<plugin id>", "spool_ref": "<ref>"}` (never `filament_id`: for
-Bambu that already means an AMS tray code). A job/target/project-item/order-part "specific material" ask is
-`material_provider` + `material_ref`. For one release the legacy Spoolman keys (`slot["spoolman_spool_id"]`, `filament_id`)
+Bambu that already means an AMS tray code). A job's ask no longer references a material (it is a filament tuple, see
+services/filament_tuple.py); the ref is only for weight deduction. For one release the legacy Spoolman keys (`slot["spoolman_spool_id"]`, `filament_id`)
 are still written next to them while the provider is Spoolman, because old frontends, external API clients and AMS reports
 keep writing the old keys — so EVERY writer runs through this module:
 
 * `normalize_slots` — `PATCH /printers`, printer create, fleet import (whole-list replace, resolved against the stored slots).
 * `preserve_slot_keys` — the AMS report merge keeps every Themis-owned key (not just two named ones).
-* `material` — job configs/targets, project items, order parts (accept `filament_id` OR `material_ref`).
 
 The legacy key names live here (and in migrations/models) only; BIZ-221 removes the fallbacks."""
 from __future__ import annotations
 
+from ..filament_tuple import clean, split_type
 from . import provider
 
 LEGACY_PROVIDER = "spoolman"
 LEGACY_SLOT_KEY = "spoolman_spool_id"
 # Slot keys Themis owns: an AMS/vendor report must never wipe them (the vendor client only reports hardware facts).
 THEMIS_SLOT_KEYS = ("filament_profile", LEGACY_SLOT_KEY, "inventory")
-
-
-class MaterialRefError(ValueError):
-    """The ask names a material no provider can resolve (a writer answers 422)."""
 
 
 def _blank(v) -> bool:
@@ -52,11 +48,27 @@ def slot_spool_ref(slot: dict | None) -> str | None:
     return str(legacy) if not _blank(legacy) and pid == LEGACY_PROVIDER else None
 
 
+def _slot_tuple_keys(out: dict) -> dict:
+    """A slot with a type always has a subtype (a legacy "PLA+" is split with the shared suffix rules; plain = "standard") and a
+    `manufacturer` key (None = unknown). A typeless slot (an empty tool placeholder, a bare hand entry) gets no invented subtype."""
+    if not clean(out.get("type")):
+        return out
+    out["type"] = clean(out["type"])
+    subtype = clean(out.get("subtype"))
+    if not subtype:
+        out["type"], subtype = split_type(out["type"])
+    out["subtype"] = subtype
+    out["manufacturer"] = clean(out.get("manufacturer"))
+    return out
+
+
 def normalize_slot(slot: dict, previous: dict | None = None) -> dict:
     """One slot as it will be stored: `inventory` and the legacy key agree. Conflicts resolve by *what changed* relative to
     the stored slot: an edited `inventory` wins (new client); otherwise an edited legacy key wins (old client, which also
     echoes the stale `inventory` it read); otherwise nothing changed and the stored binding is kept."""
-    out = dict(slot)
+    out = _slot_tuple_keys(dict(slot))
+    if previous and previous.get("reported") and "reported" not in out:
+        out["reported"] = True                      # a client that does not echo the flag must not turn a reported slot into a hand-entered one
     prev_inv = slot_inventory(previous)
     prev_legacy = (previous or {}).get(LEGACY_SLOT_KEY)
     legacy = slot.get(LEGACY_SLOT_KEY)
@@ -113,41 +125,3 @@ def preserve_slot_keys(previous: dict | None, fresh: dict) -> dict:
         if key in previous or key != "inventory":          # the two legacy keys are always present (None when unset), as before
             out[key] = previous.get(key)
     return out
-
-
-# --- "specific material" asks ----------------------------------------------------------------------------------------------
-
-def material(filament_id: int | None, material_provider: str | None = None, material_ref: str | None = None,
-             previous: tuple[int | None, str | None, str | None] | None = None) -> tuple[int | None, str | None, str | None]:
-    """Normalise a material ask to `(filament_id, material_provider, material_ref)`.
-
-    Accepts the legacy `filament_id` (a Spoolman filament id) or the provider-namespaced pair. `material_ref` wins when both
-    are given. `filament_id` is only ever filled for the legacy provider (non-Spoolman refs have no such integer).
-
-    `previous` is the stored `(filament_id, provider, ref)` of the row being rewritten. An OLD client reads the whole object
-    (which now carries `material_ref`), edits only `filament_id` and echoes both back: if `material_ref` is just the stored one
-    and `filament_id` differs from the stored one, the `filament_id` edit is what was meant and the stale ref is ignored."""
-    if previous is not None and not _blank(material_ref) and filament_id is not None:
-        prev_fid, prev_provider, prev_ref = previous
-        echoed = str(material_ref).strip() == str(prev_ref or "") and (_blank(material_provider) or material_provider == prev_provider)
-        if echoed and filament_id != prev_fid:
-            material_provider, material_ref = None, None
-    if not _blank(material_ref):
-        pid = None if _blank(material_provider) else str(material_provider)
-        pid = pid or provider.provider_id()
-        if pid is None:
-            raise MaterialRefError("material_ref needs a material_provider (no inventory provider is active)")
-        ref = str(material_ref).strip()
-        if pid == LEGACY_PROVIDER:
-            if not ref.isdigit():
-                raise MaterialRefError(f"{ref!r} is not a Spoolman filament id")
-            return int(ref), pid, ref
-        return None, pid, ref
-    if filament_id is not None:
-        return int(filament_id), LEGACY_PROVIDER, str(int(filament_id))
-    return None, None, None
-
-
-def material_pair(filament_id: int | None, material_provider: str | None, material_ref: str | None):
-    """`material()` that turns a bad ref into the HTTP-friendly error writers raise (422)."""
-    return material(filament_id, material_provider, material_ref)

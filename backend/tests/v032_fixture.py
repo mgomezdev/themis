@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.migrations import v033_slice_cache, v036_inventory_refs, v037_inventory_deduction, v052_model_slicer_profiles
+from app.migrations import v033_slice_cache, v036_inventory_refs, v037_inventory_deduction, v052_model_slicer_profiles, v053_filament_tuple
 from app.migrations.runner import _CREATE_TABLE, _MIGRATIONS
 
 # Tables v001's create_all builds from today's models that v032 did not have (later phases add theirs here).
@@ -88,6 +88,7 @@ async def _build(path: Path) -> None:
             # v001 builds the *current* models (tables added by later phases too): drop what post-v032 migrations own.
             await v033_slice_cache.down(conn)
             await conn.execute(text("DELETE FROM schema_migrations WHERE version = 33"))
+            await v053_filament_tuple.down(conn)                       # drops the ask_* columns create_all added
             await v052_model_slicer_profiles.down(conn)                # back to printers.current_orca_printer_profile + machine_profile targets
             await v036_inventory_refs.down(conn)                       # drops the material_* columns create_all added
             await conn.execute(text("ALTER TABLE jobs DROP COLUMN deduction_note"))   # added by create_all (v037)

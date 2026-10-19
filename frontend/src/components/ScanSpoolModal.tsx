@@ -67,7 +67,7 @@ export function ScanSpoolModal({ onClose, onAssigned }: { onClose: () => void; o
         slots[idx] = { ...current!, ...patch };
       } else {
         const next = slots.reduce((m, s) => Math.max(m, s.slot + 1), 0);
-        slots.push({ slot: next, filament_id: null, name: '', type: '', color: '', ...patch });
+        slots.push({ slot: next, filament_id: null, name: '', manufacturer: null, type: '', subtype: null, color: '', ...patch });
       }
       await updatePrinter(printer.id, { loaded_filaments: slots });
       setDone(`Loaded ${spoolDisplayName(spool)} into ${printer.name}.`);

@@ -155,11 +155,10 @@
     "quantity",
     "quantity_completed",
     "quantity_failed",
+    "filament_manufacturer",
     "filament_type",
+    "filament_subtype",
     "filament_color",
-    "filament_id",
-    "material_provider",
-    "material_ref",
     "sort_order"
   ],
   "project_link": [
@@ -467,10 +466,9 @@
     "model_label",
     "print_profile",
     "filament_profile",
-    "filament_id",
-    "material_provider",
-    "material_ref",
+    "filament_manufacturer",
     "filament_type",
+    "filament_subtype",
     "filament_color",
     "filament_map"
   ]

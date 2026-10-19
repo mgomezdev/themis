@@ -2,7 +2,7 @@ import type { InvMaterial, InvSpool, SyncStatus } from '../api/inventory';
 import type { PluginSummary } from '../api/plugins';
 
 export const mkMaterial = (over: Partial<InvMaterial> & { ref: string }): InvMaterial => ({
-  name: 'PLA', material: 'PLA', color_hex: null, vendor: null, density: null, diameter: null, profile_links: null, archived: false, ...over,
+  name: 'PLA', material: 'PLA', subtype: 'standard', color_hex: null, vendor: null, density: null, diameter: null, profile_links: null, archived: false, ...over,
 });
 
 export const mkSpool = (ref: string, over: Partial<Omit<InvSpool, 'material'>> & { material?: Partial<InvMaterial> | null } = {}): InvSpool => {

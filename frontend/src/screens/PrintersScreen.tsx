@@ -21,6 +21,7 @@ import type { ModelSlicerProfile } from '../api/slicerProfiles';
 import { getPrinterProfiles } from '../api/queue';
 import { useInventory, useSpools } from '../api/inventory';
 import { SlotSpoolPicker } from '../components/SlotSpoolPicker';
+import { useSlotConflicts } from '../components/useSlotConflicts';
 import { DiscoverPrinters } from '../components/DiscoverPrinters';
 
 // ---------------------------------------------------------------------------
@@ -140,6 +141,7 @@ export function EditForm({
 
   const inventory = useInventory();
   const spools = useSpools(!!inventory.plugin);
+  const slotConflicts = useSlotConflicts(printer.id);
 
   useEffect(() => {
     setFilamentProfiles([]);
@@ -151,7 +153,7 @@ export function EditForm({
   }, [printer.id, printer.machine_profile]);
 
   function addSlot() {
-    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', type: 'PLA', color: '#888888' }]);
+    setSlots(s => [...s, { slot: s.length, filament_id: null, name: '', manufacturer: null, type: 'PLA', subtype: 'standard', color: '#888888' }]);
   }
   function removeSlot(i: number) {
     setSlots(s => s.filter((_, idx) => idx !== i).map((x, idx) => ({ ...x, slot: idx })));
@@ -244,6 +246,7 @@ export function EditForm({
                   spools={spools}
                   filamentProfiles={filamentProfiles}
                   onChange={patch => updateSlot(i, patch)}
+                  conflict={slotConflicts.includes(i)}
                 />
               </div>
             ))}

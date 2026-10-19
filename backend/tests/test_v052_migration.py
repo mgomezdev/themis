@@ -167,8 +167,9 @@ async def test_the_runner_applies_and_rolls_back_v052(v051_db):
         await _printer(conn, 1, M_P1S, P04)
         await run_migrations(conn)
         assert (await _rows(conn, "SELECT machine_profile FROM printer_model_slicer_profiles")) == [{"machine_profile": P04}]
-        assert (await _rows(conn, "SELECT max(version) AS v FROM schema_migrations")) == [{"v": 52}]
-        await rollback_last(conn)
+        assert (await _rows(conn, "SELECT max(version) AS v FROM schema_migrations")) == [{"v": _MIGRATIONS[-1].version}]
+        await rollback_last(conn)                                  # v053 (filament tuple) first
+        await rollback_last(conn)                                  # then v052 itself
         assert (await _rows(conn, "SELECT current_orca_printer_profile AS p FROM printers")) == [{"p": P04}]
         assert (await _rows(conn, "SELECT max(version) AS v FROM schema_migrations")) == [{"v": 51}]
 

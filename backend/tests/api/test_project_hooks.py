@@ -275,7 +275,7 @@ async def test_a_disabled_destination_gets_no_project_events(client, session_fac
 async def test_a_generate_that_fails_after_committing_some_jobs_blocks_a_retry_under_the_same_key(client, tmp_path, session_factory):
     from app.services.providers.slicing import SlicingProviderError
     project_id, file_id = await _setup_project_with_stl(client, tmp_path)
-    await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 1, "filament_type": "PETG"})
+    await client.post(f"/api/v1/projects/{project_id}/items", json={"file_id": file_id, "quantity": 1, "filament_type": "PETG", "filament_subtype": "any"})
     h = {"Idempotency-Key": "gen-partial"}
     lib = tmp_path / "library"
     packer = fake_packer(_make_3mf_bytes(plate_count=1))

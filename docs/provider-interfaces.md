@@ -74,7 +74,10 @@ its key in an exception — the **host is the redaction boundary**, the provider
 ids) proves core names neither plugin; `tests/test_provider_boundary.py` proves core reaches past the Spoolman adapter package nowhere.
 
 DTOs: `InvMaterial(ref, name, material, color_hex "#RRGGBB", vendor, density, diameter, profile_links, raw)`,
-`InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. Refs are strings. `raw` is
+`InvSpool(ref, material_ref, material, remaining_g, location, label, archived, raw)`. `InvMaterial.material` is the **base type** only and
+`InvMaterial.subtype` the variant (`standard` for plain, `plus`, `silk`, `cf`…; `None` only when the type is `None`): each provider
+splits and joins its own strings (Spoolman: `split_type` on its single `material` text; Local: two columns). `MaterialDraft`/`MATERIAL_FIELDS`
+carry `subtype` too. Refs are strings. `raw` is
 provider-private (the plugin's own alias routes relay it); core code never reads it and the neutral API never serialises it.
 **Deduction model (BIZ-218).** Provider I/O never runs on the queue loop. At print *start* (after the `printing` commit) a host task
 records `job_spool_snapshots` (the spool's weight: newest pending outbox target → live `get_spool` → `missing`). At *completion*

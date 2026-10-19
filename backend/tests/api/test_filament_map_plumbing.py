@@ -13,29 +13,29 @@ def test_slice_request_has_prepare_hook_default_none():
 
 
 def test_printer_config_input_accepts_tool_index():
-    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any", tool_index=2)
+    c = PrinterConfigInput(printer_id=1, print_profile="p", tool_index=2)
     assert c.tool_index == 2
     # default is None (single-tool / legacy)
-    assert PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any").tool_index is None
+    assert PrinterConfigInput(printer_id=1, print_profile="p").tool_index is None
 
 
 def test_printer_config_input_accepts_filament_map():
-    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+    c = PrinterConfigInput(printer_id=1, print_profile="p",
                            filament_map=[{"model_filament": 1, "tool_index": 2}])
     assert c.filament_map[0]["tool_index"] == 2
-    assert PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any").filament_map is None
+    assert PrinterConfigInput(printer_id=1, print_profile="p").filament_map is None
 
 
 def test_printer_config_input_rejects_non_dict_entry():
     with pytest.raises(ValidationError):
-        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+        PrinterConfigInput(printer_id=1, print_profile="p",
                            filament_map=["oops"])
 
 
 def test_printer_config_input_coerces_numeric_string_tool_index():
     # Pydantic's lax int coercion turns "0" into 0 so downstream int comparisons
     # (e.g. `0 <= tool_index < len(loaded)`) never see a str.
-    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+    c = PrinterConfigInput(printer_id=1, print_profile="p",
                            filament_map=[{"tool_index": "0"}])
     assert c.filament_map[0]["tool_index"] == 0
     assert isinstance(c.filament_map[0]["tool_index"], int)
@@ -45,31 +45,32 @@ def test_printer_config_input_rejects_non_numeric_tool_index():
     # filament_type/color are supplied so the ONLY thing wrong is the tool_index (a missing ask
     # would raise ValidationError too and let a broken filament_map validator pass unnoticed).
     with pytest.raises(ValidationError) as exc:
-        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any",
+        PrinterConfigInput(printer_id=1, print_profile="p",
                            filament_map=[{"tool_index": "not-a-number"}])
     assert [e["loc"][0] for e in exc.value.errors()] == ["filament_map"]
 
 
-def test_printer_config_input_requires_filament_type_and_color():
-    with pytest.raises(ValidationError):
-        PrinterConfigInput(printer_id=1, print_profile="p")
+def test_printer_config_input_ask_is_optional_and_undefined_parts_are_none():
+    c = PrinterConfigInput(printer_id=1, print_profile="p")
+    assert (c.filament_manufacturer, c.filament_type, c.filament_subtype, c.filament_color) == (None, None, None, None)
 
 
-def test_printer_config_input_rejects_blank_filament_type():
-    with pytest.raises(ValidationError):
-        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="  ", filament_color="any")
+def test_printer_config_input_treats_blank_and_the_legacy_any_as_undefined():
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="  ", filament_color="any", filament_manufacturer="ANY")
+    assert (c.filament_manufacturer, c.filament_type, c.filament_subtype, c.filament_color) == (None, None, None, None)
 
 
-def test_printer_config_input_rejects_null_filament_color():
-    with pytest.raises(ValidationError):
-        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color=None)
+def test_printer_config_input_requires_a_subtype_when_a_type_is_set():
+    with pytest.raises(ValidationError, match="subtype"):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_type="PLA")
+    with pytest.raises(ValidationError, match="subtype"):
+        PrinterConfigInput(printer_id=1, print_profile="p", filament_map=[{"model_filament": 1, "filament_type": "PLA"}])
 
 
-def test_printer_config_input_accepts_any_or_real_value():
-    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="any", filament_color="any")
-    assert (c.filament_type, c.filament_color) == ("any", "any")
-    c2 = PrinterConfigInput(printer_id=1, print_profile="p", filament_type="PLA", filament_color="#FFFFFF")
-    assert (c2.filament_type, c2.filament_color) == ("PLA", "#FFFFFF")
+def test_printer_config_input_keeps_a_real_tuple_and_subtype_any_is_a_value_not_undefined():
+    c = PrinterConfigInput(printer_id=1, print_profile="p", filament_manufacturer=" Acme ", filament_type="PLA",
+                           filament_subtype="any", filament_color="#FFFFFF")
+    assert (c.filament_manufacturer, c.filament_type, c.filament_subtype, c.filament_color) == ("Acme", "PLA", "any", "#FFFFFF")
 
 
 def _routing(filament_map):
@@ -83,7 +84,7 @@ async def test_tool_index_and_filament_map_round_trip_through_create_details_and
     printer_id = await create_printer()
     file_id = await upload_3mf()
     first_map = [{"model_filament": 1, "tool_index": 2}, {"model_filament": 2, "tool_index": 0}]
-    config = {"printer_id": printer_id, "print_profile": "0.20mm", "filament_type": "any", "filament_color": "any"}
+    config = {"printer_id": printer_id, "print_profile": "0.20mm"}
 
     with patch("app.api.routes.jobs.queue_engine"):
         created = await client.post("/api/v1/jobs", json={
@@ -108,15 +109,15 @@ async def test_tool_index_and_filament_map_round_trip_through_create_details_and
     assert stored["tool_index"] == 0
     assert _routing(stored["filament_map"]) == [(1, 1)]
 
-    catalog_map = [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#FFFFFF"}]  # resolved to a slot at slice time
+    catalog_map = [{"model_filament": 1, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#FFFFFF"}]  # resolved to a slot at slice time
     with patch("app.api.routes.jobs.queue_engine"):
         await client.patch(f"/api/v1/jobs/{job_id}/configs", json={
             "printer_configs": [{**config, "filament_map": catalog_map}],
         })
     (stored,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
     assert stored["tool_index"] is None
-    assert [(e["model_filament"], e["tool_index"], e["filament_type"], e["filament_color"]) for e in stored["filament_map"]] \
-        == [(1, None, "PETG", "#FFFFFF")]
+    assert [(e["model_filament"], e["tool_index"], e["filament_type"], e["filament_subtype"], e["filament_color"])
+            for e in stored["filament_map"]] == [(1, None, "PETG", "any", "#FFFFFF")]
 
     with patch("app.api.routes.jobs.queue_engine"):
         await client.patch(f"/api/v1/jobs/{job_id}/configs", json={"printer_configs": [config]})

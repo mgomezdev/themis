@@ -60,7 +60,8 @@ async def test_fleet_includes_loaded_filaments(client: AsyncClient) -> None:
 
     resp = await client.get("/api/v1/fleet")
     assert resp.status_code == 200
-    assert resp.json()[0]["loaded_filaments"] == [filament]
+    # a written slot is stored as the tuple: the combined "PA-CF" type is split into PA / cf, manufacturer unknown
+    assert resp.json()[0]["loaded_filaments"] == [{**filament, "type": "PA", "subtype": "cf", "manufacturer": None}]
 
 
 # ---------------------------------------------------------------------------

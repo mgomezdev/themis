@@ -7,7 +7,7 @@ import { Reply, stubFetch } from '../test/fetchStub';
 
 const item = (id: number, quantity: number) => ({
   id, project_id: 1, file_id: id, file_name: `part${id}.stl`, quantity, quantity_completed: 0, quantity_failed: 0,
-  filament_type: 'any', filament_color: 'any', filament_id: null, sort_order: id,
+  filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: id,
 });
 const project = (id: number, name: string, over: object = {}) => ({
   id, name, customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null, stage: 'queued',

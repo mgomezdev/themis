@@ -63,10 +63,26 @@ describe('model targets are keyed by registry model, not by machine profile', ()
   });
 
   it('builds model_targets with model_uuid and printer_configs with printer ids from one mixed selection', () => {
-    const cfg = { ...defaultPerPrinterCfg(), printProfile: '0.20mm', filamentType: 'PLA' };
+    const cfg = { ...defaultPerPrinterCfg(), printProfile: '0.20mm', filamentType: 'PLA', filamentSubtype: 'any' };
     const { printer_configs, model_targets } = buildEligibility([modelKey('m-p1s'), '2'], { [modelKey('m-p1s')]: cfg, '2': cfg });
-    expect(model_targets).toEqual([expect.objectContaining({ model_uuid: 'm-p1s', print_profile: '0.20mm', filament_type: 'PLA' })]);
+    expect(model_targets).toEqual([expect.objectContaining({ model_uuid: 'm-p1s', print_profile: '0.20mm', filament_type: 'PLA', filament_subtype: 'any' })]);
     expect(model_targets[0]).not.toHaveProperty('machine_profile');
     expect(printer_configs).toEqual([expect.objectContaining({ printer_id: 2 })]);
+  });
+
+  it('sends the whole tuple as-is: undefined parts are null (never the string "any"), and no material reference exists', () => {
+    const none = buildEligibility(['2'], { '2': { ...defaultPerPrinterCfg(), printProfile: 'p' } }).printer_configs[0];
+    expect(none).toMatchObject({ filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null });
+    const full = buildEligibility(['2'], { '2': { ...defaultPerPrinterCfg(), printProfile: 'p', filamentManufacturer: 'Acme',
+      filamentType: 'PLA', filamentSubtype: 'silk', filamentColor: '#ff0000' } }).printer_configs[0];
+    expect(full).toMatchObject({ filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: '#ff0000' });
+    expect(Object.keys(full).filter(k => /material|filament_id/.test(k))).toEqual([]);
+  });
+
+  it('carries per-colour asks in the filament map of an explicit printer', () => {
+    const map = [{ model_filament: 1, tool_index: null, filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: '#ff0000' },
+                 { model_filament: 2, tool_index: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null }];
+    const { printer_configs } = buildEligibility(['2'], { '2': { ...defaultPerPrinterCfg(), printProfile: 'p', filamentMap: map } });
+    expect(printer_configs[0].filament_map).toEqual(map);
   });
 });

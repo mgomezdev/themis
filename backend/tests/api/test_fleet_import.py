@@ -147,7 +147,8 @@ async def test_backup_then_import_round_trips_the_operator_facing_fields(client)
     assert (p["name"], p["printer_type"], p["connection_config"]) == ("Forge", "elegoo_centauri", {"ip_address": "10.0.0.9"})
     assert (p["orca_printer_profiles"], p["machine_profile_override"]) == (["Known Machine"], "Known Machine")
     # the stored slot also carries the provider-namespaced binding (dual-write); it survives backup + import
-    assert p["loaded_filaments"] == [{**filaments[0], "inventory": {"provider": "spoolman", "spool_ref": "7"}}]
+    assert p["loaded_filaments"] == [
+        {**filaments[0], "subtype": "standard", "manufacturer": None, "inventory": {"provider": "spoolman", "spool_ref": "7"}}]
     assert p["build_plate_type"] == "Textured PEI"
     assert (p["enabled"], p["queue_on"]) == (False, False)
 

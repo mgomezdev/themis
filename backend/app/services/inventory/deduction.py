@@ -14,12 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ...models import InventorySpoolStatus, Job
 from ...plugins.capabilities.filament_inventory import TRACKS_WEIGHT, WRITE_WEIGHT
-from . import events, outbox, provider, snapshots, tasks
+from .. import filament_matching
+from . import events, outbox, provider, refs, snapshots, tasks
 
 logger = logging.getLogger("app")
 
 EVENT_UNAVAILABLE = events.TRACKING_UNAVAILABLE
 EVENT_RESTORED = events.TRACKING_RESTORED
+EVENT_NO_SPOOL = events.NO_SPOOL_TRACKED
 NOTE_SUSPENDED = "Spool tracking is suspended — correct its weight to resume"
 NOTE_NO_WEIGHT = "No starting weight was available for this spool"
 
@@ -77,6 +79,64 @@ async def plan_completion(session: AsyncSession, *, job: Job, printer_id: int | 
     outbox.enqueue(session, pid, spool_ref, snap.pre_weight_g - grams, job_id=job.id, printer_id=printer_id, source=source,
                    pre_weight_g=snap.pre_weight_g)
     return Plan("enqueued", pid, spool_ref, job.id, printer_id, grams, source)
+
+
+def completion_uses(config, loaded: list | None, grams: float, breakdown: list | None) -> tuple[list[dict], list[str]]:
+    """The spool deductions of one finished print and the notes for what could not be tracked: `([{"spool_ref", "grams"}], [note])`.
+
+    The spool is the one bound to the slot that PRINTED (the claim-time plan), per used slot for a multi-material job; the job's own
+    ask never selects a spool. One used slot takes all the grams (two colours sharing a slot included); several take their share from
+    the per-extruder breakdown (extruder index = tool index). A slot with no bound spool is skipped and named in a note, so the
+    operator can bind a spool and correct the weight."""
+    plan = filament_matching.plan_for(config, loaded)
+    slots = list(dict.fromkeys(u.slot for u in plan))
+    if not slots:
+        return [], ["No filament slot was recorded for this print, so no spool was tracked"]
+    loaded = list(loaded or [])
+    by_extruder = {}
+    for entry in breakdown or []:
+        by_extruder[entry.get("extruder_index")] = by_extruder.get(entry.get("extruder_index"), 0.0) + float(entry.get("grams") or 0.0)
+    merged: dict[str, float] = {}
+    unbound: list[str] = []
+    for slot in slots:
+        ref = refs.slot_spool_ref(loaded[slot]) if 0 <= slot < len(loaded) else None
+        if len(slots) == 1:
+            share = float(grams)
+        elif by_extruder:
+            share = by_extruder.get(slot, 0.0)
+        else:
+            return [], ["The filament used per slot was not reported, so no spool was tracked"]
+        if ref is None:
+            unbound.append(f"T{slot}")
+        elif share > 0:
+            merged[str(ref)] = merged.get(str(ref), 0.0) + share
+    notes = [f"No spool is bound to {', '.join(unbound)}, so nothing was deducted for it — bind a spool and correct its weight"] if unbound else []
+    return [{"spool_ref": r, "grams": g} for r, g in merged.items()], notes
+
+
+def snapshot_refs(config, loaded: list | None) -> list[str]:
+    """The spool refs to snapshot at print start: those bound to the planned slots (DB only)."""
+    out = []
+    for u in filament_matching.plan_for(config, loaded):
+        ref = refs.slot_spool_ref((loaded or [])[u.slot]) if 0 <= u.slot < len(loaded or []) else None
+        if ref is not None and str(ref) not in out:
+            out.append(str(ref))
+    return out
+
+
+async def warn_untracked(factory: async_sessionmaker[AsyncSession], job_id: int, printer_id: int | None, notes: list[str]) -> None:
+    """Flag the job (its detail shows "usage was not recorded: ...") and warn the operator ONCE per job (a redelivered completion
+    finds the note already there)."""
+    note = "; ".join(notes)
+    async with factory() as session:
+        job = await session.get(Job, job_id)
+        if job is None or (job.deduction_skipped and job.deduction_note and note in job.deduction_note):
+            return
+        job.deduction_note = f"{job.deduction_note}; {note}" if job.deduction_skipped and job.deduction_note else note
+        job.deduction_skipped = True
+        await events.emit(session, EVENT_NO_SPOOL, {"job_id": job_id, "printer_id": printer_id, "notes": notes},
+                          "Themis: filament usage not tracked", f"Job {job_id}: {note}.", job_id)
+        await session.commit()
 
 
 def factory_for(session: AsyncSession) -> async_sessionmaker[AsyncSession]:

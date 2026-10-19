@@ -11,7 +11,7 @@ const PRINTERS = [
 ];
 const ITEM = {
   id: 50, project_id: 42, file_id: 1, file_name: 'Bracket.stl', quantity: 4, quantity_completed: 0, quantity_failed: 0,
-  filament_type: 'PLA', filament_color: '#ff0000', filament_id: null, sort_order: 0,
+  filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: '#ff0000', sort_order: 0,
 };
 const project = (over: object = {}) => ({
   id: 42, name: 'Shelf set', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
@@ -487,16 +487,16 @@ describe('ProjectDetailScreen - parts, jobs and estimates', () => {
     open({}, project({
       items: [
         ITEM,
-        { ...ITEM, id: 51, file_name: 'Widget.stl', quantity: 5, quantity_completed: 3, quantity_failed: 1, filament_type: 'any', filament_color: 'any', filament_id: 12 },
-        { ...ITEM, id: 52, file_name: 'Done.stl', quantity: 2, quantity_completed: 2, filament_type: 'PETG', filament_color: 'any' },
+        { ...ITEM, id: 51, file_name: 'Widget.stl', quantity: 5, quantity_completed: 3, quantity_failed: 1, filament_manufacturer: 'Acme', filament_type: 'PLA', filament_subtype: 'silk', filament_color: null },
+        { ...ITEM, id: 52, file_name: 'Done.stl', quantity: 2, quantity_completed: 2, filament_type: 'PETG', filament_subtype: 'any', filament_color: null },
       ],
     }));
     await ready();
 
     expect(screen.getByText('Parts (3)')).toBeTruthy();
-    expect(screen.getByText('PLA / #ff0000')).toBeTruthy();
-    expect(screen.getByText('PETG / any')).toBeTruthy();
-    expect(screen.getByText('Material #12')).toBeTruthy();                // a specific material wins over type/colour
+    expect(screen.getByText('PLA any #FF0000')).toBeTruthy();             // the whole tuple, undefined parts left out
+    expect(screen.getByText('PETG any')).toBeTruthy();
+    expect(screen.getByText('Acme PLA silk')).toBeTruthy();
     expect(screen.getByText('3/5 · 1 failed')).toBeTruthy();
     expect(screen.getByText('2/2')).toBeTruthy();
     expect(screen.getByText('—')).toBeTruthy();                            // Bracket: nothing printed yet

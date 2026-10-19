@@ -72,7 +72,7 @@ def contract_violations(provider: object) -> list[str]:
     return out
 
 
-MATERIAL_FIELDS = ("name", "material", "color_hex", "vendor", "density", "diameter")     # what create/update_material accept
+MATERIAL_FIELDS = ("name", "material", "subtype", "color_hex", "vendor", "density", "diameter")     # what create/update_material accept
 SPOOL_FIELDS = ("label", "location")                                                    # what update_spool accepts (weight: set_remaining)
 
 
@@ -98,7 +98,8 @@ class NotSupported(Exception):
 class InvMaterial:
     ref: str                                 # provider-opaque id, always a string
     name: str = ""
-    material: str | None = None              # "PLA" — compared against type asks
+    material: str | None = None              # BASE type only ("PLA"); the variant is `subtype`. The provider splits its own strings.
+    subtype: str | None = None               # "standard" (plain), "plus", "silk", "cf"...; None only when `material` is None
     color_hex: str | None = None             # "#RRGGBB"
     vendor: str | None = None
     density: float | None = None
@@ -126,6 +127,7 @@ class MaterialDraft:
     """What `create_material` needs (`name` is the only required field)."""
     name: str
     material: str | None = None
+    subtype: str | None = None
     color_hex: str | None = None
     vendor: str | None = None
     density: float | None = None

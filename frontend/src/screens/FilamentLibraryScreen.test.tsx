@@ -56,7 +56,7 @@ describe('FilamentLibraryScreen', () => {
     await userEvent.click(save);
 
     await waitFor(() => expect(api.to('POST', '/api/v1/inventory/materials')).toHaveLength(1));
-    expect(api.to('POST', '/api/v1/inventory/materials')[0].body).toEqual({ name: 'PETG Blue', material: 'PETG', vendor: null, color_hex: null, density: null, diameter: 1.75 });
+    expect(api.to('POST', '/api/v1/inventory/materials')[0].body).toEqual({ name: 'PETG Blue', material: 'PETG', subtype: null, vendor: null, color_hex: null, density: null, diameter: 1.75 });   // no subtype typed: plain, the provider fills `standard`
     await waitFor(() => expect(api.to('GET', '/api/v1/inventory/materials?include_archived=true')).toHaveLength(2));   // reloaded
   });
 

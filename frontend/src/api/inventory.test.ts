@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  activeSlotRef, askRef, materialAsk, materialDisplayName, slotPatchForSpool, spoolDisplayName, syncTone,
+  activeSlotRef, materialDisplayName, slotPatchForSpool, spoolDisplayName, syncTone,
   type InvSpool, type SyncStatus,
 } from './inventory';
 import { slotBinding } from './printers';
@@ -8,7 +8,7 @@ import { slotBinding } from './printers';
 const spool = (over: Partial<InvSpool> = {}): InvSpool => ({
   ref: '7', material_ref: '3', label: 'Acme PLA', remaining_g: 412, initial_g: 1000, location: null, archived: false, unsynced: false, url: null,
   material: { ref: '3', name: 'PLA Red', material: 'PLA', color_hex: '#FF0000', vendor: 'Acme', density: null, diameter: null,
-              profile_links: { 'Bambu X1C': ['Bambu PLA'], 'Prusa MK4': ['A', 'B'] }, archived: false },
+              profile_links: { 'Bambu X1C': ['Bambu PLA'], 'Prusa MK4': ['A', 'B'] }, archived: false, subtype: 'silk' },
   ...over,
 });
 
@@ -38,6 +38,7 @@ describe('slotPatchForSpool', () => {
   it('binds the spool with the active provider and copies type/colour/name', () => {
     const p = slotPatchForSpool(spool(), 'local', null);
     expect(p).toMatchObject({ inventory: { provider: 'local', spool_ref: '7' }, type: 'PLA', color: '#FF0000', name: 'Acme PLA Red' });
+    expect(p).toMatchObject({ manufacturer: 'Acme', subtype: 'silk' });                // the slot copies the material's whole tuple
     expect(p).not.toHaveProperty('spoolman_spool_id');                                 // the server mirrors the legacy key
   });
 
@@ -54,23 +55,6 @@ describe('naming and asks', () => {
     expect(materialDisplayName({ name: 'PLA Red', vendor: null })).toBe('PLA Red');
     expect(spoolDisplayName(spool({ material: null }))).toBe('Acme PLA');
     expect(spoolDisplayName(spool({ material: null, label: '' }))).toBe('Spool 7');
-  });
-
-  it('a material ask is the provider-namespaced pair with no legacy id, and null when cleared', () => {
-    expect(materialAsk({ ref: '3' }, 'local')).toEqual({ filament_id: null, material_provider: 'local', material_ref: '3' });
-    expect(materialAsk(null, 'local')).toEqual({ filament_id: null, material_provider: null, material_ref: null });
-    expect(askRef({ material_provider: 'local', material_ref: 'm-1', filament_id: 5 }, 'local')).toBe('m-1');
-    expect(askRef({ filament_id: 5 }, 'spoolman')).toBe('5');          // a bare legacy id belongs to the legacy provider
-    expect(askRef({}, 'local')).toBeNull();
-  });
-});
-
-describe('a stored ask only means something to its own provider', () => {
-  it('ignores an ask issued by another provider, including a bare legacy id under a different active provider', () => {
-    expect(askRef({ material_provider: 'spoolman', material_ref: '5' }, 'local')).toBeNull();
-    expect(askRef({ filament_id: 5 }, 'local')).toBeNull();
-    expect(askRef({ material_ref: '5' }, 'spoolman')).toBe('5');       // no provider recorded: the legacy one
-    expect(askRef({ material_provider: 'local', material_ref: '5' }, null)).toBe('5');   // no active provider: nothing to contradict
   });
 });
 

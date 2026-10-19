@@ -20,7 +20,7 @@ const EXISTING = {
   id: 7, name: 'Gridfinity', customer: '', order_type: 'internal', on_hold: false, due_date: null, notes: null,
   amount_paid: null, payment_status: 'unpaid', stage: 'planning', customer_id: null, links: [], parts: [],
   items: [{ id: 50, project_id: 7, file_id: 1, file_name: 'Bracket.stl', quantity: 2, quantity_completed: 0, quantity_failed: 0,
-            filament_type: 'PLA', filament_color: 'any', filament_id: null, sort_order: 0 }],
+            filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, sort_order: 0 }],
 };
 const job = (id: number) => ({ id, uploaded_file_id: 1, plate_number: 1, queue_position: id, status: 'queued' });
 const generated = (n: number) => ({ project_id: 7, jobs: Array.from({ length: n }, (_, i) => job(i + 1)), files: [], eligible_printer_ids: [], pack_bed_x: 256, pack_bed_y: 256 });
@@ -95,7 +95,7 @@ describe('ProjectBuilderScreen - generating a new project', () => {
       price: null, customer_id: null,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
-      file_id: 1, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 0,
+      file_id: 1, quantity: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/generate')[0].body).toEqual({
       eligible_printer_ids: [1, 2], process_preset: '0.20mm Standard', allow_cached: true, save_slice: false,
@@ -253,10 +253,10 @@ describe('ProjectBuilderScreen - generating an existing project', () => {
       'POST /api/v1/projects/7/items', 'POST /api/v1/projects/7/generate',
     ]);
     expect(api.to('PUT', '/api/v1/projects/7/items/50')[0].body).toEqual({
-      quantity: 5, filament_type: 'PLA', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 0,
+      quantity: 5, filament_manufacturer: null, filament_type: 'PLA', filament_subtype: 'any', filament_color: null, sort_order: 0,
     });
     expect(api.to('POST', '/api/v1/projects/7/items')[0].body).toEqual({
-      file_id: 2, quantity: 1, filament_type: 'any', filament_color: 'any', filament_id: null, material_provider: null, material_ref: null, sort_order: 1,
+      file_id: 2, quantity: 1, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, sort_order: 1,
     });
     expect(where()).toBe('/projects/7/edit');
   });

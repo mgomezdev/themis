@@ -3,6 +3,7 @@ import type { LoadedFilament } from '../api/printers';
 import type { InvSpool } from '../api/inventory';
 import { activeSlotRef, profileLinks, slotPatchForSpool, spoolColor, spoolDisplayName } from '../api/inventory';
 import { slotBinding } from '../api/printers';
+import { SUBTYPES } from '../lib/filamentAsk';
 
 export interface SlotSpoolPickerProps {
   slot: LoadedFilament;
@@ -12,6 +13,8 @@ export interface SlotSpoolPickerProps {
   spools: InvSpool[];
   filamentProfiles: string[];
   onChange: (patch: Partial<LoadedFilament>) => void;
+  /** The bound spool's material differs from what the printer reports for this slot: the queue skips the slot until it is fixed. */
+  conflict?: boolean;
 }
 
 function spoolRowLabel(spool: InvSpool): string {
@@ -30,7 +33,7 @@ function spoolDetail(spool: InvSpool): string {
 }
 
 export function SlotSpoolPicker({
-  slot, printerPreset, provider, spools, filamentProfiles, onChange,
+  slot, printerPreset, provider, spools, filamentProfiles, onChange, conflict = false,
 }: SlotSpoolPickerProps) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
@@ -78,6 +81,14 @@ export function SlotSpoolPicker({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {conflict && !isCustom && (
+        <div data-testid="slot-conflict" style={{
+          fontSize: 12, color: 'var(--err)', padding: '4px 8px',
+          background: 'rgba(239,68,68,0.10)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6,
+        }}>
+          The bound spool differs from what the printer reports for this slot, so jobs skip it. Rebind the right spool, or unbind this one.
+        </div>
+      )}
       {isDegraded && (
         <div style={{
           fontSize: 12, color: 'var(--warn)', padding: '4px 8px',
@@ -162,12 +173,36 @@ export function SlotSpoolPicker({
 
       {(isCustom || isDegraded) && (
         <>
-          <input
-            className="input"
-            placeholder="Type (e.g. PLA)"
-            value={slot.type}
-            onChange={e => onChange({ type: e.target.value })}
-          />
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            <input
+              className="input"
+              aria-label={`Manufacturer for slot ${slot.slot + 1}`}
+              placeholder="Manufacturer"
+              style={{ flex: '1 1 120px' }}
+              value={slot.manufacturer ?? ''}
+              onChange={e => onChange({ manufacturer: e.target.value || null })}
+            />
+            <input
+              className="input"
+              aria-label={`Type for slot ${slot.slot + 1}`}
+              placeholder="Type (e.g. PLA)"
+              style={{ flex: '1 1 90px' }}
+              value={slot.type}
+              onChange={e => onChange({ type: e.target.value, subtype: e.target.value.trim() ? (slot.subtype || 'standard') : null })}
+            />
+            <select
+              className="select"
+              aria-label={`Subtype for slot ${slot.slot + 1}`}
+              style={{ flex: '1 1 90px' }}
+              disabled={!slot.type.trim()}
+              value={slot.type.trim() ? slot.subtype || 'standard' : ''}
+              onChange={e => onChange({ subtype: e.target.value })}
+            >
+              {!slot.type.trim() && <option value="">—</option>}
+              {[...SUBTYPES.filter(s => s !== 'any'), ...(slot.subtype && !SUBTYPES.includes(slot.subtype) ? [slot.subtype] : [])]
+                .map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </div>
           <input
             className="input"
             placeholder="Color (#hex)"
@@ -193,7 +228,8 @@ export function SlotSpoolPicker({
               flex: 1, padding: '7px 10px', background: 'var(--bg-1)',
               border: '1px solid var(--border-1)', borderRadius: 8, fontSize: 13, color: 'var(--text-2)',
             }}>
-              {selectedSpool.material?.material ?? '—'}
+              {[selectedSpool.material?.vendor, selectedSpool.material?.material, selectedSpool.material?.subtype]
+                .filter(Boolean).join(' ') || '—'}
             </div>
             <div style={{
               width: 34, height: 34, borderRadius: 8, flexShrink: 0,

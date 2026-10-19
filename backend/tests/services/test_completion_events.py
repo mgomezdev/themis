@@ -62,7 +62,8 @@ async def test_completion_commits_the_job_and_one_durable_event_together_and_eff
     (o,) = outbox
     assert (o.name, o.dedup_key, o.source) == ("job.complete", f"job.complete:{job_id}", "core")
     assert o.envelope["entities"] == {"job_id": job_id, "printer_id": printer_id}
-    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "inventory": None}
+    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "inventory": None,
+                                            "deduction_notes": []}
     assert {d.subscriber for d in deliveries} == SUBSCRIBERS and {d.status for d in deliveries} == {"pending"}
     assert (await _counters(db)) == (0, 0)                       # committed but not yet handled: still owed, not lost
 
