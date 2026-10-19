@@ -740,9 +740,9 @@ class QueueEngine:
                 return None
             if await refresh_content_hash(source_file, get_library_store()):   # the key hashes the model's bytes
                 await session.commit()
+            params = _slice_params(job, config, printer, source_file, machine_preset, plan)
             try:
-                req, fmap = self._slice_request(job.id, printer.id, job.plate_number,
-                                                _slice_params(job, config, printer, source_file, machine_preset, plan), provider_id)
+                req, fmap = self._slice_request(job.id, printer.id, job.plate_number, params, provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
                 return None
             inputs = slice_cache.key_inputs(req, source_file.content_hash, params["tool_index"], fmap)
