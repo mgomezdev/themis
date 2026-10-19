@@ -134,7 +134,10 @@ async def down(conn) -> None:
     for table in _TABLES:
         have = await _columns(conn, table)
         if "ask_type" in have:
-            for row_id, atype, asub, acolor in (await conn.execute(text(f"SELECT id, ask_type, ask_subtype, ask_color FROM {table}"))).fetchall():
+            for row_id, aman, atype, asub, acolor, ltype, lcolor in (await conn.execute(text(
+                    f"SELECT id, ask_manufacturer, ask_type, ask_subtype, ask_color, filament_type, filament_color FROM {table}"))).fetchall():
+                if (aman, atype, asub, acolor) == tuple(ask_from_legacy(ltype, lcolor).__dict__.values()):
+                    continue                    # untouched since up(): the legacy value is the better (lossless) history
                 ftype, fcolor = _legacy_pair(atype, asub, acolor)
                 await conn.execute(text(f"UPDATE {table} SET filament_type = :t, filament_color = :c WHERE id = :i"),
                                    {"t": ftype, "c": fcolor, "i": row_id})

@@ -146,3 +146,13 @@ async def test_down_writes_asks_made_since_the_upgrade_back_to_the_legacy_column
                                         ((None, None, "#123456"), ("any", "#123456")), (("PA", "cf", None), ("PA-cf", "any"))])
 def test_a_tuple_folds_into_the_legacy_type_string(ask, legacy):
     assert mig._legacy_pair(*ask) == legacy
+
+
+async def test_down_keeps_the_legacy_value_of_a_row_not_touched_since_the_upgrade(db):
+    async with db.begin() as conn:
+        await conn.execute(text("UPDATE job_printer_configs SET filament_type = 'PLA+', filament_color = 'FFFFFF'"))
+        await mig.up(conn)                                   # ask = PLA / any / FFFFFF (broader than "PLA+")
+        await mig.down(conn)
+        await mig.down(conn)                                 # a second rollback is harmless
+        (cfg,) = await _rows(conn, "SELECT filament_type, filament_color FROM job_printer_configs")
+    assert (cfg["filament_type"], cfg["filament_color"]) == ("PLA+", "FFFFFF")

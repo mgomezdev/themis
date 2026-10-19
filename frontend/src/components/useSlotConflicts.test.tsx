@@ -34,10 +34,21 @@ describe('useSlotConflicts', () => {
     expect(result.current).toEqual([0, 1]);
   });
 
-  it('is empty when the request fails', async () => {
+  it('clears the verdict when a re-read fails, and does not ask for a printer that does not exist', async () => {
+    const { result, rerender } = renderHook(({ stored }) => useSlotConflicts(7, stored), { initialProps: { stored: [slot(0, '1')] } });
+    await waitFor(() => expect(result.current).toEqual([0, 1]));
     vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down'); }));
-    const { result } = renderHook(() => useSlotConflicts(7, []));
-    await new Promise(r => setTimeout(r, 0));
-    expect(result.current).toEqual([]);
+    rerender({ stored: [slot(0, '2')] });
+    await waitFor(() => expect(result.current).toEqual([]));
+    const before = vi.mocked(fetch).mock.calls.length;
+    renderHook(() => useSlotConflicts(NaN, [], undefined, false));
+    expect(vi.mocked(fetch).mock.calls.length).toBe(before);
+  });
+
+  it('re-reads when the hardware first reports a hand-entered slot (same tuple, now reported)', async () => {
+    const { rerender } = renderHook(({ stored }) => useSlotConflicts(7, stored), { initialProps: { stored: [slot(0, '1')] } });
+    await waitFor(() => expect(conflictsCalls()).toBe(1));
+    rerender({ stored: [{ ...slot(0, '1'), reported: true } as LoadedFilament] });
+    await waitFor(() => expect(conflictsCalls()).toBe(2));
   });
 });

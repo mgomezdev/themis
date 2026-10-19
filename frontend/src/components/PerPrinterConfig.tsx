@@ -98,7 +98,7 @@ export function PerPrinterConfig({ printerId, printers, config, onChange, modelF
   const inventory = useInventory();
   const catalogActive = !!inventory.plugin;          // "a material catalog is available" (only to fill the tuple from)
   const materials = useMaterials(catalogActive);
-  const conflicts = useSlotConflicts(pid, printer?.loaded_filaments);
+  const conflicts = useSlotConflicts(pid, printer?.loaded_filaments, undefined, !!printer);
 
   if (!printer) return null;
   const badge = BADGE[printer.printer_type] ?? printer.printer_type.slice(0, 3).toUpperCase();
