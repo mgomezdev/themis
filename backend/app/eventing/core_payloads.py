@@ -14,12 +14,14 @@ class InventoryUse(BaseModel):
 
 class JobCompletePayload(BaseModel):
     """`job.complete`: `source` is `queue` (a real print finished) or `manual` (an admin completed it without printing, which
-    fires no webhooks or notifications). `inventory` is null when no spool deduction applies."""
+    fires no webhooks or notifications). `inventory` is the spool deductions (one per spool used; a single object is the older shape),
+    null/empty when none applies; `deduction_notes` says what could not be tracked (no spool bound to a printing slot)."""
     model_config = ConfigDict(extra="forbid")
     source: Literal["queue", "manual"]
     actual_seconds: int | None = None
     actual_grams: float | None = None
-    inventory: InventoryUse | None = None
+    inventory: InventoryUse | list[InventoryUse] | None = None
+    deduction_notes: list[str] = []
 
 
 class ProjectPayload(BaseModel):

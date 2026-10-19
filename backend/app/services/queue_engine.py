@@ -62,20 +62,11 @@ def _slot_for_config(config, loaded: list, conflicts=frozenset(), plan: list | N
     return filament_matching.slot_for_config(config, loaded, conflicts, plan)
 
 
-def _config_plan(config, loaded: list) -> list:
-    """The slots `config` prints from: the plan stored when a printer claimed the job, else a fresh match (nothing stored yet, or
-    an estimate/debug slice that never claims). Empty when the printer cannot satisfy the ask."""
-    stored = filament_matching.plan_from_json(getattr(config, "slot_plan", None)) if config else None
-    if stored is not None:
-        return stored
-    return filament_matching.evaluate(config, loaded).plan if config else []
-
-
 def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
     loaded = (printer.loaded_filaments if printer else None) or []
-    plan = _config_plan(config, loaded) if plan is None else plan
+    plan = filament_matching.plan_for(config, loaded) if plan is None else plan
     slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if config and plan else None
     return {
         "source_key": uploaded_file.relative_path if uploaded_file else None,
@@ -830,7 +821,7 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             # Capture scalar values before session closes
             loaded = (printer.loaded_filaments if printer else None) or []
-            plan = _config_plan(config, loaded) if config else []
+            plan = filament_matching.plan_for(config, loaded) if config else []
             slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if plan else None
             plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
             cfg_tool_index = config.tool_index if config else None
@@ -1346,26 +1337,24 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             if printer is not None:
                 printer.awaiting_plate_clear = True
-            snapshot_ref = await self._snapshot_ref(session, job_id, printer_id, printer)
+            snapshot_refs = await self._snapshot_refs(session, job_id, printer_id, printer)
             await session.commit()
 
-        if snapshot_ref is not None:
+        for snapshot_ref in snapshot_refs:
             # Provider I/O never runs on the queue loop: the starting weight is read in a host task.
             inventory_tasks.spawn(inventory_snapshots.take(self._factory, job_id, printer_id, snapshot_ref),
                                   name=f"inventory-snapshot-{job_id}")
         await self._broadcast_job(job_id)
 
-    async def _snapshot_ref(self, session, job_id: int, printer_id: int, printer) -> str | None:
-        """The spool ref to snapshot at print start (DB only), or None when no deduction will apply."""
+    async def _snapshot_refs(self, session, job_id: int, printer_id: int, printer) -> list[str]:
+        """The spool refs to snapshot at print start (DB only): those bound to the slots the print uses; empty when no deduction applies."""
         if not (inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session)):
-            return None
+            return []
         config = (await session.execute(select(JobPrinterConfig).where(
             JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
         if config is None:
-            return None
-        slot = _slot_for_config(config, (printer.loaded_filaments if printer else None) or [])
-        ref = inventory_refs.slot_spool_ref(slot) if slot is not None else None
-        return str(ref) if ref is not None else None
+            return []
+        return inventory_deduction.snapshot_refs(config, (printer.loaded_filaments if printer else None) or [])
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
@@ -1401,7 +1390,8 @@ class QueueEngine:
             # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. Which spool
             # was in use is resolved now, because the loaded slot may change once the print is over.
             printer = await session.get(Printer, printer_id)
-            inventory_use = None
+            inventory_use: list[dict] = []
+            deduction_notes: list[str] = []
             actual_grams = job.actual_filament_grams
             if actual_grams is not None and inventory_deduction.can_deduct() \
                     and await inventory_config.deduct_enabled(session):
@@ -1414,11 +1404,9 @@ class QueueEngine:
                 )
                 config = cfg_result.scalar_one_or_none()
                 if config is not None:
-                    slot = _slot_for_config(config, loaded)
-                    if slot is not None:
-                        raw_spool_id = inventory_refs.slot_spool_ref(slot)
-                        if raw_spool_id is not None:
-                            inventory_use = {"spool_ref": str(raw_spool_id), "grams": actual_grams}
+                    # the spool bound to the slot(s) that PRINTED (the claim-time plan); none bound = a note + a warning, no deduction
+                    inventory_use, deduction_notes = inventory_deduction.completion_uses(
+                        config, loaded, actual_grams, job.actual_filament_breakdown)
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1434,7 +1422,8 @@ class QueueEngine:
                 except OSError:
                     pass
                 await session.delete(gcode)
-            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", inventory=inventory_use)
+            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", inventory=inventory_use,
+                                                         deduction_notes=deduction_notes)
             await session.commit()
 
         event_hub.wake()

@@ -1667,6 +1667,54 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/slot-conflicts": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Slots whose bound spool differs from what the printer reports",
+        "description": "Indexes of the slots in conflict (a hardware-reported slot whose bound spool's material differs in a part known on both\nsides). A conflicting slot is skipped by the queue's filament matching; the UI flags it so the operator can rebind, correct or\nunbind the spool. Empty when no slot is bound or the inventory cannot be read.",
+        "operationId": "slot_conflicts_api_v1_printers__printer_id__slot_conflicts_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Slot Conflicts Api V1 Printers  Printer Id  Slot Conflicts Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [

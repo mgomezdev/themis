@@ -161,6 +161,17 @@ def plan_from_json(raw) -> list[SlotUse] | None:
     return out
 
 
+def plan_for(config, loaded: list | None) -> list[SlotUse]:
+    """The slots `config` prints from: the plan stored when a printer claimed the job, else a fresh match (nothing stored yet, or an
+    estimate / debug / manual-completion path that never claims). Empty when the printer cannot satisfy the ask."""
+    if config is None:
+        return []
+    stored = plan_from_json(getattr(config, "slot_plan", None))
+    if stored is not None:
+        return stored
+    return evaluate(config, loaded).plan
+
+
 def plan_to_json(plan: list[SlotUse]) -> list[dict]:
     return [u.as_dict() for u in plan]
 

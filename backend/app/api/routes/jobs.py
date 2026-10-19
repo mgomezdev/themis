@@ -23,7 +23,7 @@ from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file
 from ...services.library_store import get_library_store, with_local_path
 from ...services.three_mf_parser import source_has_project_settings
-from ...services import model_targets, scheduling, slicer_profiles
+from ...services import filament_matching, model_targets, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine, _slot_for_config
 from ...services.providers.slicing import effective_provider_id, get_slicing_provider, slicing_provider_for
@@ -684,12 +684,15 @@ async def get_job_details(
 
     # Resolve each config's loaded-filament slot up front so we know whether a
     # inventory lookup is needed at all, and so we only ever fetch spools once.
-    resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None]] = []
+    resolved: list[tuple[JobPrinterConfig, Printer | None, dict | None, filament_matching.Verdict]] = []
     spool_ids_needed: set[str] = set()
     for cfg in configs:
         p = await session.get(Printer, cfg.printer_id)
-        slot = _slot_for_config(cfg, (p.loaded_filaments if p else None) or []) if p else None
-        resolved.append((cfg, p, slot))
+        loaded = (p.loaded_filaments if p else None) or []
+        conflicts = await filament_matching.conflicts_for(loaded) if p else set()
+        fit = filament_matching.evaluate(cfg, loaded, conflicts)                  # why this printer does / does not match
+        slot = _slot_for_config(cfg, loaded, conflicts) if p else None
+        resolved.append((cfg, p, slot, fit))
         if inventory_refs.slot_spool_ref(slot) is not None:
             spool_ids_needed.add(inventory_refs.slot_spool_ref(slot))
 
@@ -698,7 +701,7 @@ async def get_job_details(
         spools_by_id = await inventory_read.spools_by_ref(f"job {job_id}")
 
     printer_configs = []
-    for cfg, p, slot in resolved:
+    for cfg, p, slot, fit in resolved:
         spool_warning = None
         if inventory_refs.slot_spool_ref(slot) is not None:
             spool = spools_by_id.get(inventory_refs.slot_spool_ref(slot))
@@ -715,6 +718,8 @@ async def get_job_details(
             "filament_map": cfg.filament_map,
             "slice_failed": cfg.slice_failed,
             "slice_error": cfg.slice_error,
+            # Does the printer's loaded filament satisfy the ask right now? `reasons` is one line per slot that does not.
+            "filament_match": {"eligible": fit.eligible, "slots": [u.slot for u in fit.plan], "reasons": fit.reasons},
             "from_model_target": cfg.model_target_id is not None,
             "low_stock_warning": spool_warning,
         })
@@ -1237,13 +1242,13 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     # Wear counters and the spool deduction run from the durable `job.complete` event written in this transaction.
-    inventory_use = None
+    inventory_use: list[dict] = []
+    deduction_notes: list[str] = []
     if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
-        slot = _slot_for_config(config, printer.loaded_filaments or [])
-        raw_spool_id = inventory_refs.slot_spool_ref(slot) if slot is not None else None
-        if raw_spool_id is not None:
-            inventory_use = {"spool_ref": str(raw_spool_id), "grams": grams}
-    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use)
+        inventory_use, deduction_notes = inventory_deduction.completion_uses(
+            config, printer.loaded_filaments or [], grams, job.actual_filament_breakdown)
+    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use,
+                                                 deduction_notes=deduction_notes)
 
     await session.commit()
     await session.refresh(job)

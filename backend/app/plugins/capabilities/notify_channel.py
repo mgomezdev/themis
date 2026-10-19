@@ -21,7 +21,7 @@ CAPABILITY = "notify.channel"
 NOTIFY_EVENTS: tuple[str, ...] = (
     "job.complete", "job.failed", "job.blocked", "spool.low", "printer.alarm",
     "inventory.tracking_unavailable", "inventory.tracking_restored", "inventory.disconnected", "inventory.reconnected",
-    "inventory.weight_conflict",
+    "inventory.weight_conflict", "inventory.no_spool_tracked",
 )
 TEST_TITLE = "Themis test notification"
 TEST_MESSAGE = "This is a test notification from Themis."

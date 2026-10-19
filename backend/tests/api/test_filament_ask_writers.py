@@ -130,3 +130,56 @@ async def test_the_job_list_shows_type_chips_with_a_meaningful_subtype(client, c
     await create_job()
     chips = sorted(sum((j["materials"] for j in (await client.get("/api/v1/jobs")).json()), []))
     assert chips == ["ABS", "PETG", "PLA silk"]
+
+
+
+# --- the job detail says why a printer does not match (BIZ-317) --------------------------------------------------------------------
+
+PLA_RED = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "manufacturer": "Acme"},
+           {"slot": 1, "type": "PETG", "subtype": "standard", "color": "#00FF00"}]
+
+
+async def _match(client, create_job, create_printer, loaded, **ask):
+    pid = await create_printer(loaded_filaments=loaded)
+    job_id = await create_job(printer_id=pid, **ask)
+    (cfg,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    return cfg["filament_match"]
+
+
+async def test_a_matching_printer_reports_the_slot_it_would_print_from(client, create_job, create_printer):
+    m = await _match(client, create_job, create_printer, PLA_RED, filament_type="PETG", filament_subtype="any")
+    assert m == {"eligible": True, "slots": [1], "reasons": []}
+
+
+async def test_a_printer_that_does_not_match_lists_every_slot_and_what_was_wanted(client, create_job, create_printer):
+    m = await _match(client, create_job, create_printer, PLA_RED, filament_type="PLA", filament_subtype="silk", filament_color="#FF0000")
+    assert m == {"eligible": False, "slots": [], "reasons": [
+        "T0: Acme PLA standard #FF0000; wanted PLA silk #FF0000", "T1: PETG standard #00FF00; wanted PLA silk #FF0000"]}
+
+
+async def test_a_printer_with_no_slots_says_no_filament_configured(client, create_job, create_printer):
+    m = await _match(client, create_job, create_printer, [], filament_type="PLA", filament_subtype="any")
+    assert (m["eligible"], m["reasons"]) == (False, ["no filament configured"])
+
+
+async def test_an_unmatched_job_stays_queued_and_the_details_still_load(client, create_job, create_printer):
+    pid = await create_printer(loaded_filaments=PLA_RED)
+    job_id = await create_job(printer_id=pid, filament_type="ABS", filament_subtype="any")
+    assert (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["status"] == "queued"
+
+
+async def test_a_conflicting_slot_is_named_in_the_reasons_and_listed_by_the_printer(client, create_job, create_printer):
+    from app.plugins.capabilities.filament_inventory import InvMaterial, InvSpool
+    from tests.fake_providers import FakeInventoryProvider
+    from tests.inventory_helpers import use_provider
+    silk = InvMaterial(ref="m1", name="x", material="PLA", subtype="silk", color_hex="#FF0000", vendor="Acme")
+    await use_provider(FakeInventoryProvider(spools=[InvSpool(ref="9", material_ref="m1", material=silk)]), plugin_id="spoolman")
+    slots = [{"slot": 0, "type": "PLA", "subtype": "standard", "color": "#FF0000", "reported": True,
+              "inventory": {"provider": "spoolman", "spool_ref": "9"}}]
+    pid = await create_printer(loaded_filaments=slots)
+    job_id = await create_job(printer_id=pid, filament_type="PLA", filament_subtype="any")
+    (cfg,) = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()["printer_configs"]
+    assert cfg["filament_match"]["eligible"] is False
+    assert cfg["filament_match"]["reasons"] == ["T0: bound spool conflicts with what the printer reports"]
+    assert (await client.get(f"/api/v1/printers/{pid}/slot-conflicts")).json() == {"conflicts": [0]}
+    assert (await client.get("/api/v1/printers/999/slot-conflicts")).status_code == 404
