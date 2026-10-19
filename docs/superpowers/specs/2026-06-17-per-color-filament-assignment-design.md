@@ -1,5 +1,7 @@
 # Per-Color Filament Assignment for Multi-Material Jobs — Design Spec
 
+> **Superseded in part (2026-10-19):** the matching rules (what a job asks for, what a slot stores, how they are compared) are now in `2026-10-19-filament-matching-design.md`. Where this document disagrees, that one wins.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Let operators assign each model color in a multi-material job to either a specific tool slot or a Spoolman catalog filament; the queue engine resolves catalog filament → slot at dispatch/slice time.
