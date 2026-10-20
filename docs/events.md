@@ -29,7 +29,7 @@ Publication is validated against the **catalog** (`registry.event_catalog()` = `
 core event or another plugin's), the schema version must be current and the payload valid. A violation raises `EventError` to the
 **publisher** (a programming error); nothing a subscriber does can ever raise into a publisher.
 
-Core classes (names match the existing webhook/notification event names): `job.complete` (**durable**), `job.failed`,
+Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.failed`,
 `job.blocked`, `printer.alarm`, `spool.low` (best-effort).
 
 Plugin events: `PluginManifest.defines_events=(EventDef("acme_x.ready", version=1, durability=…, payload_model=…),)`; names must
@@ -42,7 +42,7 @@ cannot publish.
 ## Decisions
 
 **1. Which events are durable.** Per class, declared with the class. `durable` = at-least-once, stored in the publisher's
-transaction. Only `job.complete` is durable among core events, because its consumers (filament deduction, maintenance accrual)
+transaction. Only `job.started` and `job.complete` are durable among core events, because its consumers (filament deduction, maintenance accrual)
 are state that must not be lost; every other core event is a notice whose loss costs a message, never data. A plugin chooses for
 its own events. Durable events must be published with `enqueue_durable`, best-effort ones with `publish`; the wrong call raises,
 so a durable event can never be sent by a path that forgets the transaction.
@@ -115,15 +115,17 @@ printing it) each write a durable `job.complete` event **inside the job's comple
 then `hub.wake()` after the commit). The state change, the printer's `awaiting_plate_clear`, the gcode cleanup and the atomic
 completion claim (`UPDATE jobs … WHERE status='printing'`, whose loser returns without publishing) stay in that transaction; the
 event's `dedup_key` is `job.complete:<job id>`, so duplicate printer callbacks, a reconciliation pass and a manual completion racing a real one
-yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `inventory` (`{spool_ref, grams}` or
-null: the spool in the printing slot, resolved at completion, not when the event is handled).
+yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `loaded_filaments` (the printer's filament slots at completion, because they may change once the print is over). The publisher names no consumer and resolves no spool: observers work out what they need. (`inventory` / `deduction_notes` are the legacy payload of an event written before inventory subscribed on its own; the handler still honours them.)
+
+`job.started` is published the same way, in the transaction that marks a job `printing` (`completion_events.enqueue_job_started`; `dedup_key = job.started:<job>:<printer>:<updated_at>`, so a restart after a failed attempt is a new event). Payload: `loaded_filaments`.
 
 Subscribers (`app/services/completion_events.py`, registered on import, all idempotent on the job id):
 
 | Subscriber | Effect | Idempotency key |
 |---|---|---|
 | `job_complete.maintenance` | `printer.lifetime_job_count += 1`, `lifetime_print_seconds += job.actual_seconds` | `UPDATE jobs SET maintenance_accrued=1 WHERE id=? AND status='complete' AND maintenance_accrued=0` in the **same transaction** as the counters (migration v046; already-complete jobs are backfilled as accrued) |
-| `job_complete.inventory` | `inventory_deduction.plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
+| `job_started.inventory` (`services/inventory/subscribers.py`, BIZ-308) | snapshots the weight of each spool bound to a slot the print uses (`snapshots.take`); nothing unless the active provider tracks and writes weight and deduction is on | unique `(job, provider, spool)` snapshot row |
+| `job_complete.inventory` (same module) | resolves the spool(s) the print used from the job's config and `loaded_filaments`, then `plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
 | `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none: the senders swallow their own errors and each step is attempted independently, so a send failure is logged, not retried or propagated. A hub-level timeout/crash/shutdown mid-handler redelivers the event and can repeat a notice (at-least-once) |
 
 Crash boundaries (each covered by `tests/services/test_completion_events.py`): *before commit* — job and event roll back together, the

@@ -1,14 +1,16 @@
 """The event catalog: core events plus every registered plugin's `defines_events` (BIZ-249). Publication is validated against it."""
 from __future__ import annotations
 
-from .core_payloads import JobCompletePayload, ProjectPayload
+from .core_payloads import JobCompletePayload, JobStartedPayload, ProjectPayload
 from .definitions import EventDef
 from .envelope import EventEnvelope, EventError
 
-# Core event classes. `job.complete` is durable: its consumers (inventory deduction, maintenance accrual) must not lose it.
+# Core event classes. `job.started` and `job.complete` are durable: their consumers (inventory snapshot and deduction, maintenance accrual) must not lose them.
 # The rest are notices: losing one on a crash costs a notification, never data. Names match the existing webhook/notification
 # event names so migrating a consumer changes how it is fed, not what it is called.
 CORE_EVENTS: dict[str, EventDef] = {d.name: d for d in (
+    EventDef("job.started", durability="durable", payload_model=JobStartedPayload,
+             description="A printer began a job's physical print (published once per start)."),
     EventDef("job.complete", durability="durable", payload_model=JobCompletePayload,
              description="A job finished printing successfully (published once per job)."),
     EventDef("job.failed", description="A job failed after slicing (upload or start error)."),

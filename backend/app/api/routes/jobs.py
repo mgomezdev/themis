@@ -30,7 +30,7 @@ from ...services.providers.slicing import effective_provider_id, get_slicing_pro
 from ...services.slicer_service import SliceError, SliceRequest, tool_mapping_hook
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ._filament_ask import AskFields, ask_columns, ask_out, type_labels
-from ...services.inventory import config as inventory_config, deduction as inventory_deduction, read as inventory_read, refs as inventory_refs
+from ...services.inventory import read as inventory_read, refs as inventory_refs
 from ...services.inventory.preflight import check_spool_sufficiency
 from ...services.providers.contract import OverrideInspection, PlateEstimate
 from ...services.providers.slicing import get_format_provider
@@ -1245,13 +1245,8 @@ async def complete_job_manually(
     printer_manager.set_awaiting_plate_clear(body.printer_id, True)
 
     # Wear counters and the spool deduction run from the durable `job.complete` event written in this transaction.
-    inventory_use: list[dict] = []
-    deduction_notes: list[str] = []
-    if grams is not None and inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session):
-        inventory_use, deduction_notes = inventory_deduction.completion_uses(
-            config, printer.loaded_filaments or [], grams, job.actual_filament_breakdown)
-    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual", inventory=inventory_use,
-                                                 deduction_notes=deduction_notes)
+    await completion_events.enqueue_job_complete(session, job, body.printer_id, source="manual",
+                                                 loaded_filaments=printer.loaded_filaments)
 
     await session.commit()
     await session.refresh(job)
