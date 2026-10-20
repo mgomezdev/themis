@@ -70,6 +70,11 @@ async def get_details(job_id: int, fields: Sequence[str], origin: str | None = N
   `result` (`success` | `failure`), and the filament/time fields the plugin can supply, each either declared in `job_fields` or in
   `unsupported_job_fields`. Conformance is checked, not enforced: the plugin test kit gains a manifest check, and the host logs a
   warning at load for a printer plugin that neither declares nor marks-unsupported a minimum field. A warning never blocks the plugin.
+- **Single writer per field (rule, not enforced yet).** A job's field is meant to have exactly one writing plugin; two plugins
+  modifying the same field on one job is a contract violation. Core does **not** enforce it for now (storage keeps
+  `(job_id, field, origin)` so nothing is lost if it happens). Enforcement (e.g. first-writer-owns, manifest ownership check,
+  rejecting or warning on a second origin) is deferred; tracked under "Out of scope". The multi-origin resolution below is only an
+  interim fallback for that case.
 - **Resolution for one field**: stored value (any origin; with `origin=` only that origin) -> else the job's printer plugin
   manifest: listed in `unsupported_job_fields` -> `unsupported`; declared in `job_fields` -> `unavailable` -> else the catalog:
   nobody declares it -> `unknown_field`. If several origins stored the same field and no `origin` is given, the printer-plugin origin wins,
@@ -98,7 +103,7 @@ async def get_details(job_id: int, fields: Sequence[str], origin: str | None = N
 
 ## Out of scope
 
-Replay/log UI (`docs/event-diagnostics-decision.md`, BIZ-270), new durability classes, a `job.cancelled` event, PK swap, cross-instance
+Enforcing single-writer-per-field (see §3; deferred, to be designed later), replay/log UI (`docs/event-diagnostics-decision.md`, BIZ-270), new durability classes, a `job.cancelled` event, PK swap, cross-instance
 ID federation.
 
 ## Tests (each must fail without the change)
@@ -116,6 +121,6 @@ ID federation.
 - Inventory handler fallback order: details present, payload only, legacy only (three cases, each asserting the deducted grams).
 - Field catalog: enabling a plugin adds its `job_fields` to `GET /job-fields`; disabling removes them; a printer plugin missing a minimum field
   (neither declared nor unsupported) logs a load warning and still loads.
-- Two origins storing one field: default read prefers the printer origin; `origin=` selects the other.
+- Interim fallback only (single-writer is not enforced): two origins storing one field: default read prefers the printer origin; `origin=` selects the other.
 - Boundary tests (`test_vendor_extraction_boundary`, `test_provider_boundary`, `test_no_provider_in_core`) pass with the reporter in
   core and no vendor names added.
