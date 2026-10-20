@@ -89,8 +89,8 @@ async def get_details(job_id: int, fields: Sequence[str], origin: str | None = N
 
 1. Hub delivers `job.complete` (durable) with `origin` and `entities.job_id`.
 2. Handler calls `get_details(job_id, ["filament_usage"])`. Because details are persisted **in the same transaction** as the event,
-   `status != ok` is a real gap (plugin did not report usage), not a race: the handler falls back (below), else records "no usage"
-   and acks; it does not rely on retry-until-present.
+   `unsupported` (plugin cannot report it) and `unavailable` (plugin did not report it) are real answers, not races: the handler falls
+   back (below), else records "no usage" and acks; it does not rely on retry-until-present.
 3. **Compatibility window.** The inventory handlers accept, in order: `get_details` result -> payload `loaded_filaments`/`actual_grams`
    (current shape) -> legacy `inventory`/`deduction_notes` (already honored). Core keeps writing the current payload fields for one
    release so in-flight durable events and `job_started.inventory` (which reads `loaded_filaments` from `job.started`) keep
