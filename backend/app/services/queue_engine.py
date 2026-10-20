@@ -30,7 +30,6 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
@@ -1348,24 +1347,13 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             if printer is not None:
                 printer.awaiting_plate_clear = True
-            snapshot_refs = await self._snapshot_refs(session, job_id, printer_id, printer)
+            # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
+            await completion_events.enqueue_job_started(session, job, printer_id,
+                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
             await session.commit()
 
-        for snapshot_ref in snapshot_refs:
-            # Provider I/O never runs on the queue loop: the starting weight is read in a host task.
-            inventory_tasks.spawn(inventory_snapshots.take(self._factory, job_id, printer_id, snapshot_ref),
-                                  name=f"inventory-snapshot-{job_id}")
+        event_hub.wake()
         await self._broadcast_job(job_id)
-
-    async def _snapshot_refs(self, session, job_id: int, printer_id: int, printer) -> list[str]:
-        """The spool refs to snapshot at print start (DB only): those bound to the slots the print uses; empty when no deduction applies."""
-        if not (inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session)):
-            return []
-        config = (await session.execute(select(JobPrinterConfig).where(
-            JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
-        if config is None:
-            return []
-        return inventory_deduction.snapshot_refs(config, (printer.loaded_filaments if printer else None) or [])
 
     async def handle_print_complete(self, printer_id: int) -> None:
         """Called by PrinterManager when the printer's vendor client signals print done."""
@@ -1398,26 +1386,9 @@ class QueueEngine:
                 return  # already claimed by a concurrent completion path
 
             # The wear counters, the spool deduction and the notices are effects of the durable `job.complete` event written below,
-            # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. Which spool
-            # was in use is resolved now, because the loaded slot may change once the print is over.
+            # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. The printer's
+            # loaded slots travel with it, because they may change once the print is over.
             printer = await session.get(Printer, printer_id)
-            inventory_use: list[dict] = []
-            deduction_notes: list[str] = []
-            actual_grams = job.actual_filament_grams
-            if actual_grams is not None and inventory_deduction.can_deduct() \
-                    and await inventory_config.deduct_enabled(session):
-                loaded = (printer.loaded_filaments if printer else None) or []
-                cfg_result = await session.execute(
-                    select(JobPrinterConfig).where(
-                        JobPrinterConfig.job_id == job_id,
-                        JobPrinterConfig.printer_id == printer_id,
-                    )
-                )
-                config = cfg_result.scalar_one_or_none()
-                if config is not None:
-                    # the spool bound to the slot(s) that PRINTED (the claim-time plan); none bound = a note + a warning, no deduction
-                    inventory_use, deduction_notes = inventory_deduction.completion_uses(
-                        config, loaded, actual_grams, job.actual_filament_breakdown)
 
             # Delete gcode file from disk and DB
             gcode_result = await session.execute(
@@ -1433,8 +1404,8 @@ class QueueEngine:
                 except OSError:
                     pass
                 await session.delete(gcode)
-            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", inventory=inventory_use,
-                                                         deduction_notes=deduction_notes)
+            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue",
+                                                         loaded_filaments=printer.loaded_filaments if printer else None)
             await session.commit()
 
         event_hub.wake()

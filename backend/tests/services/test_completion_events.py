@@ -62,8 +62,7 @@ async def test_completion_commits_the_job_and_one_durable_event_together_and_eff
     (o,) = outbox
     assert (o.name, o.dedup_key, o.source) == ("job.complete", f"job.complete:{job_id}", "core")
     assert o.envelope["entities"] == {"job_id": job_id, "printer_id": printer_id}
-    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "inventory": None,
-                                            "deduction_notes": []}
+    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "loaded_filaments": []}
     assert {d.subscriber for d in deliveries} == SUBSCRIBERS and {d.status for d in deliveries} == {"pending"}
     assert (await _counters(db)) == (0, 0)                       # committed but not yet handled: still owed, not lost
 
@@ -213,7 +212,7 @@ async def test_a_manual_completion_accrues_and_deducts_but_notifies_nobody(db, m
         monkeypatch.setattr(engine, name, AsyncMock())
     async with db() as s:
         await s.execute(update(Job).where(Job.id == job_id).values(status="complete"))
-        await completion_events.enqueue_job_complete(s, await s.get(Job, job_id), printer_id, source="manual", inventory=None)
+        await completion_events.enqueue_job_complete(s, await s.get(Job, job_id), printer_id, source="manual")
         await s.commit()
 
     await settle_events(db)

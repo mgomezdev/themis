@@ -37,7 +37,7 @@ def test_an_envelope_is_immutable():
 def test_core_catalog_marks_job_completion_durable_and_the_rest_best_effort():
     cat = event_catalog()
     assert cat["job.complete"].durability == "durable"
-    assert {n for n, d in CORE_EVENTS.items() if d.durability == "durable"} == {"job.complete"}
+    assert {n for n, d in CORE_EVENTS.items() if d.durability == "durable"} == {"job.started", "job.complete"}
 
 
 def test_unknown_event_and_wrong_schema_version_are_rejected():

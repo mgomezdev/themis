@@ -6,8 +6,9 @@ event, at least once, each idempotent on the job id:
 
 * `job_complete.maintenance` — bumps the printer's lifetime wear counters, guarded by `jobs.maintenance_accrued` (the flag and the
   counters change in one transaction, so a crash or redelivery can neither lose nor repeat the accrual);
-* `job_complete.inventory` — plans the spool deduction (`inventory_deduction.plan_completion`; skipped when an outbox write for
-  this job and spool already exists). The spool is resolved when the job completes and carried in the payload, not looked up later;
+* inventory is an observer too (`services/inventory/subscribers.py`): `job_started.inventory` snapshots the spools in use and
+  `job_complete.inventory` deducts from them. This module (the publisher) knows nothing about spools; it only says what the
+  printer has loaded;
 * `job_complete.notices` — WebSocket broadcast, webhook and notification channels for a real print (not a manual completion).
   Each is attempted on its own and none can fail the completion; the senders swallow their own errors, so a send failure is logged
   and not retried. Delivery of the event itself is still at-least-once: a timeout, crash or shutdown mid-handler redelivers it and
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..eventing import EventEnvelope
 from ..eventing.hub import hub
 from ..models import Job, Printer
-from .inventory import deduction as inventory_deduction, outbox as inventory_outbox
+from .inventory import subscribers as inventory_subscribers
 
 logger = logging.getLogger("app")
 
@@ -36,14 +37,23 @@ def bind_engine(engine) -> None:
     _engine = engine
 
 EVENT = "job.complete"
+STARTED = "job.started"
 HANDLER_TIMEOUT_S = 30.0
 
 
+async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, *, loaded_filaments: list[dict] | None) -> bool:
+    """Add the durable `job.started` event to the caller's start transaction (no commit; call `hub.wake()` after it). One per
+    physical start: the key carries the start time, so a job restarted after a failed attempt is a new event."""
+    entities: dict[str, int | str] = {"job_id": job.id, "printer_id": printer_id}
+    envelope = EventEnvelope(name=STARTED, entities=entities, dedup_key=f"{STARTED}:{job.id}:{printer_id}:{job.updated_at}",
+                             payload={"loaded_filaments": list(loaded_filaments or [])})
+    return await hub.enqueue_durable(session, envelope)
+
+
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,
-                               inventory: list[dict] | None, deduction_notes: list[str] | None = None) -> bool:
+                               loaded_filaments: list[dict] | None = None) -> bool:
     """Add the durable `job.complete` event to the caller's completion transaction (no commit; call `hub.wake()` after it).
-    One logical event per job: `dedup_key = job.complete:<id>`. `inventory` = `[{"spool_ref", "grams"}]` (one per spool to deduct from; None/empty = none);
-    `deduction_notes` = what could not be tracked (no spool bound to a printing slot), shown on the job and sent as an event."""
+    One logical event per job: `dedup_key = job.complete:<id>`. `loaded_filaments` = the printer's slots now (they may change after the print)."""
     entities: dict[str, int | str] = {"job_id": job.id}
     if printer_id is not None:
         entities["printer_id"] = printer_id
@@ -52,8 +62,8 @@ async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int 
     if job.order_id is not None:
         entities["order_id"] = job.order_id
     envelope = EventEnvelope(name=EVENT, entities=entities, dedup_key=f"{EVENT}:{job.id}", payload={
-        "source": source, "actual_seconds": job.actual_seconds, "actual_grams": job.actual_filament_grams, "inventory": inventory or None,
-        "deduction_notes": deduction_notes or []})
+        "source": source, "actual_seconds": job.actual_seconds, "actual_grams": job.actual_filament_grams,
+        "loaded_filaments": list(loaded_filaments or [])})
     return await hub.enqueue_durable(session, envelope)
 
 
@@ -70,33 +80,6 @@ async def accrue_maintenance(envelope: EventEnvelope) -> None:
             printer.lifetime_job_count += 1
             printer.lifetime_print_seconds += job.actual_seconds or 0
         await session.commit()
-
-
-async def deduct_inventory(envelope: EventEnvelope) -> None:
-    raw = envelope.payload.get("inventory")
-    uses = [raw] if isinstance(raw, dict) else list(raw or [])                 # an event written before multi-spool carried one dict
-    notes = list(envelope.payload.get("deduction_notes") or [])
-    if not uses and not notes:
-        return
-    job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
-    source = "queue" if envelope.payload.get("source") == "queue" else "manual_complete"
-    factory = hub.session_factory
-    for use in uses:
-        async with factory() as session:
-            job = await session.get(Job, job_id)
-            if job is None:
-                return
-            plan = await inventory_deduction.plan_completion(session, job=job, printer_id=printer_id, spool_ref=str(use["spool_ref"]),
-                                                             grams=float(use["grams"]), source=source)
-            await session.commit()
-        if plan.kind == "deferred":
-            # No start snapshot: read the weight and write the outbox row HERE, so the event is acknowledged only once the deduction is
-            # durable (a crash or a provider error before that redelivers it; the outbox-row check makes the retry safe).
-            await inventory_deduction.complete_deferred(factory, plan)
-        else:
-            inventory_deduction.after_commit(plan, factory)
-    if notes:
-        await inventory_deduction.warn_untracked(factory, job_id, printer_id, notes)
 
 
 async def notify_consumers(envelope: EventEnvelope) -> None:
@@ -118,10 +101,10 @@ async def notify_consumers(envelope: EventEnvelope) -> None:
 
 
 def register() -> None:
-    for name, handler in (("job_complete.maintenance", accrue_maintenance), ("job_complete.inventory", deduct_inventory),
-                          ("job_complete.notices", notify_consumers)):
+    for event, name, handler in ((EVENT, "job_complete.maintenance", accrue_maintenance), (EVENT, "job_complete.notices", notify_consumers)):
         if not hub.has_subscriber(name):
-            hub.subscribe(EVENT, handler, name=name, timeout=HANDLER_TIMEOUT_S)
+            hub.subscribe(event, handler, name=name, timeout=HANDLER_TIMEOUT_S)
+    inventory_subscribers.register(hub, timeout=HANDLER_TIMEOUT_S)
 
 
 register()

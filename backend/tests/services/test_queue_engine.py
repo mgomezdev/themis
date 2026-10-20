@@ -1211,8 +1211,9 @@ async def _snapshot(db, job_id, pre, ref="42", provider="spoolman"):
 
 @pytest.mark.asyncio
 async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the_provider_on_the_loop(db):
-    """Provider I/O is only ever scheduled as a host task: with `tasks.spawn` intercepted (coroutines collected, never run),
-    starting and completing a print touch no provider method, yet the outbox row is already durable."""
+    """The queue never touches inventory: starting a print only publishes `job.started` (inventory snapshots when it handles that),
+    and with `tasks.spawn` intercepted (coroutines collected, never run) completing a print touches no provider method, yet the
+    outbox row is already durable."""
     from app.models import JobSpoolSnapshot
     from sqlalchemy import select
     from tests.fake_providers import FakeInventoryProvider
@@ -1230,10 +1231,8 @@ async def test_print_start_snapshots_off_the_loop_and_completion_never_calls_the
     open(gcode, "w").write("G28\n")
     with patch("app.services.inventory.tasks.spawn", spy):
         await engine._do_upload_and_print(job_id, printer_id, gcode, 1, None)
-        assert [n for n, _ in spawned] == [f"inventory-snapshot-{job_id}"]
-        assert fake.calls == []                                           # nothing ran on the loop
-        # run the scheduled snapshot "in the host", as the real task would
-        await spawned[0][1]
+        assert spawned == [] and fake.calls == []                         # the queue scheduled and ran nothing of inventory's
+        await settle_events(db)                                           # inventory reacts to `job.started`
         async with db() as session:
             snap = (await session.execute(select(JobSpoolSnapshot))).scalar_one()
         assert (snap.pre_weight_g, snap.source, snap.spool_ref) == (500.0, "live", "42")
