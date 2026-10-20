@@ -145,11 +145,114 @@ async def test_a_slot_with_no_spool_ref_the_library_can_use_changes_nothing_and_
     assert (await client.get(f"{INV}/spools")).status_code == 200      # and the library keeps working
 
 
-async def test_the_queue_and_the_printer_know_nothing_of_inventory_they_only_publish_events():
-    import inspect
-    from app.api.routes import jobs
-    from app.services import queue_engine
+async def test_a_start_snapshot_delivered_after_the_print_ended_is_not_taken(client, farm, session_factory, upload_3mf):
+    """`job.started` and `job.complete` are separate lanes with no ordering: if the start event is handled late, the weight now is
+    not the start weight, so no snapshot is stored (the completion already took the deferred path and deducted once)."""
+    await _local_inventory_active(client)
+    ref = await _spool(client, 500.0)
+    printer_id = await _printer_with_slot(client, session_factory, ref)
+    job_id = await _queue_job(client, upload_3mf, printer_id)
+    await run_cycle(farm.engine)
+    printer_manager.get_client(printer_id).stop_print()
+    await printer_manager.on_print_complete(printer_id, None)            # complete BEFORE the start event is delivered
+    async with session_factory() as s:
+        started = EventEnvelope.model_validate((await s.execute(select(EventOutbox).where(EventOutbox.name == "job.started"))).scalar_one().envelope)
+    await subscribers.deduct_on_complete(EventEnvelope.model_validate(
+        (await _outbox_envelope(session_factory, "job.complete"))))
+    await settle_events(session_factory)
+    assert await _remaining(client, ref) == 487.5
+
+    await subscribers.snapshot_on_start(started)                         # the late start event
+
+    assert await _rows(session_factory, "SELECT id FROM job_spool_snapshots") == []
+    assert await _remaining(client, ref) == 487.5
+
+
+async def _outbox_envelope(factory, name: str) -> dict:
+    async with factory() as s:
+        return (await s.execute(select(EventOutbox).where(EventOutbox.name == name))).scalar_one().envelope
+
+
+async def _completed_job_with_snapshot(client, farm, session_factory, upload_3mf):
+    await _local_inventory_active(client)
+    ref = await _spool(client, 500.0)
+    printer_id = await _printer_with_slot(client, session_factory, ref)
+    job_id = await _queue_job(client, upload_3mf, printer_id)
+    return ref, printer_id, job_id
+
+
+async def _legacy_complete(factory, job_id: int, printer_id: int, **payload) -> None:
+    """A `job.complete` written by the previous release: the publisher had already resolved the spools (`inventory`, `deduction_notes`)."""
+    async with factory() as s:
+        env = EventEnvelope(name="job.complete", entities={"job_id": job_id, "printer_id": printer_id}, dedup_key=f"legacy:{job_id}",
+                            payload={"source": "queue", "actual_seconds": 60, "actual_grams": 12.5, **payload})
+        await hub.enqueue_durable(s, env)
+        await s.commit()
+    await settle_events(factory)
+
+
+@pytest.mark.parametrize("shape", ["one-dict", "list"])
+async def test_a_legacy_job_complete_with_resolved_spools_is_still_deducted(client, farm, session_factory, upload_3mf, shape):
+    ref, printer_id, job_id = await _completed_job_with_snapshot(client, farm, session_factory, upload_3mf)
+    await run_cycle(farm.engine)
+    await settle_events(session_factory)                                 # snapshot at 500
+    async with session_factory() as s:                                   # the job ended without the new event (it predates this release)
+        (await s.get(Job, job_id)).status = "complete"
+        await s.commit()
+    use = {"spool_ref": ref, "grams": 20.0}
+    await _legacy_complete(session_factory, job_id, printer_id, inventory=use if shape == "one-dict" else [use], deduction_notes=[])
+
+    assert await _remaining(client, ref) == 480.0
+
+
+async def test_a_legacy_job_complete_with_nothing_to_deduct_does_not_invent_a_warning(client, farm, session_factory, upload_3mf):
+    ref, printer_id, job_id = await _completed_job_with_snapshot(client, farm, session_factory, upload_3mf)
+    async with session_factory() as s:
+        (await s.get(Job, job_id)).status = "complete"
+        await s.commit()
+    await _legacy_complete(session_factory, job_id, printer_id, inventory=None, deduction_notes=[])        # old "deduction did not apply"
+
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()
+    assert not job["deduction_skipped"] and not job["deduction_note"]
+    assert await _remaining(client, ref) == 500.0
+
+
+async def test_a_legacy_job_complete_with_notes_flags_the_job(client, farm, session_factory, upload_3mf):
+    ref, printer_id, job_id = await _completed_job_with_snapshot(client, farm, session_factory, upload_3mf)
+    async with session_factory() as s:
+        (await s.get(Job, job_id)).status = "complete"
+        await s.commit()
+    await _legacy_complete(session_factory, job_id, printer_id, inventory=None, deduction_notes=["No spool is bound to T0, so nothing"])
+
+    job = (await client.get(f"/api/v1/jobs/{job_id}")).json()
+    assert job["deduction_skipped"] is True and "No spool is bound to T0" in job["deduction_note"]
+
+
+async def test_each_start_is_its_own_durable_event_and_the_same_start_is_one(client, farm, session_factory, upload_3mf):
+    from app.services import completion_events
+    _, printer_id, job_id = await _completed_job_with_snapshot(client, farm, session_factory, upload_3mf)
+    async with session_factory() as s:
+        job = await s.get(Job, job_id)
+        job.updated_at = "2026-01-01T00:00:00+00:00"
+        assert await completion_events.enqueue_job_started(s, job, printer_id, loaded_filaments=[]) is True
+        assert await completion_events.enqueue_job_started(s, job, printer_id, loaded_filaments=[]) is False       # same start: one event
+        job.updated_at = "2026-01-01T00:05:00+00:00"                                                                # restarted later
+        assert await completion_events.enqueue_job_started(s, job, printer_id, loaded_filaments=[]) is True
+        await s.commit()
+    async with session_factory() as s:
+        assert len((await s.execute(select(EventOutbox).where(EventOutbox.name == "job.started"))).scalars().all()) == 2
+
+
+def test_the_queue_engine_and_the_job_routes_import_nothing_from_inventory_services_but_reads():
+    """The printer/queue side publishes events; it does not drive spool tracking. (Reading the library to show it is fine.)"""
+    import ast
+    import app.api.routes.jobs as jobs
+    import app.services.queue_engine as queue_engine
+    allowed = {"read", "refs"}                                             # job views and the preflight read spools; they never write or snapshot
     for module in (queue_engine, jobs):
-        source = inspect.getsource(module)
-        assert "inventory_deduction" not in source and "inventory_snapshots" not in source and "inventory_config" not in source
-    assert hub.has_subscriber("job_started.inventory") and hub.has_subscriber("job_complete.inventory")
+        tree = ast.parse(open(module.__file__).read())
+        used = {a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("services.inventory")
+                or isinstance(n, ast.ImportFrom) and n.module == "inventory" for a in n.names}
+        used |= {(n.module or "").rsplit(".", 1)[-1] for n in ast.walk(tree)
+                 if isinstance(n, ast.ImportFrom) and ".inventory." in f".{n.module}." and (n.module or "").split(".")[-2:-1] == ["inventory"]}
+        assert used <= allowed | {"preflight"}, f"{module.__name__} reaches into inventory: {sorted(used - allowed)}"

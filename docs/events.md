@@ -119,6 +119,8 @@ yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `ac
 
 `job.started` is published the same way, in the transaction that marks a job `printing` (`completion_events.enqueue_job_started`; `dedup_key = job.started:<job>:<printer>:<updated_at>`, so a restart after a failed attempt is a new event). Payload: `loaded_filaments`.
 
+Inventory's two observers decide at **delivery** time, not publication time: whether the active provider can track and write weight and whether deduction is on are read when the event is handled, so changing either during a print (or while a delivery is in backoff) changes the outcome. `job.started` and `job.complete` are separate lanes with no ordering: a start snapshot handled after the job ended, or after its deduction was planned, is skipped (the completion already took the deferred read). Each subscriber is serial, so a hung provider delays later snapshots behind it (30 s handler timeout, then retry).
+
 Subscribers (`app/services/completion_events.py`, registered on import, all idempotent on the job id):
 
 | Subscriber | Effect | Idempotency key |

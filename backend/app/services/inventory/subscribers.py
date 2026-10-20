@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from ...eventing import EventEnvelope
 from ...models import Job, JobPrinterConfig
-from . import config, deduction, snapshots
+from . import config, deduction, outbox, provider, snapshots
 
 
 async def _config_for(session, job_id: int, printer_id: int | None) -> JobPrinterConfig | None:
@@ -30,8 +30,13 @@ async def snapshot_on_start(envelope: EventEnvelope) -> None:
     async with factory() as session:
         if not (deduction.can_deduct() and await config.deduct_enabled(session)):
             return
+        job = await session.get(Job, job_id)
         cfg = await _config_for(session, job_id, printer_id)
         spool_refs = deduction.snapshot_refs(cfg, envelope.payload.get("loaded_filaments") or []) if cfg is not None else []
+        pid = provider.provider_id()
+        if job is None or job.status != "printing" or pid is None:
+            return                                    # delivered late (the print already ended): the weight now is not the start weight
+        spool_refs = [r for r in spool_refs if not await outbox.exists_for_job(session, pid, r, job_id)]
     for spool_ref in spool_refs:
         await snapshots.take(factory, job_id, printer_id, spool_ref)             # provider I/O, with no session held
 
@@ -41,10 +46,11 @@ async def deduct_on_complete(envelope: EventEnvelope) -> None:
     payload = envelope.payload
     job_id, printer_id = envelope.entities["job_id"], envelope.entities.get("printer_id")
     factory = hub.session_factory
-    raw = payload.get("inventory")                                              # legacy event: the publisher already resolved the spools
+    legacy = "inventory" in payload or "deduction_notes" in payload            # written before inventory subscribed: spools already resolved
+    raw = payload.get("inventory")
     uses = [raw] if isinstance(raw, dict) else list(raw or [])
     notes = list(payload.get("deduction_notes") or [])
-    if not uses and not notes:
+    if not legacy:
         grams = payload.get("actual_grams")
         if grams is None:
             return
