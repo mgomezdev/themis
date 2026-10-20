@@ -5,39 +5,32 @@ Status: draft for review. Builds on `docs/events.md` (BIZ-249/269).
 ## Goal
 
 Printer plugins report what happened to a print; core publishes a notice naming the job; any interested plugin reacts by asking core
-for the job details it cares about. Example: "bambu: Print job complete: job `<uid>`" -> the filament plugin calls
-`get_details(<uid>, ["filament_usage"])` and decrements the library.
+for the job details it cares about. Example: "bambu: Print job complete: job `<id>`" -> the filament plugin calls
+`get_details(<id>, ["filament_usage"])` and decrements the library.
 
 ## Decisions
 
 1. **Core owns the job ID and the details accessor.** Plugins never mint IDs.
-2. **Cross-plugin job ID is a long opaque string (`jobs.uid`, `uuid4().hex`, 32 chars, same format as envelope ids).** The int
-   `jobs.id` stays as the internal primary key; all existing FKs and idempotency tables remain keyed on it. A full PK swap is out
-   of scope (SQLite INTEGER is 64-bit; the need is opacity/uniqueness, which `uid` provides).
+2. **Job ID stays the existing int `jobs.id`** (64-bit; no practical exhaustion). No `uid`, no PK swap.
 3. **Plugins talk to core through a callback**; plugins never call `hub.publish` for core events (unchanged rule, and a disabled
    plugin's callback is rejected like a disabled publisher). Core publishes.
 4. **Events carry the originating plugin** in a new `origin` envelope field.
 5. **One generic accessor**, `get_details(job_id, fields)`, open field vocabulary.
 
-## 1. Job ID (`uid`)
+## 1. Job ID
 
-- Migration `v054`: add `jobs.uid TEXT NOT NULL UNIQUE`, backfill existing rows, assign `uuid4().hex` on insert.
-- `entities.job_id` in envelopes becomes the `uid` string (`ENTITY_KEYS` unchanged, value type widened to `int | str` like `spool_ref`).
-  `dedup_key` becomes `job.complete:<uid>`.
-- **In-flight events / no double deduction.** Handlers resolve the envelope's `job_id` through one helper, `resolve_job(ref)`,
-  that accepts an int (events enqueued before the migration) or a `uid`, and returns the `Job` row. Every idempotency key
-  (`maintenance_accrued`, snapshot `(job, provider, spool)`, `inventory_pending_writes`) stays on the int PK, so a redelivered old
-  event and a new one for the same job hit the same key. Test below.
-- API: responses that expose a job add `uid` (additive). Existing `{job_id}` routes keep int. Contract updates: `uid` added to
-  `contracts/response-keys.json` for the shapes that return it, matching TS interface + `responseKeys.contract.test.ts`, and
-  `openapi.json` regenerated if params/routes change. The `events` route filter `entity=job_id:<x>` matches either form.
+- **No new ID.** The cross-plugin job ID is the existing `jobs.id`. SQLite INTEGER PKs are signed 64-bit (~9.2e18), so exhaustion
+  is not a practical concern. No migration, no `uid`, no in-flight-event compatibility issue; `entities.job_id`, `dedup_key`
+  (`job.complete:<id>`) and every idempotency key are unchanged.
+- Rule: `jobs.id` is never reused or recycled (keep the PK `AUTOINCREMENT` semantics; a deleted job's id is not handed out again),
+  so an id in an old event can only ever mean that job. Test below.
 
 ## 2. Plugin -> core callback, event origin
 
 - **Injection.** `report_job_event` is not a plain `PluginContext` value. Core builds a per-plugin `JobReporter` (bound to the
   plugin's `plugin_id`, a session factory and the hub) in `app/plugins/host.py` and passes it via `PluginContext.job_reporter`.
   Plugin code imports nothing from `queue_engine`; the reporter lives in core and delegates to it.
-- Signature: `await ctx.job_reporter.report(job_ref, kind, details=None)`; `kind` in `started | complete | failed | blocked`.
+- Signature: `await ctx.job_reporter.report(job_id, kind, details=None)`; `kind` in `started | complete | failed | blocked`.
   (`cancelled` is **not** added now: cancel is core-initiated and stays `job.failed`/existing flow; revisit if a vendor needs it.)
 - Core validates the job's printer belongs to `plugin_id`, applies the state transition (existing atomic claim; the loser returns
   without publishing), persists `details` in the **same transaction**, then publishes.
@@ -48,20 +41,20 @@ for the job details it cares about. Example: "bambu: Print job complete: job `<u
   `core`. Adding a field to a frozen `extra=forbid` envelope: `schema_version` of the affected core classes bumps 1 -> 2, the
   docs/events.md envelope table gains `origin`, and stored v1 envelopes deserialize with `origin = None` (default), so pending durable
   rows keep working. `event_outbox` stores the envelope JSON, so no column/migration is needed for `origin`.
-- Display: `job_complete.notices` (queue source only) prepends the origin: `bambu: Print job complete: job <uid>`. `None` origin
+- Display: `job_complete.notices` (queue source only) prepends the origin: `bambu: Print job complete: job <id>`. `None` origin
   renders as today.
 
 ## 3. `get_details(job_id, fields)`
 
 ```python
-async def get_details(job_ref: str | int, fields: Sequence[str]) -> dict[str, DetailResult]
+async def get_details(job_id: int, fields: Sequence[str]) -> dict[str, DetailResult]
 # DetailResult = {"status": "ok" | "unavailable" | "unknown_field", "value": Any, "origin": str | None, "updated_at": str | None}
 ```
 
 - Core-internal function, also handed to plugins as `PluginContext.job_details` (read-only). Core-owned.
 - Per-field result: a missing field never fails the call; unknown names return `unknown_field`, never raise.
 - **Storage**: table `job_details(job_id FK jobs.id, field, value JSON, origin, updated_at)`, unique `(job_id, field)` (migration
-  `v054`). Written only through the reporter (`report(..., details=...)` or `reporter.set_details(job_ref, {...})`) so it commits
+  `v054`). Written only through the reporter (`report(..., details=...)` or `reporter.set_details(job_id, {...})`) so it commits
   with the state change. Survives the printer forgetting the job.
 - **Vocabulary**: any field name is storable. A small registry of well-known fields has schemas and is validated
   (`filament_usage`, `time`, `loaded_filaments`, `actual_grams`); others are stored as given. Computed fields (e.g. `time` from job
@@ -93,7 +86,7 @@ ID federation.
 - Duplicate `report(complete)` calls leave exactly **one** `event_outbox` row and one deduction (assert rows, not "didn't raise").
 - A plugin cannot set `origin="core"`; a `core`-acting manual completion carries `origin="core"`.
 - A stored v1 envelope without `origin` deserializes with `origin=None` and is delivered normally.
-- Redelivery of a pre-migration event (int `job_id`) and a new event (`uid`) for the same job deduct **once** (assert one `inventory_pending_writes` row).
+- A deleted job's id is never reissued to a new job (insert, delete, insert; assert distinct ids).
 - `get_details`: mixed request returns `ok`/`unavailable`/`unknown_field` per field; a detail row is still readable after the delivery is
   `delivered` and after the printer client reports the job unknown.
 - Details and state change roll back together on a forced failure (no `complete` row without its details).
