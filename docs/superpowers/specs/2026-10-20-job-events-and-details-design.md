@@ -32,6 +32,15 @@ for the job details it cares about. Example: "bambu: Print job complete: job `<i
   Plugin code imports nothing from `queue_engine`; the reporter lives in core and delegates to it.
 - Signature: `await ctx.job_reporter.report(job_id, kind, details=None)`; `kind` in `started | complete | failed | blocked`.
   (`cancelled` is **not** added now: cancel is core-initiated and stays `job.failed`/existing flow; revisit if a vendor needs it.)
+- **Mid-print `blocked` (optional, printer-initiated).** A printer may report `blocked` for a job that is `printing` (filament runout,
+  hardware fault, ...). Nothing requires it; core must tolerate it and never depend on it. Semantics: a **notice only, no state change**.
+  The job stays `printing` and keeps its printer: the queue treats `blocked` as "released, re-evaluate", so flipping the status would let
+  another printer claim a job whose physical print is only paused. The reason is stored as detail field `blocked_reason` (origin = the
+  printer plugin) and published as best-effort `job.blocked` with payload `{reason, phase: "print"}` (queue-initiated blocks carry
+  `phase: "queue"`). Repeats of the same reason for the same job while it is still `printing` publish once. There is no `resumed` kind:
+  the print ends via the usual `complete` / `failed`, and a stale `blocked_reason` is cleared by writing it empty on those. Existing
+  recovery (`_reconcile_printing_jobs` failing a job the printer ended) is unchanged. `blocked` for a job in any other state follows the
+  queue rules above.
 - Core validates the job's printer belongs to `plugin_id`, applies the state transition (existing atomic claim; the loser returns
   without publishing), persists `details` in the **same transaction**, then publishes.
 - **Durability follows the event class** (`docs/events.md` decision 1): `started`/`complete` -> `enqueue_durable` in that
