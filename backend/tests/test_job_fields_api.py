@@ -68,3 +68,10 @@ async def test_a_printer_plugin_missing_a_minimum_field_logs_a_warning_at_load_a
     assert len(warned) == 1 and "gappy_prn" in warned[0] and "print_end_time, result" in warned[0]      # full and honest are silent
     await plugin_host.update_config("gappy_prn", enabled=True)
     assert plugin_host.is_enabled("gappy_prn") and "gappy_prn" not in plugin_host._build_errors          # the warning never blocks it
+
+
+def test_the_plugin_test_kit_reports_the_minimum_job_fields_a_printer_plugin_leaves_out():
+    from tests.plugins.conformance import printer_job_field_gaps
+    assert printer_job_field_gaps(printer_manifest("kit_ok", fields=PRINTER_MIN_JOB_FIELDS)) == []
+    assert printer_job_field_gaps(printer_manifest("kit_mixed", fields=("print_start_time",), unsupported=("result",))) == ["print_end_time"]
+    assert printer_job_field_gaps(printer_manifest("kit_none")) == list(PRINTER_MIN_JOB_FIELDS)

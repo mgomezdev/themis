@@ -247,3 +247,19 @@ def test_a_plugins_notice_is_prefixed_with_its_id_and_core_events_read_as_before
     assert content("job.complete", 7, "cube.3mf", "P1S", None, origin="core") == plain
     assert content("job.complete", 7, "cube.3mf", "P1S", None, origin="bambu") == ("Themis: job complete", "bambu: cube.3mf finished printing on P1S.")
     assert content("job.failed", 7, "cube.3mf", "P1S", "runout", origin="bambu")[1] == "bambu: cube.3mf failed on P1S: runout"
+
+
+async def test_a_print_reported_through_the_plugin_context_can_be_read_back_by_another_plugin(env, session_factory):
+    """The whole path a plugin sees: start and finish through `ctx.job_reporter`, then any plugin asks `ctx.job_details` for the details."""
+    job_id, printer_id = await seed(session_factory, env.tmp, status="uploading")
+    printer_ctx, reader_ctx = plugin_host.context_for("prn_a"), plugin_host.context_for("prn_b")
+
+    assert await printer_ctx.job_reporter.report(job_id, "started") is True
+    assert await printer_ctx.job_reporter.report(job_id, "complete", {"filament_usage": {"grams": 7.5, "breakdown": None}}) is True
+
+    got = await reader_ctx.job_details.get(job_id, ["print_start_time", "print_end_time", "result", "filament_usage", "no_such"])
+    assert {k: v["status"] for k, v in got.items()} == {"print_start_time": "ok", "print_end_time": "ok", "result": "ok",
+                                                         "filament_usage": "ok", "no_such": "unknown_field"}
+    assert got["result"]["value"] == "success" and got["filament_usage"]["value"]["grams"] == 7.5 and got["result"]["origin"] == "prn_a"
+    names = [r.name for r in await rows(session_factory, EventOutbox)]
+    assert sorted(names) == ["job.complete", "job.started"]

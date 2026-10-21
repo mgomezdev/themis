@@ -5,7 +5,8 @@
 * `job_complete.inventory` — works out the spool(s) the print used and plans the absolute `snapshot - spent` write
   (`deduction.plan_completion`).
 
-Both do nothing unless the active provider can track and write weight and the operator left deduction on. Both are idempotent per job
+Both do nothing unless the active provider can track and write weight and the operator left deduction on. `job_complete.inventory` reads what the print used from the job's `filament_usage` detail first, then the event's `actual_grams`, and the legacy
+`inventory` payload still wins when an old event carries it. Both are idempotent per job
 (at-least-once delivery): a snapshot is unique per job/provider/spool, and a deduction whose outbox row exists is not planned again."""
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from sqlalchemy import select
 
 from ...eventing import EventEnvelope
 from ...models import Job, JobPrinterConfig
+from .. import job_details
 from . import config, deduction, outbox, provider, snapshots
 
 
@@ -51,16 +53,21 @@ async def deduct_on_complete(envelope: EventEnvelope) -> None:
     uses = [raw] if isinstance(raw, dict) else list(raw or [])
     notes = list(payload.get("deduction_notes") or [])
     if not legacy:
-        grams = payload.get("actual_grams")
-        if grams is None:
-            return
         async with factory() as session:
             job = await session.get(Job, job_id)
+            # What the print used, from the most authoritative source first: the `filament_usage` detail the printer's plugin reported
+            # (or core filled in for it), else the grams carried on the event (the shape before details existed).
+            grams, breakdown = payload.get("actual_grams"), None
+            usage = (await job_details.get_details_in(session, job_id, ["filament_usage"]))["filament_usage"]
+            if usage["status"] == "ok" and isinstance(usage["value"], dict) and usage["value"].get("grams") is not None:
+                grams, breakdown = usage["value"]["grams"], usage["value"].get("breakdown")
+            if grams is None:
+                return
             cfg = await _config_for(session, job_id, printer_id) if job is not None else None
             if cfg is None or not (deduction.can_deduct() and await config.deduct_enabled(session)):
                 return
             uses, notes = deduction.completion_uses(cfg, payload.get("loaded_filaments") or [], float(grams),
-                                                    job.actual_filament_breakdown)
+                                                    breakdown if breakdown is not None else job.actual_filament_breakdown)
     if not uses and not notes:
         return
     source = "queue" if payload.get("source") == "queue" else "manual_complete"
