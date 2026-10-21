@@ -248,9 +248,9 @@ def stub_laminus(sidecar, suggest=SUGGEST, variants=VARIANTS):  # noqa: F811
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append((request.url.path, request.content))
-        if request.url.path == "/api/profiles/machines/suggest":
+        if request.url.path == "/api/v1/profiles/machines/suggest":
             return httpx.Response(200, json=suggest, headers={"X-Catalog-Version": suggest["catalog_version"]})
-        if request.url.path == "/api/profiles/models/variants":
+        if request.url.path == "/api/v1/profiles/models/variants":
             return httpx.Response(200, json=variants)
         return httpx.Response(404)
     sidecar.handler = handler
@@ -277,7 +277,7 @@ async def test_suggestions_come_from_the_provider_with_the_model_identity(client
     assert [v["is_default_guess"] for v in body["variants"]] == [True, False]
     assert body["variants"][1]["flow"] == "high_flow"
     import json
-    sent = json.loads(next(c for p, c in seen if p == "/api/profiles/machines/suggest"))
+    sent = json.loads(next(c for p, c in seen if p == "/api/v1/profiles/machines/suggest"))
     assert sent["model"] == "P1S" and sent["manufacturer"] == "Bambu Lab" and sent["model_key"] == "bambu/p1s"
 
 

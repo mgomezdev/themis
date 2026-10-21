@@ -39,7 +39,7 @@ def test_slice_prepared_returns_job_id(tmp_path):
     prepared.write_bytes(b"PK")
 
     def handler(req):
-        assert req.url.path == "/api/slice/prepared"
+        assert req.url.path == "/api/v1/slice/prepared"
         return httpx.Response(200, json={"job_id": "abc-123", "status": "pending"})
 
     c = _client(httpx.MockTransport(handler))
@@ -80,19 +80,20 @@ def test_poll_status_completes_on_second_poll():
     def handler(req):
         calls["n"] += 1
         if calls["n"] < 2:
-            return httpx.Response(200, json={"status": "slicing", "sliced_file": None, "error": None})
-        return httpx.Response(200, json={"status": "completed", "sliced_file": "plate_1.gcode", "error": None})
+            return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
+        assert req.url.path == "/api/v1/jobs/job1"
+        return httpx.Response(200, json={"status": "completed", "artifact": {"name": "plate_1.gcode", "available": True}, "error": None})
 
     c = _client(httpx.MockTransport(handler))
     result = c.poll_status("job1", poll_interval=0.0, timeout=10.0)
     assert result["status"] == "completed"
-    assert result["sliced_file"] == "plate_1.gcode"
+    assert result["artifact"]["name"] == "plate_1.gcode"
     assert calls["n"] == 2
 
 
 def test_poll_status_raises_on_failed():
     def handler(req):
-        return httpx.Response(200, json={"status": "failed", "sliced_file": None, "error": "oom"})
+        return httpx.Response(200, json={"status": "failed", "artifact": {"name": None, "available": False}, "error": "oom"})
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="oom"):
@@ -101,7 +102,7 @@ def test_poll_status_raises_on_failed():
 
 def test_poll_status_raises_on_timeout():
     def handler(req):
-        return httpx.Response(200, json={"status": "slicing", "sliced_file": None, "error": None})
+        return httpx.Response(200, json={"status": "slicing", "artifact": {"name": None, "available": False}, "error": None})
 
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="timed out"):
@@ -115,7 +116,7 @@ def test_download_writes_file(tmp_path):
     gcode_bytes = b"G28\nG1 X0\n"
 
     def handler(req):
-        assert "/api/slice/download/" in req.url.path
+        assert req.url.path == "/api/v1/jobs/job1/artifact"
         return httpx.Response(200, content=gcode_bytes)
 
     c = _client(httpx.MockTransport(handler))
@@ -144,7 +145,7 @@ def test_pack_stls_returns_bytes(tmp_path):
     stl2.write_bytes(b"solid b\nendsolid b\n")
 
     def handler(req):
-        assert req.url.path == "/api/pack"
+        assert req.url.path == "/api/v1/pack"
         return httpx.Response(200, content=packed)
 
     c = _client(httpx.MockTransport(handler))
@@ -162,3 +163,57 @@ def test_pack_stls_raises_on_error(tmp_path):
     c = _client(httpx.MockTransport(handler))
     with pytest.raises(SidecarError, match="400"):
         c.pack_stls([stl], bed_x=100.0, bed_y=100.0)
+
+
+# ── v1 contract ────────────────────────────────────────────────────────────────
+
+def test_slice_start_posts_a_job_and_returns_its_id(tmp_path):
+    model = tmp_path / "m.3mf"
+    model.write_bytes(b"PK")
+
+    def handler(req):
+        assert (req.method, req.url.path) == ("POST", "/api/v1/jobs")
+        return httpx.Response(202, json={"id": "job-9", "status": "pending"})
+
+    c = _client(httpx.MockTransport(handler))
+    assert c.slice_start(model, "m", "p", ["f"], plate=1) == "job-9"
+
+
+def test_completed_job_without_an_artifact_is_an_error():
+    def handler(req):
+        return httpx.Response(200, json={"status": "completed", "artifact": {"name": None, "available": False}})
+
+    c = _client(httpx.MockTransport(handler))
+    with pytest.raises(SidecarError, match="without an artifact"):
+        c.poll_status("job1", poll_interval=0.0, timeout=5.0)
+
+
+def test_get_catalog_walks_every_page_and_groups_by_type():
+    seen: list[str | None] = []
+
+    def handler(req):
+        assert req.url.path == "/api/v1/profiles"
+        cursor = req.url.params.get("cursor")
+        seen.append(cursor)
+        assert req.url.params["limit"] == "200"
+        if cursor is None:
+            return httpx.Response(200, json={"data": [{"type": "machine", "uuid": "m1", "name": "M"},
+                                                      {"type": "process", "uuid": "p1", "name": "P"}],
+                                             "page": {"limit": 200, "next_cursor": "c2"}})
+        return httpx.Response(200, json={"data": [{"type": "filament", "uuid": "f1", "name": "F"}],
+                                         "page": {"limit": 200, "next_cursor": None}})
+
+    cat = _client(httpx.MockTransport(handler)).get_catalog()
+    assert seen == [None, "c2"]
+    assert [e["uuid"] for e in cat["machine"]] == ["m1"]
+    assert [e["uuid"] for e in cat["process"]] == ["p1"]
+    assert [e["uuid"] for e in cat["filament"]] == ["f1"]
+
+
+def test_errors_surface_the_v1_envelope_code_and_message():
+    def handler(req):
+        return httpx.Response(503, json={"error": {"code": "catalog_not_ready", "message": "Retry shortly.",
+                                                   "status": 503}, "request_id": "r"})
+
+    with pytest.raises(SidecarError, match="catalog_not_ready: Retry shortly."):
+        _client(httpx.MockTransport(handler)).get_catalog()

@@ -215,7 +215,7 @@ async def test_the_poll_ceiling_option_is_what_the_slice_waits_for(client, monke
     seen = {}
     monkeypatch.setattr(LaminusSidecarClient, "slice_start", lambda self, *a, **k: "j1")
     monkeypatch.setattr(LaminusSidecarClient, "poll_status",
-                        lambda self, job_id, poll_interval=2.0, timeout=None: seen.update(timeout=timeout) or {"sliced_file": "o.gcode"})
+                        lambda self, job_id, poll_interval=2.0, timeout=None: seen.update(timeout=timeout) or {"artifact": {"name": "o.gcode"}})
     monkeypatch.setattr(LaminusSidecarClient, "download", lambda self, job_id, dest: dest)
     await _configure(client, poll_timeout_s=123)
     src = tmp_path / "m.3mf"

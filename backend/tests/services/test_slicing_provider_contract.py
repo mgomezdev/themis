@@ -33,24 +33,27 @@ def sidecar():
 
     def default(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        if path == "/api/health":
+        if path == "/api/v1/health":
             return httpx.Response(200, json={"status": "ok", "orcaslicer_version": "2.3.2"})
-        if path == "/api/profiles":
-            return httpx.Response(200, json=_RAW_CATALOG)
-        if path == "/api/profiles/merged-config":
+        if path == "/api/v1/profiles":
+            data = [{**e, "type": kind} for kind, es in _RAW_CATALOG.items() for e in es]
+            return httpx.Response(200, json={"data": data, "page": {"limit": 200, "next_cursor": None}})
+        if path == "/api/v1/profiles/merged-config":
             body = json.loads(request.content)
             return httpx.Response(200, json={"machine_uuid": body["machine_uuid"], "layer_height": "0.2"})
-        if path in ("/api/slice/start", "/api/slice/prepared"):
+        if path == "/api/v1/jobs":
+            return httpx.Response(202, json={"id": "job-1", "status": "pending"})
+        if path == "/api/v1/slice/prepared":
             return httpx.Response(200, json={"job_id": "job-1"})
-        if path == "/api/slice/status/job-1":
+        if path == "/api/v1/jobs/job-1":
             if sc.status == "failed":
                 return httpx.Response(200, json={"status": "failed", "error": "bad geometry"})
-            return httpx.Response(200, json={"status": "completed", "sliced_file": "out.gcode"})
-        if path == "/api/slice/download/job-1":
+            return httpx.Response(200, json={"status": "completed", "artifact": {"name": "out.gcode", "available": True}})
+        if path == "/api/v1/jobs/job-1/artifact":
             return httpx.Response(200, content=sc.gcode)
-        if path == "/api/arrange":
+        if path == "/api/v1/arrange":
             return httpx.Response(200, content=b"ARRANGED")
-        if path == "/api/pack":
+        if path == "/api/v1/pack":
             return httpx.Response(200, content=b"PACKED")
         return httpx.Response(404)
 
@@ -150,7 +153,7 @@ def test_laminus_slice_artifact_is_downloaded_to_the_status_filename(sidecar, tm
 
 def test_laminus_slice_sends_resolved_refs_plate_and_extra_config(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, extra_config={"bed_type": "Textured PEI"}), tmp_path)
-    start = next(r for r in sidecar.requests if r.url.path == "/api/slice/start")
+    start = next(r for r in sidecar.requests if r.url.path == "/api/v1/jobs")
     body = start.content.decode(errors="ignore")
     for needle in ('name="machine_uuid"', "m-1", "p-1", '["f-1"]', 'name="plate"', "Textured PEI", "geometry_only_retry"):
         assert needle in body
@@ -158,7 +161,7 @@ def test_laminus_slice_sends_resolved_refs_plate_and_extra_config(sidecar, tmp_p
 
 def test_laminus_omits_empty_extra_config_and_names_the_3mf_export(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, export_3mf=True), tmp_path)
-    body = next(r for r in sidecar.requests if r.url.path == "/api/slice/start").content.decode(errors="ignore")
+    body = next(r for r in sidecar.requests if r.url.path == "/api/v1/jobs").content.decode(errors="ignore")
     assert "extra_config" not in body
     assert "model.gcode.3mf" in body
 
@@ -166,7 +169,7 @@ def test_laminus_omits_empty_extra_config_and_names_the_3mf_export(sidecar, tmp_
 def test_laminus_prepared_projects_use_the_prepared_endpoint(sidecar, tmp_path):
     LaminusSlicingProvider(URL).slice(_spec(tmp_path, prepared=True), tmp_path)
     paths = [r.url.path for r in sidecar.requests]
-    assert "/api/slice/prepared" in paths and "/api/slice/start" not in paths
+    assert "/api/v1/slice/prepared" in paths and "/api/v1/jobs" not in paths
 
 
 def test_laminus_timeouts_unchanged(sidecar, tmp_path):
@@ -232,17 +235,17 @@ def test_laminus_catalog_health_uses_the_given_timeout_and_maps_transport_errors
         p.catalog_health()
 
 
-@pytest.mark.parametrize("status, ok", [(200, True), (503, True), (500, False)])
-def test_laminus_rebuild_request_accepts_200_and_503_only(sidecar, status, ok):
+@pytest.mark.parametrize("status, ok", [(200, True), (503, False), (500, False)])
+def test_laminus_rebuild_request_accepts_200_only(sidecar, status, ok):
     sidecar.handler = lambda request: httpx.Response(status)
     p = LaminusSlicingProvider(URL)
     if ok:
         p.request_catalog_rebuild()
         req = sidecar.requests[-1]
-        assert req.url.path == "/api/profiles" and req.url.params["refresh"] == "true"
+        assert req.method == "POST" and req.url.path == "/api/v1/profiles/rescan"
         assert req.extensions["timeout"]["read"] == 10.0
     else:
-        with pytest.raises(SlicingProviderError, match="Laminus rescan trigger returned 500"):
+        with pytest.raises(SlicingProviderError, match=f"Laminus rescan trigger returned {status}"):
             p.request_catalog_rebuild()
 
 

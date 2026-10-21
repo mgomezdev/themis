@@ -132,7 +132,7 @@ class LaminusSlicingProvider(SlicingProvider):
                     extra_config=spec.extra_config or None,
                 )
             status = client.poll_status(job_id, timeout=self._poll_timeout_s)
-            return str(client.download(job_id, output_dir / status["sliced_file"]))
+            return str(client.download(job_id, output_dir / status["artifact"]["name"]))
         except SidecarError as e:
             raise SlicingProviderError(str(e)) from e
 
