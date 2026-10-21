@@ -9,10 +9,10 @@ import importlib.util
 from pathlib import Path
 
 from .capabilities.definition import CapabilityDef
-from .manifest import HOST_API, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
+from .manifest import HOST_API, JobFieldDef, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
 from .ui_schema import UiReport, inspect_manifest
 
-__all__ = ["HOST_API", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
+__all__ = ["HOST_API", "JobFieldDef", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
            "register_plugin", "ui_report", "plugin_root", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:

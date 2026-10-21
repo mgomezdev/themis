@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
@@ -889,3 +889,18 @@ class IdempotencyKey(Base):
     created_at: Mapped[str] = mapped_column(String(32))
 
     __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
+
+
+class JobDetail(Base):
+    """One detail field of a job, written by one origin (a plugin id or `core`). Names and values are not enforced; `status` is `ok` or
+    `unsupported` (the source says it cannot provide the field for this job). Unique per (job, field, origin)."""
+    __tablename__ = "job_details"
+    __table_args__ = (UniqueConstraint("job_id", "field", "origin", name="ux_job_details"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    field: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
+    value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String(32))
