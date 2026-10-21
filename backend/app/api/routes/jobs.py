@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import delete, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...auth import require_scope
 from ...database import get_session
 from ...models import GcodeFile, Job, JobItemFailure, JobModelTarget, JobPrinterConfig, Order, Printer, PrinterModelRecord, Project, ProjectItem, QueueConfig, SlicedVersion, UploadedFile
-from ...services import completion_events, slice_cache, slice_saver
+from ...services import completion_events, job_details, slice_cache, slice_saver
 from ...eventing.hub import hub as event_hub
 from ...services import gcode_eligibility as eligibility
 from ...services.library_scanner import file_kind, is_presliced_file
@@ -635,6 +635,33 @@ async def get_job(
     session: AsyncSession = Depends(get_session),
 ) -> dict:
     return _to_dict(await _get_or_404(job_id, session))
+
+
+MAX_DETAIL_FIELDS = 50
+
+
+@router.get(
+    "/{job_id}/detail-fields",
+    summary="Get generic job detail fields",
+    responses={
+        404: {"description": "Job not found"},
+        422: {"description": "No field names, or more than 50"},
+    },
+    dependencies=[Depends(require_scope("jobs:read"))],
+)
+async def get_job_detail_fields(
+    job_id: int,
+    fields: str = Query(..., description="Comma-separated field names, e.g. `print_end_time,filament_usage`"),
+    origin: Optional[str] = Query(None, description="Only the value written by this origin (a plugin id or `core`)"),
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """The open-vocabulary details plugins wrote onto the job (debug/read-only). Each field answers `ok`, `unsupported`,
+    `unavailable` or `unknown_field`; a bad name never fails the call. Distinct from `/{job_id}/details` (the job screen's shape)."""
+    await _get_or_404(job_id, session)
+    names = list(dict.fromkeys(f.strip() for f in fields.split(",") if f.strip()))
+    if not names or len(names) > MAX_DETAIL_FIELDS:
+        raise HTTPException(422, f"Give between 1 and {MAX_DETAIL_FIELDS} comma-separated field names")
+    return {"job_id": job_id, "fields": await job_details.get_details_in(session, job_id, names, origin)}
 
 
 @router.get(

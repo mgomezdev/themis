@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 from pathlib import Path
 
 from .capabilities.definition import CapabilityDef
@@ -39,6 +40,19 @@ def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
     if root is not None:
         _ROOTS[manifest.id] = root
     _UI_REPORTS[manifest.id] = inspect_manifest(manifest)      # never raises: a bad contribution is a diagnostic, not a boot failure
+    _warn_missing_job_fields(manifest)
+
+
+def _warn_missing_job_fields(manifest: PluginManifest) -> None:
+    """A printer plugin (one that declares printer models or provides `printer.client`) should declare, or mark unsupported, the
+    minimum job fields (docs/printer-interface.md). A gap is logged at load and never blocks the plugin."""
+    if not (manifest.manufacturers or "printer.client" in manifest.provides):
+        return
+    from .job_fields import missing_min_fields
+    missing = missing_min_fields(manifest)
+    if missing:
+        logging.getLogger("app").warning("Printer plugin %s neither declares nor marks unsupported the minimum job field(s) %s",
+                                         manifest.id, ", ".join(missing))
 
 
 def ui_report(plugin_id: str) -> UiReport:
