@@ -18,7 +18,8 @@ Every event, core or plugin, is an `EventEnvelope` (frozen, `extra=forbid`):
 | `name` | event class, dotted lower-case: `job.complete`, `acme_ntfy.sent`. |
 | `schema_version` | integer ≥ 1; must equal the class's current version at publication. |
 | `occurred_at` | UTC ISO-8601, when the transition committed. |
-| `source` | `core` or the publishing plugin's id. |
+| `source` | `core` or the publishing plugin's id (the event class's owner). |
+| `origin` | optional: who caused the event. `core` when core acted itself (a manual completion, the queue), or the id of the plugin whose report core is publishing (a printer plugin reporting a job). A plugin publishing directly can only name itself; `None` on envelopes stored before v2. |
 | `entities` | references to what the event is about: `job_id`, `project_id`, `printer_id`, `order_id`, `customer_id`, `file_id`, `spool_ref` (int or str). Other keys are rejected. |
 | `dedup_key` | logical identity (`job.complete:42`). Two publications with one key are one event. |
 | `correlation_id` | optional, ties events of one request/flow together. |
@@ -30,7 +31,9 @@ core event or another plugin's), the schema version must be current and the payl
 **publisher** (a programming error); nothing a subscriber does can ever raise into a publisher.
 
 Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.failed`,
-`job.blocked`, `printer.alarm`, `spool.low` (best-effort).
+`job.blocked`, `printer.alarm`, `spool.low` (best-effort). `job.started`, `job.complete`, `job.failed` and `job.blocked` are at **version 2**
+(v2 adds `origin`); a stored v1 envelope has no `origin` and is delivered unchanged with `origin=None`, only new publications must carry the
+current version.
 
 Plugin events: `PluginManifest.defines_events=(EventDef("acme_x.ready", version=1, durability=…, payload_model=…),)`; names must
 start `<plugin id>.`. Subscriptions: `PluginManifest.subscribes=(EventSubscription("job.complete", "on_complete", timeout=, queue_size=),)`

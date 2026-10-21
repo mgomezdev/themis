@@ -30,6 +30,9 @@ class EventEnvelope(BaseModel):
     schema_version: int = 1
     occurred_at: str = Field(default_factory=_now)                  # UTC ISO-8601, when the transition committed
     source: str = "core"                                            # "core" or the publishing plugin's id
+    # Who caused it: "core" (core acted itself) or the id of the plugin that reported it (e.g. a printer plugin reporting a job
+    # event through the job reporter). `source` stays the event's owner; `origin` says who triggered it. None on old v1 events.
+    origin: str | None = None
     # Entity references (ids of the things the event is about); values are int or str. Only ENTITY_KEYS are allowed.
     entities: dict[str, int | str] = Field(default_factory=dict)
     # Logical identity: two publications with the same dedup_key are the same logical event (e.g. "job.complete:42").
@@ -56,6 +59,13 @@ class EventEnvelope(BaseModel):
     def _source(cls, v: str) -> str:
         if not v or len(v) > 64:
             raise ValueError("source must be 'core' or a plugin id")
+        return v
+
+    @field_validator("origin")
+    @classmethod
+    def _origin(cls, v: str | None) -> str | None:
+        if v is not None and (not v or len(v) > 64):
+            raise ValueError("origin must be 'core' or a plugin id")
         return v
 
     @field_validator("entities")

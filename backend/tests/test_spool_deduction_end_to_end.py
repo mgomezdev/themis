@@ -184,7 +184,7 @@ async def _completed_job_with_snapshot(client, farm, session_factory, upload_3mf
 async def _legacy_complete(factory, job_id: int, printer_id: int, **payload) -> None:
     """A `job.complete` written by the previous release: the publisher had already resolved the spools (`inventory`, `deduction_notes`)."""
     async with factory() as s:
-        env = EventEnvelope(name="job.complete", entities={"job_id": job_id, "printer_id": printer_id}, dedup_key=f"legacy:{job_id}",
+        env = EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": job_id, "printer_id": printer_id}, dedup_key=f"legacy:{job_id}",
                             payload={"source": "queue", "actual_seconds": 60, "actual_grams": 12.5, **payload})
         await hub.enqueue_durable(s, env)
         await s.commit()

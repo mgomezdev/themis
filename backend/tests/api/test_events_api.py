@@ -25,7 +25,7 @@ async def test_catalog_lists_core_and_plugin_defined_events_with_their_durabilit
     register(definer_manifest("pub_cat"))
     rows = {r["name"]: r for r in (await client.get("/api/v1/events/catalog")).json()}
 
-    assert (rows["job.complete"]["durability"], rows["job.complete"]["source"], rows["job.complete"]["version"]) == ("durable", "core", 1)
+    assert (rows["job.complete"]["durability"], rows["job.complete"]["source"], rows["job.complete"]["version"]) == ("durable", "core", 2)
     assert rows["job.blocked"]["durability"] == "best_effort"
     assert (rows["pub_cat.ready"]["source"], rows["pub_cat.ready"]["durability"]) == ("pub_cat", "best_effort")
 
@@ -35,7 +35,7 @@ async def test_subscribers_report_counters_and_the_redacted_last_error(client, h
         raise RuntimeError("login failed password=hunter2")
 
     hub.subscribe("job.blocked", boom, name="api.boom")
-    await hub.publish(EventEnvelope(name="job.blocked", dedup_key="b:1"))
+    await hub.publish(EventEnvelope(name="job.blocked", schema_version=2, dedup_key="b:1"))
     await hub.drain()
 
     (row,) = [r for r in (await client.get("/api/v1/events/subscribers")).json() if r["subscriber"] == "core:api.boom"]
@@ -52,7 +52,7 @@ async def test_dead_deliveries_are_listed_and_can_be_retried(client, hub, sessio
 
     hub.subscribe("job.complete", handler, name="api.dur")
     async with session_factory() as s:
-        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", entities={"job_id": 5}, dedup_key="job.complete:5", payload={"source": "queue"}))
+        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": 5}, dedup_key="job.complete:5", payload={"source": "queue"}))
         await s.commit()
     hub.wake()
 
@@ -82,7 +82,7 @@ async def test_deliveries_validate_status_and_retry_404s_for_unknown(client, hub
 async def test_durable_rows_of_an_unregistered_subscriber_are_still_reported(client, hub, session_factory):
     hub.subscribe("job.complete", _noop, name="api.gone")
     async with session_factory() as s:
-        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", dedup_key="job.complete:1", payload={"source": "queue"}))
+        await hub.enqueue_durable(s, EventEnvelope(name="job.complete", schema_version=2, dedup_key="job.complete:1", payload={"source": "queue"}))
         await s.commit()
     hub.unsubscribe("api.gone")                                  # e.g. a plugin uninstalled with work still queued
     hub._stats.pop("core:api.gone")
@@ -101,7 +101,7 @@ async def test_deliveries_can_be_found_by_entity_event_id_dedup_key_and_name(cli
     hub.subscribe("job.complete", ok, name="api.find")
     ids = {}
     for job_id in (41, 42):
-        env = EventEnvelope(name="job.complete", entities={"job_id": job_id, "printer_id": 7}, dedup_key=f"job.complete:{job_id}",
+        env = EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": job_id, "printer_id": 7}, dedup_key=f"job.complete:{job_id}",
                             correlation_id="flow-1", payload={"source": "queue"})
         ids[job_id] = env.id
         async with session_factory() as s:
