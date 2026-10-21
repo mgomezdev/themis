@@ -66,6 +66,11 @@ never touches the assignment.
 
 - A print the printer ends in failure (physical cancel) becomes `failed` but **keeps** the printer as history (today `~590` clears it).
   `complete` already keeps it. Terminal jobs do not reserve the printer; `awaiting_plate_clear` still gates new work.
+- **Exception: a dead printer.** If a printer stays offline longer than the user's `printer_dead_after_minutes` setting, it can no longer
+  hold its job: core fails the `printing` job (best-effort `job.failed`, `origin="core"`, `phase: "print"`) and requeues it at the top of
+  the queue, releasing the assignment. A printer that is offline for less than the cutoff is "undead": it still counts in queue
+  processing and nothing is triggered when it returns. This is a core action, not a printer or plugin one, so the rule above still
+  holds for everything a printer can report. `awaiting_plate_clear` stays set on the dead printer.
 - Mid-print `blocked` from a printer (§2) already obeys this: no status change, no release.
 - "No eligible printer" blocking (queue-initiated) applies to unassigned jobs only; it never touches a started job.
 - Pre-start behaviour, including automatic rescue of a slice-failed job, is unchanged, so the CLAUDE.md "Slicing failure recovery"
