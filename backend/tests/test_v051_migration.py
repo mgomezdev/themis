@@ -53,6 +53,9 @@ async def test_v051_rewrites_keys_to_the_current_shape_and_down_restores_the_old
             # The migrated keys are byte-for-byte what the production key builder produces now.
             assert keys == [slice_cache.cache_key(_inputs(c)) for c in CASES]
             assert keys != [_legacy_key(c) for c in CASES]
+            await rollback_last(conn)                                  # v056 (newer than the migration under test)
+            await rollback_last(conn)                                  # v055
+            await rollback_last(conn)                                  # v054
             await rollback_last(conn)                                  # v053 (newer than the migration under test)
             await rollback_last(conn)                                  # v052
             await rollback_last(conn)                                  # v051
