@@ -116,3 +116,17 @@ async def test_rewrite_rejects_a_ddl_it_does_not_understand():
         mig._rewrite("CREATE TABLE other (id INTEGER)")
     with pytest.raises(RuntimeError):
         mig._rewrite("CREATE TABLE jobs (name TEXT)")
+
+
+async def test_up_creates_sqlite_sequence_when_no_other_autoincrement_table_exists(tmp_path):
+    """SQLite makes sqlite_sequence with the first AUTOINCREMENT table; the schema rewrite bypasses that, so the migration must."""
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'bare.db'}")
+    async with engine.begin() as conn:
+        await conn.execute(text("CREATE TABLE jobs (id INTEGER NOT NULL, name TEXT, PRIMARY KEY (id))"))
+        await conn.execute(text("INSERT INTO jobs (id, name) VALUES (3, 'a')"))
+        assert (await conn.execute(text("SELECT 1 FROM sqlite_master WHERE name='sqlite_sequence'"))).first() is None
+        await mig.up(conn)
+        assert (await conn.execute(text("SELECT seq FROM sqlite_sequence WHERE name='jobs'"))).scalar_one() == 3
+        await conn.execute(text("INSERT INTO jobs (name) VALUES ('b')"))
+        assert (await conn.execute(text("SELECT MAX(id) FROM jobs"))).scalar_one() == 4
+    await engine.dispose()

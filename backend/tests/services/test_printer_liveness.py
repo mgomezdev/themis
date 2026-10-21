@@ -261,3 +261,30 @@ async def test_a_changed_filament_slot_wakes_the_queue_and_an_unchanged_report_d
     assert env.engine.wake.call_count == 1                                  # the same report again: nothing changed
     await env.mgr.on_ams_change(pid, [{**trays[0], "type": "PLA"}])
     assert env.engine.wake.call_count == 2
+
+
+async def test_the_manager_reports_no_liveness_for_an_unknown_printer_and_forgets_a_disconnected_one(env):
+    assert env.mgr.liveness(99, CUTOFF) is None
+    env.mgr.register_client(5, client(connected=False))
+    assert env.mgr.liveness(5, CUTOFF) == "undead"
+    env.mgr._clients[5].disconnect = MagicMock()
+    env.mgr.disconnect_printer(5)
+    assert env.mgr.liveness(5, CUTOFF) is None and env.mgr.offline_seconds(5) is None and not env.mgr.is_dead(5)
+
+
+async def test_telemetry_from_a_returning_printer_reaches_the_connectivity_callback_and_a_failing_callback_is_contained(env):
+    c = client(connected=False)
+    env.mgr.register_client(7, c)
+    seen = []
+
+    async def cb(pid, edge, was_dead):
+        seen.append((pid, edge, was_dead))
+        raise RuntimeError("handler bug")                                    # must never break telemetry handling
+
+    env.mgr.set_connectivity_callback(cb)
+    c.connected = True
+    c.get_alarms.return_value = []
+    await env.mgr.on_state_change(7, None)
+    await env.mgr.on_state_change(7, None)                                   # no second edge
+
+    assert seen == [(7, "online", False)]
