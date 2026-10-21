@@ -263,3 +263,35 @@ async def test_a_print_reported_through_the_plugin_context_can_be_read_back_by_a
     assert got["result"]["value"] == "success" and got["filament_usage"]["value"]["grams"] == 7.5 and got["result"]["origin"] == "prn_a"
     names = [r.name for r in await rows(session_factory, EventOutbox)]
     assert sorted(names) == ["job.complete", "job.started"]
+
+
+async def test_a_report_naming_another_printer_of_the_same_plugin_is_refused(env, session_factory):
+    """A printer that came back from the dead must not complete or fail the print the job now has on a different printer."""
+    job_id, printer_a = await seed(session_factory, env.tmp, plugin="prn_a")
+    async with session_factory() as s:
+        other = Printer(name="B", printer_type="bambu", connection_config={}, orca_printer_profiles=[], plugin_id="prn_a")
+        s.add(other)
+        await s.commit()
+        printer_b = other.id
+    with pytest.raises(JobReportError, match=f"is on printer {printer_a}, not printer {printer_b}"):
+        await JobReporter("prn_a").report(job_id, "complete", printer_id=printer_b)
+    assert (await rows(session_factory, Job))[0].status == "printing" and await rows(session_factory, EventOutbox) == []
+    assert await JobReporter("prn_a").report(job_id, "complete", printer_id=printer_a) is True
+
+
+async def test_a_dead_printers_late_completion_cannot_touch_the_job_that_now_prints_elsewhere(env, session_factory):
+    job_id, printer_a = await seed(session_factory, env.tmp)
+    assert await env.engine.requeue_dead_print(job_id, printer_a, "offline") is True       # A was declared dead; the job is back in the queue
+    async with session_factory() as s:
+        other = Printer(name="B", printer_type="bambu", connection_config={}, orca_printer_profiles=[], plugin_id="prn_a")
+        s.add(other)
+        await s.flush()
+        job = await s.get(Job, job_id)
+        job.status, job.assigned_printer_id = "printing", other.id                          # B claimed and started it
+        await s.commit()
+    outbox_before = len(await rows(session_factory, EventOutbox))
+
+    await env.engine.handle_print_complete(printer_a)                                       # A comes back and reports its own print ending
+
+    assert (await rows(session_factory, Job))[0].status == "printing"                       # B's print is untouched
+    assert len(await rows(session_factory, EventOutbox)) == outbox_before

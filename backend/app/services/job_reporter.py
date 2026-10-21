@@ -27,7 +27,7 @@ class JobReporter:
     def __init__(self, plugin_id: str) -> None:
         self.plugin_id = plugin_id
 
-    async def _job_and_printer(self, job_id: int) -> tuple[Job, int]:
+    async def _job_and_printer(self, job_id: int, printer_id: int | None = None) -> tuple[Job, int]:
         from ..eventing.hub import hub
         from ..plugins.host import plugin_host
         if not plugin_host.is_enabled(self.plugin_id):
@@ -36,19 +36,25 @@ class JobReporter:
             job = await session.get(Job, job_id)
             if job is None:
                 raise JobReportError(f"job {job_id} does not exist")
-            printer_id = job.assigned_printer_id if job.assigned_printer_id is not None else job.printed_on_printer_id
-            printer = await session.get(Printer, printer_id) if printer_id is not None else None
+            on = job.assigned_printer_id if job.assigned_printer_id is not None else job.printed_on_printer_id
+            printer = await session.get(Printer, on) if on is not None else None
             if printer is None or printer.plugin_id != self.plugin_id:
                 raise JobReportError(f"job {job_id} is not on a printer of plugin {self.plugin_id!r}")
+            if printer_id is not None and printer_id != printer.id:
+                # Same plugin, another printer: e.g. a printer that came back from the dead reporting a job that was requeued and now
+                # prints elsewhere. Its report must not touch that print.
+                raise JobReportError(f"job {job_id} is on printer {printer.id}, not printer {printer_id}")
             return job, printer.id
 
-    async def report(self, job_id: int, kind: str, details: Mapping[str, Any] | None = None, *, reason: str | None = None) -> bool:
+    async def report(self, job_id: int, kind: str, details: Mapping[str, Any] | None = None, *, reason: str | None = None,
+                     printer_id: int | None = None) -> bool:
         """Report `kind` for `job_id`. Returns True when it changed something, False for a duplicate or a job that is not in a state
-        the report applies to (nothing is written or published then). Raises `JobReportError` for a report core must not accept."""
+        the report applies to (nothing is written or published then). Raises `JobReportError` for a report core must not accept. A plugin
+        that serves several printers should pass the reporting `printer_id`: the report is refused when the job is on another one."""
         from .queue_engine import queue_engine
         if kind not in KINDS:
             raise JobReportError(f"unknown job event kind {kind!r}; expected one of {', '.join(KINDS)}")
-        job, printer_id = await self._job_and_printer(job_id)
+        job, printer_id = await self._job_and_printer(job_id, printer_id)
         origin = self.plugin_id
         if kind == "complete":
             return await queue_engine.complete_job(job_id, printer_id, origin=origin, details=details)

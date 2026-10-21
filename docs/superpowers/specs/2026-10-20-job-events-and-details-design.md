@@ -167,4 +167,5 @@ ID federation.
   plugin's own `details` win. `failure_reason` and a dead printer's `last_failure` are core's.
 - Queue-initiated blocks publish `job.blocked` from one place (`_block_job`, plus the slice-failure and cache-gate paths) with `phase: "queue"`; only a fleet-wide no-match block (and a printer-reported one)
   also fires the webhook/notification. The no-match sweep runs at the end of each `_process_queue` and releases only blocks whose reason starts with `NO_MATCH_PREFIX`.
+- The no-match sweep counts every printer except a dead one (queue-off, disabled, dormant and not-yet-registered printers count), syncs model targets first, and updates a reworded reason without a second announcement. `report(..., printer_id=)` refuses a report for a job on another printer. The v054 rewrite edits `jobs`' stored CREATE statement instead of rebuilding the table, because dropping it with foreign keys on cascades into every child table.
 - Known limitation: a job requeued after its printer died keeps its earlier spool start snapshot, so the partial print's filament is not deducted when the reprint completes.

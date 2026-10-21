@@ -129,14 +129,80 @@ async def test_an_undead_offline_printer_counts_but_a_dead_one_does_not(env, ses
 
 
 @pytest.mark.parametrize("kw", [{"queue_on": False}, {"enabled": False}], ids=["queue-off", "disabled"])
-async def test_a_queue_off_or_disabled_printer_does_not_count(env, session_factory, kw):
+async def test_a_queue_off_or_disabled_printer_still_counts_because_the_operator_can_switch_it_back(env, session_factory, kw):
     await add_printer(env, session_factory, 1, PA_CF, **kw)
     job_id = await add_job(env, session_factory, [1])
 
     await env.engine._sweep_unmatched_jobs()
 
+    assert (await job(session_factory, job_id)).status == "queued" and env.blocked == []        # toggling a queue must not block and announce jobs
+
+
+async def test_a_printer_with_no_client_yet_counts_so_a_restart_blocks_nothing(env, session_factory):
+    async with session_factory() as s:                                                          # a row, but its client is not registered (just booted)
+        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF))
+        await s.commit()
+    job_id = await add_job(env, session_factory, [1])
+
+    await env.engine._sweep_unmatched_jobs()
+
+    assert (await job(session_factory, job_id)).status == "queued" and env.blocked == []
+
+
+async def test_a_dead_printer_counts_again_when_the_limit_is_switched_off(env, session_factory):
+    await add_printer(env, session_factory, 1, PA_CF, connected=False)
+    job_id = await add_job(env, session_factory, [1])
+    env.clock.t += 60 * 60
+    await env.engine._liveness_pass()
+    await env.engine._sweep_unmatched_jobs()
+    assert (await job(session_factory, job_id)).status == "blocked"
+
+    async with session_factory() as s:
+        (await s.get(QueueConfig, 1)).printer_dead_after_minutes = 0
+        await s.commit()
+    await env.engine._liveness_pass()
+    await env.engine._sweep_unmatched_jobs()
+
+    assert (await job(session_factory, job_id)).status == "queued"                             # "never dead": the offline printer counts again
+
+
+async def test_a_reworded_reason_updates_the_block_quietly_instead_of_announcing_it_again(env, session_factory):
+    await add_printer(env, session_factory, 1, PLA)
+    job_id = await add_job(env, session_factory, [1])
+    await env.engine._sweep_unmatched_jobs()
+    first_reason = (await job(session_factory, job_id)).block_reason
+    async with session_factory() as s:                                                          # the slot's colour changes: the reason text differs, the block does not
+        (await s.get(Printer, 1)).loaded_filaments = [{"slot": 0, "type": "PETG", "subtype": "standard", "color": "#FF0000"}]
+        await s.commit()
+
+    await env.engine._sweep_unmatched_jobs()
+    from app.eventing.hub import hub
+    await hub.drain()
+
     j = await job(session_factory, job_id)
-    assert j.status == "blocked" and "offline, disabled or has its queue off" in j.block_reason
+    assert j.status == "blocked" and j.block_reason.startswith(NO_MATCH_PREFIX) and j.block_reason != first_reason
+    assert len(env.blocked) == 1 and env.engine._fire_webhooks.await_count == 1
+
+
+async def test_a_printer_skipped_by_the_claim_loop_still_has_its_model_targets_materialized_before_the_sweep(env, session_factory):
+    from app.models import JobModelTarget, PrinterModelRecord
+    async with session_factory() as s:
+        s.add(PrinterModelRecord(id="m1", plugin_id="bambu", manufacturer_id="bambu", model_id="m1", display_name="M1"))
+        s.add(Printer(id=1, name="P1", printer_type="bambu", connection_config={}, orca_printer_profiles=[], loaded_filaments=PA_CF,
+                      model_uuid="m1", quiet_start="00:00", quiet_end="23:59"))             # quiet hours: the claim loop skips it
+        await s.commit()
+    env.mgr.register_client(1, client())
+    async with session_factory() as s:
+        j = Job(uploaded_file_id=env.file_id, plate_number=1, queue_position=1.0, status="queued", created_at=NOW, updated_at=NOW)
+        s.add(j)
+        await s.flush()
+        s.add(JobModelTarget(job_id=j.id, model_uuid="m1", print_profile="p", ask_type="PA-CF", ask_subtype="any"))
+        await s.commit()
+        job_id = j.id
+
+    await env.engine._sweep_unmatched_jobs()
+
+    assert (await job(session_factory, job_id)).status == "queued" and env.blocked == []      # a match exists: P1 has a config now
 
 
 async def test_loading_the_filament_or_adding_a_matching_printer_releases_the_job(env, session_factory):

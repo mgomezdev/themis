@@ -37,7 +37,8 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   *preset* used for slicing comes from the matched `printer.loaded_filaments` slot's `filament_profile` (the operator picks it per
   slot; the config's own `filament_profile` is an optional override). Don't conflate them.
 - **A per-printer mismatch never blocks; a fleet-wide one does**: a printer that cannot supply a job's filament is skipped for it (the job stays `queued`, the job
-  detail's `filament_match.reasons` say why). When NO printer in the fleet could take the job (online or undead, enabled, queue on, compatible, filament loaded) the
+  detail's `filament_match.reasons` say why). When NO printer in the fleet could take the job (compatible and with the filament loaded; every printer counts except a *dead* one, i.e. offline past the
+  user's limit, so a queue toggled off, a disabled printer or a fresh restart never blocks anything) the
   unmatched-job sweep blocks it (`block_reason` starts "no eligible printer", one `job.blocked`, a webhook/notification) and releases it again as soon as a match
   exists, because requeue-and-wait cannot fix that. A filament removed *after* the claim is a slice failure (`blocked`).
   Matching is `filament_matching.evaluate` for the single ask, every `filament_map` colour and pinned `tool_index` alike; the chosen

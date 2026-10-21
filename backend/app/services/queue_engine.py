@@ -31,7 +31,6 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .printer_identity import dormant_reason
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
@@ -654,10 +653,11 @@ class QueueEngine:
     # --- a job nothing in the fleet could ever take is blocked: waiting cannot fix it --------------------------------------
 
     def _counts_for_matching(self, printer: Printer, cutoff_minutes: int) -> bool:
-        """A printer that could take a job once the queue reaches it: online or undead (offline for less than the user's cutoff), not
-        dormant, enabled and with its queue on. A dead, disabled or queue-off printer needs a user action, so it does not count."""
-        return (self._mgr.liveness(printer.id, cutoff_minutes) in ("online", "undead") and bool(printer.enabled) and bool(printer.queue_on)
-                and dormant_reason(printer.plugin_id) is None)
+        """A printer that could take a job once the situation changes without anyone touching the fleet: every printer except a DEAD one
+        (offline for the user's cutoff). Online and undead (offline under the cutoff) count; so do printers the operator switched off or
+        whose plugin is dormant, and ones with no client yet (just booted): none of those makes a job *impossible*, and blocking and
+        announcing jobs the moment someone toggles a queue or restarts Themis would be noise."""
+        return self._mgr.liveness(printer.id, cutoff_minutes) != "dead"
 
     async def _no_match_reason(self, session: AsyncSession, job: Job, configs: list[JobPrinterConfig], printers: dict[int, Printer],
                                counted: dict[int, Printer], conflicts: dict[int, set]) -> str | None:
@@ -667,7 +667,7 @@ class QueueEngine:
             return f"{NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job"
         candidates = [(c, counted[c.printer_id]) for c in configs if c.printer_id in counted]
         if not candidates:
-            return f"{NO_MATCH_PREFIX}: every compatible printer is offline, disabled or has its queue off"
+            return f"{NO_MATCH_PREFIX}: every compatible printer has been offline past the limit"
         source_file = await session.get(UploadedFile, job.uploaded_file_id)
         reasons: list[str] = []
         for config, printer in candidates:
@@ -705,6 +705,9 @@ class QueueEngine:
                 return
             printers = {p.id: p for p in (await session.execute(select(Printer))).scalars()}
             counted = {pid: p for pid, p in printers.items() if self._counts_for_matching(p, cutoff)}
+            for printer in counted.values():          # a printer skipped by the claim loop (quiet hours, pending sliced work) must still have its model targets materialized
+                await model_targets.sync_targets_for_printer(session, printer)
+            await session.commit()
             conflicts = {pid: await filament_matching.conflicts_for(p.loaded_filaments or []) for pid, p in counted.items()}
             by_job: dict[int, list[JobPrinterConfig]] = {}
             for c in (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id.in_([j.id for j in jobs])))).scalars():
@@ -719,8 +722,14 @@ class QueueEngine:
                         await session.commit()
                         if released.rowcount:
                             await self._broadcast_job(job.id)
-                elif job.status == "queued" or job.block_reason != reason:
+                elif job.status == "queued":
                     await self._block_job(session, job, reason, notify=True)
+                elif job.block_reason != reason:
+                    # Already ours and still blocked, only the wording moved (a slot changed, reasons reordered): update it quietly, one
+                    # announcement per block, not one per cycle.
+                    await session.execute(update(Job).where(Job.id == job.id, Job.status == "blocked",
+                                                            Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(block_reason=reason, updated_at=_now()))
+                    await session.commit()
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.

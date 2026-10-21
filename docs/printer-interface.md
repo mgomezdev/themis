@@ -361,7 +361,7 @@ state change, stores the details in the same transaction and publishes the event
 await ctx.job_reporter.report(job_id, "started" | "complete" | "failed" | "blocked", details=None, reason=None)   # -> bool
 ```
 
-`report` returns False for a duplicate or a job not in a state the report applies to, and raises `JobReportError` for a job on another
+A plugin that serves several printers passes the reporting `printer_id=`: the report is refused if the job is on another printer (a printer back from the dead cannot touch a print that now runs elsewhere). `report` returns False for a duplicate or a job not in a state the report applies to, and raises `JobReportError` for a job on another
 plugin's printer or a disabled plugin. It never releases a job from its printer. `blocked` is optional and tolerated, not required: a
 started print the printer halted (filament runout, a hardware fault) is a **notice only** (the job stays `printing` on its printer, the
 reason is kept as the `blocked_reason` detail, `job.blocked` is published with `phase: "print"`; the same reason repeated is one notice).
@@ -387,7 +387,7 @@ plugin's value, then the latest); enforcement is deferred.
 
 `Settings -> Print defaults -> Printer offline limit` (`queue_config.printer_dead_after_minutes`, default 30, 0 = never) sets how long a printer may be
 offline before it is **dead**. Under the limit it is **undead**: it still counts in queue processing (including the "no printer could take this job"
-check) and a connection that heals in time triggers nothing, unless a job was sliced for it while it was away (the queue is woken and the normal ready
+check; only a dead printer stops counting) and a connection that heals in time triggers nothing, unless a job was sliced for it while it was away (the queue is woken and the normal ready
 path uploads and starts it only if the printer is idle with a clear plate). When a printer is declared dead its `printing` job fails (`job.failed`,
 `origin: core`) and goes back to the top of the queue, a job merely sliced for it returns to `queued`, and `awaiting_plate_clear` stays set. A dead
 printer coming back wakes the queue once. The offline clock lives in memory (a restart restarts it).
