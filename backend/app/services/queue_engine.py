@@ -587,7 +587,8 @@ class QueueEngine:
                     job.status = "failed"
                     job.completed_at = _now()
                     job.block_reason = "print cancelled or ended with failure on the printer"
-                    job.assigned_printer_id = None
+                    # The printer is NOT released: once a print has started only a user action (cancel, requeue, edit, stop or
+                    # delete the printer) clears the assignment. A failed job is terminal and does not reserve the printer.
                     job.updated_at = _now()
                     job.deduction_skipped = True
                     gcode_result = await session.execute(

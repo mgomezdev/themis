@@ -4,6 +4,7 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
 
 ## Invariants (don't violate these)
 
+- **Printer assignment after start**: once a print has started (`printing`), only a user action (cancel, requeue/edit, stop or delete the printer) clears `jobs.assigned_printer_id`; printers, plugins and the queue never release it (a print the printer ended in failure becomes `failed` and keeps the printer, without reserving it). Before the start (slicing/`sliced`/`uploading`) the queue still releases and rescues as before. Exception: a printer declared dead releases its job.
 - **blocked vs failed**: `blocked` is *transient* — the queue re-evaluates it every cycle (filament
   mismatch, or a slice failure: `_handle_slice_failure` marks that printer's config `slice_failed` and blocks
   the job, even when every config has failed — it then waits for an unblock). `failed` is *terminal* — set
