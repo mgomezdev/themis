@@ -195,6 +195,7 @@ def test_get_catalog_walks_every_page_and_groups_by_type():
         assert req.url.path == "/api/v1/profiles"
         cursor = req.url.params.get("cursor")
         seen.append(cursor)
+        assert req.url.params["limit"] == "200"
         if cursor is None:
             return httpx.Response(200, json={"data": [{"type": "machine", "uuid": "m1", "name": "M"},
                                                       {"type": "process", "uuid": "p1", "name": "P"}],

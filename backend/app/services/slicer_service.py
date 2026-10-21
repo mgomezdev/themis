@@ -135,7 +135,7 @@ class SlicerService:
     # ── public API ────────────────────────────────────────────────────────────
     def slice(self, req: SliceRequest, output_dir: "Path | None" = None) -> str:
         """Resolve profile names to sidecar UUIDs and delegate the full slice to
-        the Orca sidecar (POST /api/slice/start). The sidecar owns all profile
+        the Laminus sidecar (POST /api/v1/jobs). The sidecar owns all profile
         resolution, 3MF assembly, and gcode generation. Raises SliceError if the
         sidecar is unreachable, unconfigured, or any profile is not in its catalog.
 
