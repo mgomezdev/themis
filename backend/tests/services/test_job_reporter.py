@@ -276,6 +276,8 @@ async def test_a_report_naming_another_printer_of_the_same_plugin_is_refused(env
     with pytest.raises(JobReportError, match=f"is on printer {printer_a}, not printer {printer_b}"):
         await JobReporter("prn_a").report(job_id, "complete", printer_id=printer_b)
     assert (await rows(session_factory, Job))[0].status == "printing" and await rows(session_factory, EventOutbox) == []
+    with pytest.raises(JobReportError, match="serves 2 printers: pass printer_id"):             # and omitting it is not a way around the check
+        await JobReporter("prn_a").report(job_id, "complete")
     assert await JobReporter("prn_a").report(job_id, "complete", printer_id=printer_a) is True
 
 

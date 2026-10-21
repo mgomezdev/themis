@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from ..models import Job, Printer
 from . import job_details
@@ -40,6 +40,10 @@ class JobReporter:
             printer = await session.get(Printer, on) if on is not None else None
             if printer is None or printer.plugin_id != self.plugin_id:
                 raise JobReportError(f"job {job_id} is not on a printer of plugin {self.plugin_id!r}")
+            if printer_id is None:
+                mine = (await session.execute(select(func.count()).select_from(Printer).where(Printer.plugin_id == self.plugin_id))).scalar_one()
+                if mine > 1:                          # which of its printers is reporting? Guessing could complete another printer's print
+                    raise JobReportError(f"plugin {self.plugin_id!r} serves {mine} printers: pass printer_id= with the report")
             if printer_id is not None and printer_id != printer.id:
                 # Same plugin, another printer: e.g. a printer that came back from the dead reporting a job that was requeued and now
                 # prints elsewhere. Its report must not touch that print.

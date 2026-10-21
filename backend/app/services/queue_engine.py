@@ -706,7 +706,11 @@ class QueueEngine:
             printers = {p.id: p for p in (await session.execute(select(Printer))).scalars()}
             counted = {pid: p for pid, p in printers.items() if self._counts_for_matching(p, cutoff)}
             for printer in counted.values():          # a printer skipped by the claim loop (quiet hours, pending sliced work) must still have its model targets materialized
-                await model_targets.sync_targets_for_printer(session, printer)
+                try:
+                    await model_targets.sync_targets_for_printer(session, printer)
+                except Exception:                     # one printer's failure must not stop the others being swept
+                    logger.exception("Syncing model targets for printer %s failed", printer.id)
+                    await session.rollback()
             await session.commit()
             conflicts = {pid: await filament_matching.conflicts_for(p.loaded_filaments or []) for pid, p in counted.items()}
             by_job: dict[int, list[JobPrinterConfig]] = {}
@@ -730,6 +734,7 @@ class QueueEngine:
                     await session.execute(update(Job).where(Job.id == job.id, Job.status == "blocked",
                                                             Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(block_reason=reason, updated_at=_now()))
                     await session.commit()
+                    await self._broadcast_job(job.id)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.

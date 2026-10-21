@@ -47,6 +47,10 @@ async def up(conn) -> None:
     finally:
         await conn.execute(text("PRAGMA writable_schema=OFF"))
     await conn.execute(text(f"PRAGMA schema_version = {int(cookie) + 1}"))
+    if (await conn.execute(text("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'"))).first() is None:
+        # SQLite creates sqlite_sequence with the first AUTOINCREMENT table; the rewrite above bypasses that, so make sure it exists.
+        await conn.execute(text("CREATE TABLE _autoinc_probe (id INTEGER PRIMARY KEY AUTOINCREMENT)"))
+        await conn.execute(text("DROP TABLE _autoinc_probe"))
     await conn.execute(text("DELETE FROM sqlite_sequence WHERE name = 'jobs'"))
     await conn.execute(text("INSERT INTO sqlite_sequence (name, seq) SELECT 'jobs', COALESCE(MAX(id), 0) FROM jobs"))
     check = (await conn.execute(text("PRAGMA integrity_check"))).scalars().all()
