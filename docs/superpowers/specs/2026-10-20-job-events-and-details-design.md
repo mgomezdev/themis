@@ -53,6 +53,24 @@ for the job details it cares about. Example: "bambu: Print job complete: job `<i
 - Display: `job_complete.notices` (queue source only) prepends the origin: `bambu: Print job complete: job <id>`. `None` origin
   renders as today.
 
+## 2a. Release rule: only the user releases a job from its printer
+
+Once a job is claimed (`slicing`, `sliced`, `uploading`, `printing`, `paused`), `jobs.assigned_printer_id` is cleared **only by a user
+action** (cancel, unblock/requeue, edit/reassign, stop or delete the printer). Printers, plugins and the queue engine never release it,
+whatever they report; a reporter call can change status and publish events but never touches the assignment.
+
+- Failures keep the assignment. A slice failure, upload/start error, lost cached version, a print the printer ended in failure, a missing
+  sliced gcode and a restart-interrupted slice no longer clear the printer. Recoverable ones set `blocked` ("held on <printer>"); a
+  post-slice upload/start error stays `failed` (terminal, printer kept as history). Terminal jobs (`complete`/`failed`/`cancelled`) keep
+  the printer as a record and do not reserve it.
+- A `blocked` job that still has a printer **reserves** it: the queue does not claim another job onto that printer until the user
+  releases the held one. (Otherwise two jobs would be assigned to one printer.)
+- Consequence: the automatic rescue of a slice-failed job on another printer is gone. The user releases it (`POST /jobs/{id}/unblock`
+  now releases the printer and clears `slice_failed`, or edits the job's printers) and the queue then picks any eligible printer. This
+  replaces the "Slicing failure recovery" invariant in CLAUDE.md / `docs/agent/conventions.md`.
+- Only **unassigned** jobs take part in "no eligible printer" blocking (§ job.blocked, queue-initiated). A held job is never swept.
+- Mid-print `blocked` from a printer (§2) already obeys this: no status change, no release.
+
 ## 3. `get_details(job_id, fields)` and field declarations
 
 ```python
