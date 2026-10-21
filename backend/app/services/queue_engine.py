@@ -31,6 +31,7 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
+from .printer_identity import dormant_reason
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
@@ -137,6 +138,10 @@ def _notification_text(event: str, job_id: int, file_name: str, printer_name: st
             message = f"{file_name} is blocked."
         return title, message
     return f"Themis: {event}", f"{file_name} ({event})"
+
+
+# Marks a `blocked` job the unmatched-job sweep owns: it re-checks only these, and releases them when a match appears.
+NO_MATCH_PREFIX = "no eligible printer"
 
 
 class QueueEngine:
@@ -409,7 +414,9 @@ class QueueEngine:
         return await fut
 
     def wake(self) -> None:
-        self._event.set()
+        event = getattr(self, "_event", None)          # the module singleton is built uninitialised until the app starts
+        if event is not None:
+            event.set()
 
     async def start(self) -> None:
         # Sweep stale estimate gcode from a prior run so we don't serve stale data.
@@ -550,6 +557,10 @@ class QueueEngine:
                         await self._try_claim_for_printer(session, printer_id, slice_only=True)
             except Exception:
                 logger.exception("Queue engine error processing printer %s", printer_id)
+        try:
+            await self._sweep_unmatched_jobs()
+        except Exception:
+            logger.exception("Queue engine error sweeping unmatched jobs")
 
     # --- printer liveness: a printer offline past the user's cutoff is dead -------------------------------------------
 
@@ -567,6 +578,9 @@ class QueueEngine:
         """A printer that was offline is back. Nothing happens for a blip that healed before the cutoff, unless work is waiting for
         it: a job sliced for it while it was away (undead) is picked up by waking the queue, and the normal ready path uploads and
         starts it only if the printer is idle with a clear plate. A dead printer returning reopens what its absence blocked."""
+        if edge == "slots":                                  # what is loaded changed: a job may now have (or lose) a match
+            self.wake()
+            return
         if edge != "online":
             return
         if was_dead:
@@ -636,6 +650,77 @@ class QueueEngine:
             await self._cleanup_gcode(session, job_id, printer_id)
             await session.commit()
         await self._broadcast_job(job_id)
+
+    # --- a job nothing in the fleet could ever take is blocked: waiting cannot fix it --------------------------------------
+
+    def _counts_for_matching(self, printer: Printer, cutoff_minutes: int) -> bool:
+        """A printer that could take a job once the queue reaches it: online or undead (offline for less than the user's cutoff), not
+        dormant, enabled and with its queue on. A dead, disabled or queue-off printer needs a user action, so it does not count."""
+        return (self._mgr.liveness(printer.id, cutoff_minutes) in ("online", "undead") and bool(printer.enabled) and bool(printer.queue_on)
+                and dormant_reason(printer.plugin_id) is None)
+
+    async def _no_match_reason(self, session: AsyncSession, job: Job, configs: list[JobPrinterConfig], printers: dict[int, Printer],
+                               counted: dict[int, Printer], conflicts: dict[int, set]) -> str | None:
+        """Why no printer in the fleet could take `job` (None when one could, or when a per-printer path already owns the block)."""
+        configs = [c for c in configs if c.printer_id in printers]
+        if not configs:
+            return f"{NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job"
+        candidates = [(c, counted[c.printer_id]) for c in configs if c.printer_id in counted]
+        if not candidates:
+            return f"{NO_MATCH_PREFIX}: every compatible printer is offline, disabled or has its queue off"
+        source_file = await session.get(UploadedFile, job.uploaded_file_id)
+        reasons: list[str] = []
+        for config, printer in candidates:
+            if config.slice_failed:
+                return None                                  # the slicing-failure path blocks and rescues this one
+            if source_file is not None and is_presliced_file(source_file):
+                verdict = await gcode_eligibility.evaluate(session, source_file, printer, confirmed=bool(job.eligibility_confirmed))
+                if not verdict.allowed:
+                    reasons.append(verdict.message)
+                    continue
+            fit = filament_matching.evaluate(config, printer.loaded_filaments or [], conflicts.get(printer.id, set()))
+            if fit.eligible:
+                return None
+            reasons.extend(fit.reasons)
+        unique = list(dict.fromkeys(r for r in reasons if r))[:3]
+        return f"{NO_MATCH_PREFIX}: " + ("; ".join(unique) or "no printer in the fleet can run this job")
+
+    async def _sweep_unmatched_jobs(self) -> None:
+        """Each cycle, for every job that is up for work (queued, due, its project promoted): when no printer in the fleet could take it
+        — whatever its current state — block it (one `job.blocked`, plus webhook/notification) because requeue-and-wait cannot fix
+        it. A job this sweep blocked is released back to `queued` as soon as a match exists (a printer added or back, filament
+        loaded). Blocks with any other cause are left alone."""
+        cutoff = await self._dead_after_minutes()
+        if not isinstance(self._mgr.liveness(0, cutoff), (str, type(None))):
+            return                                           # a manager that cannot report liveness: no basis to decide
+        now = _now()
+        async with self._factory() as session:
+            jobs = (await session.execute(
+                select(Job).outerjoin(Project, Project.id == Job.project_id)
+                .where(or_(Job.status == "queued", and_(Job.status == "blocked", Job.block_reason.like(f"{NO_MATCH_PREFIX}%"))))
+                .where(or_(Job.project_id.is_(None), Project.stage == "queued"))
+                .where(or_(Job.not_before.is_(None), Job.not_before <= now))
+                .order_by(Job.queue_position.asc()))).scalars().all()
+            if not jobs:
+                return
+            printers = {p.id: p for p in (await session.execute(select(Printer))).scalars()}
+            counted = {pid: p for pid, p in printers.items() if self._counts_for_matching(p, cutoff)}
+            conflicts = {pid: await filament_matching.conflicts_for(p.loaded_filaments or []) for pid, p in counted.items()}
+            by_job: dict[int, list[JobPrinterConfig]] = {}
+            for c in (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id.in_([j.id for j in jobs])))).scalars():
+                by_job.setdefault(c.job_id, []).append(c)
+            for job in jobs:
+                reason = await self._no_match_reason(session, job, by_job.get(job.id, []), printers, counted, conflicts)
+                if reason is None:
+                    if job.status == "blocked":
+                        released = await session.execute(update(Job).where(
+                            Job.id == job.id, Job.status == "blocked", Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(
+                            status="queued", block_reason=None, updated_at=_now()))
+                        await session.commit()
+                        if released.rowcount:
+                            await self._broadcast_job(job.id)
+                elif job.status == "queued" or job.block_reason != reason:
+                    await self._block_job(session, job, reason, notify=True)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.
@@ -864,7 +949,7 @@ class QueueEngine:
                 return (v, f), True
         return None, bool(rows)
 
-    async def _block_job(self, session: AsyncSession, job: Job, reason: str) -> None:
+    async def _block_job(self, session: AsyncSession, job: Job, reason: str, *, notify: bool = False) -> None:
         job_id = job.id
         already = job.status == "blocked" and job.block_reason == reason
         # Conditional UPDATE, mirroring the claim guard above: some call sites reach
@@ -881,6 +966,11 @@ class QueueEngine:
         await session.commit()
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
+            await self._publish_job_event("job.blocked", job_id, None, "core", {"reason": reason, "phase": "queue"},
+                                          dedup=f"job.blocked:{job_id}:{_now()}")
+            if notify:                                      # a block that needs the user (fleet-wide mismatch) is also announced
+                await self._fire_webhooks(job_id, "job.blocked")
+                await self._fire_notifications(job_id, "job.blocked", reason=reason, origin="core")
 
     async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int, slice_only: bool = False,
                                    cache_only_version: int | None = None, provider_id: str | None = None) -> None:
@@ -1203,6 +1293,8 @@ class QueueEngine:
         slice_cache.log_event("gate_bypass_released", job_id=job_id, printer_id=printer_id, reason=reason)
         if result.rowcount:
             await self._broadcast_job(job_id)
+            await self._publish_job_event("job.blocked", job_id, printer_id, "core", {"reason": reason, "phase": "queue"},
+                                          dedup=f"job.blocked:{job_id}:{_now()}")
 
     async def _record_cache_decision(self, job_id: int, info: dict) -> None:
         async with self._factory() as session:
@@ -1262,6 +1354,8 @@ class QueueEngine:
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.blocked")
         await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=error)
+        await self._publish_job_event("job.blocked", job_id, printer_id, "core", {"reason": f"slicing failed: {error}", "phase": "queue"},
+                                      dedup=f"job.blocked:{job_id}:{_now()}")
 
     async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
         async with self._factory() as session:

@@ -680,6 +680,7 @@ async def update_printer(
         printer.preferred_slicer_plugin_id = wanted
     await session.commit()
     await session.refresh(printer)
+    queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 

@@ -33,7 +33,7 @@ def client(connected=True, idle=True) -> MagicMock:
 
 
 @pytest.fixture
-async def env(session_factory, tmp_path):
+async def env(session_factory, tmp_path, listen):
     mgr, clock = PrinterManager(), Clock()
     mgr._clock = clock
     engine = QueueEngine(session_factory, mgr, MagicMock(), broadcast_cb=None)
@@ -43,14 +43,8 @@ async def env(session_factory, tmp_path):
     async with session_factory() as s:
         s.add(QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=CUTOFF, snapshot_interval_seconds=2, estimates_enabled=False))
         await s.commit()
-    failed = []
-
-    async def on_failed(e):
-        failed.append(e)
-
-    hub.subscribe("job.failed", on_failed, name="t.liveness.failed")
+    failed = listen("job.failed")
     yield MagicMock(engine=engine, mgr=mgr, clock=clock, failed=failed, tmp=tmp_path)
-    hub._core.pop("core:t.liveness.failed", None)
     engine._executor.shutdown(wait=False)
 
 
@@ -252,3 +246,18 @@ async def test_a_dead_printer_gives_back_a_job_sliced_for_it_without_a_failure(e
     async with session_factory() as s:
         assert (await s.execute(select(GcodeFile))).first() is None
     assert env.failed == []                                                # it never started: not a failure
+
+
+async def test_a_changed_filament_slot_wakes_the_queue_and_an_unchanged_report_does_not(env, session_factory):
+    _, pid = await seed(session_factory, env.tmp, status="queued", extra_queued=False)
+    env.mgr.register_client(pid, client())
+    env.mgr.set_session_factory(session_factory)
+    env.mgr.set_connectivity_callback(env.engine.on_connectivity)
+    trays = [{"slot": 0, "type": "PA-CF", "subtype": "standard", "color": "#000000"}]
+
+    await env.mgr.on_ams_change(pid, trays)
+    assert env.engine.wake.call_count == 1                                  # PA-CF just got loaded: a blocked job may match now
+    await env.mgr.on_ams_change(pid, trays)
+    assert env.engine.wake.call_count == 1                                  # the same report again: nothing changed
+    await env.mgr.on_ams_change(pid, [{**trays[0], "type": "PLA"}])
+    assert env.engine.wake.call_count == 2

@@ -18,6 +18,12 @@ from .printer_identity import dormant_reason
 logger = logging.getLogger(__name__)
 
 
+def _slots_signature(slots: list) -> list[dict]:
+    """Slots without their unset (None) keys: a first report and the same report merged with the stored slot differ only by Themis-owned keys
+    that are None, which is not a change in what is loaded."""
+    return [{k: v for k, v in slot.items() if v is not None} for slot in slots]
+
+
 class PrinterManager:
     def __init__(self) -> None:
         self._clients: dict[int, AbstractPrinterClient] = {}
@@ -273,8 +279,14 @@ class PrinterManager:
                             # a vendor AMS report only carries hardware facts and must never wipe a link.
                             tray = inventory_refs.preserve_slot_keys(prev, tray)
                         merged.append(tray)
+                    slots_changed = _slots_signature(merged) != _slots_signature(printer.loaded_filaments or [])
                     printer.loaded_filaments = merged
                     await session.commit()
+                    if slots_changed and self._on_connectivity is not None:
+                        try:
+                            await self._on_connectivity(printer_id, "slots", False)   # a job may now match (or stop matching) this printer
+                        except Exception:
+                            logger.exception("Connectivity handler failed for printer %s", printer_id)
         if self._on_state_broadcast:
             try:
                 await self._on_state_broadcast("printer_state", self.get_normalized_state(printer_id))

@@ -202,6 +202,8 @@ async def _set_filament(db, job_id, printer_id, req_type, req_color, loaded):
 
 @pytest.mark.asyncio
 async def test_filament_mismatch_keeps_the_job_queued_never_blocked(db):
+    """On the claim path a printer whose loaded filament does not fit skips the job: that alone never blocks it. (Only when NO printer in
+    the fleet could take it does the unmatched-job sweep block it; this manager cannot report liveness, so the sweep stays out.)"""
     mgr = _make_mock_printer_manager([1])
     qe = QueueEngine(db, mgr, MagicMock())
     job_id = await _seed_job(db, printer_id=1)

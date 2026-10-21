@@ -171,14 +171,9 @@ async def test_started_claims_a_pre_start_job_once_and_writes_the_start_event_an
     assert (await jd.get_details(job_id, ["print_start_time"]))["print_start_time"]["status"] == "ok"
 
 
-async def test_failed_ends_a_started_print_keeps_the_printer_and_publishes_job_failed(env, session_factory):
+async def test_failed_ends_a_started_print_keeps_the_printer_and_publishes_job_failed(env, session_factory, listen):
     job_id, printer_id = await seed(session_factory, env.tmp)
-    seen = []
-
-    async def handler(e):
-        seen.append(e)
-
-    hub.subscribe("job.failed", handler, name="t.failed")
+    seen = listen("job.failed")
     assert await JobReporter("prn_a").report(job_id, "failed", reason="nozzle clog") is True
     await hub.drain()
 
@@ -191,14 +186,9 @@ async def test_failed_ends_a_started_print_keeps_the_printer_and_publishes_job_f
     assert await JobReporter("prn_a").report(job_id, "failed") is False      # a repeat does nothing
 
 
-async def test_a_mid_print_blocked_is_a_notice_only_that_never_releases_the_printer(env, session_factory):
+async def test_a_mid_print_blocked_is_a_notice_only_that_never_releases_the_printer(env, session_factory, listen):
     job_id, printer_id = await seed(session_factory, env.tmp)
-    seen = []
-
-    async def handler(e):
-        seen.append(e)
-
-    hub.subscribe("job.blocked", handler, name="t.blocked")
+    seen = listen("job.blocked")
     reporter = JobReporter("prn_a")
 
     assert await reporter.report(job_id, "blocked", reason="filament runout") is True
