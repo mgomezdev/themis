@@ -122,6 +122,15 @@ payload_model=…),)`, names start `<id>.`) and **subscribe** to core or other p
 resumes it (no replay of best-effort events). Handlers are contained like any provider call, must be idempotent on `envelope.id`,
 and their errors are redacted. Contract, delivery guarantees and operator endpoints: `docs/events.md`.
 
+### Job events and details
+
+A printer plugin gets `ctx.job_reporter` (report `started` / `complete` / `failed` / `blocked`; core applies the change and publishes with the plugin as `origin`),
+`ctx.job_details` (read any job's detail fields) and `ctx.job_details_writer` (add this plugin's fields) on its `PluginContext`; all three are bound to
+the plugin and refuse a disabled plugin. A plugin declares the fields it writes with `PluginManifest.job_fields=(JobFieldDef("print_end_time",
+"…", "iso8601"),)` and standard fields it cannot supply with `unsupported_job_fields=("filament_usage",)` (names are lower-case dotted/underscored; a name
+cannot be in both). Printer plugins should cover the minimum set (`print_start_time`, `print_end_time`, `result`); a gap is logged at load and never blocks
+the plugin. Non-printer plugins prefix their field names with their id (`filament.cost`). Details: `docs/printer-interface.md`.
+
 ### Declarative UI (BIZ-303)
 
 A plugin contributes UI without frontend code through two surfaces that share one contract version (`schema_version` 1,

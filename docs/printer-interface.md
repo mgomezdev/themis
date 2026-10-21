@@ -352,6 +352,46 @@ These are applied by the `printer_state_to_dict` serializer (e.g. filter out `ch
 - `set_awaiting_plate_clear(printer_id, awaiting)` — updates the in-memory set, async-schedules a DB write and a WebSocket broadcast
 - `load_awaiting_plate_clear_from_db()` — called at startup to rehydrate
 
+### Reporting job events and details (core-owned job id)
+
+Core owns the job id (`jobs.id`, never reused) and the details accessor; a printer plugin **reports** what happened and core applies the
+state change, stores the details in the same transaction and publishes the event with the plugin as its `origin` (`docs/events.md`):
+
+```python
+await ctx.job_reporter.report(job_id, "started" | "complete" | "failed" | "blocked", details=None, reason=None)   # -> bool
+```
+
+`report` returns False for a duplicate or a job not in a state the report applies to, and raises `JobReportError` for a job on another
+plugin's printer or a disabled plugin. It never releases a job from its printer. `blocked` is optional and tolerated, not required: a
+started print the printer halted (filament runout, a hardware fault) is a **notice only** (the job stays `printing` on its printer, the
+reason is kept as the `blocked_reason` detail, `job.blocked` is published with `phase: "print"`; the same reason repeated is one notice).
+Today the bundled plugins keep signalling through the printer client callbacks and core reports on their behalf with
+`printer.plugin_id` as the origin; the same call is what a new plugin makes directly.
+
+Any plugin reads a job's details with `await ctx.job_details.get(job_id, ["filament_usage", ...], origin=None)` and adds its own fields with
+`await ctx.job_details_writer.set(job_id, {"myplugin.cost": 1.2})`. Field names and value shapes are not enforced by code; every field answers
+`ok`, `unsupported` (the source cannot provide it), `unavailable` (declared, no value for this job) or `unknown_field`.
+
+**Minimum fields every printer plugin supplies** (checked, not enforced: a load warning and `tests/plugins/conformance.py`): `print_start_time`
+(iso8601), `print_end_time` (iso8601) and `result` (`success` | `failure`), each declared in `PluginManifest.job_fields=(JobFieldDef(name,
+description, type_hint), ...)` or, when the hardware cannot provide it, listed in `unsupported_job_fields`. Standard optional fields:
+`print_seconds`, `filament_usage` (`{"grams": float, "breakdown": [...]|None}`; core derives it from the sliced job until a printer reports
+actuals; the inventory deduction reads it first) and `blocked_reason`. `PRINTER_JOB_FIELDS` in `plugins/job_fields.py` is the shared set the
+bundled plugins use. A runtime `details={"filament_usage": UNSUPPORTED}` marks a field unsupported for one job. The catalog of declared
+fields is `GET /api/v1/job-fields`; one job's fields are `GET /api/v1/jobs/{id}/detail-fields?fields=a,b[&origin=]` (read-only, debug).
+
+A job's field should have **one** writing plugin. That is not enforced yet (storage keeps `(job, field, origin)`, reads prefer the printer
+plugin's value, then the latest); enforcement is deferred.
+
+### Liveness: online, undead, dead
+
+`Settings -> Print defaults -> Printer offline limit` (`queue_config.printer_dead_after_minutes`, default 30, 0 = never) sets how long a printer may be
+offline before it is **dead**. Under the limit it is **undead**: it still counts in queue processing (including the "no printer could take this job"
+check) and a connection that heals in time triggers nothing, unless a job was sliced for it while it was away (the queue is woken and the normal ready
+path uploads and starts it only if the printer is idle with a clear plate). When a printer is declared dead its `printing` job fails (`job.failed`,
+`origin: core`) and goes back to the top of the queue, a job merely sliced for it returns to `queued`, and `awaiting_plate_clear` stays set. A dead
+printer coming back wakes the queue once. The offline clock lives in memory (a restart restarts it).
+
 ---
 
 ## State Serialization

@@ -36,8 +36,10 @@ Non-obvious invariants and dev-environment traps. **Skim before editing or runni
   for eligibility; undefined = NULL, never the string `"any"`; `ask_subtype="any"` is a real wildcard value). The OrcaSlicer filament
   *preset* used for slicing comes from the matched `printer.loaded_filaments` slot's `filament_profile` (the operator picks it per
   slot; the config's own `filament_profile` is an optional override). Don't conflate them.
-- **A mismatch never blocks**: a job whose filament no printer has stays `queued` (the engine skips it for a printer that cannot supply
-  it; the job detail's `filament_match.reasons` say why). Only a filament removed *after* the claim is a slice failure (`blocked`).
+- **A per-printer mismatch never blocks; a fleet-wide one does**: a printer that cannot supply a job's filament is skipped for it (the job stays `queued`, the job
+  detail's `filament_match.reasons` say why). When NO printer in the fleet could take the job (online or undead, enabled, queue on, compatible, filament loaded) the
+  unmatched-job sweep blocks it (`block_reason` starts "no eligible printer", one `job.blocked`, a webhook/notification) and releases it again as soon as a match
+  exists, because requeue-and-wait cannot fix that. A filament removed *after* the claim is a slice failure (`blocked`).
   Matching is `filament_matching.evaluate` for the single ask, every `filament_map` colour and pinned `tool_index` alike; the chosen
   slots are stored on the config (`slot_plan`) at claim and slicing + deduction follow that plan.
 - **Per-printer flags are read from the client, not StartPrintOptions**: vendor `start_print` reads

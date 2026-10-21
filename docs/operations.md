@@ -58,6 +58,14 @@ Vite serves the app at `http://localhost:5173` and proxies API and WebSocket req
 
 The data directory and library directory are created as needed. In Docker, ensure bind-mounted OrcaSlicer profile directories exist and are readable by the container.
 
+## Printer offline limit
+
+`Settings -> Print defaults -> Printer offline limit` (minutes; default 30; 0 = never) is how long a printer may stay offline before Themis considers it dead.
+A shorter drop changes nothing, so a flaky network does not keep reprocessing the queue. When a printer is declared dead, the job it was printing is marked failed
+(a `job.failed` event, webhook and notification) and goes back to the top of the queue; a job already sliced for it returns to the queue; the printer keeps its
+"plate not cleared" state, so you confirm the bed when it is back. **Risk:** the printer may still be printing on its own (only Themis lost contact). It stays
+unavailable until its print ends and you clear the plate, but the requeued job can be printed again elsewhere; raise the limit if your network drops for long periods.
+
 ## Authentication and account recovery
 
 On first boot, Themis initializes an administrator account. Keyless requests are treated as local admin only when the peer IP is in `THEMIS_LOCAL_NETWORKS` and local login is enabled in the Admin account settings. A presented API key takes precedence over local-network access, so a limited key remains limited on the LAN. The app does not trust forwarded IP headers for this decision; when running behind a reverse proxy or Docker networking, verify the peer IP observed by Themis before relying on local access.

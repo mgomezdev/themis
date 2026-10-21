@@ -192,6 +192,15 @@ not an error. `estimate_filament_grams` (falling back to the plate's parsed `fil
 estimate exists yet) is what `spool_check.check_spool_sufficiency` compares against a bound spool's
 remaining weight for the low-stock warning (see `backend.md` § Services, `spool_check.py`).
 
+`jobs.id` is `INTEGER PRIMARY KEY AUTOINCREMENT` (v054): an id is never handed out again, so an id in an old event, webhook or log can only mean that job.
+After a print has started (`printing`) only a user action clears `assigned_printer_id`; a print the printer ended in failure keeps it (terminal, not reserved).
+
+### job_details  (v055 — generic job detail fields)
+`job_details{id, job_id FK jobs(id) ON DELETE CASCADE, field:str(64), origin:str(64) (a plugin id or "core"), status:"ok"|"unsupported", value: JSON?, updated_at}`,
+unique `(job_id, field, origin)`. Written by the job reporter in the same transaction as the state change and by plugins through the details writer; read
+with `services/job_details.get_details`. Names and values are not enforced. Standard printer fields: `print_start_time`, `print_end_time`, `result`,
+`print_seconds`, `filament_usage`, `blocked_reason`; core also writes `failure_reason` and `last_failure` (`{reason, printer_id, at}`, a dead printer).
+
 ### job_printer_configs  (one row per (job, eligible printer))
 `id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
@@ -320,7 +329,7 @@ Plugin-owned (`local_inv_*`, tracked in `plugin_schema_versions`, created at sta
 `inventory_cache{provider, kind spools|materials, payload JSON, fetched_at}` PK(provider, kind): the last successful list of a `REMOTE` provider (DTO fields without `raw`), written after every live list/sync (skipped when unchanged) and served stale when the provider is unreachable, across restarts. A successfully applied outbox write patches the cached spool's weight. Never written for non-REMOTE providers. Outage state lives in `plugin_configs.state`: `disconnected_since`, `disconnect_alerted_at` (cleared on the next successful sync). Events `inventory.disconnected {provider, since, pending_count}` (once per outage, after the plugin's `max_disconnect_minutes`) and `inventory.reconnected {provider, since, flushed, pending_count}`.
 
 ### queue_config / spoolman_config / webhook_config / notification_config
-`queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
+`queue_config{check_interval_minutes:int=5, printer_dead_after_minutes:int=30 (v056; 0 = never), operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline
 (see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
 Managed via `GET/PUT /api/v1/settings/queue`.
