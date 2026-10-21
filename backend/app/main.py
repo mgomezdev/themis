@@ -32,6 +32,7 @@ from .api.routes.orders import router as orders_router
 from .api.routes.payments import router as payments_router
 from .api.routes.fleet import router as fleet_router
 from .api.routes.jobs import router as jobs_router
+from .api.routes.job_fields import router as job_fields_router
 from .api.routes.alarms import router as alarms_router
 from .api.routes.labor import router as labor_router
 from .api.routes.laminus import router as laminus_router
@@ -141,6 +142,7 @@ async def lifespan(app: FastAPI):
         broadcast_cb=connection_manager.broadcast,
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
+    printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
     await queue_engine.start()
 
     try:
@@ -221,6 +223,7 @@ app.include_router(printer_model_slicer_profiles_router)
 app.include_router(fleet_router)
 app.include_router(files_router)
 app.include_router(jobs_router)
+app.include_router(job_fields_router)
 app.include_router(alarms_router)
 app.include_router(labor_router)
 app.include_router(laminus_router)

@@ -184,7 +184,7 @@ async def _completed_job_with_snapshot(client, farm, session_factory, upload_3mf
 async def _legacy_complete(factory, job_id: int, printer_id: int, **payload) -> None:
     """A `job.complete` written by the previous release: the publisher had already resolved the spools (`inventory`, `deduction_notes`)."""
     async with factory() as s:
-        env = EventEnvelope(name="job.complete", entities={"job_id": job_id, "printer_id": printer_id}, dedup_key=f"legacy:{job_id}",
+        env = EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": job_id, "printer_id": printer_id}, dedup_key=f"legacy:{job_id}",
                             payload={"source": "queue", "actual_seconds": 60, "actual_grams": 12.5, **payload})
         await hub.enqueue_durable(s, env)
         await s.commit()
@@ -256,3 +256,24 @@ def test_the_queue_engine_and_the_job_routes_import_nothing_from_inventory_servi
         used |= {(n.module or "").rsplit(".", 1)[-1] for n in ast.walk(tree)
                  if isinstance(n, ast.ImportFrom) and ".inventory." in f".{n.module}." and (n.module or "").split(".")[-2:-1] == ["inventory"]}
         assert used <= allowed | {"preflight"}, f"{module.__name__} reaches into inventory: {sorted(used - allowed)}"
+
+
+async def _finish_with_details(client, farm, session_factory, upload_3mf, details):
+    """A print started by the queue (snapshot at 500 g) and finished through the engine's completion path with the given details."""
+    ref, printer_id, job_id = await _completed_job_with_snapshot(client, farm, session_factory, upload_3mf)
+    await run_cycle(farm.engine)
+    await settle_events(session_factory)
+    assert await farm.engine.complete_job(job_id, printer_id, origin=None, details=details) is True
+    await settle_events(session_factory)
+    return ref
+
+
+async def test_the_filament_usage_detail_wins_over_the_grams_on_the_event(client, farm, session_factory, upload_3mf):
+    ref = await _finish_with_details(client, farm, session_factory, upload_3mf, {"filament_usage": {"grams": 20.0, "breakdown": None}})
+    assert await _remaining(client, ref) == 480.0                         # the reported 20 g, not the 12.5 g on the event
+
+
+async def test_without_a_usable_detail_the_event_grams_are_used(client, farm, session_factory, upload_3mf):
+    from app.services.job_details import UNSUPPORTED
+    ref = await _finish_with_details(client, farm, session_factory, upload_3mf, {"filament_usage": UNSUPPORTED})
+    assert await _remaining(client, ref) == 487.5                         # the printer says it cannot report usage: the payload shape from before details

@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .client import ElegooCentauriClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
+from ..job_fields import PRINTER_JOB_FIELDS
 
 
 class NoSettings(BaseModel):
@@ -20,6 +21,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=NoSettings,
     default_enabled=True,
+    job_fields=PRINTER_JOB_FIELDS,
     factory=ElegooCentauriClient,
     manufacturers=(
     Manufacturer("elegoo", "Elegoo", (PrinterModel("centauri", "Centauri Carbon", bed_mm=(256, 256), toolheads=1),)),

@@ -23,6 +23,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..eventing import EventEnvelope
+from ..eventing.registry import CORE_EVENTS
 from ..eventing.hub import hub
 from ..models import Job, Printer
 from .inventory import subscribers as inventory_subscribers
@@ -41,17 +42,19 @@ STARTED = "job.started"
 HANDLER_TIMEOUT_S = 30.0
 
 
-async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, *, loaded_filaments: list[dict] | None) -> bool:
+async def enqueue_job_started(session: AsyncSession, job: Job, printer_id: int, *, loaded_filaments: list[dict] | None,
+                              origin: str | None = "core") -> bool:
     """Add the durable `job.started` event to the caller's start transaction (no commit; call `hub.wake()` after it). One per
     physical start: the key carries the start time, so a job restarted after a failed attempt is a new event."""
     entities: dict[str, int | str] = {"job_id": job.id, "printer_id": printer_id}
-    envelope = EventEnvelope(name=STARTED, entities=entities, dedup_key=f"{STARTED}:{job.id}:{printer_id}:{job.updated_at}",
+    envelope = EventEnvelope(name=STARTED, schema_version=CORE_EVENTS[STARTED].version, origin=origin, entities=entities,
+                             dedup_key=f"{STARTED}:{job.id}:{printer_id}:{job.updated_at}",
                              payload={"loaded_filaments": list(loaded_filaments or [])})
     return await hub.enqueue_durable(session, envelope)
 
 
 async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int | None, *, source: str,
-                               loaded_filaments: list[dict] | None = None) -> bool:
+                               loaded_filaments: list[dict] | None = None, origin: str | None = "core") -> bool:
     """Add the durable `job.complete` event to the caller's completion transaction (no commit; call `hub.wake()` after it).
     One logical event per job: `dedup_key = job.complete:<id>`. `loaded_filaments` = the printer's slots now (they may change after the print)."""
     entities: dict[str, int | str] = {"job_id": job.id}
@@ -61,7 +64,8 @@ async def enqueue_job_complete(session: AsyncSession, job: Job, printer_id: int 
         entities["project_id"] = job.project_id
     if job.order_id is not None:
         entities["order_id"] = job.order_id
-    envelope = EventEnvelope(name=EVENT, entities=entities, dedup_key=f"{EVENT}:{job.id}", payload={
+    envelope = EventEnvelope(name=EVENT, schema_version=CORE_EVENTS[EVENT].version, origin=origin, entities=entities,
+                             dedup_key=f"{EVENT}:{job.id}", payload={
         "source": source, "actual_seconds": job.actual_seconds, "actual_grams": job.actual_filament_grams,
         "loaded_filaments": list(loaded_filaments or [])})
     return await hub.enqueue_durable(session, envelope)
@@ -93,7 +97,7 @@ async def notify_consumers(envelope: EventEnvelope) -> None:
     for name, send in (("broadcast", lambda: queue_engine._broadcast_job(job_id)),
                        ("webhooks", lambda: queue_engine._fire_webhooks(job_id, EVENT, event_id=envelope.id)),
                        ("notifications", lambda: queue_engine._fire_notifications(job_id, EVENT, printer_id=printer_id,
-                                                                                  event_id=envelope.id))):
+                                                                                  event_id=envelope.id, origin=envelope.origin))):
         try:
             await send()
         except Exception:                                        # each is independent; none may fail the others or the completion

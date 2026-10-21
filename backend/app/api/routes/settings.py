@@ -26,8 +26,13 @@ router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
 _BACKUP_VERSION = 1
 
 
+MAX_DEAD_AFTER_MINUTES = 1440
+
+
 class QueueConfigOut(BaseModel):
     check_interval_minutes: int
+    # Minutes a printer may be offline before it counts as dead (its running job fails and is requeued at the top). 0 = never.
+    printer_dead_after_minutes: int
     operator_name: str | None
     snapshot_interval_seconds: int
     estimates_enabled: bool
@@ -37,6 +42,7 @@ class QueueConfigOut(BaseModel):
 
 class QueueConfigIn(BaseModel):
     check_interval_minutes: int | None = None
+    printer_dead_after_minutes: int | None = Field(default=None, ge=0, le=MAX_DEAD_AFTER_MINUTES)
     operator_name: str | None = None
     snapshot_interval_seconds: int | None = None
     estimates_enabled: bool | None = None
@@ -74,7 +80,7 @@ async def put_cost_config(body: CostConfigModel, session: AsyncSession = Depends
 async def _get_or_create_queue(session: AsyncSession) -> QueueConfig:
     row = await session.get(QueueConfig, 1)
     if row is None:
-        row = QueueConfig(id=1, check_interval_minutes=5, snapshot_interval_seconds=2, estimates_enabled=False,
+        row = QueueConfig(id=1, check_interval_minutes=5, printer_dead_after_minutes=30, snapshot_interval_seconds=2, estimates_enabled=False,
                           slice_cache_use_latest_settings=True)
         session.add(row)
         await session.flush()
@@ -99,6 +105,8 @@ async def update_queue_config(
     row = await _get_or_create_queue(session)
     if body.check_interval_minutes is not None:
         row.check_interval_minutes = max(1, body.check_interval_minutes)
+    if body.printer_dead_after_minutes is not None:
+        row.printer_dead_after_minutes = body.printer_dead_after_minutes
     if body.operator_name is not None:
         row.operator_name = body.operator_name or None
     if body.snapshot_interval_seconds is not None:

@@ -360,7 +360,7 @@ function TagsPage() {
 function PrintDefaultsPage() {
   // Last values the server confirmed, so a refused save can put the field back instead of leaving the
   // screen claiming a value that was never stored.
-  const saved = useRef({ check: 5, snapshot: 2, name: '', estimates: false, useLatest: true });
+  const saved = useRef({ check: 5, dead: 30, snapshot: 2, name: '', estimates: false, useLatest: true });
   const [saveError, setSaveError] = useState<string | null>(null);
   async function persist(
     label: string, patch: Partial<QueueConfig>, revert: () => void, onSaved: () => void, setBusy?: (b: boolean) => void,
@@ -383,6 +383,19 @@ function PrintDefaultsPage() {
     setCheckInterval(v);
     await persist('the queue check interval', { check_interval_minutes: v },
       () => setCheckInterval(saved.current.check), () => { saved.current.check = v; }, setSavingInterval);
+  }
+
+  // How long a printer may be offline before it is considered dead
+  const [deadAfter, setDeadAfter] = useState<number>(30);
+  const [savingDeadAfter, setSavingDeadAfter] = useState(false);
+  useEffect(() => {
+    getQueueConfig().then(c => { const v = c.printer_dead_after_minutes ?? 30; saved.current.dead = v; setDeadAfter(v); }).catch(console.error);
+  }, []);
+  async function commitDeadAfter(minutes: number) {
+    const v = Math.min(1440, Math.max(0, Math.round(minutes) || 0));
+    setDeadAfter(v);
+    await persist('the printer offline limit', { printer_dead_after_minutes: v },
+      () => setDeadAfter(saved.current.dead), () => { saved.current.dead = v; }, setSavingDeadAfter);
   }
 
   // Snapshot interval
@@ -554,6 +567,19 @@ function PrintDefaultsPage() {
                  onBlur={e => commitSnapshotInterval(Number(e.target.value))}
                  style={{ width: 90 }} />
           <span className="muted small">sec{savingSnapshot ? ' · saving…' : ''}</span>
+        </div>
+      </FieldRow>
+
+      <FieldRow label="Printer offline limit"
+                hint="How long a printer may stay offline before it is considered dead. A shorter drop changes nothing, so a flaky network does not keep reprocessing the queue. When a printer is declared dead, the job it was printing fails and goes back to the top of the queue. 0 = never.">
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <input className="input" type="number" min={0} max={1440} step={1}
+                 aria-label="Printer offline limit"
+                 value={deadAfter}
+                 onChange={e => setDeadAfter(Number(e.target.value))}
+                 onBlur={e => commitDeadAfter(Number(e.target.value))}
+                 style={{ width: 90 }} />
+          <span className="muted small">min{savingDeadAfter ? ' · saving…' : ''}</span>
         </div>
       </FieldRow>
 

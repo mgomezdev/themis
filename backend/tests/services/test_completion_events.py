@@ -224,7 +224,7 @@ async def test_a_manual_completion_accrues_and_deducts_but_notifies_nobody(db, m
 
 async def test_the_event_payload_is_validated(db):
     with pytest.raises(Exception, match="invalid payload"):
-        await hub.enqueue_durable(None, EventEnvelope(name="job.complete", payload={"source": "carrier-pigeon"}))
+        await hub.enqueue_durable(None, EventEnvelope(name="job.complete", schema_version=2, payload={"source": "carrier-pigeon"}))
 
 
 async def test_migration_v046_backfills_completed_jobs_and_is_idempotent():
@@ -293,7 +293,7 @@ async def test_a_deferred_deduction_is_durable_before_the_event_is_acknowledged(
 
 async def test_notices_are_dropped_with_a_log_not_silently_when_no_engine_is_bound(db, caplog, monkeypatch):
     monkeypatch.setattr(completion_events, "_engine", None)
-    envelope = EventEnvelope(name="job.complete", entities={"job_id": 7}, payload={"source": "queue"})
+    envelope = EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": 7}, payload={"source": "queue"})
     with caplog.at_level("WARNING", logger="app"):
         await completion_events.notify_consumers(envelope)
     assert "dropped: no queue engine is bound" in caplog.text

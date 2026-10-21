@@ -4628,6 +4628,76 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/detail-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get generic job detail fields",
+        "description": "The open-vocabulary details plugins wrote onto the job (debug/read-only). Each field answers `ok`, `unsupported`,\n`unavailable` or `unknown_field`; a bad name never fails the call. Distinct from `/{job_id}/details` (the job screen's shape).",
+        "operationId": "get_job_detail_fields_api_v1_jobs__job_id__detail_fields_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`",
+              "title": "Fields"
+            },
+            "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`"
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the value written by this origin (a plugin id or `core`)",
+              "title": "Origin"
+            },
+            "description": "Only the value written by this origin (a plugin id or `core`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Detail Fields Api V1 Jobs  Job Id  Detail Fields Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "No field names, or more than 50"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/details": {
       "get": {
         "tags": [
@@ -5311,6 +5381,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/job-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List job detail fields",
+        "description": "Every field an enabled plugin declares (or lists as unsupported), with its sources. Field names are not enforced: a plugin may\nalso write fields nobody declared; those answer `unknown_field` only when nothing is stored.",
+        "operationId": "list_job_fields_api_v1_job_fields_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Job Fields Api V1 Job Fields Get"
                 }
               }
             }
@@ -14435,6 +14532,19 @@
             ],
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14489,6 +14599,10 @@
             "type": "integer",
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "type": "integer",
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14516,6 +14630,7 @@
         "type": "object",
         "required": [
           "check_interval_minutes",
+          "printer_dead_after_minutes",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

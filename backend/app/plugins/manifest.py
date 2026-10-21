@@ -77,6 +77,18 @@ class Manufacturer:
     models: tuple[PrinterModel, ...] = ()
 
 
+JOB_FIELD_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$")      # `print_end_time`, `filament.cost`
+
+
+@dataclass(frozen=True)
+class JobFieldDef:
+    """A job-detail field a plugin produces (see `services/job_details.py`). Names and value shapes are not enforced by code;
+    `type_hint` (`iso8601`, `seconds`, `grams`, ...) is documentation for consumers."""
+    name: str
+    description: str = ""
+    type_hint: str = ""
+
+
 @dataclass(frozen=True)
 class Provide:
     """How a plugin serves one capability. `attr` names the attribute of the plugin's instance that serves it (None = the
@@ -135,6 +147,10 @@ class PluginManifest:
     # handlers (`async def name(self, envelope)` on the instance) for core or other plugins' events. Not part of themis-plugin.toml.
     defines_events: tuple[EventDef, ...] = ()
     subscribes: tuple[EventSubscription, ...] = ()
+    # Job details (docs/printer-interface.md): the fields this plugin writes onto jobs, and standard fields it knows it cannot
+    # provide (e.g. a printer that cannot report actual filament used). Core builds the field catalog from enabled plugins.
+    job_fields: tuple[JobFieldDef, ...] = ()
+    unsupported_job_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not ID_RE.match(self.id):
@@ -176,6 +192,16 @@ class PluginManifest:
             if e.durability not in ("best_effort", "durable"):
                 raise PluginError(f"plugin {self.id!r}: event {e.name!r} has unknown durability {e.durability!r}")
             defined.add(e.name)
+        declared: set[str] = set()
+        for jf in self.job_fields:
+            if not JOB_FIELD_RE.match(jf.name) or len(jf.name) > 64 or jf.name in declared:
+                raise PluginError(f"plugin {self.id!r}: job field {jf.name!r} must be unique, lower-case dotted/underscored and <= 64 characters")
+            declared.add(jf.name)
+        for name in self.unsupported_job_fields:
+            if not JOB_FIELD_RE.match(name) or len(name) > 64:
+                raise PluginError(f"plugin {self.id!r}: unsupported job field {name!r} is not a valid field name")
+            if name in declared:
+                raise PluginError(f"plugin {self.id!r}: job field {name!r} is both declared and marked unsupported")
         seen_subs: set[tuple[str, str]] = set()
         for sub in self.subscribes:
             if not EVENT_NAME_RE.match(sub.event) or not sub.handler.isidentifier() or (sub.event, sub.handler) in seen_subs:

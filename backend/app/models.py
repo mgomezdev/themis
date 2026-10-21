@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
@@ -200,6 +200,8 @@ class Order(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # Never reuse an id: events, webhooks and logs name a job by it (v054).
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
@@ -342,6 +344,9 @@ class QueueConfig(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
+    # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
+    # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
+    printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -887,3 +892,18 @@ class IdempotencyKey(Base):
     created_at: Mapped[str] = mapped_column(String(32))
 
     __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
+
+
+class JobDetail(Base):
+    """One detail field of a job, written by one origin (a plugin id or `core`). Names and values are not enforced; `status` is `ok` or
+    `unsupported` (the source says it cannot provide the field for this job). Unique per (job, field, origin)."""
+    __tablename__ = "job_details"
+    __table_args__ = (UniqueConstraint("job_id", "field", "origin", name="ux_job_details"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    field: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
+    value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String(32))

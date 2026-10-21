@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .client import BambuMQTTClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
+from ..job_fields import PRINTER_JOB_FIELDS
 
 
 class NoSettings(BaseModel):
@@ -20,6 +21,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=NoSettings,
     default_enabled=True,
+    job_fields=PRINTER_JOB_FIELDS,
     factory=BambuMQTTClient,
     # Build volumes are Bambu Lab's published figures (X/Y in mm). The H2D is dual-nozzle: 350x320 is the full plate
     # (each nozzle alone reaches 325x320; both together 300x320).

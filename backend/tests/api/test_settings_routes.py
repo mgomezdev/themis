@@ -274,3 +274,17 @@ async def test_spoolman_test_connection_reports_a_failed_connection_and_survives
     with _patch_inventory(flaky):
         resp = await client.post("/api/v1/settings/spoolman/test", json={"url": "http://spoolman.test"})
     assert resp.json()["ok"] is True and resp.json()["status"] == "ok"      # best-effort: connection still ok
+
+
+async def test_printer_dead_after_minutes_defaults_to_30_round_trips_and_rejects_out_of_range(client: AsyncClient):
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 30
+
+    resp = await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": 45})
+    assert resp.status_code == 200 and resp.json()["printer_dead_after_minutes"] == 45
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 45
+
+    assert (await client.put("/api/v1/settings/queue", json={"check_interval_minutes": 7})).json()["printer_dead_after_minutes"] == 45   # untouched
+    assert (await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": 0})).json()["printer_dead_after_minutes"] == 0   # 0 = never
+    for bad in (-1, 1441):
+        assert (await client.put("/api/v1/settings/queue", json={"printer_dead_after_minutes": bad})).status_code == 422
+    assert (await client.get("/api/v1/settings/queue")).json()["printer_dead_after_minutes"] == 0

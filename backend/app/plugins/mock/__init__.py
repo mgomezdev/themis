@@ -7,6 +7,7 @@ from pydantic import BaseModel
 
 from .client import MockPrinterClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
+from ..job_fields import PRINTER_JOB_FIELDS
 
 
 class NoSettings(BaseModel):
@@ -19,6 +20,7 @@ MANIFEST = PluginManifest(
     version="1.0.0",
     host_api=HOST_API,
     settings_model=NoSettings,
+    job_fields=PRINTER_JOB_FIELDS,
     # Off in production; dev and the test suite turn it on through core (defaults.toml maps the deprecated THEMIS_MOCK_PRINTERS).
     default_enabled=False,
     factory=MockPrinterClient,

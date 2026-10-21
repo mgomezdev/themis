@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import logging
 from pathlib import Path
 
 from .capabilities.definition import CapabilityDef
-from .manifest import HOST_API, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
+from .manifest import HOST_API, JobFieldDef, PluginError, PluginManifest, Provide, Requirement, UiContribution, UiTab
 from .ui_schema import UiReport, inspect_manifest
 
-__all__ = ["HOST_API", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
+__all__ = ["HOST_API", "JobFieldDef", "PluginError", "PluginManifest", "Provide", "Requirement", "CapabilityDef", "UiContribution", "UiTab",
            "register_plugin", "ui_report", "plugin_root", "get_plugin", "providers_of", "capability_catalog", "definer_of", "registered_plugins", "load_bundled", "bundled_ids", "BUNDLED_MODULES"]
 
 def _discover_bundled() -> tuple[str, ...]:
@@ -39,6 +40,19 @@ def register_plugin(manifest: PluginManifest, root: Path | None = None) -> None:
     if root is not None:
         _ROOTS[manifest.id] = root
     _UI_REPORTS[manifest.id] = inspect_manifest(manifest)      # never raises: a bad contribution is a diagnostic, not a boot failure
+    _warn_missing_job_fields(manifest)
+
+
+def _warn_missing_job_fields(manifest: PluginManifest) -> None:
+    """A printer plugin (one that declares printer models or provides `printer.client`) should declare, or mark unsupported, the
+    minimum job fields (docs/printer-interface.md). A gap is logged at load and never blocks the plugin."""
+    if not (manifest.manufacturers or "printer.client" in manifest.provides):
+        return
+    from .job_fields import missing_min_fields
+    missing = missing_min_fields(manifest)
+    if missing:
+        logging.getLogger("app").warning("Printer plugin %s neither declares nor marks unsupported the minimum job field(s) %s",
+                                         manifest.id, ", ".join(missing))
 
 
 def ui_report(plugin_id: str) -> UiReport:

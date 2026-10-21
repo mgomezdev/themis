@@ -160,3 +160,10 @@ async def invoke(host, kit: Kit, plugin_id: str, *, timeout: float = 5.0):
     if kit.exclusive:
         return await host.call(kit.capability, kit.operation, timeout=timeout)
     return await host.call_for(kit.capability, plugin_id, lambda p: getattr(p, kit.operation)(), timeout=timeout)
+
+
+def printer_job_field_gaps(manifest: PluginManifest) -> list[str]:
+    """Printer-plugin conformance (docs/printer-interface.md): the minimum job fields (`print_start_time`, `print_end_time`, `result`) each
+    declared in `job_fields` or listed in `unsupported_job_fields`. Returns the missing ones; checked, never enforced at load."""
+    from app.plugins.job_fields import missing_min_fields
+    return missing_min_fields(manifest)
