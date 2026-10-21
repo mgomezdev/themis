@@ -9,12 +9,13 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import (
+    JobDetail,
     GcodeFile,
     Job,
     JobPrinterConfig,
@@ -34,11 +35,13 @@ from .providers.slicing import effective_provider_id, get_format_provider, slici
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
-from . import completion_events
+from . import completion_events, job_details
 from .notify import notify
 from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
 from ..plugins.host import plugin_host
+from ..eventing import EventEnvelope, EventError
 from ..eventing.hub import hub as event_hub
+from ..eventing.registry import CORE_EVENTS
 from . import filament_matching, scheduling
 from . import webhook_service
 
@@ -97,11 +100,17 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
 
 
 def _notification_content(
-    event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None
+    event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None, origin: str | None = None
 ) -> tuple[str, str]:
     """Build a plain, human-readable (title, message) pair for a job event.
     No templating engine, no config-driven customization — basic per-event
-    text, mirroring the fixed shape of the built-in notification channels."""
+    text, mirroring the fixed shape of the built-in notification channels. A plugin's report is prefixed with its id
+    (`bambu: ...`) so the reader knows who said it; core's own events read as before."""
+    title, message = _notification_text(event, job_id, file_name, printer_name, reason)
+    return title, (f"{origin}: {message}" if origin and origin != "core" else message)
+
+
+def _notification_text(event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None) -> tuple[str, str]:
     if event == "job.complete":
         title = "Themis: job complete"
         if printer_name:
@@ -581,35 +590,9 @@ class QueueEngine:
                 # Elegoo/Snapmaker physical cancel: normalized state is FAILED.
                 # Mark the job failed so the user can adjust settings before re-queueing.
                 async with self._factory() as session:
-                    job = await session.get(Job, job_id)
-                    if job is None or job.status != "printing":
-                        continue  # already resolved by the normal callback
-                    job.status = "failed"
-                    job.completed_at = _now()
-                    job.block_reason = "print cancelled or ended with failure on the printer"
-                    # The printer is NOT released: once a print has started only a user action (cancel, requeue, edit, stop or
-                    # delete the printer) clears the assignment. A failed job is terminal and does not reserve the printer.
-                    job.updated_at = _now()
-                    job.deduction_skipped = True
-                    gcode_result = await session.execute(
-                        select(GcodeFile).where(
-                            GcodeFile.job_id == job_id,
-                            GcodeFile.printer_id == printer_id,
-                        )
-                    )
-                    gcode = gcode_result.scalar_one_or_none()
-                    if gcode:
-                        try:
-                            os.remove(gcode.path)
-                        except OSError:
-                            pass
-                        await session.delete(gcode)
-                    await session.commit()
-                logger.warning(
-                    "Reconcile: job %s → failed (printer %s idle with FAILED state)",
-                    job_id, printer_id,
-                )
-                await self._broadcast_job(job_id)
+                    origin = await self._origin_of(session, printer_id)
+                await self.fail_started_job(job_id, printer_id, origin=origin,
+                                            reason="print cancelled or ended with failure on the printer")
             else:
                 # Normal completion (or Bambu cancel, which is indistinguishable from
                 # a successful finish at the firmware level). Delegate to the same
@@ -1333,83 +1316,171 @@ class QueueEngine:
             return
 
         async with self._factory() as session:
-            job = await session.get(Job, job_id)
-            if job is None or job.status in ("cancelled", "complete"):
-                return
-            job.status = "printing"
-            job.printed_on_printer_id = printer_id
-            job.updated_at = _now()
-            # The printer has started a physical print: mark it not-ready for new
-            # work so it won't auto-claim the next job after this one finishes — the
-            # user must explicitly mark it ready (clear the plate) first. Set on
-            # start (not just on completion) so a missed completion event can't let
-            # it grab another job onto an uncleared plate.
-            self._mgr.set_awaiting_plate_clear(printer_id, True)
-            printer = await session.get(Printer, printer_id)
-            if printer is not None:
-                printer.awaiting_plate_clear = True
-            # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
-            await completion_events.enqueue_job_started(session, job, printer_id,
-                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
-            await session.commit()
-
-        event_hub.wake()
+            origin = await self._origin_of(session, printer_id)
+        if not await self.mark_printing(job_id, printer_id, origin=origin):
+            return
         await self._broadcast_job(job_id)
 
-    async def handle_print_complete(self, printer_id: int) -> None:
-        """Called by PrinterManager when the printer's vendor client signals print done."""
-        job_id = None
+    async def _origin_of(self, session: AsyncSession, printer_id: int | None) -> str | None:
+        """The plugin that owns a printer: the `origin` of the events core publishes for what that printer's plugin reported."""
+        printer = await session.get(Printer, printer_id) if printer_id is not None else None
+        return printer.plugin_id if printer is not None else None
 
+    async def _cleanup_gcode(self, session: AsyncSession, job_id: int, printer_id: int) -> None:
+        gcode_result = await session.execute(select(GcodeFile).where(GcodeFile.job_id == job_id, GcodeFile.printer_id == printer_id))
+        gcode = gcode_result.scalar_one_or_none()
+        if gcode:
+            try:
+                os.remove(gcode.path)
+            except OSError:
+                pass
+            await session.delete(gcode)
+
+    async def _hold_plate_gate(self, session: AsyncSession, printer_id: int) -> Printer | None:
+        """The printer must not auto-claim the next job onto an uncleared plate: set from the start of a print, and again at its end
+        (a missed completion callback can never let it grab another job)."""
+        self._mgr.set_awaiting_plate_clear(printer_id, True)
+        printer = await session.get(Printer, printer_id)
+        if printer is not None:
+            printer.awaiting_plate_clear = True
+        return printer
+
+    async def mark_printing(self, job_id: int, printer_id: int, *, origin: str | None, details: Mapping[str, Any] | None = None,
+                            only_from: tuple[str, ...] | None = None) -> bool:
+        """The printer began a job's physical print: status `printing`, the plate gate, the print-start detail and the durable
+        `job.started` event in ONE transaction. `only_from` makes it an atomic claim (a repeat or a job in another state is a no-op
+        returning False); without it only a cancelled/complete job is refused (the queue's own start path)."""
         async with self._factory() as session:
-            result = await session.execute(
-                select(Job).where(
-                    Job.status == "printing",
-                    Job.assigned_printer_id == printer_id,
-                )
-            )
-            job = result.scalar_one_or_none()
+            now = _now()
+            if only_from is not None:
+                claim = await session.execute(update(Job).where(Job.id == job_id, Job.status.in_(only_from))
+                                              .values(status="printing", printed_on_printer_id=printer_id, updated_at=now))
+                if claim.rowcount == 0:
+                    return False
+                job = await session.get(Job, job_id)
+            else:
+                job = await session.get(Job, job_id)
+                if job is None or job.status in ("cancelled", "complete"):
+                    return False
+                job.status = "printing"
+                job.printed_on_printer_id = printer_id
+                job.updated_at = now
+            printer = await self._hold_plate_gate(session, printer_id)
+            await job_details.set_details(session, job_id, origin or "core", {"print_start_time": now, **(details or {})})
+            # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
+            await completion_events.enqueue_job_started(session, job, printer_id, origin=origin or "core",
+                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
+            await session.commit()
+        event_hub.wake()
+        return True
+
+    async def handle_print_complete(self, printer_id: int) -> None:
+        """Called by PrinterManager when the printer's vendor client signals print done: the printer's plugin reporting `complete`."""
+        async with self._factory() as session:
+            job = (await session.execute(select(Job).where(Job.status == "printing", Job.assigned_printer_id == printer_id))
+                   ).scalar_one_or_none()
             if job is None:
                 return
-            job_id = job.id
+            job_id, origin = job.id, await self._origin_of(session, printer_id)
+        await self.complete_job(job_id, printer_id, origin=origin)
 
-            # Conditional UPDATE claims the completion atomically. The vendor client's
-            # completion callback and _reconcile_printing_jobs can both observe
-            # status=="printing" for the same job (several awaits separate this read
-            # from the commit below); without this guard both would proceed and
-            # double the inventory deduction, lifetime counters, and job.complete
-            # webhook. Only the caller that flips the row wins.
-            claim = await session.execute(
-                update(Job)
-                .where(Job.id == job_id, Job.status == "printing")
-                .values(status="complete", completed_at=_now(), updated_at=_now())
-            )
+    async def complete_job(self, job_id: int, printer_id: int, *, origin: str | None, details: Mapping[str, Any] | None = None) -> bool:
+        """Finish a `printing` job: the status, gcode cleanup, plate gate, the reported details and the durable `job.complete` event
+        in ONE transaction (so a forced failure leaves none of them). False when another completion path already won."""
+        async with self._factory() as session:
+            now = _now()
+            # Conditional UPDATE claims the completion atomically. The vendor client's completion callback and
+            # _reconcile_printing_jobs can both observe status=="printing" for the same job (several awaits separate that read
+            # from this commit); without the guard both would proceed and double the inventory deduction, lifetime counters, and
+            # job.complete webhook. Only the caller that flips the row wins.
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing")
+                                          .values(status="complete", completed_at=now, updated_at=now))
             if claim.rowcount == 0:
-                return  # already claimed by a concurrent completion path
-
+                return False
             # The wear counters, the spool deduction and the notices are effects of the durable `job.complete` event written below,
             # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. The printer's
             # loaded slots travel with it, because they may change once the print is over.
-            printer = await session.get(Printer, printer_id)
-
-            # Delete gcode file from disk and DB
-            gcode_result = await session.execute(
-                select(GcodeFile).where(
-                    GcodeFile.job_id == job_id,
-                    GcodeFile.printer_id == printer_id,
-                )
-            )
-            gcode = gcode_result.scalar_one_or_none()
-            if gcode:
-                try:
-                    os.remove(gcode.path)
-                except OSError:
-                    pass
-                await session.delete(gcode)
-            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue",
+            job = await session.get(Job, job_id)
+            printer = await self._hold_plate_gate(session, printer_id)
+            await self._cleanup_gcode(session, job_id, printer_id)
+            reported: dict[str, Any] = {"print_end_time": now, "result": "success"}
+            if job.actual_seconds is not None:
+                reported["print_seconds"] = job.actual_seconds
+            if job.actual_filament_grams is not None:
+                reported["filament_usage"] = {"grams": job.actual_filament_grams, "breakdown": job.actual_filament_breakdown}
+            await job_details.set_details(session, job_id, origin or "core", {**reported, **(details or {})})
+            await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
+            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", origin=origin or "core",
                                                          loaded_filaments=printer.loaded_filaments if printer else None)
             await session.commit()
-
         event_hub.wake()
+        return True
+
+    async def fail_started_job(self, job_id: int, printer_id: int, *, reason: str, origin: str | None,
+                               details: Mapping[str, Any] | None = None, fire_notices: bool = False) -> bool:
+        """A started print ended in failure: `failed` (terminal), the printer KEPT (after the start only a user releases it), no spool
+        deduction, the failure details, and a best-effort `job.failed`. False when the job is not `printing` any more."""
+        async with self._factory() as session:
+            now = _now()
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing")
+                                          .values(status="failed", completed_at=now, updated_at=now, block_reason=reason,
+                                                  deduction_skipped=True))
+            if claim.rowcount == 0:
+                return False
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await job_details.set_details(session, job_id, origin or "core",
+                                          {"print_end_time": now, "result": "failure", "failure_reason": reason, **(details or {})})
+            await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
+            await session.commit()
+        logger.warning("Job %s → failed on printer %s: %s", job_id, printer_id, reason)
+        await self._broadcast_job(job_id)
+        await self._publish_job_event("job.failed", job_id, printer_id, origin, {"reason": reason, "phase": "print"}, dedup=f"job.failed:{job_id}:{now}")
+        if fire_notices:
+            await self._fire_webhooks(job_id, "job.failed")
+            await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason, origin=origin)
+        return True
+
+    async def note_print_blocked(self, job_id: int, printer_id: int, *, origin: str | None, reason: str,
+                                 details: Mapping[str, Any] | None = None) -> bool:
+        """A printer halted a started print (filament runout, a hardware fault, ...). A NOTICE ONLY: the job stays `printing` on its
+        printer (`blocked` elsewhere means "released, re-evaluate": flipping it here would let another printer claim a job whose
+        physical print is only paused). The reason is kept as the `blocked_reason` detail and published as best-effort `job.blocked`
+        (`phase: "print"`); the same reason repeated while the job still prints is one notice. The print ends through `complete` /
+        `failed`, which clear it. False for a job that is not `printing` or a repeated reason."""
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status != "printing":
+                return False
+            who = origin or "core"
+            known = (await session.execute(select(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason",
+                                                                  JobDetail.origin == who))).scalar_one_or_none()
+            if known is not None and known.value == reason:
+                return False
+            await job_details.set_details(session, job_id, who, {"blocked_reason": reason, **(details or {})})
+            await session.commit()
+        await self._publish_job_event("job.blocked", job_id, printer_id, origin, {"reason": reason, "phase": "print"},
+                                      dedup=f"job.blocked:{job_id}:print:{_now()}")
+        await self._fire_webhooks(job_id, "job.blocked")
+        await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=reason, origin=origin)
+        return True
+
+    async def _publish_job_event(self, name: str, job_id: int, printer_id: int | None, origin: str | None, payload: dict, *, dedup: str) -> None:
+        """Best-effort notice for a job transition (`job.failed` / `job.blocked`): core publishes, the origin says who reported it. A
+        publication error is a bug in core, logged and never raised into the state change that already committed."""
+        try:
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+            entities: dict[str, int | str] = {"job_id": job_id}
+            if printer_id is not None:
+                entities["printer_id"] = printer_id
+            if job is not None and job.project_id is not None:
+                entities["project_id"] = job.project_id
+            if job is not None and job.order_id is not None:
+                entities["order_id"] = job.order_id
+            await event_hub.publish(EventEnvelope(name=name, schema_version=CORE_EVENTS[name].version, origin=origin or "core",
+                                                  entities=entities, dedup_key=dedup, payload=payload))
+        except EventError:
+            logger.exception("Could not publish %s for job %s", name, job_id)
 
     async def _fire_webhooks(self, job_id: int, event: str, event_id: str | None = None) -> None:
         try:
@@ -1430,7 +1501,8 @@ class QueueEngine:
                                   ("external_ref", project.external_ref)) if v is not None}
 
     async def _fire_notifications(
-        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None
+        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None,
+        origin: str | None = None,
     ) -> None:
         try:
             if not plugin_host.active_providers(NOTIFY_CHANNEL.id):
@@ -1446,7 +1518,7 @@ class QueueEngine:
                 if pid is not None:
                     printer = await session.get(Printer, pid)
                     printer_name = printer.name if printer else None
-            title, message = _notification_content(event, job_id, file_name, printer_name, reason)
+            title, message = _notification_content(event, job_id, file_name, printer_name, reason, origin)
             # Fire-and-forget, like _fire_webhooks/webhook_service.schedule: real
             # channel delivery is network/SMTP I/O with a 5s timeout per channel and
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,

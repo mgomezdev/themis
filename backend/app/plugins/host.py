@@ -216,7 +216,10 @@ class PluginHost:
         return {**defaults_of(plugin_id).settings, **core_overrides_of(plugin_id).settings, **kept}
 
     def context_for(self, plugin_id: str) -> PluginContext:
-        return PluginContext(plugin_id, config.get_app_data_dir() / "plugin-data" / plugin_id, plugin_root(plugin_id))
+        from ..services.job_reporter import JobDetailsReader, JobDetailsWriter, JobReporter        # late: services import the host
+        return PluginContext(plugin_id, config.get_app_data_dir() / "plugin-data" / plugin_id, plugin_root(plugin_id),
+                             job_reporter=JobReporter(plugin_id), job_details=JobDetailsReader(),
+                             job_details_writer=JobDetailsWriter(plugin_id))
 
     def _construct(self, manifest: PluginManifest, settings: Any) -> Any:
         return manifest.factory(settings, self.context_for(manifest.id)) if wants_context(manifest.factory) else manifest.factory(settings)
