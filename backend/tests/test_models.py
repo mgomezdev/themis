@@ -87,3 +87,22 @@ async def test_project_share_token_defaults_to_none(session):
     await session.refresh(p)
     assert p.share_token is None
     assert p.share_token_created_at is None
+
+
+async def test_a_deleted_jobs_id_is_never_handed_out_again(session):
+    """Events, webhooks and logs name a job by its id; deleting the newest job must not let the next one reuse it (v054)."""
+    f = UploadedFile(original_filename="m.3mf", stored_path="/x", plates=[], uploaded_at="2026-05-20T12:00:00Z")
+    session.add(f)
+    await session.commit()
+    first = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued",
+                created_at="2026-05-20T12:00:00Z", updated_at="2026-05-20T12:00:00Z")
+    session.add(first)
+    await session.commit()
+    gone = first.id
+    await session.delete(first)
+    await session.commit()
+    second = Job(uploaded_file_id=f.id, plate_number=1, queue_position=1.0, status="queued",
+                 created_at="2026-05-20T12:00:00Z", updated_at="2026-05-20T12:00:00Z")
+    session.add(second)
+    await session.commit()
+    assert second.id != gone

@@ -200,6 +200,8 @@ class Order(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # Never reuse an id: events, webhooks and logs name a job by it (v054).
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
