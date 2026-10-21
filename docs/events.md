@@ -35,6 +35,11 @@ Core classes (names match the existing webhook/notification event names): `job.s
 (v2 adds `origin`); a stored v1 envelope has no `origin` and is delivered unchanged with `origin=None`, only new publications must carry the
 current version.
 
+`job.failed` and `job.blocked` (best-effort) carry a free-form payload `{reason, phase}`: `phase` is `queue` (a block the queue made: slicing failure, no printer in the fleet
+could take the job, a cache gate lost) or `print` (a started print: a printer-reported failure or halt, or a printer declared dead — then `origin` is `core`). Printer
+plugins cause them through `ctx.job_reporter` (`docs/printer-interface.md`); core publishes with the plugin as `origin`, so `job.started|complete|failed|blocked`
+always say who reported them. The webhook/notification for a plugin's report reads `<origin>: <message>`.
+
 Plugin events: `PluginManifest.defines_events=(EventDef("acme_x.ready", version=1, durability=…, payload_model=…),)`; names must
 start `<plugin id>.`. Subscriptions: `PluginManifest.subscribes=(EventSubscription("job.complete", "on_complete", timeout=, queue_size=),)`
 where `on_complete` is an `async def on_complete(self, envelope)` on the plugin instance. Neither is part of `themis-plugin.toml`

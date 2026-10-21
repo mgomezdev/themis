@@ -1,6 +1,6 @@
 # Job events + generic job-details accessor (design)
 
-Status: draft for review. Builds on `docs/events.md` (BIZ-249/269).
+Status: implemented (see the plan's task list); notes at the end. Builds on `docs/events.md` (BIZ-249/269).
 
 ## Goal
 
@@ -38,7 +38,7 @@ for the job details it cares about. Example: "bambu: Print job complete: job `<i
   another printer claim a job whose physical print is only paused. The reason is stored as detail field `blocked_reason` (origin = the
   printer plugin) and published as best-effort `job.blocked` with payload `{reason, phase: "print"}` (queue-initiated blocks carry
   `phase: "queue"`). Repeats of the same reason for the same job while it is still `printing` publish once. There is no `resumed` kind:
-  the print ends via the usual `complete` / `failed`, and a stale `blocked_reason` is cleared by writing it empty on those. Existing
+  the print ends via the usual `complete` / `failed`, and a stale `blocked_reason` is deleted when they commit. Existing
   recovery (`_reconcile_printing_jobs` failing a job the printer ended) is unchanged. `blocked` for a job in any other state follows the
   queue rules above.
 - Core validates the job's printer belongs to `plugin_id`, applies the state transition (existing atomic claim; the loser returns
@@ -156,3 +156,15 @@ ID federation.
 - Interim fallback only (single-writer is not enforced): two origins storing one field: default read prefers the printer origin; `origin=` selects the other.
 - Boundary tests (`test_vendor_extraction_boundary`, `test_provider_boundary`, `test_no_provider_in_core`) pass with the reporter in
   core and no vendor names added.
+
+
+## Implementation notes (as built)
+
+- `report(job_id, kind, details=None, *, reason=None)`; `started` is accepted only from `slicing`/`sliced`/`uploading`, `complete`/`failed` only from `printing`, and a mid-print `blocked` only
+  for a `printing` job; anything else returns False without writing. The core adapters (`handle_print_complete`, the reconcile failure branch, the queue's own start path) use the same
+  engine methods with the printer's `plugin_id` as origin, so bundled plugins need no change.
+- Core writes `print_start_time` at the start commit and `print_end_time`, `result`, `print_seconds`, `filament_usage` (derived from the sliced job) at the end, as the printer plugin's origin; a
+  plugin's own `details` win. `failure_reason` and a dead printer's `last_failure` are core's.
+- Queue-initiated blocks publish `job.blocked` from one place (`_block_job`, plus the slice-failure and cache-gate paths) with `phase: "queue"`; only a fleet-wide no-match block (and a printer-reported one)
+  also fires the webhook/notification. The no-match sweep runs at the end of each `_process_queue` and releases only blocks whose reason starts with `NO_MATCH_PREFIX`.
+- Known limitation: a job requeued after its printer died keeps its earlier spool start snapshot, so the partial print's filament is not deducted when the reprint completes.
