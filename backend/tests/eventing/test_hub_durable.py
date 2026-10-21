@@ -16,7 +16,7 @@ from tests.waiting import wait_until
 
 
 def complete(job_id: int = 1) -> EventEnvelope:
-    return EventEnvelope(name="job.complete", entities={"job_id": job_id}, dedup_key=f"job.complete:{job_id}", payload={"source": "queue"})
+    return EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": job_id}, dedup_key=f"job.complete:{job_id}", payload={"source": "queue"})
 
 
 @pytest.fixture(autouse=True)
@@ -266,7 +266,7 @@ async def test_publish_and_enqueue_refuse_the_wrong_durability_path(hub, session
         await hub.publish(complete(1))
     async with session_factory() as s:
         with pytest.raises(EventError, match="best_effort"):
-            await hub.enqueue_durable(s, EventEnvelope(name="job.blocked"))
+            await hub.enqueue_durable(s, EventEnvelope(name="job.blocked", schema_version=2))
 
 
 async def test_a_plugin_defined_durable_event_is_enqueued_by_its_owner_only(hub, session_factory):
@@ -433,3 +433,29 @@ async def test_purge_drops_old_finished_events_but_keeps_pending_and_recent_dead
         kept = {o.dedup_key for o in (await s.execute(select(EventOutbox))).scalars()}
         rows = len((await s.execute(select(EventDelivery))).all())
     assert kept == {"job.complete:2", "job.complete:3", "job.complete:4"} and rows == 3
+
+
+async def test_the_origin_survives_the_outbox_and_a_stored_v1_envelope_without_one_is_still_delivered(hub, session_factory):
+    got = []
+
+    async def handler(e):
+        got.append(e)
+
+    hub.subscribe("job.complete", handler, name="t.origin")
+    assert await publish(hub, session_factory, complete(1).model_copy(update={"origin": "core"})) is True
+    await wait_until(lambda: len(got) == 1, what="v2 delivery")
+    assert got[0].origin == "core"
+    async with session_factory() as s:
+        stored = (await s.execute(select(EventOutbox))).scalar_one().envelope
+    assert stored["origin"] == "core" and stored["schema_version"] == 2           # the envelope JSON carries it: no outbox column needed
+    # a row written before this change: version 1, no `origin` key
+    await _stage(hub, session_factory, complete(2))
+    async with session_factory() as s:
+        o = (await s.execute(select(EventOutbox).where(EventOutbox.dedup_key == "job.complete:2"))).scalar_one()
+        legacy = {k: v for k, v in o.envelope.items() if k != "origin"}
+        legacy["schema_version"] = 1
+        o.envelope, o.schema_version = legacy, 1
+        await s.commit()
+    hub.wake()
+    await wait_until(lambda: len(got) == 2, what="v1 delivery")
+    assert got[1].origin is None and got[1].schema_version == 1 and got[1].entities == {"job_id": 2}

@@ -711,6 +711,13 @@ function platesToLocal(apiPlates: ApiPlate[], fileId: number): Plate[] {
   }));
 }
 
+/** What a saved slice stands for as an ask: its base type (any variant) and exact colour; "any"/blank = undefined. */
+function versionAsk(v: { filament_type: string; filament_color: string }): Partial<PerPrinterCfg> {
+  const type = v.filament_type && v.filament_type.toLowerCase() !== 'any' ? v.filament_type : null;
+  const color = v.filament_color && v.filament_color.toLowerCase() !== 'any' ? v.filament_color : null;
+  return { filamentType: type, filamentSubtype: type ? 'any' : null, filamentColor: color };
+}
+
 function fmtDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
   const m = Math.round(seconds / 60);
@@ -873,7 +880,7 @@ export function NewJobScreen() {
         for (const [id, cfg] of Object.entries(next)) {
           next[id] = {
             ...cfg, selectedPrinters: keys,
-            perPrinter: Object.fromEntries(keys.map(k => [k, { ...defaultPerPrinterCfg(), filamentType: version.filament_type, filamentColor: version.filament_color }])),
+            perPrinter: Object.fromEntries(keys.map(k => [k, { ...defaultPerPrinterCfg(), ...versionAsk(version) }])),
           };
         }
         return next;

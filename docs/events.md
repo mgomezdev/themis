@@ -18,7 +18,8 @@ Every event, core or plugin, is an `EventEnvelope` (frozen, `extra=forbid`):
 | `name` | event class, dotted lower-case: `job.complete`, `acme_ntfy.sent`. |
 | `schema_version` | integer ≥ 1; must equal the class's current version at publication. |
 | `occurred_at` | UTC ISO-8601, when the transition committed. |
-| `source` | `core` or the publishing plugin's id. |
+| `source` | `core` or the publishing plugin's id (the event class's owner). |
+| `origin` | optional: who caused the event. `core` when core acted itself (a manual completion, the queue), or the id of the plugin whose report core is publishing (a printer plugin reporting a job). A plugin publishing directly can only name itself; `None` on envelopes stored before v2. |
 | `entities` | references to what the event is about: `job_id`, `project_id`, `printer_id`, `order_id`, `customer_id`, `file_id`, `spool_ref` (int or str). Other keys are rejected. |
 | `dedup_key` | logical identity (`job.complete:42`). Two publications with one key are one event. |
 | `correlation_id` | optional, ties events of one request/flow together. |
@@ -29,8 +30,15 @@ Publication is validated against the **catalog** (`registry.event_catalog()` = `
 core event or another plugin's), the schema version must be current and the payload valid. A violation raises `EventError` to the
 **publisher** (a programming error); nothing a subscriber does can ever raise into a publisher.
 
-Core classes (names match the existing webhook/notification event names): `job.complete` (**durable**), `job.failed`,
-`job.blocked`, `printer.alarm`, `spool.low` (best-effort).
+Core classes (names match the existing webhook/notification event names): `job.started` (**durable**), `job.complete` (**durable**), `job.failed`,
+`job.blocked`, `printer.alarm`, `spool.low` (best-effort). `job.started`, `job.complete`, `job.failed` and `job.blocked` are at **version 2**
+(v2 adds `origin`); a stored v1 envelope has no `origin` and is delivered unchanged with `origin=None`, only new publications must carry the
+current version.
+
+`job.failed` and `job.blocked` (best-effort) carry a free-form payload `{reason, phase}`: `phase` is `queue` (a block the queue made: slicing failure, no printer in the fleet
+could take the job, a cache gate lost) or `print` (a started print: a printer-reported failure or halt, or a printer declared dead — then `origin` is `core`). Printer
+plugins cause them through `ctx.job_reporter` (`docs/printer-interface.md`); core publishes with the plugin as `origin`, so `job.started|complete|failed|blocked`
+always say who reported them. The webhook/notification for a plugin's report reads `<origin>: <message>`.
 
 Plugin events: `PluginManifest.defines_events=(EventDef("acme_x.ready", version=1, durability=…, payload_model=…),)`; names must
 start `<plugin id>.`. Subscriptions: `PluginManifest.subscribes=(EventSubscription("job.complete", "on_complete", timeout=, queue_size=),)`
@@ -42,7 +50,7 @@ cannot publish.
 ## Decisions
 
 **1. Which events are durable.** Per class, declared with the class. `durable` = at-least-once, stored in the publisher's
-transaction. Only `job.complete` is durable among core events, because its consumers (filament deduction, maintenance accrual)
+transaction. Only `job.started` and `job.complete` are durable among core events, because its consumers (filament deduction, maintenance accrual)
 are state that must not be lost; every other core event is a notice whose loss costs a message, never data. A plugin chooses for
 its own events. Durable events must be published with `enqueue_durable`, best-effort ones with `publish`; the wrong call raises,
 so a durable event can never be sent by a path that forgets the transaction.
@@ -115,15 +123,19 @@ printing it) each write a durable `job.complete` event **inside the job's comple
 then `hub.wake()` after the commit). The state change, the printer's `awaiting_plate_clear`, the gcode cleanup and the atomic
 completion claim (`UPDATE jobs … WHERE status='printing'`, whose loser returns without publishing) stay in that transaction; the
 event's `dedup_key` is `job.complete:<job id>`, so duplicate printer callbacks, a reconciliation pass and a manual completion racing a real one
-yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `inventory` (`{spool_ref, grams}` or
-null: the spool in the printing slot, resolved at completion, not when the event is handled).
+yield **one** event. Payload: `source` (`queue`|`manual`), `actual_seconds`, `actual_grams`, `loaded_filaments` (the printer's filament slots at completion, because they may change once the print is over). The publisher names no consumer and resolves no spool: observers work out what they need. (`inventory` / `deduction_notes` are the legacy payload of an event written before inventory subscribed on its own; the handler still honours them.)
+
+`job.started` is published the same way, in the transaction that marks a job `printing` (`completion_events.enqueue_job_started`; `dedup_key = job.started:<job>:<printer>:<updated_at>`, so a restart after a failed attempt is a new event). Payload: `loaded_filaments`.
+
+Inventory's two observers decide at **delivery** time, not publication time: whether the active provider can track and write weight and whether deduction is on are read when the event is handled, so changing either during a print (or while a delivery is in backoff) changes the outcome. `job.started` and `job.complete` are separate lanes with no ordering: a start snapshot handled after the job ended, or after its deduction was planned, is skipped (the completion already took the deferred read). Each subscriber is serial, so a hung provider delays later snapshots behind it (30 s handler timeout, then retry).
 
 Subscribers (`app/services/completion_events.py`, registered on import, all idempotent on the job id):
 
 | Subscriber | Effect | Idempotency key |
 |---|---|---|
 | `job_complete.maintenance` | `printer.lifetime_job_count += 1`, `lifetime_print_seconds += job.actual_seconds` | `UPDATE jobs SET maintenance_accrued=1 WHERE id=? AND status='complete' AND maintenance_accrued=0` in the **same transaction** as the counters (migration v046; already-complete jobs are backfilled as accrued) |
-| `job_complete.inventory` | `inventory_deduction.plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
+| `job_started.inventory` (`services/inventory/subscribers.py`, BIZ-308) | snapshots the weight of each spool bound to a slot the print uses (`snapshots.take`); nothing unless the active provider tracks and writes weight and deduction is on | unique `(job, provider, spool)` snapshot row |
+| `job_complete.inventory` (same module) | resolves the spool(s) the print used from the job's config and `loaded_filaments`, then `plan_completion` + `after_commit` (outbox write / deferred weight read) | an `inventory_pending_writes` row for (provider, spool, job) already exists ⇒ nothing is planned again |
 | `job_complete.notices` | WebSocket broadcast, webhook, notification channels (`source=queue` only: a manual completion fires none) | none: the senders swallow their own errors and each step is attempted independently, so a send failure is logged, not retried or propagated. A hub-level timeout/crash/shutdown mid-handler redelivers the event and can repeat a notice (at-least-once) |
 
 Crash boundaries (each covered by `tests/services/test_completion_events.py`): *before commit* — job and event roll back together, the

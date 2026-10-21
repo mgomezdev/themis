@@ -1,5 +1,7 @@
 # Filament Constraint Verification + 3MF Override Confirmation Design
 
+> **Superseded in part (2026-10-19):** the matching rules (what a job asks for, what a slot stores, how they are compared) are now in `2026-10-19-filament-matching-design.md`. Where this document disagrees, that one wins.
+
 ## Overview
 
 Two related features for New Job and Edit Job:

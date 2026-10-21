@@ -11,6 +11,7 @@ from ...auth import require_scope
 from ...database import get_session
 from ...models import Job, JobPrinterConfig, Printer, UploadedFile
 from ...services.queue_engine import _slot_for_config
+from ._filament_ask import type_labels
 from ...services.model_targets import target_dicts_by_job
 from ...plugins.capabilities.filament_inventory import InvSpool
 from ...services.inventory import read as inventory_read, refs as inventory_refs
@@ -77,7 +78,7 @@ async def _enrich(
         select(JobPrinterConfig).where(JobPrinterConfig.job_id == j.id)
     )
     configs = cfg_result.scalars().all()
-    d["materials"] = sorted({c.filament_type for c in configs if c.filament_type})
+    d["materials"] = type_labels(configs)
 
     needed_g = await _needed_grams(j, session)
     eligible = []

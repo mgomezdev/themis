@@ -386,7 +386,7 @@ async def test_a_job_on_a_cached_version_records_the_hand_picked_hit(
     version_id, cached = await _version_for(session_factory, library, await upload_3mf())
 
     resp = await _post_job(client, {"uploaded_file_id": cached, "printer_configs": [
-        {"printer_id": pid, "filament_type": "PETG", "filament_color": "#112233"}]})
+        {"printer_id": pid, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#112233"}]})
 
     assert resp.status_code == 201, resp.text
     async with session_factory() as s:
@@ -416,7 +416,7 @@ async def test_a_cached_version_is_accepted_for_a_model_target_whose_mapping_nam
     pid = await create_printer(machine_profile_override=None)
     model = await model_uuid_of(pid)
     _, cached = await _version_for(session_factory, library, await upload_3mf())
-    body = {"uploaded_file_id": cached, "model_targets": [{"model_uuid": model, "filament_type": "PETG", "filament_color": "#112233"}]}
+    body = {"uploaded_file_id": cached, "model_targets": [{"model_uuid": model, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#112233"}]}
 
     assert (await _post_job(client, body)).status_code == 422             # the model maps nothing yet: not what the version was sliced for
     assert (await client.post(f"/api/v1/printer-models/{model}/slicer-profiles", json={

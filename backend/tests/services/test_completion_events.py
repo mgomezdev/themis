@@ -62,7 +62,7 @@ async def test_completion_commits_the_job_and_one_durable_event_together_and_eff
     (o,) = outbox
     assert (o.name, o.dedup_key, o.source) == ("job.complete", f"job.complete:{job_id}", "core")
     assert o.envelope["entities"] == {"job_id": job_id, "printer_id": printer_id}
-    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "inventory": None}
+    assert o.envelope["payload"] == {"source": "queue", "actual_seconds": 600, "actual_grams": None, "loaded_filaments": []}
     assert {d.subscriber for d in deliveries} == SUBSCRIBERS and {d.status for d in deliveries} == {"pending"}
     assert (await _counters(db)) == (0, 0)                       # committed but not yet handled: still owed, not lost
 
@@ -212,7 +212,7 @@ async def test_a_manual_completion_accrues_and_deducts_but_notifies_nobody(db, m
         monkeypatch.setattr(engine, name, AsyncMock())
     async with db() as s:
         await s.execute(update(Job).where(Job.id == job_id).values(status="complete"))
-        await completion_events.enqueue_job_complete(s, await s.get(Job, job_id), printer_id, source="manual", inventory=None)
+        await completion_events.enqueue_job_complete(s, await s.get(Job, job_id), printer_id, source="manual")
         await s.commit()
 
     await settle_events(db)
@@ -224,7 +224,7 @@ async def test_a_manual_completion_accrues_and_deducts_but_notifies_nobody(db, m
 
 async def test_the_event_payload_is_validated(db):
     with pytest.raises(Exception, match="invalid payload"):
-        await hub.enqueue_durable(None, EventEnvelope(name="job.complete", payload={"source": "carrier-pigeon"}))
+        await hub.enqueue_durable(None, EventEnvelope(name="job.complete", schema_version=2, payload={"source": "carrier-pigeon"}))
 
 
 async def test_migration_v046_backfills_completed_jobs_and_is_idempotent():
@@ -293,7 +293,7 @@ async def test_a_deferred_deduction_is_durable_before_the_event_is_acknowledged(
 
 async def test_notices_are_dropped_with_a_log_not_silently_when_no_engine_is_bound(db, caplog, monkeypatch):
     monkeypatch.setattr(completion_events, "_engine", None)
-    envelope = EventEnvelope(name="job.complete", entities={"job_id": 7}, payload={"source": "queue"})
+    envelope = EventEnvelope(name="job.complete", schema_version=2, entities={"job_id": 7}, payload={"source": "queue"})
     with caplog.at_level("WARNING", logger="app"):
         await completion_events.notify_consumers(envelope)
     assert "dropped: no queue engine is bound" in caplog.text

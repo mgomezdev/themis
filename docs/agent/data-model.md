@@ -96,8 +96,14 @@ trigger math, never reset except by construction (per-item resets live on `print
 - `connection_config`: vendor creds **+ per-printer print options** (these are `connection_fields()`
   keys passed to the client ctor). Elegoo: `ip_address,bed_type,bed_leveling,timelapse`. Bambu:
   `ip_address,serial_number,access_code,use_ams,bed_leveling,flow_cali,timelapse`.
-- `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, type, color:"#RRGGBB",
-  filament_profile?:str|null, spoolman_spool_id?:str|null, ams_tray_id?, ams_unit?}`.
+- `loaded_filaments`: list of `{slot:int, filament_id:str|null, name, manufacturer:str|null, type, subtype, color:"#RRGGBB",
+  filament_profile?:str|null, spoolman_spool_id?:str|null, inventory?, reported?:bool, ams_tray_id?, ams_unit?}`.
+  - A slot **is a filament tuple** (`manufacturer` null = unknown, `type` = base type, `subtype` always set for a typed slot: `standard` =
+    plain, `plus`, `silk`, `cf`…; empty-tool placeholders `{type:"", empty:true}` have none). Every writer (`refs.normalize_slot`) splits a
+    legacy combined type ("PLA+" → PLA/plus). **Hardware wins**: `on_ams_change` replaces the whole tuple from the report and sets
+    `reported: true`; only `filament_profile` and the spool binding survive. A *reported* slot whose bound spool's material differs in
+    any part known on both sides is in **conflict** (`filament_matching.conflicting_slots`, `GET /printers/{id}/slot-conflicts`): skipped for
+    matching. A hand-entered slot (no `reported`) never conflicts. Matching reads only this tuple, never the bound spool's material.
   - `filament_id` = Bambu AMS material code (e.g. `"GFL99"`) or `null`; **not** a Spoolman id.
   - `filament_profile` = OrcaSlicer filament preset used when slicing with this slot.
   - `spoolman_spool_id` = optional mapped Spoolman spool id (written by EditForm/FilamentPicker).
@@ -129,7 +135,7 @@ Library index fields (filesystem is source of truth; these cache it):
 `id, order_type` (`customer`|`internal`), `customer, title, due_date?, notes?`, `on_hold: bool`,
 `parts: JSON, amount_paid: float?, payment_status: str="unpaid"` (`unpaid|partial|paid`),
 `created_at, updated_at`.
-- `parts`: BoM checklist `[{id, name, qty, material, est_minutes, filament_id?, filament_color?}]`. No
+- `parts`: BoM checklist `[{id, name, qty, material, est_minutes, filament_manufacturer?, filament_type?, filament_subtype?, filament_color?}]`. No
   per-part fulfillment tracking. **Derived (not stored)**: `status` (hold if on_hold; else queued/
   in_progress/complete from linked jobs), `progress` (completed/active jobs, 0..1), `job_count`,
   `filament_cost_total` (sum of `jobs.filament_cost` across the order's non-cancelled jobs, or `null`).
@@ -186,20 +192,30 @@ not an error. `estimate_filament_grams` (falling back to the plate's parsed `fil
 estimate exists yet) is what `spool_check.check_spool_sufficiency` compares against a bound spool's
 remaining weight for the low-stock warning (see `backend.md` § Services, `spool_check.py`).
 
+`jobs.id` is `INTEGER PRIMARY KEY AUTOINCREMENT` (v054): an id is never handed out again, so an id in an old event, webhook or log can only mean that job.
+After a print has started (`printing`) only a user action clears `assigned_printer_id`; a print the printer ended in failure keeps it (terminal, not reserved).
+
+### job_details  (v055 — generic job detail fields)
+`job_details{id, job_id FK jobs(id) ON DELETE CASCADE, field:str(64), origin:str(64) (a plugin id or "core"), status:"ok"|"unsupported", value: JSON?, updated_at}`,
+unique `(job_id, field, origin)`. Written by the job reporter in the same transaction as the state change and by plugins through the details writer; read
+with `services/job_details.get_details`. Names and values are not enforced. Standard printer fields: `print_start_time`, `print_end_time`, `result`,
+`print_seconds`, `filament_usage`, `blocked_reason`; core also writes `failure_reason` and `last_failure` (`{reason, printer_id, at}`, a dead printer).
+
 ### job_printer_configs  (one row per (job, eligible printer))
 `id, job_id FK, printer_id FK, print_profile` (orca process preset), `filament_profile?` (legacy /
 manual-type fallback; the *authoritative* orca filament preset for slicing now lives on the printer's
-loaded-filament slot), `filament_id?` (Spoolman), `filament_type, filament_color` (the job's filament
-**ask** → matched against `printer.loaded_filaments`), `tool_index?` (nullable int, 0-based physical
-tool/slot; `None` = default/legacy — queue uses type+color ask instead),
+loaded-filament slot), `ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (v053: the job's filament **ask** tuple →
+matched against `printer.loaded_filaments`; NULL = undefined; subtype is required whenever type is set), `tool_index?` (nullable int,
+0-based physical tool/slot; `None` = match by the ask), `slot_plan?` (JSON `[{model_filament, slot}]`, written when a printer claims the
+job: the slots it prints from),
 `filament_map?` (JSON, nullable), `slice_failed: bool, slice_error: text?`,
 `model_target_id?` (v031; set on rows materialized from a `job_model_targets` row, null = explicit pick).
-- `filament_type`+`filament_color` = the eligibility "ask". Non-nullable, `server_default="any"` — the
-  literal string `"any"` (never null/blank) means no constraint on that axis; matching logic checks for
-  this keyword rather than a null/empty check. Same convention on `project_items.filament_type/color`
-  below. `slice_failed` blocks the job on that printer until cleared (by `unblock` or `updateJobConfigs`).
-- `tool_index`: when set, `_slot_for_config` resolves `loaded_filaments[tool_index]` directly (bypasses
-  type/color match); `_filament_mismatch` checks that slot is loaded.
+- `ask_*` = the eligibility "ask" (see `services/filament_tuple.py`, `services/filament_matching.py`). The pre-v053 columns
+  `filament_type`/`filament_color` (`server_default="any"`), `filament_id`, `material_provider`, `material_ref` remain as history and are
+  neither read nor written. API fields: `filament_manufacturer/filament_type/filament_subtype/filament_color` (`_filament_ask.py`
+  normalises blank and the legacy `"any"` to undefined and 422s a type without a subtype). Same columns on `job_model_targets` and
+  `project_items`. `slice_failed` blocks the job on that printer until cleared (by `unblock` or `updateJobConfigs`).
+- `tool_index`: when set, that slot is used directly (its content is not matched; it must be loaded and not in conflict).
 - `filament_map`: multi-material model→tool mapping. Shape: `[{model_filament: int (1-based),
   tool_index: int (0-based)}, …]`; `null` = single-material (no remap). When set, queue passes
   loaded slots ordered by tool as N `filament_presets` and forwards the map into `SliceRequest`;
@@ -254,7 +270,7 @@ hit_slice_skipped|miss|saved|save_duplicate_skipped|save_failed|pack_reused|pack
 
 ### job_model_targets  (v031 — "any printer of this model"; keyed by model since v052)
 `id, job_id FK (CASCADE), model_uuid FK printer_models` (BIZ-294; was `machine_profile`, the printers' machine preset — a printer's model is `printers.model_uuid`, so printers of one model with different nozzles share a target),
-`print_profile, filament_profile?, filament_id?, filament_type, filament_color` (`"any"` default),
+`print_profile, filament_profile?, ask_manufacturer?, ask_type?, ask_subtype?, ask_color?` (the ask tuple, as on `job_printer_configs`),
 `filament_map?` (never slot-pinned: `tool_index` is rejected, slots differ per printer).
 Persistent intent; `services/model_targets.py` **materializes** it into per-printer `job_printer_configs`
 rows (at create/PATCH via `materialize_job`, and every queue cycle in `_try_claim_for_printer` via
@@ -289,12 +305,13 @@ is kept but no longer read or written** (dropped in a later cleanup release).
 ### Provider-namespaced inventory refs  (v036 — BIZ-217)
 
 `printers.loaded_filaments[].inventory = {"provider": "<plugin id>", "spool_ref": "<ref>"}` (never `filament_id`: that is a Bambu AMS tray code);
-`material_provider` + `material_ref` (TEXT, NULL) on `job_printer_configs`, `job_model_targets`, `project_items`, and the same pair inside every
-`orders.parts[]` entry. **Dual-write for one release:** the legacy `spoolman_spool_id` / `filament_id` are still written (mirrored while the provider
+`material_provider` + `material_ref` (TEXT, NULL) were added to `job_printer_configs`, `job_model_targets`, `project_items` and
+`orders.parts[]` — **superseded by the filament tuple (v053): a job's ask no longer references a material; those columns are history and
+`refs.material()` is gone.** The slot binding below is unchanged. **Dual-write for one release:** the legacy `spoolman_spool_id` / `filament_id` are still written (mirrored while the provider
 is Spoolman; `filament_id` stays NULL for any other provider) because old frontends, API clients and AMS reports keep writing the old keys, so
 every writer goes through `services/inventory/refs.py` (`PATCH /printers`, printer create, fleet import, `printer_manager.on_ams_change` — which
 now preserves *all* Themis-owned slot keys —, job configs/targets, project items + generation grouping, order parts). Conflicts resolve by what
-changed vs the stored slot (an edited `inventory` wins; otherwise an edited legacy key wins). Material asks resolve the same way: an old client's echo of the stored `material_ref` never undoes its `filament_id` edit. **A new client must send `inventory: null` to unbind** (omitting the key leaves the stored binding); the legacy key is kept an int when numeric. A ref whose provider is not active is *unresolved*
+changed vs the stored slot (an edited `inventory` wins; otherwise an edited legacy key wins). **A new client must send `inventory: null` to unbind** (omitting the key leaves the stored binding); the legacy key is kept an int when numeric. A ref whose provider is not active is *unresolved*
 (never applied to another provider). Backfill: `('spoolman', CAST(filament_id AS TEXT))`.
 
 ### Deduction model  (v037 — BIZ-218)
@@ -312,7 +329,7 @@ Plugin-owned (`local_inv_*`, tracked in `plugin_schema_versions`, created at sta
 `inventory_cache{provider, kind spools|materials, payload JSON, fetched_at}` PK(provider, kind): the last successful list of a `REMOTE` provider (DTO fields without `raw`), written after every live list/sync (skipped when unchanged) and served stale when the provider is unreachable, across restarts. A successfully applied outbox write patches the cached spool's weight. Never written for non-REMOTE providers. Outage state lives in `plugin_configs.state`: `disconnected_since`, `disconnect_alerted_at` (cleared on the next successful sync). Events `inventory.disconnected {provider, since, pending_count}` (once per outage, after the plugin's `max_disconnect_minutes`) and `inventory.reconnected {provider, since, flushed, pending_count}`.
 
 ### queue_config / spoolman_config / webhook_config / notification_config
-`queue_config{check_interval_minutes:int=5, operator_name:str?, snapshot_interval_seconds:int=2,
+`queue_config{check_interval_minutes:int=5, printer_dead_after_minutes:int=30 (v056; 0 = never), operator_name:str?, snapshot_interval_seconds:int=2,
 estimates_enabled:bool=False, slice_cache_use_latest_settings:bool=True}`. `estimates_enabled` gates the background test-slice estimate pipeline
 (see `jobs` § Estimate values above); flipping it off does not clear already-computed estimates.
 Managed via `GET/PUT /api/v1/settings/queue`.
@@ -406,13 +423,13 @@ price: float? (v023), payment_status: str="unpaid"` (`unpaid|partial|paid`), `st
 
 ### project_items
 `id, project_id FK (CASCADE), file_id FK (RESTRICT), quantity, quantity_completed, quantity_failed,
-filament_type:str="any", filament_color:str="any", filament_id:int?, color_hex:str="#FFFFFF"
-(legacy), sort_order`.
+ask_manufacturer?, ask_type?, ask_subtype?, ask_color?, color_hex:str="#FFFFFF"
+(legacy), sort_order` (the pre-v053 `filament_type/color/filament_id/material_*` columns are history).
 - One row per STL file in the project. `quantity` = how many copies to pack.
 - `quantity_completed`/`quantity_failed` are updated as jobs for this project complete.
-- `filament_type`/`filament_color`: the item's own filament requirement spec, same `"any"`-keyword
-  convention as `job_printer_configs` above. `filament_id`: Spoolman filament id. `color_hex` is a
-  legacy OrcaSlicer-era field kept for backward compat with pre-v005 rows; not the current color source.
+- `ask_*`: the item's own filament ask tuple, same convention as `job_printer_configs` above (generation groups items by the tuple and
+  copies it onto the generated jobs). `color_hex` is a legacy OrcaSlicer-era field kept for backward compat with pre-v005 rows; not the
+  current color source.
 
 ### project_links
 `id, project_id FK (CASCADE), url, label?, sort_order, created_at`.

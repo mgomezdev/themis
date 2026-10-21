@@ -124,4 +124,38 @@ describe('SlotSpoolPicker', () => {
     render(picker(bound('5')));
     expect(screen.queryByTestId('spool-location')).toBeNull();
   });
+
+  it('a hand-entered slot edits the whole tuple; a type always gets a subtype (plain unless chosen)', () => {
+    const onChange = vi.fn();
+    render(picker(baseSlot, { spools: [], onChange }));
+    fireEvent.change(screen.getByLabelText('Manufacturer for slot 1'), { target: { value: 'Acme' } });
+    expect(onChange).toHaveBeenLastCalledWith({ manufacturer: 'Acme' });
+    expect(screen.getByLabelText('Subtype for slot 1')).toBeDisabled();                   // no type yet
+    fireEvent.change(screen.getByLabelText('Type for slot 1'), { target: { value: 'PETG' } });
+    expect(onChange).toHaveBeenLastCalledWith({ type: 'PETG', subtype: 'standard' });
+  });
+
+  it('the subtype choice of a typed slot is stored, and "any" is not offered (a slot has a real subtype)', () => {
+    const onChange = vi.fn();
+    render(picker({ ...baseSlot, type: 'PLA', subtype: 'standard' }, { spools: [], onChange }));
+    const sel = screen.getByLabelText('Subtype for slot 1') as HTMLSelectElement;
+    expect([...sel.options].map(o => o.value)).not.toContain('any');
+    fireEvent.change(sel, { target: { value: 'silk' } });
+    expect(onChange).toHaveBeenLastCalledWith({ subtype: 'silk' });
+  });
+
+  it('flags a bound slot whose spool differs from what the printer reports, and offers to unbind', async () => {
+    const onChange = vi.fn();
+    render(picker(bound('2'), { conflict: true, onChange }));
+    expect(screen.getByTestId('slot-conflict').textContent).toMatch(/differs from what the printer reports/);
+    await userEvent.click(screen.getByLabelText('Clear spool selection'));
+    expect(onChange).toHaveBeenCalledWith({ inventory: null, filament_profile: null });
+  });
+
+  it('shows no conflict flag when the slot agrees (or is hand-entered)', () => {
+    render(picker(bound('2'), { conflict: false }));
+    expect(screen.queryByTestId('slot-conflict')).toBeNull();
+    render(picker(baseSlot, { spools: [], conflict: true }));
+    expect(screen.queryByTestId('slot-conflict')).toBeNull();
+  });
 });

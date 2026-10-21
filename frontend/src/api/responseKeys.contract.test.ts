@@ -12,10 +12,10 @@ import type { CostConfig, ProjectLabor } from './costs';
 import type { PortalPayment, PortalProject, PortalQuote } from './customers';
 import type { CustomerPayment, ProjectPayment } from './payments';
 import type { AlarmSummary, PrinterAlarm } from './alarms';
-import type { ApiPrinter } from './printers';
+import type { ApiPrinter, SlotConflicts } from './printers';
 import type { MergedPrinterFiles, PrinterFileEntry, PrinterFilesListing } from './printerFiles';
 import type { Project, ProjectCosts, ProjectItem, ProjectJob, ProjectLink, ProjectPart } from './projects';
-import type { ApiJob, ApiJobDetails, ApiModelTarget } from './queue';
+import type { ApiJob, ApiJobDetails, ApiModelTarget, FilamentMatch } from './queue';
 import type { ModelSlicerProfile, ProfileCandidate, ProfileSuggestions, ProfileVariantOption } from './slicerProfiles';
 import type { CapabilityInfo } from './capabilities';
 import type { PluginConnectionResult, PluginProvides, PluginSummary } from './plugins';
@@ -50,6 +50,9 @@ const JOB_DETAILS = {
   ...JOB, file: 1, plate: 1, printer_configs: 1, assigned_printer: 1, filament_grams_live: 1, estimated_seconds_live: 1,
 } satisfies Record<keyof ApiJobDetails, 1>;
 
+const FILAMENT_MATCH = { eligible: 1, slots: 1, reasons: 1 } satisfies Record<keyof FilamentMatch, 1>;
+const SLOT_CONFLICTS = { conflicts: 1 } satisfies Record<keyof SlotConflicts, 1>;
+
 const PROJECT = {
   id: 1, name: 1, customer: 1, order_type: 1, on_hold: 1, due_date: 1, notes: 1, result_file_id: 1, source_app: 1,
   source_user: 1, source_layout_id: 1, amount_paid: 1, price: 1, payment_status: 1, stage: 1, customer_id: 1,
@@ -61,7 +64,7 @@ const PROJECT = {
 
 const PROJECT_ITEM = {
   id: 1, project_id: 1, file_id: 1, file_name: 1, quantity: 1, quantity_completed: 1, quantity_failed: 1,
-  filament_type: 1, filament_color: 1, filament_id: 1, material_provider: 1, material_ref: 1, sort_order: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, sort_order: 1,
 } satisfies Record<keyof ProjectItem, 1>;
 
 const PROJECT_LINK = { id: 1, project_id: 1, url: 1, label: 1, sort_order: 1, created_at: 1 } satisfies Record<keyof ProjectLink, 1>;
@@ -97,8 +100,8 @@ const PROFILE_VARIANT = {
   name: 1, nozzle_diameter_mm: 1, flow: 1, ref: 1, is_default_guess: 1,
 } satisfies Record<keyof ProfileVariantOption, 1>;
 const MODEL_TARGET = {
-  model_uuid: 1, model_label: 1, print_profile: 1, filament_profile: 1, filament_id: 1, material_provider: 1, material_ref: 1,
-  filament_type: 1, filament_color: 1, filament_map: 1,
+  model_uuid: 1, model_label: 1, print_profile: 1, filament_profile: 1,
+  filament_manufacturer: 1, filament_type: 1, filament_subtype: 1, filament_color: 1, filament_map: 1,
 } satisfies Record<keyof ApiModelTarget, 1>;
 
 const ANALYTICS = { range: 1, totals: 1, printers: 1, materials: 1 } satisfies Record<keyof FleetAnalytics, 1>;
@@ -156,6 +159,8 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
     ['printer', contract.printer, keysOf(PRINTER)],
     ['queue rows + job details core cover every ApiJob key', [...contract.queue_job, ...contract.job_details_core], keysOf(JOB)],
     ['job details (core + extra + queue-only enrichments)', [...contract.queue_job, ...contract.job_details_core, ...contract.job_details_extra], keysOf(JOB_DETAILS)],
+    ['filament match (job details printer_configs[].filament_match)', contract.filament_match, keysOf(FILAMENT_MATCH)],
+    ['slot conflicts (GET /printers/{id}/slot-conflicts)', contract.slot_conflicts, keysOf(SLOT_CONFLICTS)],
     ['project', contract.project, keysOf(PROJECT)],
     ['sliced version (GET /files/{id}/sliced-versions item)', contract.sliced_version_item, keysOf(SLICED_VERSION)],
     ['model slicer profile mapping', contract.printer_model_slicer_profile, keysOf(MODEL_SLICER_PROFILE)],
@@ -205,7 +210,7 @@ describe('contracts/response-keys.json matches the frontend interfaces', () => {
       'analytics', 'analytics_range', 'analytics_totals', 'analytics_printer', 'analytics_material',
       'project_labor', 'project_costs', 'cost_config', 'sliced_version_item',
       'printer_model_slicer_profile', 'slicer_profile_suggestions', 'slicer_profile_candidate', 'slicer_profile_variant', 'model_target',
-      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'capability_info']);
+      'plugin_summary', 'plugin_provides', 'plugin_connection_result', 'capability_info', 'filament_match', 'slot_conflicts']);
     expect(Object.keys(contract).sort()).toEqual([...used].sort());
   });
 });

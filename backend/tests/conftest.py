@@ -276,7 +276,6 @@ async def create_job(client, upload_3mf, create_printer):
         printer_id = printer_id if printer_id is not None else await create_printer()
         config = {
             "printer_id": printer_id, "print_profile": "0.20mm",
-            "filament_type": "any", "filament_color": "any",
         }
         config.update(config_overrides)
         body = {"uploaded_file_id": file_id, "plate_number": 1, "printer_configs": [config]}

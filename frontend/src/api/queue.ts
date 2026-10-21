@@ -1,3 +1,4 @@
+import type { FilamentAsk } from '../lib/filamentAsk';
 import { useState, useEffect, useCallback } from 'react';
 import { apiFetch, withKeyParam, openLiveSocket } from './client';
 
@@ -26,42 +27,30 @@ export interface ModelFilament {
   type: string;
 }
 
-export interface PrinterConfigInput {
+/** One model colour of a multi-material job: pinned to a tool (`tool_index`) or an ask matched against the printer's slots. */
+export type FilamentMapEntry = { model_filament: number; tool_index: number | null } & FilamentAsk;
+
+export interface PrinterConfigInput extends Partial<FilamentAsk> {
   printer_id: number;
   print_profile: string;
   filament_profile?: string | null;
-  filament_id?: number | null;
-  material_provider?: string | null;      // the provider-namespaced material pick (preferred over filament_id)
-  material_ref?: string | null;
-  filament_type?: string | null;
-  filament_color?: string | null;
   tool_index?: number | null;
-  filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+  filament_map?: FilamentMapEntry[] | null;
 }
 
 /** Eligible on any printer of the registry model `model_uuid` (BIZ-294). */
-export interface ModelTargetInput {
+export interface ModelTargetInput extends Partial<FilamentAsk> {
   model_uuid: string;
   print_profile: string;
   filament_profile?: string | null;
-  filament_id?: number | null;
-  material_provider?: string | null;
-  material_ref?: string | null;
-  filament_type?: string | null;
-  filament_color?: string | null;
 }
 
-export interface ApiModelTarget {
+export interface ApiModelTarget extends FilamentAsk {
   model_uuid: string;
   model_label: string | null;     // "<manufacturer> <model>"
   print_profile: string;
   filament_profile: string | null;
-  filament_id: number | null;
-  material_provider?: string | null;
-  material_ref?: string | null;
-  filament_type: string;
-  filament_color: string;
-  filament_map: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+  filament_map: FilamentMapEntry[] | null;
 }
 
 export interface ApiJob {
@@ -147,19 +136,18 @@ export interface ApiSliceFailure {
   slice_error: string | null;
 }
 
-export interface ApiJobPrinterConfig {
+/** Whether the printer's loaded filament satisfies the job's ask right now, and if not why (one line per slot that does not). */
+export interface FilamentMatch { eligible: boolean; slots: number[]; reasons: string[] }
+
+export interface ApiJobPrinterConfig extends FilamentAsk {
   printer_id: number;
   printer_name: string;
   printer_type: string;
   print_profile: string;
   filament_profile: string | null;
-  filament_id: number | null;
-  material_provider?: string | null;
-  material_ref?: string | null;
-  filament_type: string | null;
-  filament_color: string | null;
   tool_index: number | null;
-  filament_map?: { model_filament: number; tool_index: number | null; filament_id: number | null; filament_type: string | null; filament_color: string | null }[] | null;
+  filament_map?: FilamentMapEntry[] | null;
+  filament_match?: FilamentMatch;
   slice_failed: boolean;
   slice_error: string | null;
   from_model_target: boolean;   // materialized from a make/model target rather than picked explicitly
@@ -295,6 +283,8 @@ export async function checkOverrides(body: {
 
 export interface QueueConfig {
   check_interval_minutes: number; operator_name: string | null; snapshot_interval_seconds: number;
+  /** Minutes a printer may be offline before it is declared dead (its running job fails and goes back to the top of the queue). 0 = never. */
+  printer_dead_after_minutes: number;
   estimates_enabled: boolean;
   /** Slicing cache: reslice a cached version whose presets/OrcaSlicer changed (true) or still print it (false). */
   slice_cache_use_latest_settings: boolean;

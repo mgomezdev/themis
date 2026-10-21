@@ -38,7 +38,7 @@ def env(tmp_path, monkeypatch):
 
 
 async def _seed(factory, *, save=True, name=None, content_hash="srchash", printer_type="elegoo_centauri",
-                filament_type="PETG") -> int:
+                filament_type="PETG") -> int:    # the ask's base type (subtype any)
     async with factory() as s:
         if await s.get(Printer, 1) is None:
             s.add(Printer(id=1, name="P1", printer_type=printer_type, connection_config={},
@@ -59,7 +59,7 @@ async def _seed(factory, *, save=True, name=None, content_hash="srchash", printe
         s.add(j)
         await s.flush()
         s.add(JobPrinterConfig(job_id=j.id, printer_id=1, print_profile="0.20mm Standard",
-                               filament_type=filament_type, filament_color="#000000"))
+                               ask_type=filament_type, ask_subtype="any", ask_color="#000000"))
         await s.commit()
         return j.id
 
@@ -309,14 +309,13 @@ async def test_the_key_uses_the_resolved_filament_map_and_the_merged_config(sess
                               {"slot": 1, "type": "PETG", "color": "#000000", "filament_profile": "Generic PETG"}]
         (await s.get(Job, job_id)).overrides = {"sparse_infill_density": "25%"}
         cfg = (await s.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id == job_id))).scalar_one()
-        cfg.filament_map = [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000"}]
+        cfg.filament_map = [{"model_filament": 1, "filament_type": "PETG", "filament_subtype": "any", "filament_color": "#000000"}]
         await s.commit()
 
     await _run_to_printing(qe, session_factory, job_id)
 
     (version,) = await _versions(session_factory)
-    assert version.filament_map == [{"model_filament": 1, "filament_type": "PETG", "filament_color": "#000000",
-                                     "tool_index": 1}]
+    assert version.filament_map == [{"model_filament": 1, "tool_index": 1}]      # only the routing: the ask must not split the cache
     assert version.extra_config == {"curr_bed_type": "Textured PEI Plate", "sparse_infill_density": "25%"}
     req = qe._slicer.slice.call_args.args[0]
     assert version.cache_key == slice_cache.cache_key(

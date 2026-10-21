@@ -1667,6 +1667,54 @@
         }
       }
     },
+    "/api/v1/printers/{printer_id}/slot-conflicts": {
+      "get": {
+        "tags": [
+          "printers"
+        ],
+        "summary": "Slots whose bound spool differs from what the printer reports",
+        "description": "Indexes of the slots in conflict (a hardware-reported slot whose bound spool's material differs in a part known on both\nsides). A conflicting slot is skipped by the queue's filament matching; the UI flags it so the operator can rebind, correct or\nunbind the spool. Empty when no slot is bound or the inventory cannot be read.",
+        "operationId": "slot_conflicts_api_v1_printers__printer_id__slot_conflicts_get",
+        "parameters": [
+          {
+            "name": "printer_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Printer Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Slot Conflicts Api V1 Printers  Printer Id  Slot Conflicts Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Printer not found"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/printers/{printer_id}/plate-cleared": {
       "post": {
         "tags": [
@@ -4580,6 +4628,76 @@
         }
       }
     },
+    "/api/v1/jobs/{job_id}/detail-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get generic job detail fields",
+        "description": "The open-vocabulary details plugins wrote onto the job (debug/read-only). Each field answers `ok`, `unsupported`,\n`unavailable` or `unknown_field`; a bad name never fails the call. Distinct from `/{job_id}/details` (the job screen's shape).",
+        "operationId": "get_job_detail_fields_api_v1_jobs__job_id__detail_fields_get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "fields",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`",
+              "title": "Fields"
+            },
+            "description": "Comma-separated field names, e.g. `print_end_time,filament_usage`"
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the value written by this origin (a plugin id or `core`)",
+              "title": "Origin"
+            },
+            "description": "Only the value written by this origin (a plugin id or `core`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Get Job Detail Fields Api V1 Jobs  Job Id  Detail Fields Get"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job not found"
+          },
+          "422": {
+            "description": "No field names, or more than 50"
+          }
+        }
+      }
+    },
     "/api/v1/jobs/{job_id}/details": {
       "get": {
         "tags": [
@@ -5263,6 +5381,33 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/job-fields": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List job detail fields",
+        "description": "Every field an enabled plugin declares (or lists as unsupported), with its sources. Field names are not enforced: a plugin may\nalso write fields nobody declared; those answer `unknown_field` only when nothing is stored.",
+        "operationId": "list_job_fields_api_v1_job_fields_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "type": "array",
+                  "title": "Response List Job Fields Api V1 Job Fields Get"
                 }
               }
             }
@@ -12395,6 +12540,18 @@
             ],
             "title": "Material"
           },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
           "color_hex": {
             "anyOf": [
               {
@@ -12479,6 +12636,18 @@
             ],
             "title": "Material"
           },
+          "subtype": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subtype"
+          },
           "color_hex": {
             "anyOf": [
               {
@@ -12549,6 +12718,50 @@
       },
       "ModelTargetInput": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "model_uuid": {
             "type": "string",
             "title": "Model Uuid"
@@ -12568,49 +12781,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
           },
           "filament_map": {
             "anyOf": [
@@ -12721,6 +12891,50 @@
       },
       "OrderPartIn": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "id": {
             "anyOf": [
               {
@@ -12750,50 +12964,6 @@
             "type": "integer",
             "title": "Est Minutes",
             "default": 0
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_color": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Color"
           }
         },
         "type": "object",
@@ -13207,6 +13377,50 @@
       },
       "PrinterConfigInput": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "printer_id": {
             "type": "integer",
             "title": "Printer Id"
@@ -13226,47 +13440,6 @@
               }
             ],
             "title": "Filament Profile"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color"
           },
           "tool_index": {
             "anyOf": [
@@ -13297,9 +13470,7 @@
         },
         "type": "object",
         "required": [
-          "printer_id",
-          "filament_type",
-          "filament_color"
+          "printer_id"
         ],
         "title": "PrinterConfigInput"
       },
@@ -13828,6 +13999,50 @@
       },
       "ProjectItemCreate": {
         "properties": {
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
+          "filament_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Type"
+          },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
+          "filament_color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Color"
+          },
           "file_id": {
             "type": "integer",
             "title": "File Id"
@@ -13836,49 +14051,6 @@
             "type": "integer",
             "title": "Quantity",
             "default": 1
-          },
-          "filament_type": {
-            "type": "string",
-            "title": "Filament Type",
-            "default": "any"
-          },
-          "filament_color": {
-            "type": "string",
-            "title": "Filament Color",
-            "default": "any"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
           },
           "sort_order": {
             "type": "integer",
@@ -13905,6 +14077,17 @@
             ],
             "title": "Quantity"
           },
+          "filament_manufacturer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Manufacturer"
+          },
           "filament_type": {
             "anyOf": [
               {
@@ -13916,6 +14099,17 @@
             ],
             "title": "Filament Type"
           },
+          "filament_subtype": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filament Subtype"
+          },
           "filament_color": {
             "anyOf": [
               {
@@ -13926,39 +14120,6 @@
               }
             ],
             "title": "Filament Color"
-          },
-          "filament_id": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Filament Id"
-          },
-          "material_provider": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Provider"
-          },
-          "material_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Material Ref"
           },
           "sort_order": {
             "anyOf": [
@@ -13973,7 +14134,8 @@
           }
         },
         "type": "object",
-        "title": "ProjectItemUpdate"
+        "title": "ProjectItemUpdate",
+        "description": "A PATCH: only the fields sent change. The resulting ask must still be valid (a type needs a subtype)."
       },
       "ProjectLink": {
         "properties": {
@@ -14370,6 +14532,19 @@
             ],
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14424,6 +14599,10 @@
             "type": "integer",
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "type": "integer",
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14451,6 +14630,7 @@
         "type": "object",
         "required": [
           "check_interval_minutes",
+          "printer_dead_after_minutes",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

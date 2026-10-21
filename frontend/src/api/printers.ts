@@ -61,6 +61,10 @@ export interface LoadedFilament {
   name: string;
   type: string;
   color: string;
+  subtype?: string | null;             // "standard" (plain), "plus", "silk", "cf"... — the server always supplies one for a typed slot
+  manufacturer?: string | null;        // the maker, null = unknown
+  reported?: boolean;                  // the printer's hardware reports this slot (telemetry replaces its tuple on every report)
+  empty?: boolean;                     // a tool-changer placeholder for an empty tool
   filament_profile?: string | null;    // OrcaSlicer filament preset used to slice with this filament
   /** The inventory spool loaded here: `{provider, spool_ref}` (null = unbound). Write this one. */
   inventory?: { provider: string; spool_ref: string } | null;
@@ -185,6 +189,12 @@ export function setPrinterModelEnabled(id: string, enabled: boolean): Promise<Pr
 
 export function fetchPrinters(): Promise<ApiPrinter[]> {
   return request(BASE);
+}
+
+/** Indexes of the slots whose bound spool differs from what the printer reports (skipped by the queue's filament matching). */
+export interface SlotConflicts { conflicts: number[] }
+export function fetchSlotConflicts(id: number): Promise<SlotConflicts> {
+  return request(`${BASE}/${id}/slot-conflicts`);
 }
 
 export function fetchPrinter(id: number): Promise<ApiPrinter> {
@@ -352,10 +362,4 @@ export function discoverPrinters(ranges: string[]): Promise<DiscoveryResult> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ranges }),
   });
-}
-
-/** The material a stored ask (job config, project item, order part) names: its provider-namespaced pair, else a bare legacy numeric id. */
-export function askBinding(ask: { filament_id?: number | null; material_provider?: string | null; material_ref?: string | null }): { provider: string; ref: string } | null {
-  if (ask.material_ref) return { provider: ask.material_provider || LEGACY_PROVIDER, ref: ask.material_ref };
-  return ask.filament_id != null ? { provider: LEGACY_PROVIDER, ref: String(ask.filament_id) } : null;
 }

@@ -9,12 +9,13 @@ import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable, Mapping
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..models import (
+    JobDetail,
     GcodeFile,
     Job,
     JobPrinterConfig,
@@ -30,17 +31,18 @@ from .library_scanner import (
     fresh_content_hash, is_presliced_file, presliced_suffix, refresh_content_hash,
 )
 from .printer_manager import PrinterManager
-from .inventory import config as inventory_config, deduction as inventory_deduction, refs as inventory_refs, snapshots as inventory_snapshots, tasks as inventory_tasks
 from .providers.slicing import effective_provider_id, get_format_provider, slicing_provider_for
 from .slice_resolution import PrinterView, resolve_slicing
 from .slicer_service import SliceError, SliceRequest, SlicerService, tool_mapping_hook
 from . import gcode_eligibility, model_targets, slice_cache, slice_saver, slicer_profiles
-from . import completion_events
+from . import completion_events, job_details
 from .notify import notify
 from ..plugins.capabilities.notify_channel import NOTIFY_CHANNEL
 from ..plugins.host import plugin_host
+from ..eventing import EventEnvelope, EventError
 from ..eventing.hub import hub as event_hub
-from . import scheduling
+from ..eventing.registry import CORE_EVENTS
+from . import filament_matching, scheduling
 from . import webhook_service
 
 
@@ -54,144 +56,28 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _norm_color(value) -> str:
-    return str(value or "").strip().lstrip("#").lower()
+def _slot_for_config(config, loaded: list, conflicts=frozenset(), plan: list | None = None) -> dict | None:
+    """The loaded slot this config prints with (its first colour's): the stored claim-time `plan` when given, else the pinned
+    tool slot or the first slot satisfying the ask (filament_matching). None when nothing qualifies."""
+    if plan is None and isinstance(getattr(config, "slot_plan", None), list):
+        plan = config.slot_plan                           # the slots chosen when a printer claimed the job
+    return filament_matching.slot_for_config(config, loaded, conflicts, plan)
 
 
-def _is_any_filament_ask(value) -> bool:
-    """True if a JobPrinterConfig.filament_type/filament_color value expresses 'no
-    constraint on this field' — blank, or the canonical "any" keyword (case-insensitive).
-    Scoped to JobPrinterConfig's own type/color fields only; filament_map entries have
-    their own, unrelated NULL semantics and must not go through this."""
-    return str(value or "").strip().lower() in ("", "any")
-
-
-def _is_loaded(slot: dict) -> bool:
-    """False only for a tool-changer placeholder (Snapmaker U1 keeps `{"empty": True, "type": ""}` for an empty tool
-    so list positions stay equal to tool indexes). A hand-entered slot without a type is still a slot."""
-    return bool(str(slot.get("type", "")).strip()) or not slot.get("empty")
-
-
-def _matching_loaded_filament(config: JobPrinterConfig, loaded: list) -> dict | None:
-    """The printer's loaded filament slot that satisfies the job's ask (type AND
-    color), or None. A job with no declared requirement (blank or "any") matches
-    the first slot.
-
-    The OrcaSlicer filament *profile* used for slicing is a printer-level setting
-    that lives on the matched slot (the "provide"); the job only declares the
-    desired type/color (the "ask")."""
-    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
-    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
-    if not req_type and not req_color:
-        return next((f for f in loaded or [] if _is_loaded(f)), None)
-    for f in loaded or []:
-        if str(f.get("type", "")).strip().lower() == req_type and _norm_color(f.get("color")) == req_color:
-            return f
+def _effective_tool_index(config, loaded: list, plan: list) -> int | None:
+    if config.tool_index is not None:
+        return config.tool_index
+    if not config.filament_map and len(loaded) >= 2 and plan and plan[0].slot > 0:      # T0 is where an unrouted model prints anyway
+        return plan[0].slot
     return None
 
 
-def _slot_for_config(config, loaded: list) -> dict | None:
-    """The loaded slot this config should print with: the explicit tool_index slot
-    if set (multi-tool printers), else the type/color ask match."""
-    ti = getattr(config, "tool_index", None)
-    if ti is not None:
-        loaded = loaded or []
-        return loaded[ti] if 0 <= ti < len(loaded) and _is_loaded(loaded[ti]) else None
-    return _matching_loaded_filament(config, loaded)
-
-
-def _find_slot_for_filament(
-    filament_type: str, filament_color: str | None, loaded: list
-) -> int | None:
-    """Return the index of the first loaded slot matching type (+color if given), or None."""
-    req_type = filament_type.strip().lower()
-    req_color = _norm_color(filament_color)
-    for i, lf in enumerate(loaded or []):
-        if (lf.get("type") or "").strip().lower() != req_type:
-            continue
-        if req_color and _norm_color(lf.get("color")) != req_color:
-            continue
-        return i
-    return None
-
-
-def _mapped_tools_loaded(filament_map: list, loaded: list) -> bool:
-    """True if every slot-assigned entry's tool_index is within the loaded slots list.
-    Catalog entries (tool_index is None) are skipped."""
-    loaded = loaded or []
-    return all(
-        0 <= e["tool_index"] < len(loaded) and _is_loaded(loaded[e["tool_index"]])
-        for e in (filament_map or [])
-        if e.get("tool_index") is not None
-    )
-
-
-def _resolve_filament_map(filament_map: list, loaded: list) -> list:
-    """Resolve any catalog-assigned entries (filament_type set, tool_index None)
-    to their matching loaded slot index. Returns a new list with all entries
-    having tool_index set. Raises ValueError if any catalog entry has no match."""
-    resolved = []
-    for entry in filament_map:
-        if entry.get("tool_index") is not None:
-            resolved.append(entry)
-        else:
-            ft = entry.get("filament_type")
-            if not ft:
-                raise ValueError("Catalog filament entry is missing filament_type — cannot resolve slot")
-            fc = entry.get("filament_color")
-            slot_idx = _find_slot_for_filament(ft, fc, loaded or [])
-            if slot_idx is None:
-                raise ValueError(
-                    f"Filament {ft!r} not loaded on printer — cannot slice"
-                )
-            resolved.append({**entry, "tool_index": slot_idx})
-    seen_slots: set[int] = set()
-    for entry in resolved:
-        ti = entry["tool_index"]
-        if ti in seen_slots:
-            raise ValueError(
-                f"Two model filaments resolved to the same printer slot {ti}"
-            )
-        seen_slots.add(ti)
-    return resolved
-
-
-def _filament_mismatch(config: JobPrinterConfig, loaded: list) -> str | None:
-    """Return a reason string if the config can't be satisfied by the printer's
-    loaded filaments, else None."""
-    fmap = getattr(config, "filament_map", None)
-    if fmap:
-        if not _mapped_tools_loaded(fmap, loaded):
-            return "a mapped tool has no loaded filament"
-        for entry in fmap:
-            if entry.get("tool_index") is not None:
-                continue  # slot assignment — already validated by _mapped_tools_loaded
-            ft = entry.get("filament_type")
-            if ft is None:
-                continue
-            if _find_slot_for_filament(ft, entry.get("filament_color"), loaded or []) is None:
-                return f"required filament {ft!r} not loaded"
-        return None
-    if getattr(config, "tool_index", None) is not None:
-        if _slot_for_config(config, loaded) is None:
-            return f"tool T{config.tool_index} has no loaded filament"
-        return None
-    req_type = "" if _is_any_filament_ask(config.filament_type) else (config.filament_type or "").strip().lower()
-    req_color = "" if _is_any_filament_ask(config.filament_color) else _norm_color(config.filament_color)
-    if not req_type and not req_color:
-        return None
-    if _matching_loaded_filament(config, loaded) is not None:
-        return None
-    return (f"loaded filament doesn't match required "
-            f"{config.filament_type or '?'} {config.filament_color or '?'}")
-
-
-
-def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None) -> dict:
+def _slice_params(job, config, printer, uploaded_file, machine_preset: str | None = None, plan: list | None = None) -> dict:
     """What a slice of `job` on `printer` is built from, read off the ORM rows so it outlives the session. Dispatch and
     the claim-time cache check (BIZ-201) both build their SliceRequest from this, so they agree on the cache key."""
     loaded = (printer.loaded_filaments if printer else None) or []
-    slot = _slot_for_config(config, loaded) if config else None
+    plan = filament_matching.plan_for(config, loaded) if plan is None else plan
+    slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if config and plan else None
     return {
         "source_key": uploaded_file.relative_path if uploaded_file else None,
         "original_filename": uploaded_file.original_filename if uploaded_file else None,
@@ -199,21 +85,32 @@ def _slice_params(job, config, printer, uploaded_file, machine_preset: str | Non
         "build_plate_type": printer.build_plate_type if printer else None,
         "loaded": loaded,
         "print_profile": config.print_profile if config else None,
-        "filament_color": config.filament_color if config else None,
-        # Filament profile: job-level config takes priority; slot's preset is the fallback.
+        "filament_color": (slot or {}).get("color") or (config.ask_color if config else None),    # preview only: what is actually loaded
+        # Filament profile: job-level config takes priority; the matched slot's preset (the operator's per-slot choice) is the fallback.
         "filament_profile": (config.filament_profile if config else None) or (slot or {}).get("filament_profile") or None,
-        "tool_index": config.tool_index if config else None,
-        "filament_map": config.filament_map if config else None,
+        # A pinned tool, else (tool-changer printers, where the 3MF is routed at slice time) the one slot the ask matched, so what is
+        # sliced, printed and deducted is the slot the claim chose.
+        "tool_index": _effective_tool_index(config, loaded, plan) if config else None,
+        # The slicer's routing: model colour -> slot, resolved at claim time (the asks that produced it stay out of the cache key).
+        "filament_map": filament_matching.resolved_filament_map(config, plan) if config else None,
+        "slot_plan": plan,
         "overrides": (job.overrides or {}) if job else {},
         "preferred_slicer": printer.preferred_slicer_plugin_id if printer else None,
     }
 
+
 def _notification_content(
-    event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None
+    event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None, origin: str | None = None
 ) -> tuple[str, str]:
     """Build a plain, human-readable (title, message) pair for a job event.
     No templating engine, no config-driven customization — basic per-event
-    text, mirroring the fixed shape of the built-in notification channels."""
+    text, mirroring the fixed shape of the built-in notification channels. A plugin's report is prefixed with its id
+    (`bambu: ...`) so the reader knows who said it; core's own events read as before."""
+    title, message = _notification_text(event, job_id, file_name, printer_name, reason)
+    return title, (f"{origin}: {message}" if origin and origin != "core" else message)
+
+
+def _notification_text(event: str, job_id: int, file_name: str, printer_name: str | None, reason: str | None) -> tuple[str, str]:
     if event == "job.complete":
         title = "Themis: job complete"
         if printer_name:
@@ -240,6 +137,10 @@ def _notification_content(
             message = f"{file_name} is blocked."
         return title, message
     return f"Themis: {event}", f"{file_name} ({event})"
+
+
+# Marks a `blocked` job the unmatched-job sweep owns: it re-checks only these, and releases them when a match appears.
+NO_MATCH_PREFIX = "no eligible printer"
 
 
 class QueueEngine:
@@ -359,8 +260,10 @@ class QueueEngine:
             # Resolve filament profiles
             fmap = config.filament_map if config else None
             if fmap:
-                for entry in sorted(fmap, key=lambda e: e.get("tool_index", 0) or 0):
-                    ti = entry.get("tool_index")
+                plan = filament_matching.evaluate(config, loaded).plan       # empty when the printer does not satisfy every colour
+                by_colour = {u.model_filament: u.slot for u in plan}
+                for entry in sorted(fmap, key=lambda e: by_colour.get(e.get("model_filament"), e.get("tool_index", 0)) or 0):
+                    ti = by_colour.get(entry.get("model_filament"), entry.get("tool_index"))
                     ep = entry.get("filament_profile")
                     if ep:
                         filament_profiles.append(ep)
@@ -510,7 +413,9 @@ class QueueEngine:
         return await fut
 
     def wake(self) -> None:
-        self._event.set()
+        event = getattr(self, "_event", None)          # the module singleton is built uninitialised until the app starts
+        if event is not None:
+            event.set()
 
     async def start(self) -> None:
         # Sweep stale estimate gcode from a prior run so we don't serve stale data.
@@ -590,6 +495,9 @@ class QueueEngine:
             # configurable check interval, whichever comes first.
             interval = await self._check_interval_seconds()
             interval = min(interval, await self._seconds_until_next_schedule())
+            dead_wait = self._mgr.seconds_until_next_dead(await self._dead_after_minutes())
+            if isinstance(dead_wait, (int, float)):
+                interval = min(interval, dead_wait)           # a printer crossing its offline cutoff is acted on when it happens
             try:
                 await asyncio.wait_for(self._event.wait(), timeout=interval)
             except asyncio.TimeoutError:
@@ -623,6 +531,7 @@ class QueueEngine:
         return max(1, minutes) * 60.0
 
     async def _process_queue(self) -> None:
+        await self._liveness_pass()
         await self._reconcile_printing_jobs()
         all_ids = sorted(self._mgr.get_all_printer_ids())
         ready_set = {pid for pid in all_ids if self._mgr.is_printer_ready(pid)}
@@ -647,6 +556,185 @@ class QueueEngine:
                         await self._try_claim_for_printer(session, printer_id, slice_only=True)
             except Exception:
                 logger.exception("Queue engine error processing printer %s", printer_id)
+        try:
+            await self._sweep_unmatched_jobs()
+        except Exception:
+            logger.exception("Queue engine error sweeping unmatched jobs")
+
+    # --- printer liveness: a printer offline past the user's cutoff is dead -------------------------------------------
+
+    async def _dead_after_minutes(self) -> int:
+        """`queue_config.printer_dead_after_minutes` (0 = a printer is never declared dead)."""
+        try:
+            async with self._factory() as session:
+                cfg = await session.get(QueueConfig, 1)
+                return cfg.printer_dead_after_minutes if cfg is not None else 30
+        except Exception:
+            logger.exception("Failed to read the printer dead-after setting; using 30 minutes")
+            return 30
+
+    async def on_connectivity(self, printer_id: int, edge: str, was_dead: bool) -> None:
+        """A printer that was offline is back. Nothing happens for a blip that healed before the cutoff, unless work is waiting for
+        it: a job sliced for it while it was away (undead) is picked up by waking the queue, and the normal ready path uploads and
+        starts it only if the printer is idle with a clear plate. A dead printer returning reopens what its absence blocked."""
+        if edge == "slots":                                  # what is loaded changed: a job may now have (or lose) a match
+            self.wake()
+            return
+        if edge != "online":
+            return
+        if was_dead:
+            self.wake()
+            return
+        async with self._factory() as session:
+            if await self._has_pending_sliced_job(session, printer_id):
+                self.wake()
+
+    async def _liveness_pass(self) -> None:
+        """Sample every printer's connection, hand the printers that came back to `on_connectivity`, and declare the ones that crossed
+        the cutoff dead (each once per outage)."""
+        for printer_id, edge, was_dead in self._mgr.sample_all():
+            try:
+                await self.on_connectivity(printer_id, edge, was_dead)
+            except Exception:
+                logger.exception("Connectivity handling failed for printer %s", printer_id)
+        cutoff = await self._dead_after_minutes()
+        for printer_id in self._mgr.newly_dead(cutoff):
+            try:
+                await self._declare_dead(printer_id, cutoff)
+            except Exception:
+                logger.exception("Declaring printer %s dead failed", printer_id)
+
+    async def _declare_dead(self, printer_id: int, cutoff_minutes: int) -> None:
+        """A dead printer cannot hold its work. Its `printing` job fails (`job.failed`, origin core) and returns to the TOP of the queue;
+        a job merely sliced for it (not started) goes back to `queued` where it was, because only that printer could start it. The
+        plate gate stays set: a half-printed part may be on the bed, so the user still clears it when the printer returns."""
+        reason = f"printer offline for more than {cutoff_minutes} minutes"
+        logger.warning("Printer %s is dead (%s)", printer_id, reason)
+        async with self._factory() as session:
+            printing = (await session.execute(select(Job.id).where(Job.status == "printing", Job.assigned_printer_id == printer_id))).scalars().all()
+            sliced = (await session.execute(select(Job.id).join(GcodeFile, and_(GcodeFile.job_id == Job.id, GcodeFile.printer_id == printer_id))
+                                            .where(Job.status == "sliced"))).scalars().all()
+        for job_id in printing:
+            await self.requeue_dead_print(job_id, printer_id, reason)
+        for job_id in sliced:
+            await self._release_sliced_job(job_id, printer_id)
+        self.wake()
+
+    async def requeue_dead_print(self, job_id: int, printer_id: int, reason: str) -> bool:
+        async with self._factory() as session:
+            now = _now()
+            top = (await session.execute(select(func.min(Job.queue_position)).where(
+                Job.status.in_(("queued", "blocked", "sliced", "slicing", "uploading"))))).scalar()
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing").values(
+                status="queued", queue_position=(top if top is not None else 1.0) - 1.0, assigned_printer_id=None,
+                completed_at=None, block_reason=None, updated_at=now))
+            if claim.rowcount == 0:
+                return False                                   # a late completion won: nothing to requeue
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await job_details.set_details(session, job_id, "core", {"last_failure": {"reason": reason, "printer_id": printer_id, "at": now}})
+            await session.commit()
+        await self._broadcast_job(job_id)
+        await self._publish_job_event("job.failed", job_id, printer_id, "core", {"reason": reason, "phase": "print"},
+                                      dedup=f"job.failed:{job_id}:{now}")
+        await self._fire_webhooks(job_id, "job.failed")
+        await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason, origin="core")
+        return True
+
+    async def _release_sliced_job(self, job_id: int, printer_id: int) -> None:
+        async with self._factory() as session:
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "sliced").values(
+                status="queued", assigned_printer_id=None, updated_at=_now()))
+            if claim.rowcount == 0:
+                return
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await session.commit()
+        await self._broadcast_job(job_id)
+
+    # --- a job nothing in the fleet could ever take is blocked: waiting cannot fix it --------------------------------------
+
+    def _counts_for_matching(self, printer: Printer, cutoff_minutes: int) -> bool:
+        """A printer that could take a job once the situation changes without anyone touching the fleet: every printer except a DEAD one
+        (offline for the user's cutoff). Online and undead (offline under the cutoff) count; so do printers the operator switched off or
+        whose plugin is dormant, and ones with no client yet (just booted): none of those makes a job *impossible*, and blocking and
+        announcing jobs the moment someone toggles a queue or restarts Themis would be noise."""
+        return self._mgr.liveness(printer.id, cutoff_minutes) != "dead"
+
+    async def _no_match_reason(self, session: AsyncSession, job: Job, configs: list[JobPrinterConfig], printers: dict[int, Printer],
+                               counted: dict[int, Printer], conflicts: dict[int, set]) -> str | None:
+        """Why no printer in the fleet could take `job` (None when one could, or when a per-printer path already owns the block)."""
+        configs = [c for c in configs if c.printer_id in printers]
+        if not configs:
+            return f"{NO_MATCH_PREFIX}: no printer in the fleet is compatible with this job"
+        candidates = [(c, counted[c.printer_id]) for c in configs if c.printer_id in counted]
+        if not candidates:
+            return f"{NO_MATCH_PREFIX}: every compatible printer has been offline past the limit"
+        source_file = await session.get(UploadedFile, job.uploaded_file_id)
+        reasons: list[str] = []
+        for config, printer in candidates:
+            if config.slice_failed:
+                return None                                  # the slicing-failure path blocks and rescues this one
+            if source_file is not None and is_presliced_file(source_file):
+                verdict = await gcode_eligibility.evaluate(session, source_file, printer, confirmed=bool(job.eligibility_confirmed))
+                if not verdict.allowed:
+                    reasons.append(verdict.message)
+                    continue
+            fit = filament_matching.evaluate(config, printer.loaded_filaments or [], conflicts.get(printer.id, set()))
+            if fit.eligible:
+                return None
+            reasons.extend(fit.reasons)
+        unique = list(dict.fromkeys(r for r in reasons if r))[:3]
+        return f"{NO_MATCH_PREFIX}: " + ("; ".join(unique) or "no printer in the fleet can run this job")
+
+    async def _sweep_unmatched_jobs(self) -> None:
+        """Each cycle, for every job that is up for work (queued, due, its project promoted): when no printer in the fleet could take it
+        — whatever its current state — block it (one `job.blocked`, plus webhook/notification) because requeue-and-wait cannot fix
+        it. A job this sweep blocked is released back to `queued` as soon as a match exists (a printer added or back, filament
+        loaded). Blocks with any other cause are left alone."""
+        cutoff = await self._dead_after_minutes()
+        if not isinstance(self._mgr.liveness(0, cutoff), (str, type(None))):
+            return                                           # a manager that cannot report liveness: no basis to decide
+        now = _now()
+        async with self._factory() as session:
+            jobs = (await session.execute(
+                select(Job).outerjoin(Project, Project.id == Job.project_id)
+                .where(or_(Job.status == "queued", and_(Job.status == "blocked", Job.block_reason.like(f"{NO_MATCH_PREFIX}%"))))
+                .where(or_(Job.project_id.is_(None), Project.stage == "queued"))
+                .where(or_(Job.not_before.is_(None), Job.not_before <= now))
+                .order_by(Job.queue_position.asc()))).scalars().all()
+            if not jobs:
+                return
+            printers = {p.id: p for p in (await session.execute(select(Printer))).scalars()}
+            counted = {pid: p for pid, p in printers.items() if self._counts_for_matching(p, cutoff)}
+            for printer in counted.values():          # a printer skipped by the claim loop (quiet hours, pending sliced work) must still have its model targets materialized
+                try:
+                    await model_targets.sync_targets_for_printer(session, printer)
+                except Exception:                     # one printer's failure must not stop the others being swept
+                    logger.exception("Syncing model targets for printer %s failed", printer.id)
+                    await session.rollback()
+            await session.commit()
+            conflicts = {pid: await filament_matching.conflicts_for(p.loaded_filaments or []) for pid, p in counted.items()}
+            by_job: dict[int, list[JobPrinterConfig]] = {}
+            for c in (await session.execute(select(JobPrinterConfig).where(JobPrinterConfig.job_id.in_([j.id for j in jobs])))).scalars():
+                by_job.setdefault(c.job_id, []).append(c)
+            for job in jobs:
+                reason = await self._no_match_reason(session, job, by_job.get(job.id, []), printers, counted, conflicts)
+                if reason is None:
+                    if job.status == "blocked":
+                        released = await session.execute(update(Job).where(
+                            Job.id == job.id, Job.status == "blocked", Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(
+                            status="queued", block_reason=None, updated_at=_now()))
+                        await session.commit()
+                        if released.rowcount:
+                            await self._broadcast_job(job.id)
+                elif job.status == "queued":
+                    await self._block_job(session, job, reason, notify=True)
+                elif job.block_reason != reason:
+                    # Already ours and still blocked, only the wording moved (a slot changed, reasons reordered): update it quietly, one
+                    # announcement per block, not one per cycle.
+                    await session.execute(update(Job).where(Job.id == job.id, Job.status == "blocked",
+                                                            Job.block_reason.like(f"{NO_MATCH_PREFIX}%")).values(block_reason=reason, updated_at=_now()))
+                    await session.commit()
+                    await self._broadcast_job(job.id)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.
@@ -691,34 +779,9 @@ class QueueEngine:
                 # Elegoo/Snapmaker physical cancel: normalized state is FAILED.
                 # Mark the job failed so the user can adjust settings before re-queueing.
                 async with self._factory() as session:
-                    job = await session.get(Job, job_id)
-                    if job is None or job.status != "printing":
-                        continue  # already resolved by the normal callback
-                    job.status = "failed"
-                    job.completed_at = _now()
-                    job.block_reason = "print cancelled or ended with failure on the printer"
-                    job.assigned_printer_id = None
-                    job.updated_at = _now()
-                    job.deduction_skipped = True
-                    gcode_result = await session.execute(
-                        select(GcodeFile).where(
-                            GcodeFile.job_id == job_id,
-                            GcodeFile.printer_id == printer_id,
-                        )
-                    )
-                    gcode = gcode_result.scalar_one_or_none()
-                    if gcode:
-                        try:
-                            os.remove(gcode.path)
-                        except OSError:
-                            pass
-                        await session.delete(gcode)
-                    await session.commit()
-                logger.warning(
-                    "Reconcile: job %s → failed (printer %s idle with FAILED state)",
-                    job_id, printer_id,
-                )
-                await self._broadcast_job(job_id)
+                    origin = await self._origin_of(session, printer_id)
+                await self.fail_started_job(job_id, printer_id, origin=origin,
+                                            reason="print cancelled or ended with failure on the printer")
             else:
                 # Normal completion (or Bambu cancel, which is indistinguishable from
                 # a successful finish at the firmware level). Delegate to the same
@@ -738,8 +801,10 @@ class QueueEngine:
         await model_targets.sync_targets_for_printer(session, printer)
         await session.commit()
 
-        # The FIRST queue item that lists this printer as compatible — head of line.
-        # Blocked jobs are re-evaluated (loading the right filament unblocks them).
+        # The FIRST queue item that lists this printer as compatible AND whose filament this printer can supply — head of line.
+        # A job whose filament this printer can't supply is skipped (it stays queued, never blocked or failed for that: loading
+        # the right filament makes it claimable on the next cycle, and the job detail says why it doesn't match). Blocked jobs
+        # are re-evaluated (fixing the cause unblocks them).
         stmt = (
             select(Job, JobPrinterConfig)
             .join(
@@ -753,23 +818,23 @@ class QueueEngine:
             # A scheduled job that isn't due yet is skipped (not head-of-line): jobs behind it can still run.
             .where(or_(Job.not_before.is_(None), Job.not_before <= _now()))
             .order_by(Job.queue_position.asc())
-            .limit(1)
         )
-        row = (await session.execute(stmt)).first()
-        if row is None:
+        loaded = list(printer.loaded_filaments or [])
+        conflicts = await filament_matching.conflicts_for(loaded)
+        job = config = fit = None
+        for cand_job, cand_config in (await session.execute(stmt)).all():
+            # If this job can't run on this printer, block it and STOP — do not look
+            # further down the queue for this printer (head-of-line blocking).
+            if cand_config.slice_failed:
+                await self._block_job(session, cand_job, cand_config.slice_error or "slicing failed")
+                return
+            cand_fit = filament_matching.evaluate(cand_config, loaded, conflicts)
+            if cand_fit.eligible:
+                job, config, fit = cand_job, cand_config, cand_fit
+                break
+        if job is None:
             return
-        job, config = row
         job_id = job.id
-
-        # If this job can't run on this printer, block it and STOP — do not look
-        # further down the queue for this printer (head-of-line blocking).
-        if config.slice_failed:
-            await self._block_job(session, job, config.slice_error or "slicing failed")
-            return
-        mismatch = _filament_mismatch(config, printer.loaded_filaments)
-        if mismatch:
-            await self._block_job(session, job, mismatch)
-            return
 
         # A pre-sliced file only goes to a printer that prints that format as-is (create/PATCH and target sync already
         # refuse the rest; this catches configs that predate that check). Block, never fail — failed is terminal.
@@ -808,7 +873,7 @@ class QueueEngine:
             if decision.blocked:
                 if decision.recoverable and job.allow_cached_slice:
                     cache_only_version = await self._cached_version_for_claim(
-                        session, job, config, printer, source_file, provider_id)
+                        session, job, config, printer, source_file, provider_id, fit.plan)
                 if cache_only_version is None:
                     await self._block_job(session, job, decision.message)
                     return
@@ -816,6 +881,7 @@ class QueueEngine:
         # Claim → slice. Conditional UPDATE guards against a status change (e.g. a
         # user cancel) that committed while we awaited the Laminus health probe above.
         plate_number = job.plate_number
+        config.slot_plan = filament_matching.plan_to_json(fit.plan)    # the slots this print uses: slicing and deduction follow it
         result = await session.execute(
             update(Job)
             .where(Job.id == job_id, Job.status.in_(["queued", "blocked"]))
@@ -835,6 +901,7 @@ class QueueEngine:
     async def _cached_version_for_claim(
         self, session: AsyncSession, job: Job, config: JobPrinterConfig, printer: Printer, source_file: UploadedFile,
         provider_id: str | None = None,
+        plan: list | None = None,
     ) -> int | None:
         """The usable cached version matching `printer`'s slice of `job` — the key dispatch would look up — or None.
         Only asked while Laminus is down, so staleness can't be checked (unknown counts as usable, as at dispatch).
@@ -845,12 +912,12 @@ class QueueEngine:
                 return None
             if await refresh_content_hash(source_file, get_library_store()):   # the key hashes the model's bytes
                 await session.commit()
+            params = _slice_params(job, config, printer, source_file, machine_preset, plan)
             try:
-                req, fmap = self._slice_request(job.id, printer.id, job.plate_number,
-                                                _slice_params(job, config, printer, source_file, machine_preset), provider_id)
+                req, fmap = self._slice_request(job.id, printer.id, job.plate_number, params, provider_id)
             except ValueError:   # a mapped filament isn't loaded: dispatch couldn't build this slice either
                 return None
-            inputs = slice_cache.key_inputs(req, source_file.content_hash, config.tool_index, fmap)
+            inputs = slice_cache.key_inputs(req, source_file.content_hash, params["tool_index"], fmap)
             if inputs is None:
                 return None
             key = slice_cache.cache_key(inputs)
@@ -896,7 +963,7 @@ class QueueEngine:
                 return (v, f), True
         return None, bool(rows)
 
-    async def _block_job(self, session: AsyncSession, job: Job, reason: str) -> None:
+    async def _block_job(self, session: AsyncSession, job: Job, reason: str, *, notify: bool = False) -> None:
         job_id = job.id
         already = job.status == "blocked" and job.block_reason == reason
         # Conditional UPDATE, mirroring the claim guard above: some call sites reach
@@ -913,6 +980,11 @@ class QueueEngine:
         await session.commit()
         if not already:  # avoid broadcast spam when re-blocking with the same reason
             await self._broadcast_job(job_id)
+            await self._publish_job_event("job.blocked", job_id, None, "core", {"reason": reason, "phase": "queue"},
+                                          dedup=f"job.blocked:{job_id}:{_now()}")
+            if notify:                                      # a block that needs the user (fleet-wide mismatch) is also announced
+                await self._fire_webhooks(job_id, "job.blocked")
+                await self._fire_notifications(job_id, "job.blocked", reason=reason, origin="core")
 
     async def _run_slice_and_print(self, job_id: int, printer_id: int, plate_number: int, slice_only: bool = False,
                                    cache_only_version: int | None = None, provider_id: str | None = None) -> None:
@@ -936,8 +1008,10 @@ class QueueEngine:
             printer = await session.get(Printer, printer_id)
             # Capture scalar values before session closes
             loaded = (printer.loaded_filaments if printer else None) or []
-            slot = _slot_for_config(config, loaded) if config else None
-            cfg_tool_index = config.tool_index if config else None
+            plan = filament_matching.plan_for(config, loaded) if config else []
+            slot = filament_matching.slot_for_config(config, loaded, plan=filament_matching.plan_to_json(plan)) if plan else None
+            plan_gone = filament_matching.still_loaded(plan, loaded) if config else None
+            cfg_tool_index = None   # set from the slice params below
             # AMS printers (Bambu) map the print's filament to the matched tray.
             ams_tray_id = (slot or {}).get("ams_tray_id")
             source_key = uploaded_file.relative_path if uploaded_file else None
@@ -946,7 +1020,8 @@ class QueueEngine:
                 printer.preferred_slicer_plugin_id))) if printer else None
             machine_preset = resolution.profile if resolution else None
             printer_view = PrinterView.of(printer, resolution) if printer else None
-            params = _slice_params(job, config, printer, uploaded_file, machine_preset)
+            params = _slice_params(job, config, printer, uploaded_file, machine_preset, plan)
+            cfg_tool_index = params["tool_index"]
             is_gcode = is_presliced_file(uploaded_file)
             allow_cached = bool(job.allow_cached_slice) if job else False
             if uploaded_file is not None and not is_gcode and (allow_cached or (job is not None and job.save_slice)):
@@ -958,6 +1033,11 @@ class QueueEngine:
 
         if config is None or uploaded_file is None or printer_view is None:
             await self._fail_job_post_slice(job_id, printer_id)
+            return
+        if plan_gone:
+            # The filament was there when the printer claimed the job and was removed since: a slice failure (blocked, recoverable
+            # with unblock), not a mismatch (a mismatch keeps the job queued).
+            await self._handle_slice_failure(job_id, printer_id, plan_gone)
             return
         slice_presets: list = []
         slice_inputs: slice_cache.CacheKeyInputs | None = None   # what this slice was made from (slicing cache)
@@ -1090,7 +1170,7 @@ class QueueEngine:
     def _slice_request(self, job_id: int, printer_id: int, plate_number: int,
                        p: dict, provider_id: str | None = None) -> tuple[SliceRequest, list | None]:
         """The production SliceRequest for `p` (see `_slice_params`) plus the RESOLVED filament map (slot indices —
-        part of the cache key). Raises ValueError when a catalog filament in the map isn't loaded."""
+        part of the cache key)."""
         # Meaningful, unique artifact name; the printer decides its output format.
         stem = os.path.splitext(os.path.basename(p["original_filename"] or "model"))[0]
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", stem).strip("_") or "model"
@@ -1098,10 +1178,9 @@ class QueueEngine:
         client = self._mgr.get_client(printer_id)
         export_args = client.orca_export_args(file_base) if client else []
 
-        # Resolve any catalog filament entries to slot indices before slicing.
         loaded = p["loaded"]
         tool_index = p["tool_index"]
-        filament_map = _resolve_filament_map(p["filament_map"], loaded) if p["filament_map"] else p["filament_map"]
+        filament_map = p["filament_map"]                                   # already resolved to slots at claim time
 
         provider_id = provider_id or effective_provider_id(p.get('preferred_slicer'))
         prepare_hook = tool_mapping_hook(client, tool_index, filament_map, slicing_provider_for(provider_id))
@@ -1228,6 +1307,8 @@ class QueueEngine:
         slice_cache.log_event("gate_bypass_released", job_id=job_id, printer_id=printer_id, reason=reason)
         if result.rowcount:
             await self._broadcast_job(job_id)
+            await self._publish_job_event("job.blocked", job_id, printer_id, "core", {"reason": reason, "phase": "queue"},
+                                          dedup=f"job.blocked:{job_id}:{_now()}")
 
     async def _record_cache_decision(self, job_id: int, info: dict) -> None:
         async with self._factory() as session:
@@ -1287,6 +1368,8 @@ class QueueEngine:
         await self._broadcast_job(job_id)
         await self._fire_webhooks(job_id, "job.blocked")
         await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=error)
+        await self._publish_job_event("job.blocked", job_id, printer_id, "core", {"reason": f"slicing failed: {error}", "phase": "queue"},
+                                      dedup=f"job.blocked:{job_id}:{_now()}")
 
     async def _fail_job_post_slice(self, job_id: int, printer_id: int, reason: str | None = None) -> None:
         async with self._factory() as session:
@@ -1431,113 +1514,171 @@ class QueueEngine:
             return
 
         async with self._factory() as session:
-            job = await session.get(Job, job_id)
-            if job is None or job.status in ("cancelled", "complete"):
-                return
-            job.status = "printing"
-            job.printed_on_printer_id = printer_id
-            job.updated_at = _now()
-            # The printer has started a physical print: mark it not-ready for new
-            # work so it won't auto-claim the next job after this one finishes — the
-            # user must explicitly mark it ready (clear the plate) first. Set on
-            # start (not just on completion) so a missed completion event can't let
-            # it grab another job onto an uncleared plate.
-            self._mgr.set_awaiting_plate_clear(printer_id, True)
-            printer = await session.get(Printer, printer_id)
-            if printer is not None:
-                printer.awaiting_plate_clear = True
-            snapshot_ref = await self._snapshot_ref(session, job_id, printer_id, printer)
-            await session.commit()
-
-        if snapshot_ref is not None:
-            # Provider I/O never runs on the queue loop: the starting weight is read in a host task.
-            inventory_tasks.spawn(inventory_snapshots.take(self._factory, job_id, printer_id, snapshot_ref),
-                                  name=f"inventory-snapshot-{job_id}")
+            origin = await self._origin_of(session, printer_id)
+        if not await self.mark_printing(job_id, printer_id, origin=origin):
+            return
         await self._broadcast_job(job_id)
 
-    async def _snapshot_ref(self, session, job_id: int, printer_id: int, printer) -> str | None:
-        """The spool ref to snapshot at print start (DB only), or None when no deduction will apply."""
-        if not (inventory_deduction.can_deduct() and await inventory_config.deduct_enabled(session)):
-            return None
-        config = (await session.execute(select(JobPrinterConfig).where(
-            JobPrinterConfig.job_id == job_id, JobPrinterConfig.printer_id == printer_id))).scalar_one_or_none()
-        if config is None:
-            return None
-        slot = _slot_for_config(config, (printer.loaded_filaments if printer else None) or [])
-        ref = inventory_refs.slot_spool_ref(slot) if slot is not None else None
-        return str(ref) if ref is not None else None
+    async def _origin_of(self, session: AsyncSession, printer_id: int | None) -> str | None:
+        """The plugin that owns a printer: the `origin` of the events core publishes for what that printer's plugin reported."""
+        printer = await session.get(Printer, printer_id) if printer_id is not None else None
+        return printer.plugin_id if printer is not None else None
+
+    async def _cleanup_gcode(self, session: AsyncSession, job_id: int, printer_id: int) -> None:
+        gcode_result = await session.execute(select(GcodeFile).where(GcodeFile.job_id == job_id, GcodeFile.printer_id == printer_id))
+        gcode = gcode_result.scalar_one_or_none()
+        if gcode:
+            try:
+                os.remove(gcode.path)
+            except OSError:
+                pass
+            await session.delete(gcode)
+
+    async def _hold_plate_gate(self, session: AsyncSession, printer_id: int) -> Printer | None:
+        """The printer must not auto-claim the next job onto an uncleared plate: set from the start of a print, and again at its end
+        (a missed completion callback can never let it grab another job)."""
+        self._mgr.set_awaiting_plate_clear(printer_id, True)
+        printer = await session.get(Printer, printer_id)
+        if printer is not None:
+            printer.awaiting_plate_clear = True
+        return printer
+
+    async def mark_printing(self, job_id: int, printer_id: int, *, origin: str | None, details: Mapping[str, Any] | None = None,
+                            only_from: tuple[str, ...] | None = None) -> bool:
+        """The printer began a job's physical print: status `printing`, the plate gate, the print-start detail and the durable
+        `job.started` event in ONE transaction. `only_from` makes it an atomic claim (a repeat or a job in another state is a no-op
+        returning False); without it only a cancelled/complete job is refused (the queue's own start path)."""
+        async with self._factory() as session:
+            now = _now()
+            if only_from is not None:
+                claim = await session.execute(update(Job).where(Job.id == job_id, Job.status.in_(only_from))
+                                              .values(status="printing", printed_on_printer_id=printer_id, updated_at=now))
+                if claim.rowcount == 0:
+                    return False
+                job = await session.get(Job, job_id)
+            else:
+                job = await session.get(Job, job_id)
+                if job is None or job.status in ("cancelled", "complete"):
+                    return False
+                job.status = "printing"
+                job.printed_on_printer_id = printer_id
+                job.updated_at = now
+            printer = await self._hold_plate_gate(session, printer_id)
+            await job_details.set_details(session, job_id, origin or "core", {"print_start_time": now, **(details or {})})
+            # Observers (inventory snapshots the spools in use) react to this durable event; the queue names none of them.
+            await completion_events.enqueue_job_started(session, job, printer_id, origin=origin or "core",
+                                                        loaded_filaments=(printer.loaded_filaments if printer else None))
+            await session.commit()
+        event_hub.wake()
+        return True
 
     async def handle_print_complete(self, printer_id: int) -> None:
-        """Called by PrinterManager when the printer's vendor client signals print done."""
-        job_id = None
-
+        """Called by PrinterManager when the printer's vendor client signals print done: the printer's plugin reporting `complete`."""
         async with self._factory() as session:
-            result = await session.execute(
-                select(Job).where(
-                    Job.status == "printing",
-                    Job.assigned_printer_id == printer_id,
-                )
-            )
-            job = result.scalar_one_or_none()
+            job = (await session.execute(select(Job).where(Job.status == "printing", Job.assigned_printer_id == printer_id))
+                   ).scalar_one_or_none()
             if job is None:
                 return
-            job_id = job.id
+            job_id, origin = job.id, await self._origin_of(session, printer_id)
+        await self.complete_job(job_id, printer_id, origin=origin)
 
-            # Conditional UPDATE claims the completion atomically. The vendor client's
-            # completion callback and _reconcile_printing_jobs can both observe
-            # status=="printing" for the same job (several awaits separate this read
-            # from the commit below); without this guard both would proceed and
-            # double the inventory deduction, lifetime counters, and job.complete
-            # webhook. Only the caller that flips the row wins.
-            claim = await session.execute(
-                update(Job)
-                .where(Job.id == job_id, Job.status == "printing")
-                .values(status="complete", completed_at=_now(), updated_at=_now())
-            )
+    async def complete_job(self, job_id: int, printer_id: int, *, origin: str | None, details: Mapping[str, Any] | None = None) -> bool:
+        """Finish a `printing` job: the status, gcode cleanup, plate gate, the reported details and the durable `job.complete` event
+        in ONE transaction (so a forced failure leaves none of them). False when another completion path already won."""
+        async with self._factory() as session:
+            now = _now()
+            # Conditional UPDATE claims the completion atomically. The vendor client's completion callback and
+            # _reconcile_printing_jobs can both observe status=="printing" for the same job (several awaits separate that read
+            # from this commit); without the guard both would proceed and double the inventory deduction, lifetime counters, and
+            # job.complete webhook. Only the caller that flips the row wins.
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing")
+                                          .values(status="complete", completed_at=now, updated_at=now))
             if claim.rowcount == 0:
-                return  # already claimed by a concurrent completion path
-
+                return False
             # The wear counters, the spool deduction and the notices are effects of the durable `job.complete` event written below,
-            # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. Which spool
-            # was in use is resolved now, because the loaded slot may change once the print is over.
-            printer = await session.get(Printer, printer_id)
-            inventory_use = None
-            actual_grams = job.actual_filament_grams
-            if actual_grams is not None and inventory_deduction.can_deduct() \
-                    and await inventory_config.deduct_enabled(session):
-                loaded = (printer.loaded_filaments if printer else None) or []
-                cfg_result = await session.execute(
-                    select(JobPrinterConfig).where(
-                        JobPrinterConfig.job_id == job_id,
-                        JobPrinterConfig.printer_id == printer_id,
-                    )
-                )
-                config = cfg_result.scalar_one_or_none()
-                if config is not None:
-                    slot = _slot_for_config(config, loaded)
-                    if slot is not None:
-                        raw_spool_id = inventory_refs.slot_spool_ref(slot)
-                        if raw_spool_id is not None:
-                            inventory_use = {"spool_ref": str(raw_spool_id), "grams": actual_grams}
-
-            # Delete gcode file from disk and DB
-            gcode_result = await session.execute(
-                select(GcodeFile).where(
-                    GcodeFile.job_id == job_id,
-                    GcodeFile.printer_id == printer_id,
-                )
-            )
-            gcode = gcode_result.scalar_one_or_none()
-            if gcode:
-                try:
-                    os.remove(gcode.path)
-                except OSError:
-                    pass
-                await session.delete(gcode)
-            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", inventory=inventory_use)
+            # in THIS transaction (completion_events.py): they cannot be lost after the commit and cannot run twice. The printer's
+            # loaded slots travel with it, because they may change once the print is over.
+            job = await session.get(Job, job_id)
+            printer = await self._hold_plate_gate(session, printer_id)
+            await self._cleanup_gcode(session, job_id, printer_id)
+            reported: dict[str, Any] = {"print_end_time": now, "result": "success"}
+            if job.actual_seconds is not None:
+                reported["print_seconds"] = job.actual_seconds
+            if job.actual_filament_grams is not None:
+                reported["filament_usage"] = {"grams": job.actual_filament_grams, "breakdown": job.actual_filament_breakdown}
+            await job_details.set_details(session, job_id, origin or "core", {**reported, **(details or {})})
+            await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
+            await completion_events.enqueue_job_complete(session, job, printer_id, source="queue", origin=origin or "core",
+                                                         loaded_filaments=printer.loaded_filaments if printer else None)
             await session.commit()
-
         event_hub.wake()
+        return True
+
+    async def fail_started_job(self, job_id: int, printer_id: int, *, reason: str, origin: str | None,
+                               details: Mapping[str, Any] | None = None, fire_notices: bool = False) -> bool:
+        """A started print ended in failure: `failed` (terminal), the printer KEPT (after the start only a user releases it), no spool
+        deduction, the failure details, and a best-effort `job.failed`. False when the job is not `printing` any more."""
+        async with self._factory() as session:
+            now = _now()
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing")
+                                          .values(status="failed", completed_at=now, updated_at=now, block_reason=reason,
+                                                  deduction_skipped=True))
+            if claim.rowcount == 0:
+                return False
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await job_details.set_details(session, job_id, origin or "core",
+                                          {"print_end_time": now, "result": "failure", "failure_reason": reason, **(details or {})})
+            await session.execute(delete(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason"))
+            await session.commit()
+        logger.warning("Job %s → failed on printer %s: %s", job_id, printer_id, reason)
+        await self._broadcast_job(job_id)
+        await self._publish_job_event("job.failed", job_id, printer_id, origin, {"reason": reason, "phase": "print"}, dedup=f"job.failed:{job_id}:{now}")
+        if fire_notices:
+            await self._fire_webhooks(job_id, "job.failed")
+            await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason, origin=origin)
+        return True
+
+    async def note_print_blocked(self, job_id: int, printer_id: int, *, origin: str | None, reason: str,
+                                 details: Mapping[str, Any] | None = None) -> bool:
+        """A printer halted a started print (filament runout, a hardware fault, ...). A NOTICE ONLY: the job stays `printing` on its
+        printer (`blocked` elsewhere means "released, re-evaluate": flipping it here would let another printer claim a job whose
+        physical print is only paused). The reason is kept as the `blocked_reason` detail and published as best-effort `job.blocked`
+        (`phase: "print"`); the same reason repeated while the job still prints is one notice. The print ends through `complete` /
+        `failed`, which clear it. False for a job that is not `printing` or a repeated reason."""
+        async with self._factory() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status != "printing":
+                return False
+            who = origin or "core"
+            known = (await session.execute(select(JobDetail).where(JobDetail.job_id == job_id, JobDetail.field == "blocked_reason",
+                                                                  JobDetail.origin == who))).scalar_one_or_none()
+            if known is not None and known.value == reason:
+                return False
+            await job_details.set_details(session, job_id, who, {"blocked_reason": reason, **(details or {})})
+            await session.commit()
+        await self._publish_job_event("job.blocked", job_id, printer_id, origin, {"reason": reason, "phase": "print"},
+                                      dedup=f"job.blocked:{job_id}:print:{_now()}")
+        await self._fire_webhooks(job_id, "job.blocked")
+        await self._fire_notifications(job_id, "job.blocked", printer_id=printer_id, reason=reason, origin=origin)
+        return True
+
+    async def _publish_job_event(self, name: str, job_id: int, printer_id: int | None, origin: str | None, payload: dict, *, dedup: str) -> None:
+        """Best-effort notice for a job transition (`job.failed` / `job.blocked`): core publishes, the origin says who reported it. A
+        publication error is a bug in core, logged and never raised into the state change that already committed."""
+        try:
+            async with self._factory() as session:
+                job = await session.get(Job, job_id)
+            entities: dict[str, int | str] = {"job_id": job_id}
+            if printer_id is not None:
+                entities["printer_id"] = printer_id
+            if job is not None and job.project_id is not None:
+                entities["project_id"] = job.project_id
+            if job is not None and job.order_id is not None:
+                entities["order_id"] = job.order_id
+            await event_hub.publish(EventEnvelope(name=name, schema_version=CORE_EVENTS[name].version, origin=origin or "core",
+                                                  entities=entities, dedup_key=dedup, payload=payload))
+        except EventError:
+            logger.exception("Could not publish %s for job %s", name, job_id)
 
     async def _fire_webhooks(self, job_id: int, event: str, event_id: str | None = None) -> None:
         try:
@@ -1558,7 +1699,8 @@ class QueueEngine:
                                   ("external_ref", project.external_ref)) if v is not None}
 
     async def _fire_notifications(
-        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None
+        self, job_id: int, event: str, printer_id: int | None = None, reason: str | None = None, event_id: str | None = None,
+        origin: str | None = None,
     ) -> None:
         try:
             if not plugin_host.active_providers(NOTIFY_CHANNEL.id):
@@ -1574,7 +1716,7 @@ class QueueEngine:
                 if pid is not None:
                     printer = await session.get(Printer, pid)
                     printer_name = printer.name if printer else None
-            title, message = _notification_content(event, job_id, file_name, printer_name, reason)
+            title, message = _notification_content(event, job_id, file_name, printer_name, reason, origin)
             # Fire-and-forget, like _fire_webhooks/webhook_service.schedule: real
             # channel delivery is network/SMTP I/O with a 5s timeout per channel and
             # must not block the queue loop (this is awaited from _reconcile_printing_jobs,

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from sqlalchemy import Boolean, Float, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column
 from .database import Base
@@ -200,6 +200,8 @@ class Order(Base):
 
 class Job(Base):
     __tablename__ = "jobs"
+    # Never reuse an id: events, webhooks and logs name a job by it (v054).
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id: Mapped[int] = mapped_column(primary_key=True)
     uploaded_file_id: Mapped[int] = mapped_column(ForeignKey("uploaded_files.id"))
@@ -272,8 +274,17 @@ class JobPrinterConfig(Base):
     # Filament ask — "any" means no constraint (never null/blank; see v012 migration)
     filament_type: Mapped[str] = mapped_column(String(100), nullable=False, server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), nullable=False, server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     tool_index: Mapped[Optional[int]] = mapped_column(nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # The slots chosen at claim time (`[{model_filament, slot}]`, filament_matching.SlotUse): slicing, the print and the spool
+    # deduction all follow this plan instead of re-matching a slot list that may have changed since.
+    slot_plan: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     slice_failed: Mapped[bool] = mapped_column(Boolean, default=False)
     slice_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when this row was materialized from a JobModelTarget ("any printer of this model"); null = explicit pick.
@@ -305,6 +316,12 @@ class JobModelTarget(Base):
     material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     filament_type: Mapped[str] = mapped_column(String(100), default="any", server_default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any", server_default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_map: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
 
 
@@ -327,6 +344,9 @@ class QueueConfig(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
+    # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
+    # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
+    printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -452,6 +472,12 @@ class ProjectItem(Base):
     # Filament requirement spec — "any" means no constraint
     filament_type: Mapped[str] = mapped_column(String(50), default="any")
     filament_color: Mapped[str] = mapped_column(String(20), default="any")
+    # The filament ask as a tuple (spec 2026-10-19-filament-matching): NULL = undefined (matches anything). `ask_subtype` "any" is
+    # a real value (the subtype wildcard), never "undefined". The legacy filament_type/filament_color columns are history only.
+    ask_manufacturer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    ask_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_subtype: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    ask_color: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     filament_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     material_provider: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     material_ref: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
@@ -866,3 +892,18 @@ class IdempotencyKey(Base):
     created_at: Mapped[str] = mapped_column(String(32))
 
     __table_args__ = (UniqueConstraint("scope", "key", name="ux_idempotency_scope_key"),)
+
+
+class JobDetail(Base):
+    """One detail field of a job, written by one origin (a plugin id or `core`). Names and values are not enforced; `status` is `ok` or
+    `unsupported` (the source says it cannot provide the field for this job). Unique per (job, field, origin)."""
+    __tablename__ = "job_details"
+    __table_args__ = (UniqueConstraint("job_id", "field", "origin", name="ux_job_details"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), index=True)
+    field: Mapped[str] = mapped_column(String(64))
+    origin: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(12), default="ok", server_default="ok")
+    value: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[str] = mapped_column(String(32))

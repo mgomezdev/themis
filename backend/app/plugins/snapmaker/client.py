@@ -6,6 +6,7 @@ from typing import ClassVar
 
 import httpx  # noqa: F401  (the transport lives in services/moonraker; tests patch `<this module>.httpx.*`)
 
+from ...services.filament_tuple import canon_subtype, split_type
 from ...services.abstract_printer_client import ConnectionField, DiscoveredPrinter, PrinterCapabilities
 from ...services.moonraker.client import DEFAULT_PORT, MoonrakerClientBase, MoonrakerState, NORM_STATE as _NORM_STATE
 
@@ -17,7 +18,8 @@ _SUBSCRIBE_OBJECTS = {"print_task_config": None}
 
 def _trays_from_task_config(cfg: dict) -> list[dict]:
     """One loaded-filament dict per tool (T0..T3), from Klipper `print_task_config` (the U1's per-tool filament
-    setup: type/vendor/colour and whether a spool is present). Positional on purpose: the queue resolves a job's
+    setup: vendor/type/sub-type/colour and whether a spool is present; the slot's tuple is vendor, type, sub-type, colour,
+    "Generic"/"NONE" vendor = unknown maker, a blank sub-type = plain). Positional on purpose: the queue resolves a job's
     `tool_index` as the list index, so an empty tool stays in the list as a typeless placeholder (type "")."""
     exist = cfg.get("filament_exist") or []
     types = cfg.get("filament_type") or []
@@ -28,16 +30,21 @@ def _trays_from_task_config(cfg: dict) -> list[dict]:
     for i in range(4):
         ftype = str(types[i]).strip() if i < len(types) and types[i] else ""
         if not (i < len(exist) and exist[i]) or ftype.upper() in ("", "NONE"):
-            out.append({"slot": i, "filament_id": None, "name": "", "type": "", "color": "", "empty": True})
+            out.append({"slot": i, "filament_id": None, "name": "", "manufacturer": None, "type": "", "subtype": None, "color": "",
+                        "empty": True})
             continue
         vendor = str(vendors[i]).strip() if i < len(vendors) and vendors[i] else ""
         sub = str(subs[i]).strip() if i < len(subs) and subs[i] else ""
         rgba = str(colors[i]).strip() if i < len(colors) and colors[i] else ""
+        maker = "" if vendor.upper() in ("", "NONE", "GENERIC") else vendor      # the tool data names the maker; "Generic" is none
+        base, ftype_sub = split_type(ftype)                                     # a type reported as "PLA-CF" carries its variant
         out.append({
             "slot": i,
             "filament_id": None,
             "name": " ".join(p for p in ("" if vendor.upper() == "NONE" else vendor, sub or ftype) if p),
-            "type": ftype,
+            "manufacturer": maker or None,
+            "type": base,
+            "subtype": canon_subtype(sub, default=ftype_sub),
             "color": f"#{rgba[:6].upper()}" if len(rgba) >= 6 else "",
         })
     return out

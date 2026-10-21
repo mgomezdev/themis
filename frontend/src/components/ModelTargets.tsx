@@ -88,15 +88,14 @@ export function buildEligibility(
   const model_targets: ModelTargetInput[] = [];
   for (const key of selected) {
     const pp = perPrinter[key];
-    // "any" is the wire form of "no preference" — the backend rejects null/blank here.
+    // null = undefined = matches anything; a type always carries a subtype (the editor guarantees it, the server enforces it).
     const ask = {
       print_profile: pp.printProfile ?? '',   // gcode jobs have none
       filament_profile: pp.filamentProfile ?? null,
-      filament_id: pp.filamentId ?? null,
-      material_provider: pp.materialProvider ?? null,
-      material_ref: pp.materialRef ?? null,
-      filament_type: pp.filamentType ?? 'any',
-      filament_color: pp.filamentColor ?? 'any',
+      filament_manufacturer: pp.filamentManufacturer ?? null,
+      filament_type: pp.filamentType ?? null,
+      filament_subtype: pp.filamentSubtype ?? null,
+      filament_color: pp.filamentColor ?? null,
     };
     if (isModelKey(key)) {
       model_targets.push({ model_uuid: modelUuidOf(key), ...ask });

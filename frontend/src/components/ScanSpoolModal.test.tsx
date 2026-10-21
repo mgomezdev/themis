@@ -64,7 +64,7 @@ describe('ScanSpoolModal', () => {
 
     await screen.findByRole('status');
     expect(api.to('PATCH', '/api/v1/printers/1')[0].body).toEqual({ loaded_filaments: [
-      { slot: 0, filament_id: null, name: 'ELEGOO Sky Blue PLA', type: 'PLA', color: '#87CEEB',
+      { slot: 0, filament_id: null, name: 'ELEGOO Sky Blue PLA', manufacturer: 'ELEGOO', type: 'PLA', subtype: 'standard', color: '#87CEEB',
         inventory: { provider: 'spoolman', spool_ref: '12' }, filament_profile: 'ELEGOO PLA @X1' },
       PRINTER.loaded_filaments[1],
     ] });

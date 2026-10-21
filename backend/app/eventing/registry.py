@@ -1,18 +1,22 @@
 """The event catalog: core events plus every registered plugin's `defines_events` (BIZ-249). Publication is validated against it."""
 from __future__ import annotations
 
-from .core_payloads import JobCompletePayload, ProjectPayload
+from .core_payloads import JobCompletePayload, JobStartedPayload, ProjectPayload
 from .definitions import EventDef
 from .envelope import EventEnvelope, EventError
 
-# Core event classes. `job.complete` is durable: its consumers (inventory deduction, maintenance accrual) must not lose it.
+# `job.started|complete|failed|blocked` are at version 2: v2 adds the envelope `origin`. A stored v1 envelope (no origin) still
+# deserializes (origin None) and is delivered; only NEW publications must carry the current version.
+# Core event classes. `job.started` and `job.complete` are durable: their consumers (inventory snapshot and deduction, maintenance accrual) must not lose them.
 # The rest are notices: losing one on a crash costs a notification, never data. Names match the existing webhook/notification
 # event names so migrating a consumer changes how it is fed, not what it is called.
 CORE_EVENTS: dict[str, EventDef] = {d.name: d for d in (
-    EventDef("job.complete", durability="durable", payload_model=JobCompletePayload,
+    EventDef("job.started", version=2, durability="durable", payload_model=JobStartedPayload,
+             description="A printer began a job's physical print (published once per start)."),
+    EventDef("job.complete", version=2, durability="durable", payload_model=JobCompletePayload,
              description="A job finished printing successfully (published once per job)."),
-    EventDef("job.failed", description="A job failed after slicing (upload or start error)."),
-    EventDef("job.blocked", description="A job was blocked (slicing failure or no eligible printer)."),
+    EventDef("job.failed", version=2, description="A job failed after slicing (upload or start error)."),
+    EventDef("job.blocked", version=2, description="A job was blocked (slicing failure or no eligible printer)."),
     EventDef("printer.alarm", description="A printer raised or escalated an alarm."),
     EventDef("spool.low", description="A spool fell below its low-stock threshold."),
     EventDef("project.created", payload_model=ProjectPayload, description="A project was created (not published for an idempotent repeat)."),
@@ -37,6 +41,21 @@ def definer_of_event(name: str) -> str | None:
     return next((m.id for m in registered_plugins() if any(d.name == name for d in m.defines_events)), None)
 
 
+def _check_origin(envelope: EventEnvelope, as_plugin: str | None) -> None:
+    """A plugin publishing directly can only name itself as the origin; core may name `core` or an installed plugin (the plugin whose
+    report it is publishing: the job reporter checks ownership before it gets here)."""
+    origin = envelope.origin
+    if origin is None:
+        return
+    if as_plugin is not None:
+        if origin != as_plugin:
+            raise EventError(f"plugin {as_plugin!r} may only publish with origin {as_plugin!r}, not {origin!r}")
+        return
+    from ..plugins import get_plugin                    # late: the plugin package imports this one's definitions
+    if origin != "core" and get_plugin(origin) is None:
+        raise EventError(f"origin {origin!r} is neither 'core' nor an installed plugin")
+
+
 def validate_publication(envelope: EventEnvelope, *, as_plugin: str | None = None) -> EventDef:
     """The envelope's event must exist, be published by its owner at its current schema version, and carry a valid payload."""
     d = event_catalog().get(envelope.name)
@@ -51,6 +70,7 @@ def validate_publication(envelope: EventEnvelope, *, as_plugin: str | None = Non
         raise EventError(f"{as_plugin or 'core'!r} may not publish {envelope.name!r} (owned by {owner!r})")
     if envelope.schema_version != d.version:
         raise EventError(f"{envelope.name} is at schema_version {d.version}, got {envelope.schema_version}")
+    _check_origin(envelope, as_plugin)
     if d.payload_model is not None:
         try:
             d.payload_model.model_validate(envelope.payload)

@@ -16,7 +16,7 @@ async def _models(client) -> dict[str, str]:
 
 def _target(model_uuid: str, **kw) -> dict:
     return {"model_uuid": model_uuid, "print_profile": "0.20mm", "filament_type": "PLA",
-            "filament_color": "any", **kw}
+            "filament_subtype": "any", **kw}
 
 
 async def _post(client, body: dict):
@@ -44,11 +44,11 @@ async def test_create_with_model_target_only_materializes_matching_printers(
     job_id = resp.json()["id"]
     cfgs = await _configs(session_factory, job_id)
     assert [c.printer_id for c in cfgs] == [p1, p3]
-    assert all(c.model_target_id is not None and c.filament_type == "PLA" for c in cfgs)
+    assert all(c.model_target_id is not None and (c.ask_type, c.ask_subtype) == ("PLA", "any") for c in cfgs)
     details = (await client.get(f"/api/v1/jobs/{job_id}/details")).json()
     assert details["model_targets"] == [{
-        "model_uuid": model, "model_label": "Bambu Lab P1S", "print_profile": "0.20mm", "filament_profile": None, "filament_id": None,
-        "material_provider": None, "material_ref": None, "filament_type": "PLA", "filament_color": "any", "filament_map": None}]
+        "model_uuid": model, "model_label": "Bambu Lab P1S", "print_profile": "0.20mm", "filament_profile": None,
+        "filament_manufacturer": None, "filament_type": "PLA", "filament_subtype": "any", "filament_color": None, "filament_map": None}]
     assert {c["printer_id"] for c in details["printer_configs"]} == {p1, p3}
     assert all(c["from_model_target"] for c in details["printer_configs"])
     listed = next(j for j in (await client.get("/api/v1/jobs")).json() if j["id"] == job_id)
@@ -90,7 +90,7 @@ async def test_explicit_printer_and_target_do_not_duplicate_a_printer(
     resp = await _post(client, {
         "uploaded_file_id": await upload_3mf(),
         "printer_configs": [{"printer_id": pid, "print_profile": "0.28mm", "filament_type": "PETG",
-                             "filament_color": "any"}],
+                             "filament_subtype": "any"}],
         "model_targets": [_target(await model_uuid_of(pid))],
     })
     cfgs = await _configs(session_factory, resp.json()["id"])

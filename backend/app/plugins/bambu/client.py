@@ -13,7 +13,8 @@ from typing import Callable, ClassVar, Optional
 
 import paho.mqtt.client as mqtt
 
-from . import camera
+from . import camera, rfid
+from ...services.filament_tuple import split_type
 
 from ...services.abstract_printer_client import (
     AbstractPrinterClient,
@@ -481,13 +482,19 @@ class BambuMQTTClient(AbstractPrinterClient):
                 return  # empty slot
             color8 = (tray.get("tray_color") or "").strip()
             color = f"#{color8[:6]}" if len(color8) >= 6 else "#888888"
+            base, subtype = split_type(ttype)
+            sb_base, sb_subtype = split_type(tray.get("tray_sub_brands"))   # "PLA Silk" names the variant the type alone may not
+            if sb_base and sb_base.casefold() == (base or "").casefold():
+                subtype = sb_subtype
             out.append({
                 "slot": global_id,
                 "ams_tray_id": global_id,
                 "ams_unit": unit_id,
                 "filament_id": tray.get("tray_info_idx") or None,
                 "name": (tray.get("tray_sub_brands") or ttype).strip(),
-                "type": ttype,
+                "manufacturer": rfid.manufacturer(tray),           # decoded from the spool's tag; None when untagged / unknown
+                "type": base,
+                "subtype": subtype,
                 "color": color,
             })
 

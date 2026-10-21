@@ -814,7 +814,7 @@ class ElegooCentauriClient(AbstractPrinterClient):
 
     def get_loaded_filaments(self) -> list:
         return [{
-            "type": "", "color": "#808080",
+            "manufacturer": None, "type": "", "subtype": None, "color": "#808080",
             "tray_info_idx": "", "tray_sub_brands": "",
             "extruder_id": None, "is_external": True,
         }]

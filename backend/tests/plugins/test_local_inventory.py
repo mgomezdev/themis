@@ -11,7 +11,7 @@ from app.plugins.capabilities.filament_inventory import (
     CAPABILITY, REMOTE, InventoryProviderError, MaterialDraft, SpoolDraft,
 )
 from app.plugins.local_inventory import MANIFEST
-from app.plugins.local_inventory.migrations import v001_tables
+from app.plugins.local_inventory.migrations import v001_tables, v002_subtype
 from app.plugins.local_inventory.provider import LocalInventoryProvider
 from app.plugins.local_inventory.settings import LocalInventorySettings
 from app.plugins.migrations import run_plugin_migrations
@@ -55,7 +55,8 @@ async def test_migration_runs_on_a_fresh_db_is_idempotent_stays_in_its_prefix_an
         await v001_tables.up(conn)                                                    # and `up` itself is re-runnable
         tables = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).fetchall()}
         assert {"local_inv_materials", "local_inv_spools", "local_inv_weight_log"} <= tables
-        assert (await conn.execute(text("SELECT count(*) FROM plugin_schema_versions WHERE plugin_id='local_inventory'"))).scalar_one() == 1
+        assert (await conn.execute(text("SELECT count(*) FROM plugin_schema_versions WHERE plugin_id='local_inventory'"))).scalar_one() == 2
+        await v002_subtype.down(conn)
         await v001_tables.down(conn)
         left = {r[0] for r in (await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))).fetchall()}
         assert not {t for t in left if t.startswith("local_inv_")}
@@ -266,3 +267,31 @@ async def test_weights_must_be_finite_and_non_negative(local, session_factory, b
         assert e.value.status == 422
     assert (await local.get_spool(s.ref)).remaining_g == 500.0                       # nothing stored, nothing logged
     assert len(await _rows(session_factory, "SELECT * FROM local_inv_weight_log")) == 1
+
+
+async def test_v002_splits_existing_combined_material_strings_into_type_and_subtype(tmp_path):
+    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
+    async with engine.begin() as conn:
+        await v001_tables.up(conn)
+        for name, raw in (("a", "PLA"), ("b", "PLA+"), ("c", "PLA-CF"), ("d", "PETG Silk"), ("e", None)):
+            await conn.execute(text("INSERT INTO local_inv_materials (name, material, created_at, updated_at) VALUES (:n, :m, 'x', 'x')"),
+                               {"n": name, "m": raw})
+        await v002_subtype.up(conn)
+        await v002_subtype.up(conn)                                                   # re-runnable
+        rows = (await conn.execute(text("SELECT name, material, subtype FROM local_inv_materials ORDER BY id"))).all()
+    await engine.dispose()
+    assert [tuple(r) for r in rows] == [("a", "PLA", "standard"), ("b", "PLA", "plus"), ("c", "PLA", "cf"),
+                                        ("d", "PETG", "silk"), ("e", None, None)]
+
+
+async def test_a_type_without_a_subtype_is_plain_and_a_subtype_needs_a_type(local):
+    plain = await local.create_material(MaterialDraft(name="x", material="PLA"))
+    silk = await local.create_material(MaterialDraft(name="y", material="PLA", subtype="silk"))
+    none = await local.create_material(MaterialDraft(name="z"))
+    assert (plain.subtype, silk.subtype, none.subtype) == ("standard", "silk", None)
+    with pytest.raises(InventoryProviderError) as e:
+        await local.create_material(MaterialDraft(name="w", subtype="silk"))
+    assert e.value.status == 422
+    assert (await local.update_material(plain.ref, {"subtype": "plus"})).subtype == "plus"
+    cleared = await local.update_material(silk.ref, {"material": None})
+    assert (cleared.material, cleared.subtype) == (None, None)                       # clearing the type clears the subtype

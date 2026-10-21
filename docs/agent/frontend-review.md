@@ -28,10 +28,10 @@ the eligibility "ask" (type/color) are all different things that happen to live 
 data model. When a component reads or writes anything filament-related, confirm which one it actually
 has rather than assuming from the field name alone — see `backend-review.md` §1 for the full inventory.
 
-Inventory refs are **provider-namespaced strings** (`{provider, spool_ref}` on a slot, `material_provider` + `material_ref` on a
-material ask). A ref is only meaningful to the provider that issued it: never match a slot's ref against the active provider's
-spools without checking the provider (`activeSlotRef`), and never send the legacy numeric `filament_id` from new code (the server
-mirrors it for providers with numeric refs). UI code branches on capabilities (`useInventory().has(...)`), never on a plugin id —
+A slot's spool binding is a **provider-namespaced string pair** (`{provider, spool_ref}`); it is only meaningful to the provider that
+issued it: never match a slot's ref against the active provider's spools without checking the provider (`activeSlotRef`). A job's
+filament ask is **not** a reference: it is the tuple (`filament_manufacturer/type/subtype/color`, `lib/filamentAsk.ts`); picking an
+inventory material only fills those four fields. Never send `material_*` / `filament_id` from new code. UI code branches on capabilities (`useInventory().has(...)`), never on a plugin id —
 `src/inventoryGuard.test.ts` enforces it.
 
 ## 3. State fidelity when loading saved config

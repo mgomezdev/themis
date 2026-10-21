@@ -10,6 +10,7 @@ from ..capabilities.filament_inventory import (
     LABEL_SCAN, PROFILE_LINKS_READ, PROFILE_LINKS_WRITE, REMOTE, TRACKS_WEIGHT, WRITE_WEIGHT,
     FilamentInventoryProvider, InvMaterial, InvSpool, InventoryProviderError,
 )
+from ...services.filament_tuple import split_type
 from . import client, labels
 from .settings import SpoolmanSettings
 
@@ -41,9 +42,10 @@ def _hex(value) -> str | None:
 
 def to_material(raw: dict) -> InvMaterial:
     vendor = raw.get("vendor") or {}
+    base, subtype = split_type(raw.get("material"))      # Spoolman has one free-text "material" ("PLA+", "PLA-CF"): split it here
     return InvMaterial(
         ref=str(raw["id"]), name=raw.get("name") or "",
-        material=raw.get("material"), color_hex=_hex(raw.get("color_hex")),
+        material=base, subtype=subtype, color_hex=_hex(raw.get("color_hex")),
         vendor=vendor.get("name") if isinstance(vendor, dict) else None,
         density=raw.get("density"), diameter=raw.get("diameter"),
         profile_links=decode_links((raw.get("extra") or {}).get("orca_profiles")), raw=raw,

@@ -16,13 +16,13 @@ def env(**kw) -> EventEnvelope:
 def test_a_new_envelope_has_a_unique_id_a_utc_timestamp_and_the_core_source():
     a, b = env(), env()
     assert a.id != b.id and len(a.id) == 32
-    assert a.occurred_at.endswith("Z") and a.source == "core" and a.schema_version == 1
+    assert a.occurred_at.endswith("Z") and a.source == "core" and a.schema_version == 1 and a.origin is None
 
 
 @pytest.mark.parametrize("bad", [
     {"name": "Job.Complete"}, {"name": "nodots"}, {"name": "a..b"}, {"schema_version": 0}, {"source": ""},
     {"entities": {"banana_id": 1}}, {"payload": {"x": object()}}, {"payload": {"x": "a" * (MAX_PAYLOAD_BYTES + 1)}},
-    {"unknown_field": 1}, {"entities": {"job_id": 1.5}},
+    {"unknown_field": 1}, {"entities": {"job_id": 1.5}}, {"origin": ""}, {"origin": "x" * 65},
 ])
 def test_malformed_envelopes_are_rejected(bad):
     with pytest.raises(ValidationError):
@@ -37,14 +37,38 @@ def test_an_envelope_is_immutable():
 def test_core_catalog_marks_job_completion_durable_and_the_rest_best_effort():
     cat = event_catalog()
     assert cat["job.complete"].durability == "durable"
-    assert {n for n, d in CORE_EVENTS.items() if d.durability == "durable"} == {"job.complete"}
+    assert {n for n, d in CORE_EVENTS.items() if d.durability == "durable"} == {"job.started", "job.complete"}
 
 
 def test_unknown_event_and_wrong_schema_version_are_rejected():
     with pytest.raises(EventError, match="unknown event"):
         validate_publication(env(name="job.exploded"))
     with pytest.raises(EventError, match="schema_version"):
-        validate_publication(env(schema_version=2))
+        validate_publication(env(schema_version=1))                                 # job events are at v2 (they carry `origin`)
+    with pytest.raises(EventError, match="schema_version"):
+        validate_publication(env(schema_version=99))
+    assert validate_publication(env(schema_version=2)).version == 2
+
+
+def test_the_job_event_classes_that_carry_an_origin_are_at_version_2():
+    assert {n: CORE_EVENTS[n].version for n in ("job.started", "job.complete", "job.failed", "job.blocked")} == {
+        "job.started": 2, "job.complete": 2, "job.failed": 2, "job.blocked": 2}
+
+
+def test_core_names_itself_or_an_installed_plugin_as_origin_and_a_plugin_only_itself(session_factory):
+    register(definer_manifest("pub_one"))
+    register(definer_manifest("pub_two"))
+    assert validate_publication(env(schema_version=2, origin="core")).name == "job.blocked"
+    assert validate_publication(env(schema_version=2, origin="pub_one")).name == "job.blocked"        # core publishing a plugin's report
+    assert validate_publication(env(schema_version=2)).name == "job.blocked"                           # no origin: allowed
+    with pytest.raises(EventError, match="neither 'core' nor an installed plugin"):
+        validate_publication(env(schema_version=2, origin="not_installed"))
+    ok = EventEnvelope(name="pub_one.ready", source="pub_one", origin="pub_one", payload={"item": "x"})
+    assert validate_publication(ok, as_plugin="pub_one").name == "pub_one.ready"
+    for claimed in ("core", "pub_two"):                                                                 # a plugin cannot claim core or another plugin
+        with pytest.raises(EventError, match="may only publish with origin"):
+            validate_publication(EventEnvelope(name="pub_one.ready", source="pub_one", origin=claimed, payload={"item": "x"}),
+                                 as_plugin="pub_one")
 
 
 def test_only_the_owner_may_publish_an_event(session_factory):

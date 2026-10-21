@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from .client import MoonrakerClient
 from ..manifest import HOST_API, Manufacturer, PluginManifest, PrinterModel
+from ..job_fields import PRINTER_JOB_FIELDS
 
 
 class NoSettings(BaseModel):
@@ -23,6 +24,7 @@ MANIFEST = PluginManifest(
     host_api=HOST_API,
     settings_model=NoSettings,
     default_enabled=True,
+    job_fields=PRINTER_JOB_FIELDS,
     factory=MoonrakerClient,
     manufacturers=(
         Manufacturer("voron", "Voron Design", (

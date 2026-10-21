@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Icons } from '../components/icons';
-import { FilamentRequirementPicker } from '../components/FilamentRequirementPicker';
-import type { FilamentRequirement } from '../components/FilamentRequirementPicker';
+import { FilamentAskEditor } from '../components/FilamentAskEditor';
+import { NO_ASK, type FilamentAsk } from '../lib/filamentAsk';
 import { PrinterEligibilityPicker } from '../components/PrinterEligibilityPicker';
 import { ProcessPresetPicker } from '../components/ProcessPresetPicker';
 import { CustomerPicker } from '../components/CustomerPicker';
@@ -92,19 +92,19 @@ function FolderRow({
 // Local item row state (before saving)
 // ---------------------------------------------------------------------------
 
-interface LocalItem {
+interface LocalItem extends FilamentAsk {
   localId: string;
   serverId?: number;
   file_id: number;
   file_name: string;
   quantity: number;
-  filament_type: string;
-  filament_color: string;
-  filament_id: number | null;
-  material_provider: string | null;
-  material_ref: string | null;
   sort_order: number;
 }
+
+const askOf = (it: FilamentAsk): FilamentAsk => ({
+  filament_manufacturer: it.filament_manufacturer, filament_type: it.filament_type,
+  filament_subtype: it.filament_subtype, filament_color: it.filament_color,
+});
 
 interface LocalLink {
   localId: string;
@@ -251,7 +251,7 @@ export function ProjectBuilderScreen() {
       onHold: oh, dueDate: dd, notes: no, price: pr,
       items: its.map(i => ({
         fid: i.file_id, qty: i.quantity,
-        ft: i.filament_type, fc: i.filament_color, fi: i.filament_id, mr: i.material_ref, so: i.sort_order,
+        fm: i.filament_manufacturer, ft: i.filament_type, fs: i.filament_subtype, fc: i.filament_color, so: i.sort_order,
       })),
       links: lks.map(l => ({ url: l.url, label: l.label, sid: l.serverId })),
       parts: prts.map(p => ({ name: p.name, qty: p.quantity, alloc: p.allocated, uc: p.unitCost, sid: p.serverId })),
@@ -296,11 +296,10 @@ export function ProjectBuilderScreen() {
         file_id: it.file_id,
         file_name: it.file_name,
         quantity: it.quantity,
+        filament_manufacturer: it.filament_manufacturer,
         filament_type: it.filament_type,
+        filament_subtype: it.filament_subtype,
         filament_color: it.filament_color,
-        filament_id: it.filament_id,
-        material_provider: it.material_provider ?? null,
-        material_ref: it.material_ref ?? null,
         sort_order: it.sort_order,
       }));
       const lks: LocalLink[] = (p.links ?? []).map(l => ({
@@ -342,11 +341,7 @@ export function ProjectBuilderScreen() {
           file_id: f.id,
           file_name: f.original_filename,
           quantity: 1,
-          filament_type: 'any',
-          filament_color: 'any',
-          filament_id: null,
-          material_provider: null,
-          material_ref: null,
+          ...NO_ASK,
           sort_order: prev.length,
         },
       ];
@@ -385,25 +380,12 @@ export function ProjectBuilderScreen() {
     scheduleUndoClear();
   }
 
-  function setItemFilament(localId: string, req: FilamentRequirement) {
-    updateItem(localId, {
-      filament_type: req.filament_type,
-      filament_color: req.filament_color,
-      filament_id: req.filament_id,
-      material_provider: req.material_provider ?? null,
-      material_ref: req.material_ref ?? null,
-    });
+  function setItemFilament(localId: string, req: FilamentAsk) {
+    updateItem(localId, askOf(req));
   }
 
-  function applyFilamentToAll(req: FilamentRequirement) {
-    setItems(prev => prev.map(it => ({
-      ...it,
-      filament_type: req.filament_type,
-      filament_color: req.filament_color,
-      filament_id: req.filament_id,
-      material_provider: req.material_provider ?? null,
-      material_ref: req.material_ref ?? null,
-    })));
+  function applyFilamentToAll(req: FilamentAsk) {
+    setItems(prev => prev.map(it => ({ ...it, ...askOf(req) })));
   }
 
   async function saveProject(): Promise<number> {
@@ -425,11 +407,7 @@ export function ProjectBuilderScreen() {
       for (const it of existing) {
         await updateProjectItem(projectId, it.serverId!, {
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
-          material_provider: it.material_provider ?? null,
-          material_ref: it.material_ref ?? null,
+          ...askOf(it),
           sort_order: it.sort_order,
         });
       }
@@ -438,11 +416,7 @@ export function ProjectBuilderScreen() {
         await addProjectItem(projectId, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
-          material_provider: it.material_provider ?? null,
-          material_ref: it.material_ref ?? null,
+          ...askOf(it),
           sort_order: it.sort_order,
         });
       }
@@ -479,11 +453,7 @@ export function ProjectBuilderScreen() {
         await addProjectItem(proj.id, {
           file_id: it.file_id,
           quantity: it.quantity,
-          filament_type: it.filament_type,
-          filament_color: it.filament_color,
-          filament_id: it.filament_id,
-          material_provider: it.material_provider ?? null,
-          material_ref: it.material_ref ?? null,
+          ...askOf(it),
           sort_order: i,
         });
       }
@@ -823,7 +793,7 @@ export function ProjectBuilderScreen() {
               {/* Column headers */}
               <div style={{
                 display: 'grid',
-                gridTemplateColumns: '1fr 64px 260px auto',
+                gridTemplateColumns: '1fr 64px 340px auto',
                 gap: 8, padding: '0 4px',
                 fontSize: 11, fontWeight: 500, color: 'var(--text-4)',
                 textTransform: 'uppercase', letterSpacing: '0.05em',
@@ -836,7 +806,7 @@ export function ProjectBuilderScreen() {
               {items.map((it) => (
                 <div key={it.localId} style={{
                   display: 'grid',
-                  gridTemplateColumns: '1fr 64px 260px auto',
+                  gridTemplateColumns: '1fr 64px 340px auto',
                   gap: 8, alignItems: 'start',
                 }}>
                   {/* File name + progress */}
@@ -870,8 +840,9 @@ export function ProjectBuilderScreen() {
                   />
 
                   {/* Filament requirement */}
-                  <FilamentRequirementPicker
-                    value={{ filament_type: it.filament_type, filament_color: it.filament_color, filament_id: it.filament_id, material_provider: it.material_provider, material_ref: it.material_ref }}
+                  <FilamentAskEditor
+                    id={`item-ask-${it.localId}`}
+                    value={askOf(it)}
                     onChange={req => setItemFilament(it.localId, req)}
                     materials={materials}
                     catalogEnabled={catalogEnabled}
@@ -882,13 +853,7 @@ export function ProjectBuilderScreen() {
                     {items.length > 1 && (
                       <button
                         className="btn ghost icon sm"
-                        onClick={() => applyFilamentToAll({
-                          filament_type: it.filament_type,
-                          filament_color: it.filament_color,
-                          filament_id: it.filament_id,
-                          material_provider: it.material_provider ?? null,
-                          material_ref: it.material_ref ?? null,
-                        })}
+                        onClick={() => applyFilamentToAll(askOf(it))}
                         title="Apply this filament to every part"
                       >
                         {Icons.copy}

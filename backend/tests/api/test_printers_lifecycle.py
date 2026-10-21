@@ -57,6 +57,8 @@ async def test_patch_changes_only_the_field_it_was_given(client, printer, field,
     expected = {**before, field: value}
     if field == "machine_profile_override":
         expected["machine_profile"] = value        # the override is what the printer slices with
+    if field == "loaded_filaments":                # a stored slot always carries the tuple (plain = "standard", manufacturer unknown)
+        expected["loaded_filaments"] = [{**value[0], "subtype": "standard", "manufacturer": None}]
     assert body == expected  # nothing else moved
     assert await _get(client, printer["id"]) == body  # and it persisted
 

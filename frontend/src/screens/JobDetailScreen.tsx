@@ -10,6 +10,7 @@ import type { StatusKey } from '../data/types';
 import { JobProjectControl } from '../components/JobProjectControl';
 import { getProject } from '../api/projects';
 import { startsIn, toLocalInput, fromLocalInput } from '../lib/schedule';
+import { askIsUndefined, describeAsk } from '../lib/filamentAsk';
 
 const BADGE: Record<string, string> = {
   elegoo_centauri: 'ECC',
@@ -40,6 +41,18 @@ function LowStockStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
     <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
       <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Low filament</div>
       <div className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{cfg.low_stock_warning.message}</div>
+    </div>
+  );
+}
+
+/** Why this printer cannot take the job right now (the job stays queued; loading the right filament makes it claimable). */
+function FilamentMatchStatus({ cfg }: { cfg: ApiJobPrinterConfig }) {
+  const m = cfg.filament_match;
+  if (!m || m.eligible) return null;
+  return (
+    <div data-testid="filament-match-reasons" style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: 'rgba(251,191,36,0.1)', border: '1px solid rgba(251,191,36,0.3)' }}>
+      <div style={{ color: 'var(--warn)', fontSize: 12, fontWeight: 600, marginBottom: 2 }}>Filament doesn't match</div>
+      {m.reasons.map((r, i) => <div key={i} className="tiny" style={{ color: 'var(--warn)', opacity: 0.85 }}>{r}</div>)}
     </div>
   );
 }
@@ -82,7 +95,9 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
               }} />
             )}
             <div className="col" style={{ minWidth: 0 }}>
-              <div className="small" style={{ color: 'var(--text-1)' }}>{cfg.filament_type || '—'}</div>
+              <div className="small" style={{ color: 'var(--text-1)' }}>
+                {askIsUndefined(cfg) ? 'Any loaded filament' : describeAsk(cfg)}
+              </div>
               {cfg.filament_profile && (
                 <div className="tiny muted" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {cfg.filament_profile}
@@ -94,6 +109,7 @@ function PrinterConfigCard({ cfg, isAssigned }: { cfg: ApiJobPrinterConfig; isAs
       </div>
 
       <SliceStatus cfg={cfg} />
+      <FilamentMatchStatus cfg={cfg} />
       <LowStockStatus cfg={cfg} />
     </div>
   );

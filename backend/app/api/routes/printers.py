@@ -27,7 +27,7 @@ from ...services.printer_client_factory import (
 )
 from ...services import printer_model_registry as registry
 from ...services.printer_identity import IdentityError, declared_model, dormant_reason, printer_model_catalog, resolve_legacy
-from ...services import scheduling, slicer_profiles
+from ...services import filament_matching, scheduling, slicer_profiles
 from ...services.printer_manager import printer_manager
 from ...services.queue_engine import queue_engine
 
@@ -584,6 +584,25 @@ async def get_printer(
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 
+@router.get(
+    "/{printer_id}/slot-conflicts",
+    summary="Slots whose bound spool differs from what the printer reports",
+    responses={
+        404: {"description": "Printer not found"},
+    },
+    dependencies=[Depends(require_scope("printers:read"))],
+)
+async def slot_conflicts(
+    printer_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> dict:
+    """Indexes of the slots in conflict (a hardware-reported slot whose bound spool's material differs in a part known on both
+    sides). A conflicting slot is skipped by the queue's filament matching; the UI flags it so the operator can rebind, correct or
+    unbind the spool. Empty when no slot is bound or the inventory cannot be read."""
+    printer = await _get_or_404(printer_id, session)
+    return {"conflicts": sorted(await filament_matching.conflicts_for(printer.loaded_filaments or []))}
+
+
 @router.patch(
     "/{printer_id}",
     summary="Update printer",
@@ -661,6 +680,7 @@ async def update_printer(
         printer.preferred_slicer_plugin_id = wanted
     await session.commit()
     await session.refresh(printer)
+    queue_engine.wake()                      # enabled, queue on or loaded filament changed: what the queue can match may have too
     return _to_dict(printer, await slicer_profiles.resolve_for_printer(session, printer))
 
 

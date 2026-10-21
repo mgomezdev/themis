@@ -153,8 +153,7 @@ describe('NewJobScreen - creating the job', () => {
     expect(jobPosts(api).map(c => c.body)).toEqual([{
       uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
-        printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
-        filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
+        printer_id: 1, print_profile: PROFILE, filament_profile: null, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, tool_index: null, filament_map: null,
       }],
       model_targets: [],
     }]);
@@ -177,7 +176,7 @@ describe('NewJobScreen - creating the job', () => {
       printer_configs: [],
       model_targets: [{
         model_uuid: 'model-ecc', print_profile: PROFILE, filament_profile: null,
-        filament_id: null, material_provider: null, material_ref: null, filament_type: 'any', filament_color: 'any',
+        filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null,
       }],
     }]);
   });
@@ -196,8 +195,7 @@ describe('NewJobScreen - creating the job', () => {
     expect(jobPosts(api).map(c => c.body)).toEqual([{
       uploaded_file_id: 42, plate_number: 1, project_id: null, overrides: null,
       printer_configs: [{
-        printer_id: 1, print_profile: '', filament_profile: null, filament_id: null, material_provider: null, material_ref: null,
-        filament_type: 'any', filament_color: 'any', tool_index: null, filament_map: null,
+        printer_id: 1, print_profile: '', filament_profile: null, filament_manufacturer: null, filament_type: null, filament_subtype: null, filament_color: null, tool_index: null, filament_map: null,
       }],
       model_targets: [],
     }]);
