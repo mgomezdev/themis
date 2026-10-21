@@ -13,7 +13,7 @@ services:
       - SYSTEM_PROFILES_DIR=/profiles/system
       - USER_CONFIG_DIR=/profiles/user
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/v1/health"]
       interval: 10s
       timeout: 5s
       retries: 5

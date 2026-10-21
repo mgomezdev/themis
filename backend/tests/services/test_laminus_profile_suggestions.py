@@ -37,7 +37,7 @@ def test_the_adapter_advertises_and_maps_machine_candidates(sidecar):  # noqa: F
     got = provider().suggest_machines("Bambu Lab", "P1S", "bambu/p1s")
 
     assert provider().SUGGEST_PROFILES is True
-    assert seen == [("POST", "/api/profiles/machines/suggest", {"manufacturer": "Bambu Lab", "model": "P1S", "model_key": "bambu/p1s"})]
+    assert seen == [("POST", "/api/v1/profiles/machines/suggest", {"manufacturer": "Bambu Lab", "model": "P1S", "model_key": "bambu/p1s"})]
     assert [(c.name, c.ref, c.nozzle_diameter_mm, c.flow, c.confidence, c.match_reason) for c in got] == [
         ("Bambu Lab P1S 0.4 nozzle", "machine:bambu-lab-p1s-0.4-nozzle", 0.4, "standard", 0.97, "exact_model"),
         ("Bambu Lab A1 0.4 nozzle", "machine:bambu-lab-a1-0.4-nozzle", 0.4, "standard", 0.3, "vendor_only")]

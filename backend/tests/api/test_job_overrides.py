@@ -120,7 +120,7 @@ def test_extra_config_forwarded_to_sidecar():
 
     mock_client = MagicMock()
     mock_client.slice_start.return_value = "sidecar-job-1"
-    mock_client.poll_status.return_value = {"sliced_file": "out.gcode"}
+    mock_client.poll_status.return_value = {"artifact": {"name": "out.gcode"}}
     mock_client.download.return_value = Path("/tmp/out.gcode")
 
     with patch("app.services.slicer_service.SlicerService._execute_slice_by_ids") as mock_exec, \

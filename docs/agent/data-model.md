@@ -214,7 +214,7 @@ process_preset, filament_presets: JSON[str] (ordered), extra_config: JSON (bed t
 → `cache_key` = sha256 of their canonical JSON (`services/slice_cache.cache_key` over `CacheKeyInputs`; filament colour is deliberately **not** in it,
 nor is the engine version). Non-key:
 `preset_content_hash?` (sha256 of the sidecar's merged config for those presets) + `slicer_version?` (the producing provider's engine
-version, Laminus `/api/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
+version, Laminus `/api/v1/health` `orca_version`) → **stale** when either differs now (`slice_cache.staleness`; unknown when the sidecar is
 unreachable); `filament_type/color` (display + default ask), `estimated_seconds, filament_grams, filament_breakdown?`,
 `created_from_job_id?` (plain int), `created_at`. The display name is the library file's name.
 The link lives only in the DB (the filesystem stays the source of truth for the files themselves): a cached file moved
