@@ -344,6 +344,9 @@ class QueueConfig(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     check_interval_minutes: Mapped[int] = mapped_column(default=5)
+    # A printer offline this many minutes is "dead": its running job fails and goes back to the top of the queue. Shorter outages
+    # change nothing, so a flaky network does not keep reprocessing the queue. 0 = never declared dead.
+    printer_dead_after_minutes: Mapped[int] = mapped_column(Integer, default=30, server_default="30")
     operator_name: Mapped[Optional[str]] = mapped_column(String(120), nullable=True)
     snapshot_interval_seconds: Mapped[int] = mapped_column(Integer, default=2)
     estimates_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

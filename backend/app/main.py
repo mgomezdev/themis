@@ -142,6 +142,7 @@ async def lifespan(app: FastAPI):
         broadcast_cb=connection_manager.broadcast,
     )
     printer_manager.set_job_complete_callback(queue_engine.handle_print_complete)
+    printer_manager.set_connectivity_callback(queue_engine.on_connectivity)
     await queue_engine.start()
 
     try:

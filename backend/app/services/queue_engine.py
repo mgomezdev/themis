@@ -489,6 +489,9 @@ class QueueEngine:
             # configurable check interval, whichever comes first.
             interval = await self._check_interval_seconds()
             interval = min(interval, await self._seconds_until_next_schedule())
+            dead_wait = self._mgr.seconds_until_next_dead(await self._dead_after_minutes())
+            if isinstance(dead_wait, (int, float)):
+                interval = min(interval, dead_wait)           # a printer crossing its offline cutoff is acted on when it happens
             try:
                 await asyncio.wait_for(self._event.wait(), timeout=interval)
             except asyncio.TimeoutError:
@@ -522,6 +525,7 @@ class QueueEngine:
         return max(1, minutes) * 60.0
 
     async def _process_queue(self) -> None:
+        await self._liveness_pass()
         await self._reconcile_printing_jobs()
         all_ids = sorted(self._mgr.get_all_printer_ids())
         ready_set = {pid for pid in all_ids if self._mgr.is_printer_ready(pid)}
@@ -546,6 +550,92 @@ class QueueEngine:
                         await self._try_claim_for_printer(session, printer_id, slice_only=True)
             except Exception:
                 logger.exception("Queue engine error processing printer %s", printer_id)
+
+    # --- printer liveness: a printer offline past the user's cutoff is dead -------------------------------------------
+
+    async def _dead_after_minutes(self) -> int:
+        """`queue_config.printer_dead_after_minutes` (0 = a printer is never declared dead)."""
+        try:
+            async with self._factory() as session:
+                cfg = await session.get(QueueConfig, 1)
+                return cfg.printer_dead_after_minutes if cfg is not None else 30
+        except Exception:
+            logger.exception("Failed to read the printer dead-after setting; using 30 minutes")
+            return 30
+
+    async def on_connectivity(self, printer_id: int, edge: str, was_dead: bool) -> None:
+        """A printer that was offline is back. Nothing happens for a blip that healed before the cutoff, unless work is waiting for
+        it: a job sliced for it while it was away (undead) is picked up by waking the queue, and the normal ready path uploads and
+        starts it only if the printer is idle with a clear plate. A dead printer returning reopens what its absence blocked."""
+        if edge != "online":
+            return
+        if was_dead:
+            self.wake()
+            return
+        async with self._factory() as session:
+            if await self._has_pending_sliced_job(session, printer_id):
+                self.wake()
+
+    async def _liveness_pass(self) -> None:
+        """Sample every printer's connection, hand the printers that came back to `on_connectivity`, and declare the ones that crossed
+        the cutoff dead (each once per outage)."""
+        for printer_id, edge, was_dead in self._mgr.sample_all():
+            try:
+                await self.on_connectivity(printer_id, edge, was_dead)
+            except Exception:
+                logger.exception("Connectivity handling failed for printer %s", printer_id)
+        cutoff = await self._dead_after_minutes()
+        for printer_id in self._mgr.newly_dead(cutoff):
+            try:
+                await self._declare_dead(printer_id, cutoff)
+            except Exception:
+                logger.exception("Declaring printer %s dead failed", printer_id)
+
+    async def _declare_dead(self, printer_id: int, cutoff_minutes: int) -> None:
+        """A dead printer cannot hold its work. Its `printing` job fails (`job.failed`, origin core) and returns to the TOP of the queue;
+        a job merely sliced for it (not started) goes back to `queued` where it was, because only that printer could start it. The
+        plate gate stays set: a half-printed part may be on the bed, so the user still clears it when the printer returns."""
+        reason = f"printer offline for more than {cutoff_minutes} minutes"
+        logger.warning("Printer %s is dead (%s)", printer_id, reason)
+        async with self._factory() as session:
+            printing = (await session.execute(select(Job.id).where(Job.status == "printing", Job.assigned_printer_id == printer_id))).scalars().all()
+            sliced = (await session.execute(select(Job.id).join(GcodeFile, and_(GcodeFile.job_id == Job.id, GcodeFile.printer_id == printer_id))
+                                            .where(Job.status == "sliced"))).scalars().all()
+        for job_id in printing:
+            await self.requeue_dead_print(job_id, printer_id, reason)
+        for job_id in sliced:
+            await self._release_sliced_job(job_id, printer_id)
+        self.wake()
+
+    async def requeue_dead_print(self, job_id: int, printer_id: int, reason: str) -> bool:
+        async with self._factory() as session:
+            now = _now()
+            top = (await session.execute(select(func.min(Job.queue_position)).where(
+                Job.status.in_(("queued", "blocked", "sliced", "slicing", "uploading"))))).scalar()
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "printing").values(
+                status="queued", queue_position=(top if top is not None else 1.0) - 1.0, assigned_printer_id=None,
+                completed_at=None, block_reason=None, updated_at=now))
+            if claim.rowcount == 0:
+                return False                                   # a late completion won: nothing to requeue
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await job_details.set_details(session, job_id, "core", {"last_failure": {"reason": reason, "printer_id": printer_id, "at": now}})
+            await session.commit()
+        await self._broadcast_job(job_id)
+        await self._publish_job_event("job.failed", job_id, printer_id, "core", {"reason": reason, "phase": "print"},
+                                      dedup=f"job.failed:{job_id}:{now}")
+        await self._fire_webhooks(job_id, "job.failed")
+        await self._fire_notifications(job_id, "job.failed", printer_id=printer_id, reason=reason, origin="core")
+        return True
+
+    async def _release_sliced_job(self, job_id: int, printer_id: int) -> None:
+        async with self._factory() as session:
+            claim = await session.execute(update(Job).where(Job.id == job_id, Job.status == "sliced").values(
+                status="queued", assigned_printer_id=None, updated_at=_now()))
+            if claim.rowcount == 0:
+                return
+            await self._cleanup_gcode(session, job_id, printer_id)
+            await session.commit()
+        await self._broadcast_job(job_id)
 
     async def _reconcile_printing_jobs(self) -> None:
         """Reconcile jobs stuck in 'printing' against live printer state.

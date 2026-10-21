@@ -14532,6 +14532,19 @@
             ],
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14586,6 +14599,10 @@
             "type": "integer",
             "title": "Check Interval Minutes"
           },
+          "printer_dead_after_minutes": {
+            "type": "integer",
+            "title": "Printer Dead After Minutes"
+          },
           "operator_name": {
             "anyOf": [
               {
@@ -14613,6 +14630,7 @@
         "type": "object",
         "required": [
           "check_interval_minutes",
+          "printer_dead_after_minutes",
           "operator_name",
           "snapshot_interval_seconds",
           "estimates_enabled",

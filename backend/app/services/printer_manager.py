@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import logging
+import time
 from dataclasses import asdict
 from typing import Any, Callable
 
@@ -27,6 +28,12 @@ class PrinterManager:
         self._session_factory: async_sessionmaker | None = None
         self._subscribed = False
         self._printer_plugin: dict[int, str | None] = {}
+        # Liveness: when each currently-offline printer was first seen offline, and the ones past the user's cutoff ("dead"). Held in
+        # memory (a restart restarts the clock); sampled from `client.connected`, which is the authoritative connection state.
+        self._clock: Callable[[], float] = time.monotonic
+        self._offline_since: dict[int, float] = {}
+        self._dead: set[int] = set()
+        self._on_connectivity: Callable | None = None
 
     def subscribe_events(self) -> None:
         """Route the bus's printer events to the handlers that act on them. Idempotent: the bus is process-wide and the app
@@ -82,6 +89,77 @@ class PrinterManager:
 
     def register_client(self, printer_id: int, client: AbstractPrinterClient) -> None:
         self._clients[printer_id] = client
+        self._offline_since.pop(printer_id, None)
+        self._dead.discard(printer_id)
+        self.sample_connectivity(printer_id)            # a printer that is not up at registration starts its offline clock now
+
+    # --- liveness: online / undead (offline, under the cutoff) / dead (offline for the cutoff or longer) ---------------
+
+    def set_connectivity_callback(self, cb: Callable | None) -> None:
+        """`async cb(printer_id, edge, was_dead)` for each offline->online edge seen on telemetry, so the queue can react promptly."""
+        self._on_connectivity = cb
+
+    def sample_connectivity(self, printer_id: int) -> tuple[str | None, bool]:
+        """Compare `client.connected` with what was last seen: `("offline", False)` on the first sight of an outage, `("online", was_dead)`
+        when a printer that was offline is back, else `(None, False)`. No other effects."""
+        client = self._clients.get(printer_id)
+        if client is None:
+            self._offline_since.pop(printer_id, None)
+            self._dead.discard(printer_id)
+            return None, False
+        if getattr(client, "connected", True):          # a client without the property is treated as up
+            if printer_id in self._offline_since:
+                del self._offline_since[printer_id]
+                was_dead = printer_id in self._dead
+                self._dead.discard(printer_id)
+                return "online", was_dead
+            return None, False
+        if printer_id not in self._offline_since:
+            self._offline_since[printer_id] = self._clock()
+            return "offline", False
+        return None, False
+
+    def sample_all(self) -> list[tuple[int, str, bool]]:
+        """`sample_connectivity` for every printer; only the ones that changed: `(printer_id, edge, was_dead)`."""
+        out = []
+        for pid in list(self._clients):
+            edge, was_dead = self.sample_connectivity(pid)
+            if edge is not None:
+                out.append((pid, edge, was_dead))
+        return out
+
+    def offline_seconds(self, printer_id: int) -> float | None:
+        since = self._offline_since.get(printer_id)
+        return None if since is None else max(0.0, self._clock() - since)
+
+    def liveness(self, printer_id: int, cutoff_minutes: int) -> str | None:
+        """`online`, `undead` (offline but under the cutoff: still part of queue processing), `dead` (offline for the cutoff or longer;
+        never when the cutoff is 0), or None for a printer Themis has no client for."""
+        if printer_id not in self._clients:
+            return None
+        offline = self.offline_seconds(printer_id)
+        if offline is None:
+            return "online"
+        return "dead" if cutoff_minutes > 0 and offline >= cutoff_minutes * 60 else "undead"
+
+    def newly_dead(self, cutoff_minutes: int) -> list[int]:
+        """Printers that crossed the cutoff since the last call (each is reported once per outage); with cutoff 0 nobody is dead."""
+        if cutoff_minutes <= 0:
+            self._dead.clear()
+            return []
+        fresh = [pid for pid in list(self._offline_since) if pid not in self._dead and self.liveness(pid, cutoff_minutes) == "dead"]
+        self._dead.update(fresh)
+        return fresh
+
+    def is_dead(self, printer_id: int) -> bool:
+        return printer_id in self._dead
+
+    def seconds_until_next_dead(self, cutoff_minutes: int) -> float | None:
+        """Seconds until the next offline printer crosses the cutoff (None when none will), floored at 1 s."""
+        if cutoff_minutes <= 0:
+            return None
+        waits = [cutoff_minutes * 60 - (self.offline_seconds(pid) or 0.0) for pid in self._offline_since if pid not in self._dead]
+        return max(1.0, min(waits)) if waits else None
 
     def get_client(self, printer_id: int) -> AbstractPrinterClient:
         return self._clients[printer_id]
@@ -127,6 +205,12 @@ class PrinterManager:
         return state
 
     async def on_state_change(self, printer_id: int, vendor_state) -> None:
+        edge, was_dead = self.sample_connectivity(printer_id)
+        if edge == "online" and self._on_connectivity is not None:
+            try:
+                await self._on_connectivity(printer_id, edge, was_dead)
+            except Exception:
+                logger.exception("Connectivity handler failed for printer %s", printer_id)
         client = self._clients.get(printer_id)
         if client is not None:
             try:
@@ -221,6 +305,8 @@ class PrinterManager:
         client.connect(loop=loop)
 
     def disconnect_printer(self, printer_id: int) -> None:
+        self._offline_since.pop(printer_id, None)
+        self._dead.discard(printer_id)
         client = self._clients.pop(printer_id, None)
         if client:
             client.disconnect()
